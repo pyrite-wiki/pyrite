@@ -34,10 +34,10 @@ uv venv
 source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 # `.[all]` is the whole optional surface (CLI, server, MCP, AI) plus the test
 # tooling. `.[dev]` alone is tooling only and cannot even collect the suite.
-uv pip install -e ".[all]"
+uv pip install -c "$(scripts/lock-constraints.sh)" -e ".[all]"
 
 # Install all extensions (required for full test suite)
-for ext in extensions/*/; do uv pip install -e "$ext"; done
+for ext in extensions/*/; do uv pip install -c "$(scripts/lock-constraints.sh)" -e "$ext"; done
 
 # Install the git hooks (commit, commit-msg and pre-push in one go)
 pre-commit install
@@ -57,6 +57,39 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+#### The dependency lock
+
+`uv.lock` pins every dependency, transitive ones included, to one version for
+all of Python 3.11, 3.12 and 3.13 (#1357). CI and `scripts/setup-checkout.sh`
+install with `-c "$(scripts/lock-constraints.sh)"`, which exports the lock as
+pip constraints on the spot, so two runs a day apart test the same code. Nothing
+derived is committed (it would go stale when Dependabot bumps `uv.lock`). The
+install verb is still `uv pip install -e`; `uv sync` is not used, so the
+extensions (separate packages with no dependencies of their own) and `--system`
+installs work as before. Without `uv` on your PATH, `setup-checkout.sh` puts a
+private `uv` in the venv with pip and carries on. `pyproject.toml` keeps its
+ranges, they are the contract with people who `pip install pyrite`, and the
+published wheel does not read the lock.
+
+After you add or change a dependency, or bump the project version, in
+`pyproject.toml`, refresh the lock and commit it with the change:
+
+```bash
+scripts/lock-deps.sh            # uv lock: re-resolves only what pyproject.toml forces
+scripts/lock-deps.sh --upgrade  # moves every pin to the newest allowed version
+scripts/lock-deps.sh --check    # what CI's `lock` job runs: fails if the lock is stale
+```
+
+`tests/test_dependency_lock.py` fails offline when a declared dependency is
+missing from the lock or pinned outside its range; the `lock` CI job runs
+`uv lock --check`, and so does `scripts/release.py` on the release commit (a version
+bump leaves the lock stale until you run `scripts/lock-deps.sh`). Dependabot's `uv`
+entry bumps the lock only (`versioning-strategy: lockfile-only`). The lock does not hide upstream breakage from us: the
+weekly `unlocked.yml` workflow installs `.[all]` *without* it and runs the
+suite, so a release inside our ranges that breaks Pyrite shows up there.
+Dependabot's `uv` ecosystem (`.github/dependabot.yml`) opens one grouped weekly PR
+that updates `uv.lock`; the `lock` job and the install jobs run on it like any PR.
 
 See [Setting Up the Development Environment](kb/runbooks/setting-up-dev-environment.md) for troubleshooting.
 Line endings are normalised to LF across platforms via repository `.gitattributes`.
@@ -426,7 +459,7 @@ and stamps it.
 | Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* above) or the commit being pushed is already verified by CI (see *A verified commit is not tested again at the push*). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
 | On the pull request | nothing: CI runs the backend suite on one interpreter (a failure is the first thing in its log; the 25 slowest tests go to the step summary and a junit artifact is kept 30 days; mypy is its own advisory job: it fails only when a file has more type errors than the change's base commit (a PR's merge-ref parent, a push's previous tip; `.mypy-baseline.json` is the fallback when there is none), and after you fix errors you lower the baseline with `mypy pyrite/ --ignore-missing-imports > mypy.out; python scripts/mypy_ratchet.py mypy.out --update`); the backend suite runs as 3 parallel shards per interpreter balanced by `.test_durations.gz`, and `shard-report` proves they ran every test once) (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change, graded against the merge commit's first parent; it is not in `gate` and never blocks a merge, and CI does not pass it `--enforce-fix`; its claim rule handles module-level tables on the test function itself, grades the whole function for an inline `parametrize` list, and selects nothing for class-level, fixture-params, generate-hook and imported tables; a `control` counts only when written on the test or one of its parameters, and one added another way (class or module `pytestmark`, a hook, a fixture, the test body) turns the job red; it runs on pull requests, not in the merge queue, and CI's environment, which has no Postgres, is the one it reports in; gating waits for #1104's model; see `docs/testing.md`) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
 | A frontend change | `cd web && npm run check && npm run test:unit && npm run build` |
-| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
+| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, whether the private fixes repository (the `security` remote; `--private-remote`, or `--no-private-remote` for a project that keeps none) holds a change `dev` lacks, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
 
 **What CI guarantees:** no pull request merges until the full backend suite
 has passed on top of current `dev`. Run the full suite locally to reproduce a
@@ -446,11 +479,15 @@ identical version. An unbounded `pytest>=8.0.0` once resolved 9.1.1 on one
 interpreter and 9.0.2 on another; a change that passed the PR gate under one
 version broke `dev` under the other. `tests/test_dev_process_config.py`
 asserts the pins stay exact, so loosening one is a visible diff, not a silent
-drift on the next `uv pip install`. After changing a pin, refresh your
-worktree's venv and confirm it took:
+drift on the next `uv pip install`. The same is now true of every other
+dependency through `uv.lock` (see [The dependency lock](#the-dependency-lock));
+the runner's exact pins remain because they are also what `pyproject.toml`
+tells a contributor who installs without the lock. After changing a pin,
+run `scripts/lock-deps.sh`, then refresh your worktree's venv and confirm it
+took:
 
 ```bash
-uv pip install --python .venv/bin/python -e ".[all,dev]"
+uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e ".[all,dev]"
 .venv/bin/python -m pytest --version
 ```
 

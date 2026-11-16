@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..exceptions import HeldFault
 from ..storage.backends.protocol import DEFAULT_MIN_SIMILARITY
 from ..storage.database import PyriteDB
 from ..utils.install_hints import extra_install_command
@@ -74,7 +75,7 @@ def _extension_loading_refused(error: Exception) -> bool:
 
 
 def semantic_unavailable(
-    vec_available: bool, vec_load_error: Exception | None = None
+    vec_available: bool, vec_load_error: HeldFault | None = None
 ) -> tuple[str, str, str] | None:
     """Why semantic search cannot run here, or None when it can.
 
@@ -82,8 +83,10 @@ def semantic_unavailable(
     puts it in a warning and in the trace's ``reason``, `index embed` in its
     error, so the three never disagree. The install line only fits a missing
     package, not an extension that is installed but would not load. When the
-    SQLite connection supplies the loader exception, use it instead of guessing
-    at a local SQLite build limitation.
+    SQLite connection supplies the loader's fault, use it instead of guessing
+    at a local SQLite build limitation. The fault is held
+    (``exceptions.HeldFault``): its class name is shown to every caller, its
+    text only to the local process (ADR-0052 N3).
     """
     import importlib.util
 
@@ -104,9 +107,9 @@ def semantic_unavailable(
     if vec_load_error is not None:
         cause = (
             "the sqlite-vec extension failed to load "
-            f"({type(vec_load_error).__name__}: {vec_load_error})"
+            f"({vec_load_error.type_name}: {vec_load_error})"
         )
-        if _extension_loading_refused(vec_load_error):
+        if vec_load_error.matches(_extension_loading_refused):
             # The one load failure a different interpreter fixes (#606): say
             # so, beside the exception, instead of "resolve the error".
             return (
@@ -362,7 +365,9 @@ def _check_model_source(name: str) -> None:
     try:
         modules = json.loads(modules_file.read_text())
     except (OSError, ValueError) as e:
-        raise EmbeddingModelRefusedError(f"Cannot read {modules_file}: {e}") from e
+        from ..exceptions import outside_text
+
+        raise EmbeddingModelRefusedError(f"Cannot read {modules_file}: {outside_text(e)}") from e
     for module in modules if isinstance(modules, list) else []:
         ref = module.get("type", "") if isinstance(module, dict) else ""
         if not str(ref).startswith("sentence_transformers."):
@@ -386,11 +391,13 @@ def _load_model(name: str) -> Any:
     try:
         from sentence_transformers import SentenceTransformer
     except ImportError as e:
+        from ..exceptions import outside_text
+
         # is_available() only sees the package through the finder, so a broken
         # install reaches its first load here: name it and the remedy (#1101).
         raise EmbeddingModelUnavailableError(
             "sentence-transformers is installed but cannot be imported: "
-            f"{e}. Reinstall it with `{extra_install_command('semantic')}`."
+            f"{outside_text(e)}. Reinstall it with `{extra_install_command('semantic')}`."
         ) from e
 
     # Suppress noisy output during model loading:
@@ -620,6 +627,8 @@ class EmbeddingService:
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -644,10 +653,13 @@ class EmbeddingService:
             entry_type, tags, date_from, date_to, fips, state, status,
             include_archived: the same filter set the keyword leg takes.
                 Applied by the backend inside the KNN query rather than after
-                it (#56) — a filter honoured on only one leg makes a fused
+                it (#56) - a filter honoured on only one leg makes a fused
                 hybrid result violate it. ``include_archived`` is the default
                 exclusion rather than a value filter, and holds on both legs
-                for the same reason.
+                for the same reason. ``entry_types`` (the #627 include-set,
+                which absorbs a single ``entry_type``) and ``exclude_types``
+                are part of that set too, so a repeated `--type` and an
+                `--exclude-type` reach the vector leg like every other filter.
             non_empty: leave out entries whose body and summary are both blank
                 (#200); applied inside the KNN like the others.
 
@@ -667,6 +679,8 @@ class EmbeddingService:
             min_similarity=min_similarity,
             kb_names=kb_names,
             entry_type=entry_type,
+            entry_types=entry_types or None,
+            exclude_types=exclude_types or None,
             tags=tags,
             date_from=date_from,
             date_to=date_to,

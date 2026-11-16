@@ -256,7 +256,7 @@ def test_add_link_identical_triple_stays_a_noop_after_target_deleted(link_env):
         # Through the service's own delete, so the index row goes with the
         # file -- an `unlink()` on disk alone would leave the index stale and
         # `resolved` would read the deleted target as still there.
-        assert svc.delete_entry("link-b", "lk") is True
+        assert svc.delete_entry("link-b", "lk", readable_kbs=None).deleted is True
 
         result = svc.add_link("link-a", "lk", "link-b", relation="implements")
         assert result["created"] is False

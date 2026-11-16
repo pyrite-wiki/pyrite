@@ -5,12 +5,11 @@ Handles reading and writing entries to/from markdown files.
 Each KB is a directory of markdown files with YAML frontmatter.
 """
 
-import glob
 import io
 import logging
 import os
 import stat
-from collections.abc import Callable, Iterator, Set
+from collections.abc import Callable, Iterator, Mapping, Set
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,10 +17,12 @@ from ..config import KBConfig
 from ..exceptions import (
     ConflictError,
     EntryExistsError,
+    EntryLoadError,
     EntryNotFoundError,
     FrontmatterError,
-    KBReadOnlyError,
     ValidationError,
+    kb_origin,
+    outside_text,
 )
 from ..migrations import get_migration_registry, load_plugin_migrations
 from ..models import Entry, EventEntry
@@ -33,13 +34,13 @@ from ..models.core_types import (
     read_entry_id,
 )
 from ..schema import CORE_TYPES
-from ..utils.frontmatter import Frontmatter, split_frontmatter
-from ..utils.kb_files import KBFiles
-from ..utils.yaml import load_yaml, load_yaml_file
+from ..utils.atomic_write import HardLinked
+from ..utils.frontmatter import Frontmatter, describe, split_frontmatter
+from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles
+from ..utils.yaml import load_yaml
 from .entry_writer import (
     FileChanged,
     create_entry_text,
-    move_entry_text,
     publish_entry_text,
     raw_scalar,
     remove_entry_file,
@@ -117,7 +118,8 @@ def _rewrite_wikilinks(text: str, old_id: str, new_id: str) -> _Rewrite:
         partial = None
         if left:
             partial = (
-                f"the frontmatter could not be patched as values ({type(e).__name__}: {e}); "
+                "the frontmatter could not be patched as values "
+                f"({type(e).__name__}: {outside_text(e)}); "
                 f"{left} wikilink(s) there still name '{old_id}'"
             )
         return _Rewrite(text[: split.close_end] + tail, count, partial)
@@ -130,7 +132,10 @@ def _hard_link_fault(path: Path) -> str | None:
     be outside the KB, and under git would take another lock). None
     when the file can be published."""
     try:
-        links = path.stat().st_nlink
+        # lstat: the name's own link count. Called after KBFiles read the
+        # file, but a stat that followed a link out would report the outside
+        # inode's count.
+        links = path.lstat().st_nlink
     except OSError:
         return None
     if links <= 1:
@@ -153,7 +158,17 @@ def _fault_reason(e: BaseException) -> str:
         return _hard_linked(e.links)
     if isinstance(e, KBFileOutsideRootError):
         return "it resolves outside the KB root, through a symbolic link"
-    return f"{type(e).__name__}: {e}"
+    return f"{type(e).__name__}: {outside_text(e)}"
+
+
+def _read_fault_reason(path: Path, e: BaseException) -> str:
+    """``_fault_reason`` for a read inside the KB (``_read_inside``), whose one
+    refusal covers a link out and a hard link: a hard link is named as one."""
+    from pyrite.utils.kb_files import KBFileOutsideRootError
+
+    if isinstance(e, KBFileOutsideRootError):
+        return _hard_link_fault(path) or _fault_reason(e)
+    return _fault_reason(e)
 
 
 def _rewrite_as_values(
@@ -205,36 +220,10 @@ def _is_regular_file(path: Path) -> bool:
         return False
 
 
-def _regular_file_text(path: Path) -> str | None:
-    """``path.read_text(encoding="utf-8")`` -- UTF-8, universal newlines -- if
-    ``path`` is a regular file (symlinks followed), else None; None too when
-    it cannot be read or decoded. One ``open`` and ``fstat`` where
-    ``_is_regular_file`` and ``read_text`` stat and open: a lookup's scan
-    pays it once per file in the KB (#135). ``O_NONBLOCK``: a FIFO opens
-    without blocking and is refused by the ``fstat``."""
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        raw = io.FileIO(fd, closefd=False).readall()
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
-    try:
-        return _text_of(raw)
-    except UnicodeDecodeError:
-        return None
-
-
 def _text_of(raw: bytes) -> str:
     """``raw`` decoded as ``Path.read_text(encoding="utf-8")`` decodes a file:
     strict UTF-8, universal newlines. The one decoding for a reader that has
-    the bytes (``_regular_file_text``, ``load_entry_from_bytes``), so what it
+    the bytes (``_inside_text``, ``load_entry_from_bytes``), so what it
     parses is what a read of the file would give."""
     return io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
 
@@ -332,13 +321,83 @@ def _plain_for_file(value: object) -> object:
     return value
 
 
-def _event_fallback(file_path: Path, text: str | None) -> Entry:
-    """``EventEntry.load``, from ``text`` when the caller already read it."""
-    if text is None:
-        return EventEntry.load(file_path)
-    entry = EventEntry.from_markdown(text)
-    entry.file_path = file_path
-    return entry
+def load_problem(field_path: str, error: str) -> dict[str, str]:
+    """One refused field of a single-entry read (``load_problems``): the file
+    key, ``rule: load``, a severity and the loader's message."""
+    return {
+        "field": field_path,
+        "rule": "load",
+        "severity": "warning",
+        "message": f"{field_path}: {error}",
+    }
+
+
+def _loader_refuses(fm: dict) -> str | None:
+    """The loader's message when the type ``fm`` declares refuses it, else None."""
+    try:
+        entry_from_frontmatter(fm, "")
+    except Exception as e:  # noqa: BLE001 - a probe of the type's own loader
+        # A loader's text (a plugin's, a library's) reaches the refusal's
+        # message and its fields: a network caller gets Pyrite's own text
+        # (ADR-0052 N3, `outside_text`); the CLI and stdio MCP get the loader's.
+        return outside_text(e, already_logged=True) or type(e).__name__
+    return None
+
+
+def _without(fm: dict, refused: Mapping[str, str]) -> dict:
+    """``fm`` without the refused keys (``rank``, or ``metadata.rank`` inside
+    a ``metadata:`` mapping)."""
+    kept = dict(fm)
+    nested = dict(kept["metadata"]) if isinstance(kept.get("metadata"), dict) else None
+    for key in refused:
+        head, _, sub = key.partition(".")
+        if sub and head == "metadata" and nested is not None:
+            nested.pop(sub, None)
+        else:
+            kept.pop(key, None)
+    if nested is not None and "metadata" in kept:
+        kept["metadata"] = nested
+    return kept
+
+
+def _refused_fields(fm: dict, body: str) -> dict[str, str]:
+    """``{file key: loader message}`` for each key the declared type's loader
+    refuses on its own, or ``{}`` when the refusal is not isolated to fields.
+
+    A key is refused when the loader raises on the base keys (``type``,
+    ``id``, ``title``) plus that key alone; a ``metadata:`` mapping is probed
+    key by key, so ``metadata.rank`` is named as such. Isolated means the base
+    keys load alone and the file loads without the refused keys; otherwise
+    (a base field, a cross-field rule, a key the loader requires) it is
+    ``{}``. Runs only for a file that already failed to load.
+    """
+    base = {k: fm[k] for k in ("type", "id", "title") if k in fm}
+    if _loader_refuses(base) is not None:
+        return {}
+    refused: dict[str, str] = {}
+    for key, value in fm.items():
+        if key in base:
+            continue
+        whole = _loader_refuses({**base, key: value})
+        if whole is None:
+            continue
+        if key == "metadata" and isinstance(value, dict):
+            subs = {
+                f"metadata.{sub}": msg
+                for sub, sub_value in value.items()
+                if (msg := _loader_refuses({**base, "metadata": {sub: sub_value}})) is not None
+            }
+            if subs:
+                refused.update(subs)
+                continue
+        refused[str(key)] = whole
+    if not refused:
+        return {}
+    try:
+        entry_from_frontmatter(_without(fm, refused), body)
+    except Exception:  # noqa: BLE001 - the rest still does not load: not isolated
+        return {}
+    return refused
 
 
 class KBRepository:
@@ -364,65 +423,161 @@ class KBRepository:
         # to the correct type based on entry_type field
         return Entry
 
+    def _read_inside(self, file_path: Path) -> bytes:
+        """The bytes of ``file_path``, read only where it resolves inside this
+        KB's root and has one name (``KBFiles.read_bytes``). Every load of an
+        entry reads through here, so neither the index nor a by-id load holds
+        bytes from outside the KB: a link out of it, or a hard link, raises
+        ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``) and nothing is
+        read. ``FileNotFoundError`` when the file is gone."""
+        raw = self._inside_bytes(file_path)
+        if raw is None:
+            raise FileNotFoundError(str(file_path))
+        return raw
+
+    def _inside_bytes(self, file_path: Path) -> bytes | None:
+        """``KBFiles.read_bytes`` for this KB: the bytes, or None when nothing
+        is there to read (absent, or not a regular file: a FIFO or a device,
+        opened without blocking and never read). A link out of the KB, or a
+        hard link, raises ``KBFileReadOutsideRootError`` whatever it points
+        at, so no answer built on this depends on what lies outside."""
+        return KBFiles(self.path).read_bytes(file_path)
+
     def _load_entry(self, file_path: Path, text: str | None = None) -> Entry:
-        """Load an entry from a file, dispatching to the correct type.
+        """Load an entry from a file as the type its frontmatter declares: THE
+        strict load, the only kind a writer can call (ADR-0042 decision 8a).
 
         ``text``: the file's text, already read (``load_entry_from_bytes``);
         read here when None.
-        """
-        # Try to load with type-aware parsing
-        try:
-            # Read frontmatter to determine type
-            if text is None:
-                text = file_path.read_text(encoding="utf-8")
-            split = split_frontmatter(text)
-            if isinstance(split, Frontmatter):
-                fm = load_yaml(split.text)
-                if fm and isinstance(fm, dict):
-                    body = split.body
-                    fm = self._maybe_migrate(fm)
-                    # `fm` is the entry's frontmatter and nothing else. It
-                    # used to get `body` and `file_path` injected here, but
-                    # no from_frontmatter reads either (body arrives as the
-                    # positional argument, file_path is set by the caller),
-                    # while capture_extra_frontmatter reads this same dict to
-                    # decide which keys the class did not declare -- so the
-                    # two internals were recorded as "unknown frontmatter"
-                    # and written back into the file on the next save (#46).
-                    entry = entry_from_frontmatter(fm, body)
-                    # Preserve references in metadata if present in frontmatter
-                    # (typed entries drop unknown fields during from_frontmatter)
-                    if "references" in fm and fm["references"]:
-                        if not hasattr(entry, "metadata") or not entry.metadata:
-                            entry.metadata = {}
-                        if "references" not in entry.metadata:
-                            entry.metadata["references"] = fm["references"]
-                    return entry
 
-            # Fallback: try EventEntry.load for backward compat
-            return _event_fallback(file_path, text)
-        except FrontmatterError:
-            # Malformed YAML: the EventEntry fallback re-parses the same bytes
-            # and would fail identically, so re-raise rather than retry.
-            logger.warning("Entry load failed for %s: malformed frontmatter", file_path)
+        Returns an entry of the declared type, fully loaded, or raises. A read
+        error (``OSError``, ``UnicodeError``) propagates as itself, so the
+        reconcile can tell an unreadable file from one with bad content.
+        Frontmatter that is missing, does not parse or is not a mapping raises
+        ``FrontmatterError``; a type loader that raises is ``EntryLoadError``
+        (``ENTRY_UNREADABLE``) naming the file, the declared type and, when the
+        refusal is isolated to fields, those fields. No path substitutes
+        another type: this used to fall back to ``EventEntry`` of the same
+        file, which indexed a ``backlog_item`` with a bad ``rank`` as an
+        ``event`` and dropped it from its typed views with nothing reported
+        (#1261). Nor does it return a model of the declared type that holds
+        defaults for the refused values: a guard would judge a value the file
+        does not hold (#1311 rounds 1-2). The single-entry read's partial view
+        is ``load_for_read``, never a writer's.
+        """
+        # Read once, inside the KB, before any parsing (``_read_inside``): a
+        # link out of the KB or a hard link is refused before a byte is read.
+        if text is None:
+            text = _text_of(self._read_inside(file_path))
+        try:
+            fm, body = self._frontmatter_of(text)
+            try:
+                entry = entry_from_frontmatter(fm, body)
+            except FrontmatterError:
+                raise
+            except Exception as e:
+                raise self._load_error(file_path, fm, body, e) from e
+        except FrontmatterError as e:
+            # One line, never a traceback: per-file tracebacks drowned bulk
+            # sync output (Tier A 1080); the reconcile reports the file under
+            # `malformed` with this message.
+            logger.warning("Entry load failed for %s: %s", file_path, e)
             raise
-        except Exception as e:
-            # Log a one-line warning instead of a full traceback. Per-file
-            # tracebacks spam the operator during bulk sync (a research KB's
-            # drafts hit ~13 of these every operation). The underlying parse
-            # error is wrapped into FrontmatterError on re-raise from
-            # EventEntry.load if the cause is YAML; sync_incremental's
-            # malformed-summary captures it. Tier A 1080.
-            logger.warning(
-                "Entry load failed for %s, trying EventEntry fallback: %s",
-                file_path,
-                e,
-            )
-            return _event_fallback(file_path, text)
+        return self._with_references(entry, fm)
+
+    def _frontmatter_of(self, text: str) -> tuple[dict, str]:
+        """``(frontmatter, body)`` of an entry file's text, migrated, as the
+        loader reads it; ``FrontmatterError`` when there is no mapping."""
+        split = split_frontmatter(text)
+        if not isinstance(split, Frontmatter):
+            raise FrontmatterError(f"Invalid entry format: {describe(split)}")
+        # This KB's bytes: a caller holding a read grant on it is shown the
+        # parser's quote of them (D4); anyone else, the operator's message.
+        fm = load_yaml(split.text, origin=kb_origin(self.name))
+        if fm is None:
+            fm = {}  # `---\n---` and `null`: an empty mapping, as `read_entry_id` reads it
+        if not isinstance(fm, dict):
+            raise FrontmatterError("Invalid entry format: the frontmatter is not a mapping")
+        # `fm` is the entry's frontmatter and nothing else. It used to get
+        # `body` and `file_path` injected here, but no from_frontmatter reads
+        # either (body arrives as the positional argument, file_path is set by
+        # the caller), while capture_extra_frontmatter reads this same dict to
+        # decide which keys the class did not declare -- so the two internals
+        # were recorded as "unknown frontmatter" and written back into the
+        # file on the next save (#46).
+        return self._maybe_migrate(fm), split.body
+
+    @staticmethod
+    def _with_references(entry: Entry, fm: dict) -> Entry:
+        # Preserve references in metadata if present in frontmatter
+        # (typed entries drop unknown fields during from_frontmatter)
+        if "references" in fm and fm["references"]:
+            if not hasattr(entry, "metadata") or not entry.metadata:
+                entry.metadata = {}
+            if "references" not in entry.metadata:
+                entry.metadata["references"] = fm["references"]
+        return entry
+
+    def _load_error(self, file_path: Path, fm: dict, body: str, cause: Exception) -> EntryLoadError:
+        """The refusal for a file its declared type's loader raised on: the
+        KB-relative path, the declared type, the refused fields (when isolated)
+        and the loader's message, in one message every surface shows."""
+        declared = fm.get("type")
+        entry_type = str(declared) if declared else None
+        # As `_loader_refuses`: the loader's text only for the local process.
+        # Logged here when withheld, so "the server log has the details" holds.
+        loader_message = outside_text(cause) or type(cause).__name__
+        fields = _refused_fields(fm, body)
+        rel = self._rel(file_path)
+        named = ", ".join(fields) if fields else "not isolated to a field"
+        message = (
+            f"{rel} does not load as its type `{entry_type or 'note'}` "
+            f"(refused: {named}; {loader_message}). Pyrite reads it but writes "
+            "nothing to it until the file is fixed by hand."
+        )
+        return EntryLoadError(
+            message,
+            path=file_path,
+            entry_type=entry_type,
+            rel_path=rel,
+            fields=fields,
+            loader_message=loader_message,
+        )
+
+    def load_for_read(self, file_path: Path, raw: bytes) -> tuple[Entry, list[dict[str, str]]]:
+        """The single-entry read's view of a file: ``(entry, load_problems)``.
+
+        ONLY ``KBService._entry_file`` calls this
+        (``tests/test_refused_fields_stay_absent.py`` fails otherwise), and its
+        entry never leaves that seam: callers get the read's dict. A file that
+        loads gives ``(entry, [])``. A file its type's loader refuses in some
+        fields (ADR-0042 decision 8a, point 5) gives an entry of the DECLARED
+        type built without those keys, and one ``load_problem`` per refused
+        key. That model holds the type's default where the file's value was
+        refused, so the read leaves each named key out
+        (``IndexManager.read_fields(refused=)``); it is for presenting the
+        accepted fields, never for a write, a validator or a hook. A refusal
+        no field explains (a base field, a cross-field rule, a missing key the
+        loader requires) raises the ``EntryLoadError`` as the strict load does.
+        """
+        try:
+            return self.load_entry_from_bytes(file_path, raw), []
+        except EntryLoadError as error:
+            if not error.fields:
+                raise
+            fm, body = self._frontmatter_of(_text_of(raw))
+            try:
+                entry = entry_from_frontmatter(_without(fm, error.fields), body)
+            except Exception:
+                raise error from None
+            entry = self._with_references(entry, fm)
+            entry.kb_name = self.name
+            entry.file_path = file_path
+            return entry, [load_problem(k, m) for k, m in error.fields.items()]
 
     def _maybe_migrate(self, fm: dict) -> dict:
         """Apply pending schema migrations to frontmatter if needed."""
-        if not hasattr(self.config, "kb_yaml_path") or not self.config.kb_yaml_path.exists():
+        if not getattr(self.config, "kb_yaml_present", False):
             return fm
 
         entry_type = fm.get("type", "")
@@ -503,7 +658,39 @@ class KBRepository:
                 if subdir:
                     return self._contained(self.path / subdir / custom_name)
                 return self._contained(self.path / custom_name)
-        return self._get_file_path(entry.id, subdir)
+        return self._free_default_path(entry.id, subdir)
+
+    def _free_default_path(self, entry_id: str, subdir: str | None) -> Path:
+        """``<id>.md`` for a new entry, or the first ``<id>-N.md`` when that
+        path is held by a *different* id.
+
+        A file's name is a location fixed at creation, never evidence of the
+        id it holds (ADR-0038 decision 1, I6): after ``rename(a, b)`` the file
+        ``a.md`` holds ``b``, and a hand edit of ``id:`` does the same. The id
+        ``a`` is free, so a create of it must not be refused for that file. A
+        path whose holder cannot be read stays taken (the create refuses), and
+        so does one the KB would not read (a link out, a hard link): what such
+        a file holds decides nothing."""
+        path = self._get_file_path(entry_id, subdir)
+        holder = self.read_id(path)[0] if self.present(path) else None
+        if holder is None or holder == entry_id:
+            return path
+        for n in range(2, 1000):
+            candidate = path.with_name(f"{entry_id}-{n}.md")
+            if not self.present(candidate):
+                return candidate
+        return path
+
+    def holder_of_path(self, path: Path) -> str | None:
+        """The id the file at ``path`` holds, for a message; None if unreadable
+        or not the KB's to read (a link out, a hard link)."""
+        return self.read_id(path)[0] if self.present(path) else None
+
+    def present(self, path: Path) -> bool:
+        """Whether ``path`` is taken in this KB, as ``KBFiles`` answers it
+        (``KBFiles.present``): a name that leads out of the KB is taken
+        whatever it points at, or whether its target exists."""
+        return KBFiles(self.path).present(path)
 
     def _infer_subdir(self, entry: Entry) -> str | None:
         """Infer subdirectory for entries based on type.
@@ -550,33 +737,43 @@ class KBRepository:
         return None
 
     def exists(self, entry_id: str) -> bool:
-        """Check if an entry exists."""
+        """Whether a file the KB would read holds ``entry_id``.
+
+        An existence answer (create's "already exists") counts only files
+        ``KBFiles`` would read: inside the root, with one name. A file that is
+        a link out of the KB, or has a second hard link, is not the KB's, so
+        whether it holds the id is not the KB's to say (``find_file``)."""
         return self.find_file(entry_id) is not None
 
     def _lexically_inside(self, path: Path) -> bool:
         """``path`` stays under the KB root once ``..`` is collapsed.
 
         Lexical, not ``resolve()``: it refuses ``<kb>/../x`` (a ``collection-..``
-        lookup reached one level up through ``rglob("..")``) without changing
-        how symlinks placed inside a KB behave -- that question belongs to the
-        multi-user security review, not to this fix.
+        lookup reached one level up through ``rglob("..")``). Which copy of a
+        KB a path names; a link out of it is refused by the read itself
+        (``_read_inside``).
         """
-        root = os.path.normpath(os.path.abspath(self.path))
+        return self._is_lexically_inside(self.path, path)
+
+    @staticmethod
+    def _is_lexically_inside(root: str | os.PathLike[str], path: str | os.PathLike[str]) -> bool:
+        """``path`` stays under ``root`` once ``..`` is collapsed (lexical)."""
+        top = os.path.normpath(os.path.abspath(root))
         target = os.path.normpath(os.path.abspath(path))
-        return os.path.commonpath([root, target]) == root
+        return os.path.commonpath([top, target]) == top
 
     def _filename_candidates(self, entry_id: str) -> Iterator[Path]:
         """Files whose NAME matches ``entry_id``; ``entry_id`` must already be
         a plain stem. A name is a hint for a fast lookup, never evidence of
         the id the file holds: ``find_file`` verifies each one."""
         root_path = self.path / f"{entry_id}.md"
-        if root_path.is_file() and self._listed(root_path):
+        if self.present(root_path) and self._listed(root_path):
             yield root_path
 
-        # glob.escape: an id is a name, not a pattern -- `*` must not match
-        # (and so let `kb_delete` remove) whichever entry globs first.
-        filename = glob.escape(f"{entry_id}.md")
-        for match in self.path.rglob(filename):
+        # By name, never as a pattern (`*` must not match, and so let
+        # `kb_delete` remove, whichever entry globs first), and never by
+        # whether a link's target exists (``_named``).
+        for match in self._named(f"{entry_id}.md"):
             if match != root_path and self._listed(match):
                 yield match
 
@@ -585,11 +782,22 @@ class KBRepository:
             folder_name = entry_id[len("collection-") :]
             if folder_name in ("", ".", ".."):
                 return
-            for subdir in self.path.rglob(glob.escape(folder_name)):
-                if subdir.is_dir():
-                    yaml_path = subdir / "__collection.yaml"
-                    if yaml_path.exists():
-                        yield yaml_path
+            for subdir in self._named(folder_name):
+                yaml_path = subdir / "__collection.yaml"
+                if self.present(yaml_path):
+                    yield yaml_path
+
+    def _named(self, name: str) -> Iterator[Path]:
+        """Every path under the KB whose last component is ``name``, found
+        by the name alone: a link (to a file, to a folder, or dangling) is
+        listed as the name it is, never followed or checked, and a folder
+        that is a link is not walked into (``os.walk``). On Python 3.11
+        ``Path.rglob`` with a literal name lists a link only when its target
+        exists, so a listing would differ by what lies outside the KB; 3.12
+        and later list it either way. One rule on every Python."""
+        for dirpath, dirnames, filenames in os.walk(self.path):
+            if name in filenames or name in dirnames:
+                yield Path(dirpath) / name
 
     def id_of_file(self, file_path: Path) -> str | None:
         """The id ``file_path`` holds, by the loader's rule; None when it is
@@ -604,22 +812,33 @@ class KBRepository:
     def read_id(self, file_path: Path, text: str | None = None) -> tuple[str | None, str | None]:
         """``id_of_file`` with the reason: ``(id, None)``, or ``(None, why)``
         where ``why`` is the loader's own message (``title must be a string,
-        got a list``), or None when the file simply holds no entry. A path
-        that is not a regular file is not read (a FIFO would block).
-        ``text``: the markdown file's text, when the caller has read it."""
-        if not _is_regular_file(file_path):
-            return None, "not a regular file"
+        got a list``), or None when the file simply holds no entry.
+        ``text``: the markdown file's text, when the caller has read it
+        inside the KB.
+
+        One read path (ADR-0052 N1): the file is read only as ``KBFiles``
+        reads it (``_inside_bytes``). A file it refuses -- a link out of the
+        KB, a file with a second hard link -- holds no id here, and the reason
+        is the refusal whatever the link points at; a path with nothing to
+        read (absent, a FIFO, a device) is "not a regular file", and is never
+        opened in a way that blocks. So no id, existence or hint depends on a
+        file outside the KB."""
         try:
-            if file_path.name == "__collection.yaml":
-                return self._load_collection(file_path).id or None, None
             if text is None:
-                text = file_path.read_text(encoding="utf-8")
+                raw = self._inside_bytes(file_path)
+                if raw is None:
+                    return None, "not a regular file"
+                text = _text_of(raw)
+            if file_path.name == "__collection.yaml":
+                return self._collection_of(file_path, text).id or None, None
             return read_entry_id(text, migrate=self._maybe_migrate), None
         except Exception as e:
             logger.warning("Skipping unreadable file during id lookup: %s (%s)", file_path, e)
             # One line, KB-relative: a ruamel message spans lines and may name
             # an absolute path, and this text is shown to the user.
-            why = (str(e).splitlines() or [""])[0].replace(f"{self.path}/", "")
+            why = (outside_text(e, already_logged=True).splitlines() or [""])[0].replace(
+                f"{self.path}/", ""
+            )
             return None, why or type(e).__name__
 
     def find_file(self, entry_id: str) -> Path | None:
@@ -639,6 +858,12 @@ class KBRepository:
         ``load`` accepted ``../x`` and reached outside the KB. Such an id can
         still match a file's *frontmatter* id below -- that scan only returns
         files it found inside the KB.
+
+        Only files ``KBFiles`` would read count (``read_id``). A file that is
+        a link out of the KB, or has a second hard link, never matches an id,
+        so a get, update, delete or rename by id answers not-found whatever
+        such a file holds (maintainer decision 2026-11-10): no answer differs
+        by what a file outside the KB holds. There is no raw mode.
         """
         if not isinstance(entry_id, str) or not entry_id:
             return None
@@ -652,12 +877,17 @@ class KBRepository:
         if plain:
             for candidate in self._filename_candidates(entry_id):
                 tried.add(candidate)
-                if self._lexically_inside(candidate) and self.id_of_file(candidate) == entry_id:
+                if self._lexically_inside(candidate) and self.read_id(candidate)[0] == entry_id:
                     return candidate
 
         return next(self._files_holding(entry_id, skip=tried), None)
 
-    def _files_holding(self, entry_id: str, skip: Set[Path] = frozenset()) -> Iterator[Path]:
+    def _files_holding(
+        self,
+        entry_id: str,
+        skip: Set[Path] = frozenset(),
+        only: Set[Path] | None = None,
+    ) -> Iterator[Path]:
         """Every file ``list_files`` walks that holds ``entry_id``, in walk
         order: the whole-KB scan behind ``find_file``, ``files_to_delete`` and
         a ``get`` miss.
@@ -667,22 +897,42 @@ class KBRepository:
         file, about 1 ms each). Not in a KB with schema migrations to apply:
         one may set the id the text does not show, so there every file is
         parsed, as before.
+
+        ``only`` narrows the walk to those files: a caller that knows which
+        files the index could be wrong about (``KBService`` on a miss) passes
+        them, and no other file is opened.
+
+        Each file is read as ``KBFiles`` reads it, and one it refuses is
+        skipped (``find_file``).
         """
         prefilter = not self._migrations_apply()
         for md_file in self.list_files():
-            if md_file in skip:
+            if md_file in skip or (only is not None and md_file not in only):
                 continue
-            # None: not read here; read_id reads it, or says why it cannot.
-            text = _regular_file_text(md_file) if prefilter else None
-            if text is not None and not could_hold_id(text, entry_id):
+            text = self._inside_text(md_file)
+            if text is None:
+                continue
+            # The prefilter only where no migration can set the id the raw
+            # text does not show.
+            if prefilter and not could_hold_id(text, entry_id):
                 continue
             if self.read_id(md_file, text)[0] == entry_id:
                 yield md_file
 
+    def _inside_text(self, file_path: Path) -> str | None:
+        """``file_path``'s text read as ``KBFiles`` reads it, or None when it
+        refuses the file (a link out, a hard link), it is not a regular file,
+        it is gone, or it is not UTF-8."""
+        try:
+            raw = self._inside_bytes(file_path)
+            return None if raw is None else _text_of(raw)
+        except (OSError, UnicodeDecodeError, KBFileReadOutsideRootError):
+            return None
+
     def _migrations_apply(self) -> bool:
         """Whether ``_maybe_migrate`` can change any file's frontmatter here:
         a type ``kb.yaml`` gives a version, with migrations registered."""
-        if not hasattr(self.config, "kb_yaml_path") or not self.config.kb_yaml_path.exists():
+        if not getattr(self.config, "kb_yaml_present", False):
             return False
         versioned = [name for name, t in self.config.kb_schema.types.items() if t.version]
         if not versioned:
@@ -693,13 +943,20 @@ class KBRepository:
 
     def _holds(self, file_path: Path, entry_id: str) -> str | None:
         """How ``file_path`` holds ``entry_id``: ``"explicit"`` (its ``id:``
-        says so), ``"derived"`` (the id comes from its title), or None."""
-        if not file_path.is_file() or self.id_of_file(file_path) != entry_id:
-            return None
+        says so), ``"derived"`` (the id comes from its title), or None.
+
+        Read only as ``KBFiles`` reads: a file it refuses (a link out, a hard
+        link) holds nothing, and nothing in it is read, so a delete by id never
+        removes or refuses it for what it holds."""
         if file_path.name == "__collection.yaml":
-            return "explicit"  # named by its folder, or its own ``id:``
+            # named by its folder, or its own ``id:``; read inside the KB
+            held = self.read_id(file_path)[0]
+            return "explicit" if held == entry_id else None
+        text = self._inside_text(file_path)
+        if text is None or self.read_id(file_path, text)[0] != entry_id:
+            return None
         try:
-            stated = explicit_entry_id(file_path.read_text(encoding="utf-8"))
+            stated = explicit_entry_id(text)
         except Exception:
             return None
         return "explicit" if stated == entry_id else "derived"
@@ -776,7 +1033,8 @@ class KBRepository:
         except ValidationError:
             return ""
         for candidate in self._filename_candidates(entry_id):
-            held = self.id_of_file(candidate)
+            # Only a file the KB would read: the hint quotes the id it holds.
+            held = self.read_id(candidate)[0]
             if held and held != entry_id:
                 rel = candidate.relative_to(self.path)
                 return (
@@ -798,10 +1056,28 @@ class KBRepository:
         file_path = self.find_file(entry_id)
         if not file_path:
             return None
-        return file_path, file_path.read_bytes()
+        try:
+            return file_path, self._read_inside(file_path)
+        except KBFileReadOutsideRootError:
+            # A hard-linked file keeps the write rule's own refusal (ADR-0042
+            # A2, ``STORAGE_ERROR``) on every update surface; a link out of
+            # the KB is ``OUTSIDE_KB_ROOT`` as before.
+            links = file_path.stat(follow_symlinks=False).st_nlink
+            if links > 1:
+                raise HardLinked(os.path.relpath(file_path, self.path), links) from None
+            raise
 
     def load(self, entry_id: str) -> Entry | None:
-        """Load an entry by ID."""
+        """Load an entry by ID, strictly: None when no file holds the id.
+
+        A file its declared type cannot load raises ``EntryLoadError``
+        (``ENTRY_UNREADABLE``), never None: every caller that loads by id to
+        write (delete, link, the task and qa services) is then refused before
+        any hook runs, instead of reading None as "not found" or as "no entry
+        to hand the hooks" (ADR-0042 decision 8a; ``delete_entry`` ran
+        ``before_delete`` only ``if entry``). The file's other faults (YAML,
+        bytes, permissions) are still None until #777 gives them the same code.
+        """
         file_path = self.find_file(entry_id)
         if not file_path:
             return None
@@ -811,6 +1087,8 @@ class KBRepository:
             entry.kb_name = self.name
             entry.file_path = file_path
             return entry
+        except EntryLoadError:
+            raise
         except Exception as e:
             logger.warning("Could not load %s: %s", file_path, e)
             return None
@@ -829,7 +1107,7 @@ class KBRepository:
 
         Args:
             entry: The entry to save
-            subdir: Optional subdirectory (auto-inferred if not provided)
+            subdir: None infers the type folder; "" explicitly selects the KB root.
             touch_updated_at: Refresh ``updated_at`` as bookkeeping before
                 writing. Callers that already stamped it -- or that write a
                 caller-supplied ``updated_at`` and must not overwrite it
@@ -853,14 +1131,15 @@ class KBRepository:
         Returns:
             Path to the saved file
         """
-        if self.config.read_only:
-            raise KBReadOnlyError(f"KB '{self.name}' is read-only")
+        self.config.refuse_writes()
 
+        # No mkdir here: the create below makes the file's folders beneath
+        # the root (KBFiles), so a folder that is a link out is the write's
+        # refusal, never an OSError that depends on what lies outside.
         file_path = self._target_path(entry, subdir, keep_filename)
-        file_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Stamp current schema version on save
-        if hasattr(self.config, "kb_yaml_path") and self.config.kb_yaml_path.exists():
+        if getattr(self.config, "kb_yaml_present", False):
             type_schema = self.config.kb_schema.get_type_schema(entry.entry_type)
             if type_schema and type_schema.version > 0:
                 entry._schema_version = type_schema.version
@@ -914,23 +1193,34 @@ class KBRepository:
         refuses when that is not certain). Returns True if any was deleted.
         ``indexed_path`` is the index row's file, a candidate checked first;
         ``holders`` the files the reconcile found holding the id."""
-        if self.config.read_only:
-            raise KBReadOnlyError(f"KB '{self.name}' is read-only")
+        self.config.refuse_writes()
 
         files = self.files_to_delete(entry_id, indexed_path, holders)
         # Every removal decided first: one that would leave the root refuses
         # the delete before any file goes.
         for file_path in files:
             KBFiles(self.path).require_removable(file_path)
+        # Removing a file is a write to it (ADR-0042 decision 8a): the service
+        # loaded one holder of the id, and this removes every holder, so each
+        # is judged here, before the first goes. A file that cannot be parsed
+        # at all is not this rule's cause (#777) and is removed as before.
+        for file_path in files:
+            if file_path.suffix == ".md":
+                try:
+                    self._load_entry(file_path)
+                except EntryLoadError:
+                    raise
+                except Exception:  # noqa: BLE001 - not this rule's cause
+                    pass
         for file_path in files:
             remove_entry_file(file_path, root=self.path)
         return bool(files)
 
     # ---------------------------------------------------------------
-    # Rename — Tier A r1700. The smallest useful slice: same-KB file
-    # rename + frontmatter id rewrite + wikilink rewrite. Cross-KB
-    # rewrite, redirect-stub creation, and the `move` (subdir-change)
-    # variant are filed as r1700 follow-ups.
+    # Rename — Tier A r1700. The smallest useful slice: same-KB id
+    # rename (the file stays where it is) + frontmatter id rewrite +
+    # wikilink rewrite. Cross-KB rewrite, redirect-stub creation, and
+    # the `move` (subdir-change) variant are filed as r1700 follow-ups.
     # ---------------------------------------------------------------
 
     def rename(
@@ -941,7 +1231,7 @@ class KBRepository:
         update_links: bool = True,
         dry_run: bool = False,
     ) -> dict:
-        """Rename an entry: move file, rewrite frontmatter id, rewrite
+        """Rename an entry at its existing path: rewrite frontmatter id and
         all in-KB wikilinks.
 
         Args:
@@ -966,9 +1256,9 @@ class KBRepository:
 
         A rename either completes, with every linker it could not patch
         listed, or changes nothing (#978 delta review, round 1): the entry
-        is moved first, under one lock for both paths, so a source that
-        changed or a target already taken leaves every file as it was; the
-        linking files are written after it, and a fault in any of them
+        is rewritten first with compare-before-replace, so a source that
+        changed leaves every file as it was; the linking files are written
+        after it, and a fault in any of them
         (hard-linked, undecodable, unparseable, refused by ``apply``, the
         lock directory) is listed, never fatal. No linker is written before
         every linker's rewrite is computed and its hard links checked.
@@ -976,11 +1266,11 @@ class KBRepository:
         Raises:
             EntryNotFoundError: if ``old_id`` doesn't exist in this KB.
             ValidationError: if the new ID equals the old ID or already exists.
-            ConflictError: if the entry changed between the read and the move.
+            ConflictError: if the entry changed between the read and the write.
             KBReadOnlyError: if the KB is read-only.
         """
-        if self.config.read_only and not dry_run:
-            raise KBReadOnlyError(f"KB '{self.name}' is read-only")
+        if not dry_run:
+            self.config.refuse_writes()
 
         # A rename must change the id; otherwise callers can silently skip index repair.
         self._validate_entry_id(new_id)
@@ -994,10 +1284,22 @@ class KBRepository:
                 f"Entry '{old_id}' not found in KB '{self.name}'{self.not_found_hint(old_id)}"
             )
 
+        # An existence answer: only a file the KB would read takes the id.
         if self.find_file(new_id):
             raise ValidationError(
                 f"Cannot rename '{old_id}' to '{new_id}': target already exists in KB '{self.name}'"
             )
+
+        # A source its declared type cannot load is written not at all
+        # (ADR-0042 decision 8a). The rename no longer loads the model (it
+        # rewrites the id in place, ADR-0038 I6), so the strict load is made
+        # here, before the dry-run return too: a request that would change
+        # nothing is refused the same way. The source is read once, inside
+        # the KB (a link out of it, or a hard link, is refused here,
+        # OUTSIDE_KB_ROOT, before anything is parsed), and these bytes are
+        # what is loaded, rewritten and compared at the publish.
+        raw = self._read_inside(src)
+        self._load_entry(src, _text_of(raw))
 
         # Plan the link rewrite. We scan every body once and substitute
         # `[[<old_id>]]` and `[[<old_id>|...]]`. Substring matches at
@@ -1017,25 +1319,27 @@ class KBRepository:
                 # pre-count its body or double-write.
                 if md_file.resolve() == src.resolve():
                     continue
-                if not _is_regular_file(md_file):
-                    continue  # a FIFO would block the read (#990)
                 rel = self._rel(md_file)
                 try:
-                    raw = md_file.read_bytes()
-                    rewrite = _rewrite_wikilinks(raw.decode("utf-8"), old_id, new_id)
+                    # A dry run's counts too. Nothing to read (gone, a FIFO,
+                    # which is never opened to block, #990) is passed over.
+                    linker = self._inside_bytes(md_file)
+                    if linker is None:
+                        continue
+                    rewrite = _rewrite_wikilinks(linker.decode("utf-8"), old_id, new_id)
                 except Exception as e:  # noqa: BLE001 - listed, not fatal
-                    skipped[rel] = _fault_reason(e)
+                    skipped[rel] = _read_fault_reason(md_file, e)
                     continue
                 if rewrite.count == 0 and rewrite.partial is None:
                     continue
-                fault = _hard_link_fault(md_file)
+                fault = _hard_link_fault(md_file) or self._write_refusal(md_file, linker)
                 if fault is not None:
                     skipped[rel] = fault
                     continue
                 if rewrite.partial is not None:
                     partial[rel] = rewrite.partial
                 if rewrite.count:
-                    rewrites.append((md_file, raw, rewrite))
+                    rewrites.append((md_file, linker, rewrite))
 
         if dry_run:
             return self._rename_result(
@@ -1048,68 +1352,31 @@ class KBRepository:
                 dry_run=True,
             )
 
-        # Execute: the entry first, so a rename that cannot move it changes
+        # Execute: the entry first, so a rename that cannot write it changes
         # nothing (the delta review's "half-applied rename": the linkers used
-        # to be written first, and a refused move left them naming an id that
+        # to be written first, and a refused write left them naming an id that
         # did not exist). The source: one `Set("id", new_id)` on its own
         # bytes (and the `updated_at` bookkeeping where the file carries it),
-        # published at the new path as one move with the removal of the old
-        # file. The model is loaded only to resolve the new path; it supplies
-        # no bytes.
-        raw = src.read_bytes()
+        # published in place against the bytes read.
+        # The bytes read inside the KB above: no answer (not even "no
+        # frontmatter") depends on a file outside it.
         text = raw.decode("utf-8")
         split = split_frontmatter(text)
         if not isinstance(split, Frontmatter):
             raise ValidationError(f"Cannot rename '{old_id}': the file has no frontmatter")
         new_text = _renamed_text(text, split, new_id)
-        entry = self._load_entry(src, text)
-        entry.id = new_id
-        # File pattern in some plugin schemas can pull subdir from id;
-        # keep the entry in the same subdir it lived in by saving with
-        # the explicit relative subdir of the old file.
-        rel = src.parent.relative_to(self.path)
-        subdir = str(rel) if str(rel) != "." else None
 
-        # #391 cold read (round 2): a file's name is fixed at creation, so a
-        # `file_pattern` type's filename is NOT re-derived from the new id on
-        # rename -- only the frontmatter `id:` changes, exactly as an update
-        # already keeps the file where it is. Without this, a pattern with
-        # no `{id}`/`{slug}` placeholder (e.g. the software-kb `adr` type's
-        # `{adr_number:04d}-{title}.md`) re-resolves to the SAME path as the
-        # source (neither field changes on a rename), and the unconditional
-        # `src.unlink()` below used to delete the file it had just written.
-        schema = self.config.kb_schema
-        type_schema = schema.get_type_schema(entry.entry_type)
-        has_file_pattern = bool(type_schema and type_schema.file_pattern)
-        entry.file_path = src
-        file_path = self._target_path(entry, subdir, keep_filename=has_file_pattern)
-
-        if file_path.resolve() == src.resolve():
-            try:
-                publish_entry_text(src, new_text, expect=raw, root=self.path)
-            except FileChanged as e:
-                raise ConflictError(
-                    f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
-                    "nothing was written. Read it again and retry."
-                ) from e
-        else:
-            # One move: the new file published and the old one removed as
-            # one write under one lock for both paths, the old file removed
-            # only while it still holds the bytes read above (#978 review,
-            # item 3). A target already taken, or a source that changed,
-            # leaves both paths as they are.
-            try:
-                move_entry_text(src, raw, file_path, new_text, root=self.path)
-            except FileExistsError:
-                raise ValidationError(
-                    f"Cannot rename '{old_id}' to '{new_id}': target already exists "
-                    f"in KB '{self.name}'"
-                ) from None
-            except FileChanged as e:
-                raise ConflictError(
-                    f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
-                    "nothing was written. Read it again and retry."
-                ) from e
+        # A rename changes identity, never a file's placement: the file stays
+        # at its path (#488, #489), so there is no second path to move to and
+        # no target to find taken. A file that is a link inside the KB is
+        # written through, as an update writes it.
+        try:
+            publish_entry_text(src, new_text, expect=raw, root=self.path)
+        except FileChanged as e:
+            raise ConflictError(
+                f"'{old_id}' in KB '{self.name}' changed while the rename ran; "
+                "nothing was written. Read it again and retry."
+            ) from e
 
         # The linking files, each published against the bytes it was computed
         # on; one that changed meanwhile is re-read and rewritten again, one
@@ -1170,6 +1437,20 @@ class KBRepository:
         except ValueError:
             return path.name
 
+    def _write_refusal(self, path: Path, raw: bytes) -> str | None:
+        """Why no write may land on ``path`` (ADR-0042 decision 8a), or None:
+        a linking file its declared type cannot load keeps its bytes, and the
+        rename lists it with this reason. Only that cause: a file with no
+        frontmatter or one that does not parse is rewritten as before (#777
+        owns those)."""
+        try:
+            self.load_entry_from_bytes(path, raw)
+        except EntryLoadError as e:
+            return str(e)
+        except Exception:  # noqa: BLE001 - not this rule's cause
+            return None
+        return None
+
     def _publish_rewrite(
         self, path: Path, raw: bytes, rewrite: _Rewrite, old_id: str, new_id: str
     ) -> _Published:
@@ -1185,12 +1466,15 @@ class KBRepository:
                 return _Published(rewrite.count, rewrite.partial, None)
             except FileChanged:
                 try:
-                    raw = path.read_bytes()
+                    raw = self._read_inside(path)
                     rewrite = _rewrite_wikilinks(raw.decode("utf-8"), old_id, new_id)
                 except Exception as e:  # noqa: BLE001 - listed, not fatal
-                    return _Published(0, None, _fault_reason(e))
+                    return _Published(0, None, _read_fault_reason(path, e))
                 if rewrite.count == 0:
                     return _Published(0, rewrite.partial, None)
+                refusal = self._write_refusal(path, raw)
+                if refusal is not None:
+                    return _Published(0, None, refusal)
             except Exception as e:  # noqa: BLE001 - listed, not fatal
                 return _Published(0, None, _fault_reason(e))
         return _Published(
@@ -1236,7 +1520,7 @@ class KBRepository:
     def list_all_files(self) -> Iterator[Path]:
         """Iterate over all entry file paths (md + collection yaml) without parsing."""
         yield from self.list_files()
-        for yaml_file in self.path.rglob("__collection.yaml"):
+        for yaml_file in self._named("__collection.yaml"):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue
             yield yaml_file
@@ -1292,7 +1576,7 @@ class KBRepository:
                 continue
 
         # Discover __collection.yaml files
-        for yaml_file in self.path.rglob("__collection.yaml"):
+        for yaml_file in self._named("__collection.yaml"):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue
             try:
@@ -1305,8 +1589,13 @@ class KBRepository:
                 continue
 
     def _load_collection(self, yaml_file: Path) -> CollectionEntry:
-        """Load a CollectionEntry from a __collection.yaml file."""
-        data = load_yaml_file(yaml_file)
+        """Load a CollectionEntry from a __collection.yaml file, read inside
+        the KB."""
+        return self._collection_of(yaml_file, _text_of(self._read_inside(yaml_file)))
+
+    def _collection_of(self, yaml_file: Path, text: str) -> CollectionEntry:
+        """The CollectionEntry ``text`` (``yaml_file``'s, read inside) holds."""
+        data = load_yaml(text) or {}
         folder_path = str(yaml_file.parent.relative_to(self.path))
         return CollectionEntry.from_collection_yaml(data, folder_path)
 
@@ -1315,7 +1604,7 @@ class KBRepository:
         md_count = sum(1 for _ in self.list_files())
         yaml_count = sum(
             1
-            for f in self.path.rglob("__collection.yaml")
+            for f in self._named("__collection.yaml")
             if not any(part.startswith(".") for part in f.parts)
         )
         return md_count + yaml_count
@@ -1331,7 +1620,7 @@ class KBRepository:
             if not _is_regular_file(file_path):
                 continue  # a FIFO would block the read (#990)
             try:
-                content = file_path.read_text(encoding="utf-8")
+                content = _text_of(self._read_inside(file_path))
                 if query_lower in content.lower():
                     entry = self._load_entry(file_path)
                     entry.kb_name = self.name

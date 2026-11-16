@@ -1,1 +1,0 @@
-Software-KB `pull-next` context counts now match `context-for-item`, including incoming links and excluding dependency entries. Both CLI and MCP retain readable-KB scoping and count duplicate links as they appear in the full context (#1280).

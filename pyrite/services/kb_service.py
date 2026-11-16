@@ -9,10 +9,9 @@ from __future__ import annotations
 import copy
 import dataclasses
 import logging
-import os
 import re
 import shlex
-import stat
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -28,7 +27,9 @@ from ..exceptions import (
     AmbiguousEntryError,
     ConflictError,
     EntryExistsError,
+    EntryLoadError,
     EntryNotFoundError,
+    Forbidden,
     IndexSyncRecoveryHintError,
     KBNotFoundError,
     KBReadOnlyError,
@@ -38,11 +39,15 @@ from ..exceptions import (
     StorageError,
     UndeclaredTypeError,
     ValidationError,
+    kb_origin,
+    outside_text,
+    public_attribute,
     public_text,
+    refusal_fields,
 )
 from ..models import Entry
 from ..models.base import _timestamp_instant
-from ..models.core_types import as_stored_text, id_text
+from ..models.core_types import as_stored_text, id_text, read_entry_id
 from ..models.factory import build_entry
 from ..plugins.context import PluginContext
 from ..schema import Link, Source
@@ -72,11 +77,11 @@ from ..storage.file_operations import (
     unmodellable_in_text,
 )
 from ..storage.index import IndexManager, content_hash
-from ..storage.repository import KBRepository
+from ..storage.repository import KBRepository, _text_of
 from ..utils.atomic_write import HardLinked
 from ..utils.file_lock import LOCK_TIMEOUT, LockDirError, LockTimeout
 from ..utils.frontmatter import Frontmatter, NoFrontmatter, describe, split_frontmatter
-from ..utils.kb_files import KBFiles
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles
 from ..utils.metadata import declared_over_bag, parse_metadata
 from ..utils.yaml import load_yaml
 from .access_policy import named_kb
@@ -86,6 +91,71 @@ from .hook_runner import HookRunner
 from .wikilink_service import WikilinkService
 
 logger = logging.getLogger(__name__)
+
+#: The most files a lookup of an id the index lacks will read (see
+#: ``KBService._files_the_index_may_miss``).
+MISS_SCAN_MAX_FILES = 200
+
+#: The one charset an entry type is drawn from, on every create path.
+_PLAIN_TYPE_NAME = re.compile(r"\w[\w-]{0,63}")
+
+
+def _assignee_of(entry: Entry | None) -> str:
+    """An entry's assignee as stored: a model attribute (a task, a backlog
+    item) or a custom field of any other type; "" for none."""
+    if entry is None:
+        return ""
+    value = getattr(entry, "assignee", None)
+    if value is None:
+        meta = getattr(entry, "metadata", None)
+        value = meta.get("assignee") if isinstance(meta, dict) else None
+    return "" if value is None else str(value)
+
+
+def _refuse_assignee_change(entry_id: str, before: Entry | None, after: Entry) -> None:
+    """Only the holder of a held entry changes its assignee.
+
+    An entry is *held* when its assignee is an account (``user:<id>``). A
+    write that changes a held entry's assignee -- takes it, hands it on or
+    clears it -- is refused unless the account acting (`acting.acting`) is
+    the holder, and no write may name another account as an assignee.
+    Checked here, in the write pipeline, so every surface meets it: the task
+    tools, the generic entry tools, REST, plugins. Only the operator, bound
+    explicitly (`acting.OPERATOR`: the CLI, stdio, an operator key), is not
+    held to it. Nobody bound -- the anonymous visitor, an MCP call with no
+    principal, a job -- is not the operator, and is refused where the rule
+    applies. ``before`` is None for a create.
+    """
+    _refuse_assignee_values(entry_id, _assignee_of(before), _assignee_of(after))
+
+
+def _refuse_assignee_values(entry_id: str, old: str, new: str) -> None:
+    """`_refuse_assignee_change` on the two assignee values."""
+    from .acting import OPERATOR, acting
+
+    who = acting()
+    if who is OPERATOR or old == new:
+        return
+    if old.startswith("user:") and old != who:
+        if who is None:
+            raise Forbidden(
+                f"'{entry_id}' is held by an account; a caller with no identity cannot "
+                "change its assignee. Sign in as its holder."
+            )
+        raise Forbidden(
+            f"'{entry_id}' is held by another account; only its holder can change its assignee"
+        )
+    if new.startswith("user:") and new != who:
+        if who is None:
+            raise Forbidden(
+                f"'{entry_id}': the assignee names an account; a caller with no identity "
+                "cannot assign one. Sign in to assign yourself."
+            )
+        raise Forbidden(
+            f"'{entry_id}': the assignee names another account; a signed-in caller can "
+            "assign only themselves"
+        )
+
 
 #: Entry attributes a caller's field update never sets, on any type: identity,
 #: storage location and structure the service owns. A type adds its own through
@@ -155,6 +225,9 @@ _INDEX_ONLY_KEYS = frozenset(
         "modified_by",
         "outlinks",
         "backlinks",
+        # A read of a file its type does not fully load names the fields it
+        # left out (ADR-0042 decision 8a); an update never writes it back.
+        "load_problems",
     }
 )
 
@@ -224,11 +297,26 @@ def check_link_target(link: dict[str, Any]) -> None:
             continue
         value = link[key]
         if value is None and refuse_null:
-            raise ValidationError(f"A link's {key} is empty (null); the index cannot store it.")
-        if isinstance(value, list | tuple | set | dict):
+            message = f"A link's {key} is empty (null); the index cannot store it."
             raise ValidationError(
+                message, errors=[{"field": key, "rule": "required", "message": message}]
+            )
+        if isinstance(value, list | tuple | set | dict):
+            message = (
                 f"A link's {key} is a {type(value).__name__}, not a single value; "
                 "the index cannot store it."
+            )
+            raise ValidationError(
+                message,
+                errors=[
+                    {
+                        "field": key,
+                        "rule": "type",
+                        "message": message,
+                        "expected": "a single value",
+                        "got": type(value).__name__,
+                    }
+                ],
             )
 
 
@@ -282,22 +370,41 @@ def check_link_spec(
     parser refuses a third part.
     """
     if target is None or (isinstance(target, str) and not target.strip()):
-        raise ValidationError(f"A link needs a target entry id; got {target!r}.")
+        message = f"A link needs a target entry id; got {target!r}."
+        raise ValidationError(
+            message, errors=[{"field": "target", "rule": "required", "message": message}]
+        )
     if not isinstance(target, str):
-        raise ValidationError(f"A link target must be text; got {_shown(target)}.")
+        message = f"A link target must be text; got {_shown(target)}."
+        raise ValidationError(
+            message,
+            errors=[{"field": "target", "rule": "type", "message": message, "got": _shown(target)}],
+        )
     if relation is None:
         relation = _DEFAULT_RELATION
     elif not isinstance(relation, str) or not relation.strip():
-        raise ValidationError(
+        message = (
             f"A link's relation must be non-empty text; got {relation!r}. "
-            f"Leave it out for {_DEFAULT_RELATION}.",
+            f"Leave it out for {_DEFAULT_RELATION}."
+        )
+        raise ValidationError(
+            message,
+            errors=[{"field": "relation", "rule": "required", "message": message}],
         )
     if note is None:
         note = ""
     elif not isinstance(note, str):
-        raise ValidationError(f"A link's note must be text; got {type(note).__name__}.")
+        message = f"A link's note must be text; got {type(note).__name__}."
+        raise ValidationError(
+            message,
+            errors=[{"field": "note", "rule": "type", "message": message}],
+        )
     if target_kb is not None and not isinstance(target_kb, str):
-        raise ValidationError(f"A link's target_kb must be a KB name; got {target_kb!r}.")
+        message = f"A link's target_kb must be a KB name; got {target_kb!r}."
+        raise ValidationError(
+            message,
+            errors=[{"field": "target_kb", "rule": "type", "message": message}],
+        )
     return target, relation, note
 
 
@@ -333,6 +440,27 @@ class WriteResult:
 
 
 @dataclass
+class DeleteResult:
+    """A deletion and the readable index links it left dangling."""
+
+    deleted: bool
+    inbound_links: list[dict[str, Any]] = field(default_factory=list)
+
+    def __bool__(self) -> bool:
+        return self.deleted
+
+    def as_dict(self) -> dict[str, Any]:
+        count = len(self.inbound_links)
+        noun = "link" if count == 1 else "links"
+        return {
+            "deleted": self.deleted,
+            "inbound_links": self.inbound_links,
+            "inbound_link_count": count,
+            "warnings": [f"Deletion leaves {count} indexed inbound {noun}."] if count else [],
+        }
+
+
+@dataclass
 class ReconcileResult:
     """Planned directory moves and per-entry findings from index reconciliation."""
 
@@ -359,6 +487,24 @@ def _safe_message(exc: Exception) -> str:
     return public_text(exc, log=logger)
 
 
+def _validation_suggestion(errors: list[dict[str, Any]]) -> str | None:
+    """The one fix hint a field refusal carries (#1284), or ``None``.
+
+    Built from the first row whose fix is mechanical: a missing field names the
+    field, a format or a range names the accepted value. A row that carries
+    only a message (a plugin's own rule) has no mechanical fix and adds none.
+    """
+    for error in errors:
+        field = error.get("field") or "the field"
+        expected = error.get("expected")
+        rule = error.get("rule")
+        if rule == "required":
+            return f"set {field}" + (f" ({expected})" if expected else "")
+        if rule in {"format", "range"} and expected:
+            return f"use {expected} for {field}"
+    return None
+
+
 def _storage_error(entry_id: str, e: OSError) -> StorageError:
     """A write's filesystem fault as the ``StorageError`` the surfaces show.
     ``str()`` keeps the detail for the log (``public_text`` logs it, ADR-0037
@@ -381,13 +527,44 @@ def _storage_error(entry_id: str, e: OSError) -> StorageError:
     return err
 
 
+def _load_link_source(repo: KBRepository, entry_id: str) -> Entry | None:
+    """The source entry of a link write, or None when no file holds it. Read
+    as an update reads its base (only inside the KB, one name): a hard-linked
+    file is the storage fault its write would be, not a missing entry."""
+    try:
+        found = repo.read_for_write(entry_id)
+    except HardLinked as e:
+        raise _storage_error(entry_id, e) from e
+    except (OSError, KBFileOutsideRootError):
+        return None
+    if found is None:
+        return None
+    try:
+        return repo.load_entry_from_bytes(*found)
+    except EntryLoadError:
+        # Its declared type cannot load it: refused, never "not found", so a
+        # link write never lands on it (ADR-0042 8a), as `KBRepository.load`.
+        raise
+    except Exception as e:  # noqa: BLE001 - unloadable, as `KBRepository.load` reads it
+        logger.warning("Could not load %s: %s", found[0], e)
+        return None
+
+
 def _refusal_result(exc: Exception) -> dict[str, Any]:
     """A per-item failure in the bulk result shape, with its stable code."""
     if isinstance(exc, PyriteError):
         code = getattr(exc, "error_code", None) or "CREATE_FAILED"
     else:
         code = "CREATE_FAILED"
-    return {"created": False, "error": _safe_message(exc), "error_code": code}
+    return {
+        "created": False,
+        "error": _safe_message(exc),
+        "error_code": code,
+        # The rows a field-shaped refusal carries travel with the per-item
+        # result too, so a bulk caller reads the same `errors` the single-entry
+        # surfaces answer (#1381 review).
+        **refusal_fields(exc),
+    }
 
 
 class KBService:
@@ -587,7 +764,7 @@ class KBService:
         before: dict[str, Any] | None = None,
         existing_entry: Entry | None = None,
     ) -> list[dict[str, Any]]:
-        """Refuse a write the KB schema or a plugin validator rejects.
+        """Refuse a write the model, KB schema or a plugin validator rejects.
 
         The same rules `index health` and `schema validate` report after the
         fact (enum, required, min/max, pattern) are applied before the file is
@@ -602,12 +779,46 @@ class KBService:
         refusal (:meth:`_keep_on_disk_enum_values`). Create passes none and
         is always strict.
         """
+        # Keep the full message so another invalid value remains a new error.
+        prior_model_errors = Counter(
+            existing_entry.validate()
+            if existing_entry is not None and type(existing_entry) is type(entry)
+            else []
+        )
+        model_errors = []
+        model_warnings = []
+        # The structured rows (#1284) are what a refusal carries: one per
+        # refused field, so REST, MCP and the CLI name the field. The message
+        # stays the same sentence `validate()` produces, which is what the
+        # on-disk comparison below keys on.
+        for row in entry.validation_errors():
+            message = row["message"]
+            if prior_model_errors[message]:
+                prior_model_errors[message] -= 1
+                model_warnings.append(
+                    {
+                        "field": row.get("field", ""),
+                        "rule": "model_validation",
+                        "severity": "warning",
+                        "message": message,
+                        "note": "violation already on disk; kept",
+                    }
+                )
+            else:
+                model_errors.append(row)
+        if model_errors:
+            raise ValidationError(
+                "; ".join(row["message"] for row in model_errors),
+                errors=model_errors,
+                suggestion=_validation_suggestion(model_errors),
+            )
+
         fields = self._validated_fields(entry)
         result = self._schema_result(entry, fields, kb_name, kb_config, existing_entry)
         if result is None:  # a broken validator must not make every write fail
-            return []
+            return model_warnings
         errors = result.get("errors") or []
-        warnings = list(result.get("warnings") or [])
+        warnings = [*model_warnings, *(result.get("warnings") or [])]
         if before is not None and errors:
             errors, excepted = self._keep_on_disk_enum_values(errors, before, fields)
             warnings.extend(excepted)
@@ -976,20 +1187,21 @@ class KBService:
         The index row only says where to look. Its file is read if it still
         holds the id (ADR-0038 I8); otherwise, and when there is no row, the
         files named ``<id>.md`` in the KB are tried, each verified. With the
-        KB named (``unindexed`` None), the KB is then scanned as ``find_file``
-        scans it, so a file renamed by hand answers before the next sync, as
-        create's exists check already saw it. Without a KB (``get_entry``'s
-        two passes over every readable KB) a miss stops at the names: a scan
-        per KB would grow with the number of KBs (maintainer, 2026-10-20), so
-        a renamed, unindexed file answers ``-k`` only. No file holding the id
-        is a miss (``None``) even when a row remains: the file decides
-        (principle 5).
+        KB named (``unindexed`` None), the files the index may have missed are
+        then scanned (``files_the_index_may_miss``: a path with no row or a
+        changed stat, at most ``MISS_SCAN_MAX_FILES``, newest first), so a
+        file renamed or added by hand answers before the next sync, and a
+        file the index holds unchanged is its row, never reopened. Without a
+        KB (``get_entry``'s two passes over every readable KB) a miss stops
+        at the names: a scan per KB would grow with the number of KBs
+        (maintainer, 2026-10-20), so a renamed, unindexed file answers ``-k``
+        only. No file holding the id is a miss (``None``) even when a row
+        remains: the file decides (principle 5).
 
-        The scan reads every file's raw text but parses only those it cannot
-        rule out (#135): about 100 ms on 2,000 files. That bound does not hold
-        in a KB with schema migrations to apply, where every file is parsed
-        (about 1 ms each), nor for files with no ``id:`` line (a derived id),
-        each parsed on every miss.
+        The scan finds the files by stat alone, then reads the raw text of at
+        most ``MISS_SCAN_MAX_FILES`` of them and parses only those it cannot
+        rule out (#135). Beyond the bound a miss answers not found; ``pyrite
+        index sync`` closes the gap.
 
         A row whose path lies outside the KB root is a user's worktree file
         (the overlay read service, ``WorktreeResolver.get_read_service``): it
@@ -1015,21 +1227,41 @@ class KBService:
         found = self._entry_file(kb_config, entry_id, row, scan=unindexed is None)
         if found is None:
             return None
-        path, digest, entry = found
+        path, digest, entry, problems = found
         try:
-            return self._index_mgr.read_fields(entry, kb_name, path, content_hash=digest, row=row)
+            result = self._index_mgr.read_fields(
+                entry,
+                kb_name,
+                path,
+                content_hash=digest,
+                row=row,
+                refused=[p["field"] for p in problems],
+            )
+            if problems:
+                # The declared type, its loader having refused these fields
+                # (left out above): the read names them rather than presenting
+                # a default or answering "not found" (ADR-0042 decision 8a).
+                result["load_problems"] = problems
+            return result
         except TypeError as exc:
             # A file with no readable fields: a tagged or complex key, or a
             # value JSON cannot hold (a `!!set`). Refused, not a traceback
             # (#1035). A file that reads (a flow-style root) never gets here:
             # a read is refused only when it cannot be answered.
-            _refuse_unreadable_fields(path, entry_id, exc)
+            _refuse_unreadable_fields(kb_config.path, path, entry_id, exc)
             raise
 
     def _entry_file(
         self, kb_config: KBConfig, entry_id: str, row: dict[str, Any] | None, *, scan: bool
-    ) -> tuple[Path, str, Entry] | None:
-        """``(path, content_hash, entry)`` of the file holding ``entry_id``, or None.
+    ) -> tuple[Path, str, Entry, list[dict[str, str]]] | None:
+        """``(path, content_hash, entry, load_problems)`` of the file holding
+        ``entry_id``, or None.
+
+        THE one caller of ``KBRepository.load_for_read``, the partial read of a
+        file its declared type cannot fully load (ADR-0042 decision 8a; a
+        structural test pins it). Its entry never leaves ``_read_entry``,
+        which turns it into the read's dict: no writer, validator or hook can
+        be handed a model holding a default for a refused value.
 
         ``scan``: after the indexed file and the files named like the id, scan
         the KB (``_files_holding``); False stops at the names."""
@@ -1056,7 +1288,9 @@ class KBService:
                     if c != indexed and repo._lexically_inside(c):
                         yield c
             if scan:
-                yield from repo._files_holding(entry_id, skip=tried)
+                yield from repo._files_holding(
+                    entry_id, skip=tried, only=self._files_the_index_may_miss(repo)
+                )
 
         unreadable: tuple[Path, Exception] | None = None
         tried: set[Path] = set()
@@ -1065,23 +1299,52 @@ class KBService:
                 continue
             tried.add(path)
             try:
-                raw = path.read_bytes()
-            except OSError:
+                # Only inside the KB, one name (``KBFiles.read_bytes``): a read
+                # by id hands these bytes to the caller. An overlay row's file
+                # is read inside the user's working copy of the KB instead.
+                if repo._lexically_inside(path):
+                    raw = repo._read_inside(path)
+                else:
+                    raw = self._read_overlay_file(kb_config.name, path)
+            except (OSError, KBFileOutsideRootError):
                 continue
             try:
                 # One read: the entry is parsed from the bytes that are hashed.
-                entry = repo.load_entry_from_bytes(path, raw)
+                entry, problems = repo.load_for_read(path, raw)
             except Exception as exc:
                 # A file the loader refuses (a duplicate key, a root that is
                 # no mapping) is the unmodellable refusal, not a miss (#1035).
                 _refuse_unmodellable(raw, entry_id, "read")
+                if isinstance(exc, EntryLoadError) and _holds_id(raw, entry_id):
+                    # Its type cannot load it and the refusal is not isolated
+                    # to fields: the file is there, so the read says why it
+                    # cannot be answered, never "not found" (ADR-0042 8a).
+                    raise exc
                 unreadable = unreadable or (path, exc)
                 continue
             if id_text(entry.id) == entry_id:
-                return path, content_hash(raw), entry
+                return path, content_hash(raw), entry, problems
         if unreadable is not None:
             self._unreadable_entry_file(kb_config.name, entry_id, *unreadable)
         return None
+
+    def _files_the_index_may_miss(self, repo: KBRepository) -> set[Path]:
+        """``files_the_index_may_miss`` on this service's database."""
+        return files_the_index_may_miss(self.db, repo)
+
+    def _read_overlay_file(self, kb_name: str, path: Path) -> bytes:
+        """The bytes of an overlay row's file, outside the configured root:
+        read only inside the other copy of ``kb_name`` the overlay knows
+        (``WorktreeDB.kb_roots``: the user's working copy for a read, main's
+        folder for a write into a change set), the one whose folder names
+        it. A path inside no known copy is not read."""
+        for root in getattr(self.db, "kb_roots", {}).get(kb_name, ()):
+            if KBRepository._is_lexically_inside(root, path):
+                raw = KBFiles(root).read_bytes(path)
+                if raw is None:
+                    raise FileNotFoundError(str(path))
+                return raw
+        raise KBFileOutsideRootError()
 
     @staticmethod
     def _unreadable_entry_file(kb_name: str, entry_id: str, path: Path, exc: Exception) -> None:
@@ -1174,8 +1437,7 @@ class KBService:
         # a KB registered after this process started is writable wherever
         # it is readable (#764 review), not KB_NOT_FOUND to create/update alone.
         kb_config = self.require_kb(kb_name)
-        if kb_config.read_only:
-            raise KBReadOnlyError(f"KB is read-only: {kb_name}")
+        kb_config.refuse_writes()
         return kb_config
 
     def _hook_ctx(
@@ -1190,6 +1452,21 @@ class KBService:
             kb_type=kb_config.kb_type,
             **({"extra": extra} if extra else {}),
         )
+
+    @staticmethod
+    def _refuse_type_that_is_not_a_plain_name(entry_type: Any) -> None:
+        """Refuse a type outside the one charset types use.
+
+        Checked on every create, declared types or not, before anything
+        builds from it: the type names a subdirectory and a plugin class and
+        is echoed in every listing. A word character (a letter or digit in
+        any script, or `_`), then word characters or `-`, at most 64.
+        """
+        if not isinstance(entry_type, str) or not _PLAIN_TYPE_NAME.fullmatch(entry_type):
+            raise ValidationError(
+                f"type {entry_type!r} is not a plain name: use letters, digits, '_' "
+                "and '-', starting with a letter, digit or '_', at most 64 characters"
+            )
 
     @staticmethod
     def _refuse_undeclared_type(entry_type: str, kb_name: str, kb_config: KBConfig) -> None:
@@ -1277,9 +1554,13 @@ class KBService:
         named_type = fields.pop("entry_type", None)
         file_type = fields.pop("type", None)
         entry_type = named_type or file_type or "note"
+        self._refuse_type_that_is_not_a_plain_name(entry_type)
         title = fields.pop("title", None)
         if not title:
-            raise ValidationError("title is required")
+            rows = [{"field": "title", "rule": "required", "message": "title is required"}]
+            raise ValidationError(
+                "title is required", errors=rows, suggestion=_validation_suggestion(rows)
+            )
         if not allow_undeclared:
             self._refuse_undeclared_type(entry_type, kb_name, kb_config)
 
@@ -1299,10 +1580,6 @@ class KBService:
         else:
             entry = builder(entry_type, entry_id, title, body, fields)
 
-        # The model's own rules (an event needs a date, importance 1-10, ...).
-        errors = entry.validate()
-        if errors:
-            raise ValidationError("; ".join(errors))
         # A new entry's own links (a file given to `add`, a create's `links`
         # field, an import) are ingest, not a link the caller is typing: only
         # what the index insert cannot store is refused (check_link_target) --
@@ -1316,7 +1593,11 @@ class KBService:
             try:
                 check_link_target(link.to_dict())
             except ValidationError as e:
-                raise ValidationError(f"links: {e}") from None
+                raise ValidationError(
+                    f"links: {e}",
+                    errors=getattr(e, "errors", None),
+                    suggestion=getattr(e, "suggestion", None),
+                ) from None
         warnings = self._validate_write(entry, kb_name, kb_config)
 
         # Create never replaces. Ids are derived from titles, so two entries
@@ -1338,12 +1619,24 @@ class KBService:
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
         resolved_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
-        if resolved_path.exists() or resolved_path in (pending_paths or ()):
+        # A path that leads out of the KB gets the write's own refusal here,
+        # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
+        # neither depends on what lies outside.
+        if not KBFiles(kb_config.path).contains(resolved_path):
+            logger.warning("Refusing %s: it resolves outside the KB root", resolved_path)
+            raise KBFileOutsideRootError()
+        # ``repo.present``, not ``Path.exists``: never "absent" because a
+        # file outside is missing.
+        taken = repo.present(resolved_path)
+        if taken or resolved_path in (pending_paths or ()):
+            holder = repo.holder_of_path(resolved_path) if taken else None
+            held = f", which holds '{holder}'" if holder and holder != entry.id else ""
             raise EntryExistsError(
                 f"Entry with ID '{entry.id}' would resolve to a file that already "
-                f"exists ({resolved_path.name}) in KB '{kb_name}'. Use update to "
+                f"exists ({resolved_path.name}{held}) in KB '{kb_name}'. Use update to "
                 "change it, or choose a different title/id."
             )
+        _refuse_assignee_change(entry.id, None, entry)
         return entry, warnings
 
     def _with_declared_fields(
@@ -1649,19 +1942,32 @@ class KBService:
         Returns:
             Tuple of (Entry, validation_result dict with errors/warnings)
 
+        Local only (ADR-0052 N1): ``source_path`` is any path the caller
+        names, outside every KB, so this is the CLI's ``pyrite add`` and
+        nothing else. The server holds this service; a call that is not the
+        local process (``is_local_process``) is refused before anything is
+        read.
+
         Raises:
             KBNotFoundError: If KB not found
             KBReadOnlyError: If KB is read-only
             ValidationError: If frontmatter is missing required fields or the
                 pipeline refuses the entry
+            Forbidden: If the call is not the local process
         """
         from ..models.core_types import entry_from_frontmatter
         from ..schema import generate_entry_id
         from ..utils.yaml import load_yaml
+        from .acting import is_local_process
 
+        if not is_local_process():
+            raise Forbidden(
+                "Adding an entry from a file path is for the local process only "
+                "(`pyrite add`); over the network, send the entry's content instead."
+            )
         kb_config = self.require_kb(kb_name)
-        if not validate_only and kb_config.read_only:
-            raise KBReadOnlyError(f"KB is read-only: {kb_name}")
+        if not validate_only:
+            kb_config.refuse_writes()
 
         source_path = Path(source_path)
 
@@ -1680,10 +1986,11 @@ class KBService:
         body = split.body
 
         # Require type and title
-        if "type" not in meta:
-            raise ValidationError("Frontmatter must include 'type'")
-        if "title" not in meta:
-            raise ValidationError("Frontmatter must include 'title'")
+        for required_key in ("type", "title"):
+            if required_key not in meta:
+                message = f"Frontmatter must include '{required_key}'"
+                rows = [{"field": required_key, "rule": "required", "message": message}]
+                raise ValidationError(message, errors=rows, suggestion=_validation_suggestion(rows))
 
         def from_file(entry_type, entry_id, title, body_, fields):
             # The loader's own reading of the frontmatter, so links, sources,
@@ -1767,6 +2074,8 @@ class KBService:
         entry_type = row.get("entry_type") if row else None
         kb_config = self.config.get_kb(kb_name)
         if entry_type is None and kb_config is not None:
+            # Strict: its only caller splits an update (`split_echoed_update`),
+            # which a file its type cannot load refuses here, before the read.
             loaded = KBRepository(kb_config).load(entry_id)
             entry_type = loaded.entry_type if loaded else None
         if entry_type is None:
@@ -1945,7 +2254,12 @@ class KBService:
         repo = KBRepository(kb_config)
 
         for _attempt in range(_UPDATE_ATTEMPTS):
-            found = repo.read_for_write(entry_id)
+            try:
+                found = repo.read_for_write(entry_id)
+            except HardLinked as e:
+                # The base is read only inside the KB, one name: a hard-linked
+                # file is the same storage fault its write would have been.
+                raise _storage_error(entry_id, e) from e
             if found is None:
                 # No file holds the id as the reader reads ids, but `<id>.md`
                 # may be one it cannot read (#1035): that is a refusal, not a miss.
@@ -1956,7 +2270,11 @@ class KBService:
             path, raw = found
             _refuse_unmodellable(raw, entry_id, "update")
             try:
+                # Strict: a file its declared type cannot load is refused here,
+                # before any operation, validator or hook (ADR-0042 8a).
                 entry = repo.load_entry_from_bytes(path, raw)
+            except EntryLoadError:
+                raise
             except Exception as e:
                 logger.warning("Could not load %s: %s", path, e)
                 raise EntryNotFoundError(
@@ -1992,7 +2310,8 @@ class KBService:
                 all_ops.append(resolved)
             self._refuse_conflicting_spellings(entry, updates)
             try:
-                new_text, _report = apply(text, all_ops, span)
+                # The file is this KB's: its parser's words go to a reader of it.
+                new_text, _report = apply(text, all_ops, span, origin=kb_origin(kb_config.name))
                 changed = new_text != text
                 if changed and "updated_at" in file_values and "updated_at" not in updates:
                     stamp = _updated_at_stamp(
@@ -2000,7 +2319,10 @@ class KBService:
                     )
                     if stamp is not None:
                         new_text, _report = apply(
-                            new_text, [Set("updated_at", stamp)], _frontmatter_span(new_text)
+                            new_text,
+                            [Set("updated_at", stamp)],
+                            _frontmatter_span(new_text),
+                            origin=kb_origin(kb_config.name),
                         )
             except OperationRefusedError as e:
                 raise ValidationError(f"Cannot update '{entry_id}': {e.reason}") from e
@@ -2022,8 +2344,12 @@ class KBService:
                 new_entry = repo.load_entry_from_bytes(path, new_bytes)
             except Exception as e:
                 raise ValidationError(
-                    f"Cannot update '{entry_id}': the result would not load ({e})"
+                    f"Cannot update '{entry_id}': the result would not load ({outside_text(e)})"
                 ) from e
+            # Only the holder of a held entry changes its assignee, whatever
+            # path or spelling the request used: compared on the parsed
+            # before and after.
+            _refuse_assignee_change(entry_id, entry, new_entry)
             # Refuse a transition into claimed, not edits which preserve an
             # existing claim after its children have since finished.
             if (
@@ -2053,7 +2379,7 @@ class KBService:
                 )
             except ValueError as e:
                 raise ValidationError(
-                    f"Cannot update '{entry_id}': the result cannot be indexed ({e})"
+                    f"Cannot update '{entry_id}': the result cannot be indexed ({outside_text(e)})"
                 ) from e
             try:
                 locked = publish_entry_text(
@@ -2083,7 +2409,8 @@ class KBService:
             repo, kb_config, new_entry, path, new_text, file_values
         )
         row["file_path"] = str(path)
-        self.db.register_kb(
+        # Make the KB's row if it has none; never rewrite one.
+        self.db.ensure_kb(
             name=kb_name,
             kb_type=kb_config.kb_type,
             path=str(kb_config.path),
@@ -2166,7 +2493,12 @@ class KBService:
                 field, _rest = field_at(cls, entry_type, path)
             except (NotAFieldError, ValueError) as e:
                 if in_envelope:
-                    raise ValidationError(f"Cannot create a {entry_type}: {e}") from None
+                    message = f"Cannot create a {entry_type}: {outside_text(e)}"
+                    raise ValidationError(
+                        message,
+                        errors=[{"field": key, "rule": "unknown_field", "message": message}],
+                        suggestion=public_attribute(e, "suggestion"),
+                    ) from None
                 continue  # a custom top-level key: written as sent
             if field in managed:
                 found.append((key, field, in_envelope))
@@ -2190,10 +2522,15 @@ class KBService:
         if found:
             key, name, _in_envelope = found[0]
             spelled = f" (sent as `{key}`)" if key != name else ""
-            raise ValidationError(
+            message = (
                 f"Cannot set {name} on a new {entry_type}{spelled}: Pyrite maintains "
                 "this field. To keep a field of your own under that name, "
                 f"name it differently (for example `{entry_type}_{name}`)."
+            )
+            raise ValidationError(
+                message,
+                errors=[{"field": name, "rule": "managed", "message": message}],
+                suggestion=f"name it something else, for example `{entry_type}_{name}`",
             )
 
     def _drop_managed_for_import(
@@ -2303,12 +2640,15 @@ class KBService:
             # emptied `metadata:` block goes with them, so no `metadata: {}`
             # the author never wrote appears (#1001 round 4, item 4).
             return Unset(("metadata",))
+        raw_path = getattr(op, "path", None)
         try:
-            field, rest = field_at(type(entry), entry.entry_type, getattr(op, "path", None))
+            field, rest = field_at(type(entry), entry.entry_type, raw_path)
         except NotAFieldError as e:
-            raise ValidationError(f"Cannot update {entry_id!r}: {e}") from None
+            raise _unknown_field_on_update(entry_id, raw_path, str(e)) from None
         except ValueError as e:
-            raise ValidationError(f"Cannot update {entry_id!r}: {e}") from None
+            # A bare ValueError's text is not Pyrite's; a network caller gets
+            # it withheld (ADR-0052 N3). A NotAFieldError's text is ours.
+            raise _unknown_field_on_update(entry_id, raw_path, outside_text(e)) from None
 
         # `type`/`entry_type` and the empty key are never model attributes on
         # any entry (`type` is frontmatter-only; `entry_type` is a read-only
@@ -2317,17 +2657,23 @@ class KBService:
         # Checked AFTER the KB and entry lookups: a missing KB or entry, or a
         # read-only KB, must still answer its own 404/403.
         if field in ("type", "entry_type") or field == "":
-            raise ValidationError(
+            message = (
                 f"Cannot set {field or '(empty key)'} on {entry_id!r} with an update: "
                 "an entry's type is fixed once created, and a --field key must be "
                 "non-empty."
             )
+            raise ValidationError(
+                message, errors=[{"field": field, "rule": "managed", "message": message}]
+            )
         if field == "body":
             # The request named `body` where only a frontmatter key can land
             # (under `metadata`): the body is the entry's text, never a key.
-            raise ValidationError(
+            message = (
                 f"Cannot set body on {entry_id!r} as a frontmatter key: the body is "
                 "the entry's text; send it as `body` at the top level."
+            )
+            raise ValidationError(
+                message, errors=[{"field": "body", "rule": "managed", "message": message}]
             )
         whole_item = isinstance(op, Append | Remove) and not rest
         if restrict:
@@ -2336,11 +2682,14 @@ class KBService:
                 # #557: the usual way to arrive here is a KB using one of these
                 # names for a field of its own (`provenance:` on a draft), so
                 # the refusal says how to keep that field.
-                raise ValidationError(
+                message = (
                     f"Cannot set {field} on {entry.entry_type} '{entry_id}' with an "
                     "update: Pyrite maintains these fields. To keep a field of your "
                     "own under that name, rename it in the file (for example "
                     f"`{entry.entry_type}_{field}`) and update the new name."
+                )
+                raise ValidationError(
+                    message, errors=[{"field": field, "rule": "managed", "message": message}]
                 )
         try:
             head = spelling_in(file_values, type(entry), entry.entry_type, field)
@@ -2362,10 +2711,14 @@ class KBService:
                 and all(values_identical(v, values[0]) for v in values)
             ):
                 return Unset(path_sent)
-            raise ValidationError(
+            message = (
                 f"Cannot update {field} on {entry_id!r}: {e}. A field has one spelling "
                 "per file; remove one of them by hand, or `pyrite qa fix` merges an "
                 "equal pair, then update."
+            )
+            raise ValidationError(
+                message,
+                errors=[{"field": field, "rule": "field_spelled_twice", "message": message}],
             ) from None
 
         # The output path is the tuple `field_at` decided on, with the file's
@@ -2415,12 +2768,23 @@ class KBService:
             if _DATETIME_LOCAL.fullmatch(spelled):
                 spelled += ":00"
             if not _yaml_reads_a_timestamp(spelled):
-                raise ValidationError(
+                message = (
                     f"Cannot set {key} on {entry.entry_type} '{entry.id}': {spelled!r} is "
                     "not a timestamp YAML reads. Send YYYY-MM-DD, optionally followed by T "
                     "or a space, HH:MM:SS, a fraction, and Z or an offset such as +05:30 "
                     "(e.g. 2026-01-15T09:00:00Z), or YYYY-MM-DDTHH:MM, which is written "
                     "with :00 seconds."
+                )
+                raise ValidationError(
+                    message,
+                    errors=[
+                        {
+                            "field": key,
+                            "rule": "format",
+                            "message": message,
+                            "got": spelled,
+                        }
+                    ],
                 )
             value = TimestampText(spelled)
         if hasattr(entry, key):
@@ -2458,7 +2822,7 @@ class KBService:
             return path, f"the file keeps its place: it has {e.links} hard links"
         except ValidationError as e:
             return path, f"the file keeps its place: {e}"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        # The create makes target's folders beneath the root (KBFiles).
         try:
             create_entry_text(target, text, root=kb_config.path)
         except FileExistsError:
@@ -2490,22 +2854,27 @@ class KBService:
         """
         return self._update(entry_id, kb_name, updates, restrict=False).entry
 
-    def delete_entry(self, entry_id: str, kb_name: str) -> bool:
+    def delete_entry(
+        self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
+    ) -> DeleteResult:
         """
         Delete an entry.
 
         Returns:
-            True if deleted, False if not found
+            The deletion result and inbound links from readable KBs, as
+            recorded in the index. A self-link is not left dangling.
 
         Raises:
             KBNotFoundError: If KB not found
             KBReadOnlyError: If KB is read-only
         """
         kb_config = self.require_kb(kb_name)
-        if kb_config.read_only:
-            raise KBReadOnlyError(f"KB is read-only: {kb_name}")
+        kb_config.refuse_writes()
 
-        # Load entry for hooks before deleting
+        # Load entry for hooks before deleting. Strict: a file its declared
+        # type cannot load raises EntryLoadError here, so it is neither
+        # deleted nor handed to (or kept from) a before_delete hook
+        # (ADR-0042 8a). Only "no file" is None.
         repo = KBRepository(kb_config)
         entry = repo.load(entry_id)
         hook_ctx = PluginContext(
@@ -2519,6 +2888,16 @@ class KBService:
         if entry:
             entry = self._run_hooks("before_delete", entry, hook_ctx)
 
+        inbound_links = [
+            {
+                "id": link["id"],
+                "kb_name": link["kb_name"],
+                "relation": link.get("forward_relation") or link.get("relation") or "related_to",
+            }
+            for link in self.db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+            if (link["id"], link["kb_name"]) != (entry_id, kb_name)
+        ]
+
         # Delete from file system and index
         file_deleted = self._doc_mgr.delete_entry(entry_id, kb_name, kb_config)
 
@@ -2526,7 +2905,7 @@ class KBService:
         if entry:
             self._run_hooks("after_delete", entry, hook_ctx)
 
-        return file_deleted
+        return DeleteResult(file_deleted, inbound_links if file_deleted else [])
 
     def rename_entry(
         self,
@@ -2537,7 +2916,7 @@ class KBService:
         update_links: bool = True,
         dry_run: bool = False,
     ) -> dict:
-        """Rename an entry in-place: move the file, rewrite frontmatter
+        """Rename an entry at its existing file path: rewrite frontmatter
         id, rewrite ``[[old_id]]`` and ``[[old_id|alias]]`` wikilinks
         across this KB. Tier A r1700.
 
@@ -2556,8 +2935,8 @@ class KBService:
             See KBRepository.rename for the result-dict shape.
         """
         kb_config = self.require_kb(kb_name)
-        if kb_config.read_only and not dry_run:
-            raise KBReadOnlyError(f"KB is read-only: {kb_name}")
+        if not dry_run:
+            kb_config.refuse_writes()
 
         repo = KBRepository(kb_config)
         try:
@@ -2574,7 +2953,7 @@ class KBService:
         # resolves to the renamed entry, then read back to confirm it
         # actually worked. Skip on dry_run (nothing was written).
         #
-        # The file rename already succeeded on disk by this point — that
+        # The id rewrite already succeeded on disk by this point — that
         # part is never rolled back. A degraded index is recovered by the
         # next `pyrite index sync`, but the caller must be told the write
         # is degraded, not given a silent-success response while old_id
@@ -2673,11 +3052,11 @@ class KBService:
             target_id, relation, note=note, target_kb=target_kb
         )
         kb_config = self.require_kb(source_kb)
-        if kb_config.read_only:
-            raise KBReadOnlyError(f"KB is read-only: {source_kb}")
+        kb_config.refuse_writes()
 
         repo = KBRepository(kb_config)
-        entry = repo.load(source_id)
+        # Strict: EntryLoadError for a source its type cannot load (ADR-0042 8a).
+        entry = _load_link_source(repo, source_id)
         if not entry:
             raise EntryNotFoundError(f"Entry not found: {source_id}")
 
@@ -2698,7 +3077,9 @@ class KBService:
             """
             if self.db.get_entry(target_id, tkb) is not None:
                 return True
-            return target_repo.load(target_id) is not None
+            # The file exists whether or not its type loads: a link to it is
+            # not a link to nothing (#1261).
+            return target_repo.find_file(target_id) is not None
 
         # Duplicates are checked before the target is validated: re-issuing a
         # link already recorded in the source's frontmatter must stay a no-op
@@ -2787,10 +3168,31 @@ class KBService:
             try:
                 source_id, target_id, relation, note, tkb = self._checked_bulk_spec(spec, kb_name)
             except (ValidationError, KBNotFoundError) as e:
-                results[i] = {"status": "failed", "error": str(e), "error_code": e.error_code}
+                results[i] = {
+                    "status": "failed",
+                    "error": str(e),
+                    "error_code": e.error_code,
+                    # A field-shaped refusal keeps its row here too (#1284), so
+                    # a bulk caller reads the same `errors` the single-entry
+                    # surfaces answer instead of a sentence alone.
+                    **refusal_fields(e),
+                }
                 continue
             if source_id not in loaded:
-                loaded[source_id] = repo.load(source_id)
+                try:
+                    loaded[source_id] = _load_link_source(repo, source_id)
+                except EntryLoadError as e:
+                    # A source its type cannot load fails its own items, the
+                    # rest of the batch goes on (ADR-0042 8a).
+                    results[i] = {
+                        "status": "failed",
+                        "error": _safe_message(e),
+                        "error_code": e.error_code,
+                    }
+                    continue
+                except StorageError as e:
+                    results[i] = {"status": "failed", "error": _safe_message(e)}
+                    continue
             entry = loaded[source_id]
             if entry is None:
                 results[i] = {"status": "failed", "error": f"source entry not found: {source_id}"}
@@ -2824,9 +3226,15 @@ class KBService:
                 )
             except Exception as e:
                 # Once per failed save, not once per position: one cause, one line.
-                message = _safe_message(e)
+                # The refusal's own code and rows come along (#1381 review).
+                failure = {
+                    "status": "failed",
+                    "error": _safe_message(e),
+                    "error_code": getattr(e, "error_code", None) or "CREATE_FAILED",
+                    **refusal_fields(e),
+                }
                 for i in positions:
-                    results[i] = {"status": "failed", "error": message}
+                    results[i] = dict(failure)
         return results
 
     def _checked_bulk_spec(self, spec: Any, kb_name: str) -> tuple[str, str, str, str, str]:
@@ -2836,10 +3244,15 @@ class KBService:
             raise ValidationError(f"expected a mapping, got {type(spec).__name__}")
         for key in ("source", "target"):
             if spec.get(key) is None:
-                raise ValidationError(f"missing required field '{key}'")
+                message = f"missing required field '{key}'"
+                rows = [{"field": key, "rule": "required", "message": message}]
+                raise ValidationError(message, errors=rows, suggestion=_validation_suggestion(rows))
         source_id = spec["source"]
         if not isinstance(source_id, str) or not source_id.strip():
-            raise ValidationError(f"A link needs a source entry id; got {source_id!r}.")
+            message = f"A link needs a source entry id; got {source_id!r}."
+            raise ValidationError(
+                message, errors=[{"field": "source", "rule": "required", "message": message}]
+            )
         target_id, relation, note = check_link_spec(
             spec["target"],
             spec.get("relation"),
@@ -2892,6 +3305,18 @@ class KBService:
     ) -> list[dict[str, Any]]:
         """List all collection entries, optionally restricted to readable KBs."""
         return self.list_entries(kb_name=kb_name, kb_names=kb_names, entry_type="collection")
+
+    def list_entry_files(self, kb_name: str) -> list[Path]:
+        """Every markdown file the indexer walks for ``kb_name``, in path order.
+
+        ``list_files`` applies the indexer's own rule (no README, no hidden
+        path, no ``_templates`` scaffold), so a surface that lists a folder's
+        files agrees with what sync indexes (#1325).
+        """
+        kb_config = self.config.get_kb(kb_name)
+        if not kb_config or not kb_config.path.exists():
+            return []
+        return sorted(KBRepository(kb_config).list_files())
 
     @staticmethod
     def _normalize_metadata_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3061,12 +3486,20 @@ class KBService:
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get timeline events ordered by date.
 
         ``kb_names`` restricts the result to the caller's readable KBs;
         pushed into the query so ``limit`` and the reported count are
         computed over readable rows only.
+
+        ``status`` / ``exclude_status`` (single value / list) filter on the
+        *effective* status in the query, before ``LIMIT`` (#62): a task whose
+        children are all resolved counts as ``done`` though its file says
+        ``open`` (`pyrite/storage/effective_status.py`). ``exclude_status``
+        keeps entries with no status; ``status`` drops them.
         """
         return self.db.get_timeline(
             date_from=date_from,
@@ -3077,6 +3510,8 @@ class KBService:
             offset=offset,
             sort_order=sort_order,
             kb_names=kb_names,
+            status=status,
+            exclude_status=exclude_status,
         )
 
     def get_tags(
@@ -3138,10 +3573,15 @@ class KBService:
                 "and cheap, safe to run after every batch of writes."
             ),
             "error_contract": {
-                "shape": "{error, error_code, suggestion?, retryable}",
+                "shape": "{error, error_code, suggestion?, errors?, retryable}",
                 "error": "human-readable message",
                 "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
                 "suggestion": "optional fix hint, omitted when not applicable",
+                "errors": (
+                    "optional list, one row per refused field "
+                    "({field, rule, message, ...}); absent when the refusal "
+                    "is not about a field"
+                ),
                 "retryable": "bool -- whether retrying the same request could succeed",
             },
             "search_quoting": (
@@ -3339,7 +3779,8 @@ class KBService:
         # but `index health`; the rule is `plugins/removed.py`'s.
         from ..plugins.removed import removed_extension_notice
 
-        notice = removed_extension_notice(kb_name, kb_config.kb_type, distinct_types)
+        declared = kb_config.kb_schema.declared_types()
+        notice = removed_extension_notice(kb_name, kb_config.kb_type, distinct_types, declared)
         if notice:
             result["notices"] = [notice]
 
@@ -3524,7 +3965,7 @@ class KBService:
         kb_config = self.require_kb(kb_name)
         if self.db.get_entry(entry_id, kb_name) is not None:
             return
-        if KBRepository(kb_config).load(entry_id) is not None:
+        if KBRepository(kb_config).find_file(entry_id) is not None:  # exists, loadable or not
             return
         # A link to a page that does not exist yet is stored and answered (a
         # red link, `[[ghost-page]]`): the subject is absent, but the question
@@ -3534,7 +3975,9 @@ class KBService:
         raise EntryNotFoundError(f"Entry not found: {entry_id}")
 
     def load_entry_from_disk(self, entry_id: str, kb_name: str) -> Entry | None:
-        """Load an entry from disk via KBRepository."""
+        """Load an entry from disk via KBRepository: read only inside the KB
+        (``KBRepository._read_inside``), so a file that is a link out of it or
+        a hard link loads as None."""
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
             return None
@@ -3620,6 +4063,21 @@ class KBService:
         refusal = self._refuse_claim_of_complete_task(entry_id, kb_name)
         if refusal:
             return refusal
+        kb_config = self.get_kb(kb_name)
+        if kb_config is not None:
+            # A claim is a write: a file its declared type cannot load is
+            # refused (EntryLoadError) before the index's compare-and-swap,
+            # which a stale row would otherwise win (ADR-0042 8a).
+            KBRepository(kb_config).load(entry_id)
+
+        # The holder rule before the compare-and-swap, so a refused claim
+        # never touches the index row (the file write below checks again).
+        held = self.db.execute_sql(
+            "SELECT assignee FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+            {"entry_id": entry_id, "kb_name": kb_name},
+        )
+        if held:
+            _refuse_assignee_values(entry_id, held[0].get("assignee") or "", assignee or "")
 
         if getattr(self.db, "is_change_set", False):
             return self._claim_in_change_set(entry_id, kb_name, assignee, from_status, to_status)
@@ -3678,7 +4136,7 @@ class KBService:
                 {"entry_id": entry_id, "kb_name": kb_name, "from_status": from_status},
             )
             session.commit()
-            return {"claimed": False, "error": f"File update failed: {e}"}
+            return {"claimed": False, "error": f"File update failed: {outside_text(e)}"}
 
         return {
             "claimed": True,
@@ -3774,14 +4232,16 @@ class KBService:
             except Exception as exc:
                 # A bad template (such as a directory symlink outside the KB)
                 # should be reported without preventing other entries from running.
-                result.errors.append((entry.id, str(exc)))
+                result.errors.append((entry.id, public_text(exc)))
 
         result.moves = [
             (entry.id, current_path, target_path) for entry, current_path, target_path in planned
         ]
         if not apply:
             return result
-        if kb_config.read_only:
+        try:
+            kb_config.refuse_writes()  # the one read-only check every writer asks
+        except KBReadOnlyError:
             result.read_only = True
             return result
 
@@ -3805,7 +4265,7 @@ class KBService:
                     raise
                 result.moved += 1
             except Exception as exc:
-                result.errors.append((entry.id, str(exc)))
+                result.errors.append((entry.id, public_text(exc)))
 
         return result
 
@@ -3879,20 +4339,23 @@ class KBService:
         changes = []
         counts = {"created": 0, "modified": 0, "deleted": 0}
 
-        # Combine all changed files
+        # Combine all changed files. Whether a file is there is the KB's
+        # answer (``KBFiles.present``): a link out is there whatever it points
+        # at, so "deleted" never says that a file outside is missing.
+        present = KBFiles(kb_path).present
         all_files: dict[str, str] = {}  # filename -> change_type
         for f in status.get("untracked", []):
             if f.endswith(".md"):
                 all_files[f] = "created"
         for f in status.get("unstaged", []):
             if f.endswith(".md"):
-                if not (kb_path / f).exists():
+                if not present(kb_path / f):
                     all_files[f] = "deleted"
                 elif f not in all_files:
                     all_files[f] = "modified"
         for f in status.get("staged", []):
             if f.endswith(".md") and f not in all_files:
-                if not (kb_path / f).exists():
+                if not present(kb_path / f):
                     all_files[f] = "deleted"
                 else:
                     all_files[f] = "modified"
@@ -3921,8 +4384,17 @@ class KBService:
 
         # Get current content (for created/modified)
         full_path = kb_path / file_path
-        if full_path.exists():
-            content = full_path.read_text(encoding="utf-8")
+        if KBFiles(kb_path).present(full_path):
+            # Only inside the KB, one name (``KBFiles.read_bytes``): this text
+            # is handed to the caller. A link out or a hard link is listed as
+            # changed and not read.
+            try:
+                raw = KBFiles(kb_path).read_bytes(full_path)
+            except KBFileOutsideRootError:
+                raw = None
+            if raw is None:
+                return result
+            content = raw.decode("utf-8", errors="replace")
             result["current_body"] = content
             # Parse frontmatter for title/type/id
             meta = self._extract_frontmatter(content)
@@ -4073,8 +4545,19 @@ def _request_operations(updates: dict[str, Any]) -> list[Any]:
             else:
                 ops.append(Set(path_segments(key), value))
     except ValueError as e:
-        raise ValidationError(f"Cannot read a field path in the update: {e}") from None
+        raise ValidationError(
+            f"Cannot read a field path in the update: {outside_text(e)}"
+        ) from None
     return ops
+
+
+def _holds_id(raw: bytes, entry_id: str) -> bool:
+    """Whether a file's own bytes hold ``entry_id`` (``read_entry_id``), for a
+    file whose type cannot load it: then it is the entry asked for."""
+    try:
+        return read_entry_id(_text_of(raw)) == entry_id
+    except Exception:  # noqa: BLE001 - bytes that do not decode hold no id
+        return False
 
 
 def _refuse_unmodellable(raw: bytes, entry_id: str, verb: str) -> None:
@@ -4094,15 +4577,16 @@ def _refuse_unmodellable(raw: bytes, entry_id: str, verb: str) -> None:
         raise ValidationError(f"Cannot {verb} '{entry_id}': {reason} (line {line})")
 
 
-def _refuse_unreadable_fields(path: Path, entry_id: str, exc: Exception) -> NoReturn:
+def _refuse_unreadable_fields(root: Path, path: Path, entry_id: str, exc: Exception) -> NoReturn:
     """``read_fields`` raised ``TypeError`` on a loaded entry: refuse it as the
     #760 rule does when the rule names it (with its line), else as a value
-    Pyrite cannot read (a `!!set`)."""
-    raw = _read_regular_file(path)
+    Pyrite cannot read (a `!!set`). The file is read again inside the KB at
+    ``root`` (``_read_kb_file``): the reason names a key and a line."""
+    raw = _read_kb_file(root, path)
     if raw is not None:
         _refuse_unmodellable(raw, entry_id, "read")
     raise ValidationError(
-        f"Cannot read '{entry_id}': the frontmatter holds a value Pyrite cannot read ({exc})"
+        f"Cannot read '{entry_id}': the frontmatter holds a value Pyrite cannot read ({outside_text(exc)})"
     ) from exc
 
 
@@ -4117,31 +4601,23 @@ def _refuse_unmodellable_named(repo: KBRepository, entry_id: str, verb: str) -> 
     for path in repo._filename_candidates(entry_id):
         if not repo._lexically_inside(path):
             continue
-        raw = _read_regular_file(path)
+        raw = _read_kb_file(repo.path, path)
         if raw is None:
             continue
         _refuse_unmodellable(raw, entry_id, verb)
 
 
-def _read_regular_file(path: Path) -> bytes | None:
-    """``path``'s bytes when it is a regular file, else None. Opened
-    ``O_NONBLOCK`` and checked on the descriptor: a FIFO (or a device) at
-    the name never holds the caller, nor the lock it may hold."""
+def _read_kb_file(root: Path, path: Path) -> bytes | None:
+    """``path``'s bytes, read inside the KB at ``root`` (``KBFiles.read_bytes``),
+    else None: absent, not a regular file (a FIFO or a device at the name
+    never holds the caller, nor the lock it may hold), unreadable, or not the
+    KB's -- a link out of it, or a file with more than one hard link. The
+    refusals these bytes feed name a key and a line, so a file that is not
+    the KB's must give none: the caller then answers not-found."""
     try:
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
-    except OSError:
+        return KBFiles(root).read_bytes(path)
+    except (KBFileOutsideRootError, OSError):
         return None
-    try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
-            return None
-        chunks = []
-        while chunk := os.read(fd, 1 << 16):
-            chunks.append(chunk)
-        return b"".join(chunks)
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
 
 
 def _item_operations(
@@ -4186,7 +4662,9 @@ def _item_operations(
         for key in unset or []:
             ops.append(Unset(path_segments(key)))
     except ValueError as e:
-        raise ValidationError(f"Cannot read a field path in the operation: {e}") from None
+        raise ValidationError(
+            f"Cannot read a field path in the operation: {outside_text(e)}"
+        ) from None
     return ops
 
 
@@ -4198,16 +4676,29 @@ def _checked_item(entry: Entry, field: str, value: Any) -> Any:
     written and then refused by the index insert (#973 fix round 1)."""
     item_type = Link if field == "links" else Source
     if not isinstance(value, dict):
-        raise ValidationError(
+        message = (
             f"Cannot append to {field} on {entry.entry_type} '{entry.id}': an item is an "
             f'object (for a link, {{"target": "<id>", "relation": "<relation>"}}), '
             f"got {type(value).__name__}."
         )
+        raise ValidationError(
+            message,
+            errors=[
+                {
+                    "field": field,
+                    "rule": "type",
+                    "message": message,
+                    "expected": "an object",
+                    "got": type(value).__name__,
+                }
+            ],
+        )
     try:
         item = item_type.from_dict(value)
     except Exception as e:
+        message = f"Cannot append to {field} on {entry.entry_type} '{entry.id}': {outside_text(e)}"
         raise ValidationError(
-            f"Cannot append to {field} on {entry.entry_type} '{entry.id}': {e}"
+            message, errors=[{"field": field, "rule": "type", "message": message}]
         ) from e
     if field == "links":
         check_link_target(item.to_dict())
@@ -4304,8 +4795,20 @@ def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
     if key in ("sources", "links"):
         item_type = Source if key == "sources" else Link
         if not isinstance(value, list):
-            raise ValidationError(
+            message = (
                 f"Cannot set {key} on {entry.entry_type} '{entry.id}': expected a list of objects."
+            )
+            raise ValidationError(
+                message,
+                errors=[
+                    {
+                        "field": key,
+                        "rule": "type",
+                        "message": message,
+                        "expected": "a list of objects",
+                        "got": type(value).__name__,
+                    }
+                ],
             )
         converted = []
         for index, item in enumerate(value):
@@ -4314,8 +4817,18 @@ def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
             elif isinstance(item, dict):
                 converted.append(item_type.from_dict(item))
             else:
+                message = f"Cannot set {key}[{index}] on {entry.entry_type} '{entry.id}': expected an object."
                 raise ValidationError(
-                    f"Cannot set {key}[{index}] on {entry.entry_type} '{entry.id}': expected an object."
+                    message,
+                    errors=[
+                        {
+                            "field": f"{key}[{index}]",
+                            "rule": "type",
+                            "message": message,
+                            "expected": "an object",
+                            "got": type(item).__name__,
+                        }
+                    ],
                 )
         return converted
 
@@ -4327,7 +4840,76 @@ def _as_field_type(entry: Entry, key: str, value: Any) -> Any:
         return enum_type(value)
     except ValueError:
         allowed = ", ".join(str(member.value) for member in enum_type)
-        raise ValidationError(
+        message = (
             f"Cannot set {key}={value!r} on {entry.entry_type} '{entry.id}': "
             f"expected one of {allowed}."
+        )
+        raise ValidationError(
+            message,
+            errors=[
+                {
+                    "field": key,
+                    "rule": "enum",
+                    "message": message,
+                    "expected": [str(member.value) for member in enum_type],
+                }
+            ],
         ) from None
+
+
+def _unknown_field_on_update(entry_id: str, raw_path: Any, cause: str) -> ValidationError:
+    """The refusal of an update op whose path names no field, as a field row (#1284)."""
+    message = f"Cannot update {entry_id!r}: {cause}"
+    segments = raw_path if isinstance(raw_path, (tuple, list)) else ()
+    key = next((segment for segment in segments if isinstance(segment, str)), "")
+    return ValidationError(
+        message, errors=[{"field": key, "rule": "unknown_field", "message": message}]
+    )
+
+
+def files_the_index_may_miss(db: Any, repo: KBRepository) -> set[Path]:
+    """The files an id missing from the index could still be in.
+
+    A miss is answered from the index, except for a file it has not caught
+    up with: a path with no row, or a row whose recorded mtime or size no
+    longer match the file (``_file_changed``, the reconcile's own rule;
+    stat only, no file is read). At most ``MISS_SCAN_MAX_FILES`` of them
+    are read, the most recently modified first: a file that is never
+    indexed (malformed, not an entry) stays a candidate but ages behind a
+    file just added or edited, so it cannot crowd that file out. Beyond
+    the bound the lookup answers not found; ``pyrite index sync`` closes
+    the gap.
+
+    The one bound for a read-tier lookup of an id the index lacks: a read by
+    id (``KBService._entry_file``) and QA's validate of one id
+    (``QAService._check_unmodellable_frontmatter``) read only these files.
+    """
+    from ..storage.index import _file_changed
+
+    known = {
+        row["file_path"]: row
+        for row in db.get_entries_for_indexing(repo.config.name)
+        if row.get("file_path")
+    }
+    behind: list[tuple[int, Path]] = []
+    inside = KBFiles(repo.path)
+    for path in repo.list_files():
+        if not inside.contains(path):
+            continue  # a link out: never read, and its stat orders nothing
+        row = known.get(str(path))
+        try:
+            stat = path.stat()
+        except OSError:
+            behind.append((0, path))
+            continue
+        if row is None or _file_changed(row, stat):
+            behind.append((stat.st_mtime_ns, path))
+    behind.sort(key=lambda item: item[0], reverse=True)
+    if len(behind) > MISS_SCAN_MAX_FILES:
+        logger.debug(
+            "KB %s: %d files are not in the index; a lookup reads the %d newest",
+            repo.config.name,
+            len(behind),
+            MISS_SCAN_MAX_FILES,
+        )
+    return {path for _, path in behind[:MISS_SCAN_MAX_FILES]}

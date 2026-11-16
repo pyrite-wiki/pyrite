@@ -61,6 +61,8 @@ from pathlib import Path
 
 from pyrite.utils.file_lock import LOCK_TIMEOUT, check_timeout, file_lock
 
+from ..exceptions import os_reason
+
 logger = logging.getLogger(__name__)
 
 
@@ -242,7 +244,7 @@ def atomic_write_text(
             raise
         with guard():
             _write_in_place(
-                target, data, f"cannot create a file in {target.parent} ({e.strerror or e})"
+                target, data, f"cannot create a file in {target.parent} ({os_reason(e)})"
             )
         return
 

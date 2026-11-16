@@ -78,27 +78,33 @@ def removed_entry_types_held(ext: RemovedExtension, entry_types) -> list[str]:
     return [t for t in ext.entry_types if t in held]
 
 
-def removed_extension_notice(kb_name: str, kb_type: str | None, entry_types=()) -> str | None:
-    """One sentence for a KB whose type, or whose entries' types, belonged to a
-    removed extension; None when neither did.
+def removed_extension_report(
+    kb_name: str, kb_type: str | None, entry_types=(), declared_types=()
+) -> dict | None:
+    """What a KB's health row and orient notice say about a removed extension,
+    or None when the KB has nothing of one: ``extension``, ``entry_types`` (the
+    held types the extension declared and the KB's kb.yaml does not) and ``message``.
 
     ``entry_types`` is what the KB holds (the index's distinct types): a
     generic KB that still has ``timeline_event`` files gets the same notice
-    as one registered with ``cascade-timeline``.
+    as one registered with ``cascade-timeline``. ``declared_types`` are the
+    types its kb.yaml declares; those are its own and are left out (#1468).
     """
+    declared = set(declared_types or ())
+    undeclared = [t for t in (entry_types or ()) if t not in declared]
     ext = removed_extension_for_kb_type(kb_type)
     if ext is not None:
         head = f"KB '{kb_name}' has kb_type '{kb_type}', which belonged to the {ext.name} extension"
     else:
-        ext = removed_extension_for_entry_types(entry_types)
+        ext = removed_extension_for_entry_types(undeclared)
         if ext is None:
             return None
         head = (
             f"KB '{kb_name}' holds entries of type "
-            f"{', '.join(removed_entry_types_held(ext, entry_types))}, which belonged to the "
+            f"{', '.join(removed_entry_types_held(ext, undeclared))}, which belonged to the "
             f"{ext.name} extension"
         )
-    held = removed_entry_types_held(ext, entry_types)
+    held = removed_entry_types_held(ext, undeclared)
     # Not "undeclared": a kb.yaml that declares no types is unrestricted
     # (#809), so health lists nothing for these; they are entries of a type
     # no extension declares any more.
@@ -107,4 +113,16 @@ def removed_extension_notice(kb_name: str, kb_type: str | None, entry_types=()) 
         if held and ext.kb_types and kb_type in ext.kb_types
         else ""
     )
-    return f"{head}, removed in {ext.removed_in}.{held_note} {ext.replacement}"
+    return {
+        "extension": ext.name,
+        "entry_types": held,
+        "message": f"{head}, removed in {ext.removed_in}.{held_note} {ext.replacement}",
+    }
+
+
+def removed_extension_notice(
+    kb_name: str, kb_type: str | None, entry_types=(), declared_types=()
+) -> str | None:
+    """The message of ``removed_extension_report``, or None."""
+    report = removed_extension_report(kb_name, kb_type, entry_types, declared_types)
+    return report["message"] if report else None

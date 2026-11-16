@@ -9,6 +9,18 @@ from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 
 
+@pytest.fixture(autouse=True)
+def _as_the_local_operator():
+    """These tests call ``KBRegistryService.add_kb`` directly, as the
+    operator's own process does (``acting.is_local_process``). A network
+    caller is held to ``settings.kb_roots``:
+    ``tests/test_kb_roots_limit_network_registration.py``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
+
+
 def make_registry(config, db):
     return KBRegistryService(config, db, IndexManager(db, config))
 

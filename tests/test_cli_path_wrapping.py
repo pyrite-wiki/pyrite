@@ -39,7 +39,9 @@ def test_index_sync_malformed_path_stays_on_bullet_line(cli_world, narrow_termin
 
     assert result.exit_code == 0, result.output
     assert "Malformed: 1 file(s) skipped" in result.output
-    assert f"    • {malformed}" in result.output.splitlines()
+    relative = malformed.relative_to(world.kb_path("test-kb"))
+    assert f"    • {relative}" in result.output.splitlines()
+    assert str(world.kb_path("test-kb")) not in result.output
 
 
 def test_kb_commit_file_path_stays_literal(cli_world, narrow_terminal):

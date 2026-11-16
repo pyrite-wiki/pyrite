@@ -73,7 +73,7 @@ def test_483_delete_by_a_filename_does_not_remove_another_entry(kb):
     kb_path, svc, _repo, _db = kb
     alpha = _write(kb_path / "alpha.md", id="beta", title="Alpha")
 
-    svc.delete_entry("alpha", KB)
+    svc.delete_entry("alpha", KB, readable_kbs=None)
 
     assert alpha.exists(), "delete('alpha') removed the file holding 'beta'"
 
@@ -170,7 +170,7 @@ def test_494_delete_removes_explicit_duplicates_it_meets(kb):
     dup = _write(kb_path / "gamma.md", id="gamma", title="Alpha")
     other = _write(kb_path / "gamma-notes.md", id="delta", title="Delta")
 
-    assert svc.delete_entry("gamma", KB)
+    assert svc.delete_entry("gamma", KB, readable_kbs=None)
 
     assert not created.exists()
     assert not dup.exists(), "a second file holding 'gamma' survived its delete"
@@ -204,7 +204,7 @@ def test_delete_refuses_a_derived_id_two_same_title_notes_share(kb):
     _index(svc, db)
 
     with pytest.raises(ValidationError) as refused:
-        svc.delete_entry("draft", KB)
+        svc.delete_entry("draft", KB, readable_kbs=None)
 
     assert all(f.exists() for f in files), "delete removed a note it could not be sure of"
     assert "a.md" in str(refused.value) and "b.md" in str(refused.value)
@@ -218,7 +218,7 @@ def test_delete_refuses_the_id_untitled_notes_all_derive(kb):
     assert shared and all(entry_id_from_markdown(f.read_text()) == shared for f in files)
 
     with pytest.raises(ValidationError):
-        svc.delete_entry(shared, KB)
+        svc.delete_entry(shared, KB, readable_kbs=None)
 
     assert all(f.exists() for f in files)
 
@@ -228,7 +228,7 @@ def test_delete_removes_the_one_note_that_derives_the_id(kb):
     (only,) = _vault(kb_path, {"beta.md": "type: note\ntitle: Alpha\n"})
     _index(svc, db)
 
-    assert svc.delete_entry("alpha", KB)
+    assert svc.delete_entry("alpha", KB, readable_kbs=None)
     assert not only.exists()
     assert db.get_entry("alpha", KB) is None
 
@@ -320,6 +320,9 @@ def test_704_falsy_title_keeps_the_id_it_had_on_dev(kb, raw_title, stored):
     assert repo.find_file(row["id"]) == f
 
 
+@pytest.mark.control(
+    reason="#704's guard, already on dev; #1261 only moved its reason inside a longer message"
+)
 def test_704_unindexable_title_with_an_explicit_id_is_not_indexed(kb):
     # On dev an `id:` line skipped the title check, so a list or NaN title
     # reached the row write and crashed it (sqlite3.ProgrammingError).
@@ -334,11 +337,16 @@ def test_704_unindexable_title_with_an_explicit_id_is_not_indexed(kb):
 
     assert rows == {"fine"}
     # reported with the loader's reason, not a driver error naming SQL binding
-    assert {m["path"].rsplit("/", 1)[1]: m["error"] for m in result["malformed"]} == {
+    # (the reason sits inside the ENTRY_UNREADABLE message, ADR-0042 8a)
+    reported = {m["path"].rsplit("/", 1)[1]: m["error"] for m in result["malformed"]}
+    expected = {
         "lt.md": "title must be a string, got a list",
         "dt.md": "title must be a string, got a mapping",
         "nan.md": "title must be a string, got NaN",
     }
+    assert set(reported) == set(expected), reported
+    for name, reason in expected.items():
+        assert reason in reported[name] and "SQL" not in reported[name], reported[name]
 
 
 @pytest.mark.control(
@@ -401,4 +409,9 @@ def test_704_skip_reason_is_one_line_and_kb_relative(kb, monkeypatch):
         raise ValueError(f"bad value in {f}\n  line 2 detail\n  line 3")
 
     monkeypatch.setattr(repository_module, "read_entry_id", boom)
-    assert repo.read_id(f) == (None, "bad value in x.md")
+    from pyrite.services.acting import local_process
+
+    with local_process(True):  # the operator's `pyrite ids missing`
+        assert repo.read_id(f) == (None, "bad value in x.md")
+    # A network caller never sees the loader's text (ADR-0052 N3).
+    assert repo.read_id(f) == (None, "the server log has the details")

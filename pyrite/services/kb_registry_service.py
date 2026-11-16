@@ -6,6 +6,8 @@ Config.yaml KBs are seeded as source="config"; user-added KBs are source="user".
 """
 
 import logging
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +17,37 @@ from ..exceptions import (
     KBAlreadyExistsError,
     KBDefinedInConfigError,
     KBNotFoundError,
+    KBPathNotAllowedError,
     KBProtectedError,
     ValidationError,
 )
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
+from ..utils.kb_files import KBFiles
 from .credential_events import announce_kb_policy_change
+from .qa_cache import index_fingerprint
 
 logger = logging.getLogger(__name__)
+
+#: How long a read-tier route may reuse a KB's health report (seconds).
+HEALTH_CACHE_SECONDS = 60.0
+_HEALTH_CACHE_MAX = 256
+_HEALTH_CACHE: dict[tuple[str, str], tuple[float, tuple, dict[str, Any]]] = {}
+_HEALTH_LOCKS: dict[tuple[str, str], threading.Lock] = {}
+_HEALTH_LOCKS_GUARD = threading.Lock()
+
+
+def _health_lock(key: tuple[str, str]) -> threading.Lock:
+    """One lock per (index, KB): a pass for one KB never waits on another's."""
+    with _HEALTH_LOCKS_GUARD:
+        if len(_HEALTH_LOCKS) >= _HEALTH_CACHE_MAX and key not in _HEALTH_LOCKS:
+            _HEALTH_LOCKS.clear()
+        return _HEALTH_LOCKS.setdefault(key, threading.Lock())
+
+
+#: (index path, KB name) pairs whose kept "none" this process has reported:
+#: `KBRegistryService._seeded_default_role` says it once, not at every seed.
+_KEPT_CLOSED_LOGGED: set[tuple[str, str]] = set()
 
 
 KB_TYPE_REQUIRED = (
@@ -81,7 +106,7 @@ class KBRegistryService:
                 path=str(kb.path),
                 description=kb.description,
                 source="config",
-                default_role=kb.default_role,
+                default_role=self._seeded_default_role(kb),
             )
             count += 1
 
@@ -94,6 +119,35 @@ class KBRegistryService:
         self.db.session.commit()
         self.db.merge_registered_kbs(self.config)
         return count
+
+    def _seeded_default_role(self, kb: KBConfig) -> str | None:
+        """The ``default_role`` the seed stores for config.yaml KB `kb`: the
+        file's value, except that an upgrade never opens a KB that was closed.
+
+        A KB with no ``default_role`` line whose row already says "none" (an
+        earlier version stored it, or the line was removed) keeps "none"
+        until config.yaml itself sets a ``default_role``; it is said once per
+        process, naming the line to add. The in-memory entry is left as the
+        file has it, so a later save never writes a line the operator did
+        not. The access policy holds the same rule when no seed has run
+        (`AccessPolicy.kb_default_role`).
+        """
+        if kb.default_role is not None or self.registered_default_role(kb.name) != "none":
+            return kb.default_role
+        key = (str(self.config.settings.index_path), kb.name)
+        if key not in _KEPT_CLOSED_LOGGED:
+            _KEPT_CLOSED_LOGGED.add(key)
+            from ..config import current_config_file
+
+            logger.warning(
+                "KB %r has no default_role in %s; keeping the stored 'none' (closed). "
+                "Add 'default_role: none' under that KB in %s to keep it closed, or "
+                "'default_role: read' (or write) to open it.",
+                kb.name,
+                current_config_file().name,
+                current_config_file().name,
+            )
+        return "none"
 
     def list_kbs(
         self,
@@ -185,6 +239,7 @@ class KBRegistryService:
         if not kb:
             return None
         cfg = self.config.get_kb(name)
+        stats = self.db.get_kb_stats(name) or {}
         return {
             "name": kb.name,
             "type": kb.kb_type,
@@ -193,7 +248,7 @@ class KBRegistryService:
             "source": kb.source or "user",
             "read_only": cfg.read_only if cfg else False,
             "shortname": cfg.shortname if cfg else None,
-            "entries": kb.entry_count or 0,
+            "entries": stats.get("entry_count", 0),
             "indexed": bool(kb.last_indexed),
             "last_indexed": kb.last_indexed,
             "default_role": kb.default_role,
@@ -228,6 +283,7 @@ class KBRegistryService:
         # Checked before anything is created: no directory, no preset, no row.
         self.config.refuse_outside_tree(path, f"adding KB '{name}'")
         resolved = Path(path).expanduser().resolve()
+        self._refuse_outside_kb_roots(resolved)
         resolved.mkdir(parents=True, exist_ok=True)
 
         # Apply plugin preset if kb_type matches one
@@ -263,13 +319,43 @@ class KBRegistryService:
 
         return self.get_kb(name)  # type: ignore[return-value]
 
+    def _refuse_outside_kb_roots(self, resolved: Path) -> None:
+        """A network caller registers a KB only in a folder under one of
+        ``settings.kb_roots`` (``KBPathNotAllowedError`` otherwise, naming the
+        roots); the local operator (``is_local_process``) registers any path.
+
+        ``resolved`` is the requested path fully resolved (symbolic links and
+        ``..`` followed, as far as the path exists), and each root is resolved
+        when the configuration loads, so neither a link nor ``..`` reaches
+        outside a root. A root itself is not a KB path: a KB goes in a folder
+        under it."""
+        from .acting import is_local_process
+
+        if is_local_process():
+            return
+        roots = list(self.config.settings.kb_roots)
+        if any(root in resolved.parents for root in roots):
+            return
+        if not roots:
+            raise KBPathNotAllowedError(
+                "Registering a KB path over the network is off: no kb_roots are configured. "
+                "The operator can register it with `pyrite kb add`, or list the folders "
+                "network callers may use in settings.kb_roots."
+            )
+        raise KBPathNotAllowedError(
+            "A KB registered over the network must be in a folder under one of the "
+            f"configured kb_roots: {', '.join(str(r) for r in roots)}"
+        )
+
     def _apply_preset(self, kb_path: Path, name: str, kb_type: str, description: str) -> None:
         """Materialize a plugin preset into the KB directory.
 
         Writes kb.yaml with type definitions, creates subdirectories,
         and generates entry templates for each type.
         """
-        from ..utils.yaml import dump_yaml_file
+        from ..utils.atomic_write import ABSENT
+        from ..utils.kb_files import KBFileOutsideRootError
+        from ..utils.yaml import dump_yaml_text
 
         try:
             from ..plugins import get_registry
@@ -287,7 +373,10 @@ class KBRegistryService:
         # registered, not created. Registering must not write inside it: Pyrite
         # is additive to hand maintenance, and a scaffold belongs to `init` or
         # to an explicit request, not to registering what is already there.
-        if (kb_path / "kb.yaml").exists():
+        # ``KBFiles.present``: a kb.yaml that is a link out of the folder is
+        # there whatever it points at, so nothing is written through it.
+        inside = KBFiles(kb_path)
+        if inside.present(kb_path / "kb.yaml"):
             logger.info("KB '%s' already has a kb.yaml, leaving its files alone", name)
             return
 
@@ -324,24 +413,37 @@ class KBRegistryService:
         if types_section:
             kb_yaml["types"] = types_section
 
-        # Write kb.yaml. Absent by the early return above, so no guard here.
+        # Every path the preset makes is decided before anything is
+        # written: one that resolves outside the folder (a link out, dangling
+        # or not, or a folder on the way that is one) refuses the whole
+        # preset with KBFiles' refusal, whatever lies outside, so a
+        # registration never stops half-way with kb.yaml written and no row.
         kb_yaml_path = kb_path / "kb.yaml"
-        dump_yaml_file(kb_yaml, kb_yaml_path)
+        templates_dir = kb_path / "_templates"
+        folders = [kb_path / d for d in preset.get("directories", [])] + [templates_dir]
+        templates = [
+            (templates_dir / f"{type_name}.md", type_name, type_info)
+            for type_name, type_info in preset.get("types", {}).items()
+        ]
+        for planned in [kb_yaml_path, *folders, *(t[0] for t in templates)]:
+            if not inside.contains(planned):
+                logger.warning("KB '%s': %s leads outside its folder", name, planned)
+                raise KBFileOutsideRootError()
+
+        # kb.yaml is absent (the early return above); created exclusively.
+        inside.write_bytes(kb_yaml_path, dump_yaml_text(kb_yaml).encode("utf-8"), expect=ABSENT)
         logger.info("Wrote kb.yaml for KB '%s'", name)
 
-        # Create subdirectories
-        for dirname in preset.get("directories", []):
-            (kb_path / dirname).mkdir(parents=True, exist_ok=True)
+        # Create subdirectories, beneath the folder, no link followed.
+        for folder in folders:
+            inside.make_dirs(folder)
 
-        # Generate entry templates
-        templates_dir = kb_path / "_templates"
-        templates_dir.mkdir(exist_ok=True)
-        for type_name, type_info in preset.get("types", {}).items():
-            template_path = templates_dir / f"{type_name}.md"
-            if template_path.exists():
+        # Generate entry templates; one already there is left as it is.
+        for template_path, type_name, type_info in templates:
+            if inside.present(template_path):
                 continue
             template_content = self._generate_template(type_name, type_info)
-            template_path.write_text(template_content, encoding="utf-8")
+            inside.write_bytes(template_path, template_content.encode("utf-8"), expect=ABSENT)
 
         logger.info(
             "Preset '%s' applied: %d types, %d directories, %d templates",
@@ -423,6 +525,17 @@ class KBRegistryService:
             isinstance(updates["kb_type"], str) and updates["kb_type"].strip()
         ):
             raise ValidationError(KB_TYPE_REQUIRED)
+
+        if "default_role" in updates:
+            from ..config import validate_kb_default_role
+
+            try:
+                validate_kb_default_role(updates["default_role"], f"KB '{name}'")
+            except ConfigError:
+                raise ValidationError(
+                    "default_role must be 'none', 'read' or 'write', or null for the "
+                    "instance default"
+                ) from None
 
         kb = self.db.session.get(KB, name)
         if not kb:
@@ -524,8 +637,36 @@ class KBRegistryService:
             raise KBNotFoundError(f"KB '{name}' not found")
         return self.index_mgr.sync_kb(kb_config)
 
-    def health_kb(self, name: str) -> dict[str, Any]:
-        """Check KB health: path exists, file count vs index count, staleness."""
+    def health_kb(self, name: str, *, max_age: float = 0.0) -> dict[str, Any]:
+        """Report the live entry count and the shared index-health verdict.
+
+        The report parses every file of the KB. ``max_age`` is how many seconds old a report
+        for this KB may be: 0, the default, always computes it (the CLI and
+        the admin tools); a read-tier route passes ``HEALTH_CACHE_SECONDS``,
+        so any number of callers cost one pass per window. Concurrent callers
+        wait for the one pass instead of each starting their own.
+
+        Reading changes nothing: a KB registered in the database (``kb add``)
+        is checked through a config holding just that KB, never merged into
+        the shared config or written back.
+        """
+        if max_age <= 0:
+            return self._health_kb(name)
+        key = (str(self.db.db_path), name)
+        with _health_lock(key):
+            # Reused only while the index of this KB is unchanged, so an
+            # entry written, removed or re-indexed shows at once.
+            fingerprint = index_fingerprint(self.db, [name])
+            hit = _HEALTH_CACHE.get(key)
+            if hit is not None and hit[1] == fingerprint and time.monotonic() - hit[0] < max_age:
+                return dict(hit[2])
+            result = self._health_kb(name)
+            if len(_HEALTH_CACHE) >= _HEALTH_CACHE_MAX:
+                _HEALTH_CACHE.clear()
+            _HEALTH_CACHE[key] = (time.monotonic(), fingerprint, result)
+            return dict(result)
+
+    def _health_kb(self, name: str) -> dict[str, Any]:
         from ..storage.models import KB
 
         kb = self.db.session.get(KB, name)
@@ -541,12 +682,25 @@ class KBRegistryService:
                 1 for f in kb_path.rglob("*.md") if not any(p.startswith(".") for p in f.parts)
             )
 
-        entry_count = kb.entry_count or 0
-        healthy = path_exists and abs(file_count - entry_count) <= max(1, entry_count * 0.1)
-        from ..storage.index import IndexManager
+        from .index_health import health_verdict
 
-        cfg = self.get_kb_config(name)
-        drift = IndexManager(self.db, self.config)._type_name_drift([cfg] if cfg else [])
+        stats = self.db.get_kb_stats(name) or {}
+        entry_count = stats.get("entry_count", 0)
+        kb_config = self.get_kb_config(name)
+        scoped = PyriteConfig(
+            knowledge_bases=[kb_config] if kb_config else [], settings=self.config.settings
+        )
+        health = IndexManager(self.db, scoped).check_health(name)
+        healthy = path_exists and not health_verdict(health)["is_unhealthy"]
+        drift = {
+            key: health[key]
+            for key in (
+                "type_name_drift",
+                "type_name_drift_total",
+                "type_name_drift_has_more",
+                "schema_errors",
+            )
+        }
 
         return {
             "name": name,

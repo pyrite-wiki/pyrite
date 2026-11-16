@@ -5,6 +5,7 @@ Commands: build, sync, stats, embed, health
 """
 
 import logging
+from pathlib import Path
 
 import typer
 from rich.table import Table
@@ -246,7 +247,12 @@ def index_sync(
     if malformed:
         console.print(f"  [yellow]Malformed: {len(malformed)} file(s) skipped[/yellow]")
         for entry in malformed[:5]:
-            console.print(path_line("    • ", entry["path"], style="dim"))
+            path = Path(entry["path"])
+            for kb in config.all_kbs():
+                if path.is_relative_to(kb.path):
+                    path = path.relative_to(kb.path)
+                    break
+            console.print(path_line("    • ", path, style="dim"))
         if len(malformed) > 5:
             console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
     skipped = results.get("skipped", [])

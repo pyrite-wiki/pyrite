@@ -6,9 +6,9 @@ case runs against it, and nothing may write through it, so its content is
 exactly what `world.py`'s seeding put there for the life of the worker.
 
 `write_world` is a MODULE-scoped world (one fresh `build_world` call per
-test *module* that asks for it -- `test_rest_matrix.py`'s write loop and
-`test_mcp_matrix.py`'s write loop each get their own, never one shared
-across modules and never the same object as `world`). Round 1 already
+test *module* that asks for it, never the same object as `world`). The MCP
+matrix uses `mcp_write_world` once per principal because saved ADR numbers
+depend on earlier writes. Round 1 already
 solved individual write CASES colliding with each other inside one world
 (unique `call_key`-derived identity fields, disposable entries for a tool
 that mutates an existing row); module-level isolation is the next
@@ -39,6 +39,16 @@ def world(tmp_path_factory) -> World:
 @pytest.fixture(scope="module")
 def write_world(tmp_path_factory) -> World:
     w = build_world(tmp_path_factory, label="adr0037-write")
+    try:
+        yield w
+    finally:
+        w.close()
+
+
+@pytest.fixture
+def mcp_write_world(tmp_path_factory) -> World:
+    """Keep file-based ADR numbering independent of principal test order."""
+    w = build_world(tmp_path_factory, label="adr0037-mcp-write")
     try:
         yield w
     finally:

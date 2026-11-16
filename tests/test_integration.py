@@ -253,8 +253,8 @@ class TestUpdateAndDeleteFlow:
         assert len(results) == 1
 
         # Delete
-        deleted = env["kb_service"].delete_entry("delete-test", "test-timeline")
-        assert deleted is True
+        deleted = env["kb_service"].delete_entry("delete-test", "test-timeline", readable_kbs=None)
+        assert deleted.deleted is True
 
         # Verify not searchable
         results = env["search_service"].search("deleted")

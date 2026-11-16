@@ -111,12 +111,16 @@ def adr_numbers_in_files(kb_conf: Any) -> set[int]:
     from pyrite.exceptions import FrontmatterError
     from pyrite.storage.repository import KBRepository
     from pyrite.utils.frontmatter import load_frontmatter
+    from pyrite.utils.kb_files import KBFileOutsideRootError
 
     numbers: set[int] = set()
-    for path in KBRepository(kb_conf).list_files():
+    repo = KBRepository(kb_conf)
+    for path in repo.list_files():
         try:
-            loaded = load_frontmatter(path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, FrontmatterError) as exc:
+            # Inside the KB, as every entry load is: a file that is not the
+            # KB's (a link out, a hard link) gives no number.
+            loaded = load_frontmatter(repo._read_inside(path).decode("utf-8"))
+        except (OSError, UnicodeDecodeError, FrontmatterError, KBFileOutsideRootError) as exc:
             logger.warning("Skipping unreadable ADR numbering file %s: %s", path, exc)
             continue
         if loaded is None:

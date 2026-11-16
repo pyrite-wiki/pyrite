@@ -272,11 +272,10 @@ def test_a_violation_the_write_introduces_in_an_unnamed_field_is_refused(tmp_pat
         db.close()
 
 
-def test_the_update_path_has_no_second_schema_check(env):
-    """`Entry.validate()` runs on create only; an update that called it would
-    refuse a violation already on disk behind `_validate_write`'s back."""
-    from pyrite.models.base import Entry
-
-    with patch.object(Entry, "validate", side_effect=AssertionError("validate on update")):
-        ok, _w, text = _request(env, "mcp", "ev2", {"tags": ["x"]})
+def test_existing_model_and_schema_findings_are_warnings_on_update(env):
+    """An unrelated edit keeps the missing date and reports both findings."""
+    ok, warnings, text = _request(env, "mcp", "ev2", {"tags": ["x"]})
     assert ok, text
+    assert any(w["rule"] == "model_validation" for w in warnings), warnings
+    assert any(w["rule"] == "required" and w["field"] == "date" for w in warnings), warnings
+    assert all(w["severity"] == "warning" for w in warnings), warnings

@@ -1,1 +1,0 @@
-- The import-cycle and fix-commit hooks now work when only `python3` is on PATH. If no interpreter is available they explain how to set up the checkout (#1264).

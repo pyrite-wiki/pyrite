@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from ...exceptions import ValidationError
+from ...exceptions import ValidationError, public_attribute, public_text, refusal_fields
 from ...services.body_bounds import MARKER_KEYS, ensure_not_truncated
 
 
@@ -35,18 +35,28 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     one code, on every surface including this one.
     """
     code = exc.error_code
-    detail: dict = {"code": code, "message": str(exc), "retryable": False}
-    suggestion = getattr(exc, "suggestion", None)
+    detail: dict = {"code": code, "message": public_text(exc), "retryable": False}
+    # REST's write path built its own body, so it copied only ``suggestion``
+    # and ``declared_types``: the structured ``errors`` rows of a field refusal
+    # (#1284) never reached the caller, and neither did the ``candidate_kbs``/
+    # ``did_you_mean`` an endpoint answers itself -- the central handler in
+    # ``server/errors.py`` already copies them for the refusals it sees. One
+    # mapper, three surfaces.
+    detail.update(refusal_fields(exc))
+    suggestion = public_attribute(exc, "suggestion")
     if suggestion:
         detail["hint"] = suggestion
-    declared = getattr(exc, "declared_types", None)
+    declared = public_attribute(exc, "declared_types")
     if declared is not None:
         detail["declared_types"] = declared
         detail.setdefault(
             "hint",
             f"Use an entry_type in [{', '.join(declared)}], or send allow_undeclared: true.",
         )
-    return HTTPException(status_code=409 if code == "ENTRY_EXISTS" else 400, detail=detail)
+    # A file its declared type cannot load is not a bad request: the same
+    # 422 as the central handler gives it (ADR-0042 8a).
+    status = {"ENTRY_EXISTS": 409, "ENTRY_UNREADABLE": 422}.get(code, 400)
+    return HTTPException(status_code=status, detail=detail)
 
 
 async def refuses_truncated_body(request: Request) -> None:
@@ -120,10 +130,18 @@ def refuses_undeclared_keys(
             return
         unknown = sorted(set(payload) - allowed)
         if unknown:
+            message = (
+                f"Unknown field(s) on a {verb}: {', '.join(unknown)}. "
+                f"A {verb} accepts: {', '.join(sorted(allowed))}."
+            )
             raise refusal_http(
                 ValidationError(
-                    f"Unknown field(s) on a {verb}: {', '.join(unknown)}. "
-                    f"A {verb} accepts: {', '.join(sorted(allowed))}."
+                    message,
+                    # One row per key the model does not declare (#1381 review).
+                    errors=[
+                        {"field": key, "rule": "unknown_field", "message": message}
+                        for key in unknown
+                    ],
                 )
             )
         # FastAPI validates this same parsed object after solving dependencies.

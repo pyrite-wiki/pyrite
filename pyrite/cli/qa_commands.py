@@ -9,8 +9,8 @@ from rich.console import Console
 from rich.table import Table
 
 from ..exceptions import ValidationError
-from ..services.access_policy import UNSCOPED
-from .context import cli_context
+from ..services.access_policy import UNSCOPED, named_kb
+from .context import cli_context, require_entry_kb
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT, cli_console, output_format_choice, validate_output_format
 
@@ -46,6 +46,9 @@ def qa_validate(
     and schema violations.
     """
     from ..services.qa_service import QAService
+
+    if entry and not named_kb(kb_name):
+        kb_name = require_entry_kb(entry, kb_name, output_format=output_format)
 
     with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
@@ -558,7 +561,11 @@ def _print_rubric_line(text: str, kind: str, item: str | dict) -> None:
 def qa_gaps(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to analyze"),
     threshold: int = typer.Option(
-        3, "--threshold", "-t", help="Minimum entries per type to not flag as sparse"
+        3,
+        "--threshold",
+        "-t",
+        min=0,
+        help="Minimum entries per type to not flag as sparse",
     ),
     output_format: str = typer.Option(
         "rich",
@@ -691,9 +698,10 @@ def qa_fix(
 ):
     """Auto-fix safe structural issues found by validation.
 
-    Fixes: date normalisation, missing field defaults, broken wikilinks
-    (by edit distance), and tag casing. Unsafe or ambiguous issues are
-    reported for manual resolution.
+    Fixes: date normalisation, broken wikilinks (by edit distance), and tag
+    casing. Unsafe or ambiguous issues are reported for manual resolution, and
+    a schema violation is always one of them: a required field is the author's
+    to fill, not a value `qa fix` may invent.
 
     Use --dry-run to preview changes before applying them.
     """
@@ -793,7 +801,7 @@ def qa_fix(
 def qa_stale(
     kb_name: str = typer.Argument(..., help="KB to check for stale entries"),
     max_age: int = typer.Option(
-        90, "--max-age", "-a", help="Days since last update to consider stale"
+        90, "--max-age", "-a", min=0, help="Days since last update to consider stale"
     ),
     output_format: str = typer.Option(
         "rich",
@@ -847,7 +855,9 @@ def qa_stale(
 @qa_app.command("compact")
 def qa_compact(
     kb_name: str = typer.Argument(..., help="KB to check for archival candidates"),
-    min_age: int = typer.Option(90, "--min-age", "-a", help="Minimum days old to be a candidate"),
+    min_age: int = typer.Option(
+        90, "--min-age", "-a", min=0, help="Minimum days old to be a candidate"
+    ),
     output_format: str = typer.Option(
         "rich",
         "--format",
@@ -912,7 +922,9 @@ def qa_compact(
 @qa_app.command("check-urls")
 def qa_check_urls(
     kb_name: str = typer.Argument(..., help="KB to check source URLs"),
-    sample: int = typer.Option(0, "--sample", "-s", help="Check a random sample of N URLs (0=all)"),
+    sample: int = typer.Option(
+        0, "--sample", "-s", min=0, help="Check a random sample of N URLs (0=all)"
+    ),
     cache_file: str = typer.Option("", "--cache", help="Path to URL check cache file"),
     output_format: str = typer.Option(
         "rich",

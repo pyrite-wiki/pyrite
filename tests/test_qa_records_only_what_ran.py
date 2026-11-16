@@ -369,7 +369,15 @@ def test_one_failure_in_the_middle_does_not_stop_the_rest(with_model, surface):
     with _model(fake):
         _refused, _code, body = run_surface(surface, with_model, kb=JUDGED, tier=2, entry=None)
     assert [f["entry_id"] for f in body["failed"]] == ["beta"]
-    assert "provider unreachable" in body["failed"][0]["reason"]
+    reason = body["failed"][0]["reason"]
+    assert "the model call failed" in reason
+    if surface.startswith("mcp"):
+        # A network caller (MCP over HTTP; `_dispatch_tool` with no local
+        # binding) never sees the provider's own text (ADR-0052 N3).
+        assert "provider unreachable" not in reason
+        assert "the server log has the details" in reason
+    else:
+        assert "provider unreachable" in reason  # the CLI's operator does
     assert sorted(r["target_entry"] for r in body["results"]) == ["alpha", "gamma"]
     assert _records(with_model, JUDGED, "beta") == []
     for eid in ("alpha", "gamma"):
@@ -494,31 +502,17 @@ def test_assess_returns_the_task_it_could_not_create(no_model):
 # =========================================================================
 
 #: Each fix kind `fix_kb` dispatches, as the scenario that produces it: the
-#: entry file to write, and the issue validation reports for it when the
-#: validator cannot produce one (the missing-field fix: see `FIX_KINDS`).
+#: entry id, and the file to write for it. Every issue comes from validation;
+#: no scenario hands `fix_kb` one that no validator yields (#958). A
+#: required-field issue is manual -- see `tests/test_qa_fix_required_field.py`.
 FIX_SCENARIOS = {
     "invalid_date": (
         "fixd",
         "---\nid: fixd\ntitle: Dated harbour event\ntype: event\ndate: '2006'\n"
         "importance: 5\ntags: [ok]\n---\nBody.\n",
-        None,
     ),
-    "broken_link": (
-        "fixl",
-        _note("fixl", "Linking harbour note", links=["alphx"], tags=["ok"]),
-        None,
-    ),
-    "tag_case": ("fixt", _note("fixt", "Tagged harbour note", links=[], tags=["MixedCase"]), None),
-    "schema_violation": (
-        "fixm",
-        _note("fixm", "Missing harbour note", links=[], tags=["ok"]),
-        {
-            "rule": "schema_violation",
-            "field": "importance",
-            "severity": "error",
-            "message": "missing field importance",
-        },
-    ),
+    "broken_link": ("fixl", _note("fixl", "Linking harbour note", links=["alphx"], tags=["ok"])),
+    "tag_case": ("fixt", _note("fixt", "Tagged harbour note", links=[], tags=["MixedCase"])),
 }
 
 
@@ -528,7 +522,7 @@ def test_every_fix_kind_has_a_scenario():
 
 def _fix_world(tmp_path: Path, kind: str) -> tuple[PyriteConfig, Path]:
     config = _build(tmp_path, model=False)
-    eid, text, _issue = FIX_SCENARIOS[kind]
+    eid, text = FIX_SCENARIOS[kind]
     root = config.get_kb(JUDGED).path
     for sub, name, body in (
         (kind, eid, text),
@@ -547,21 +541,17 @@ def _fix_world(tmp_path: Path, kind: str) -> tuple[PyriteConfig, Path]:
 
 
 def _run_fix(config: PyriteConfig, kind: str, *, dry_run: bool = False) -> dict:
-    """`fix_kb` as `qa fix` runs it, plus the issue no validator yields today."""
+    """`fix_kb` as `qa fix` runs it."""
     from pyrite.services.qa_service import QAService
 
     db = PyriteDB(config.settings.index_path)
     try:
         qa = QAService(config, db)
-        eid, _text, extra = FIX_SCENARIOS[kind]
-
-        def validate(kb):
-            result = qa.validate_kb(kb, readable_kbs=None)
-            if extra:
-                result["issues"].append({"entry_id": eid, "kb_name": kb, **extra})
-            return result
-
-        return QAFixService(config, db).fix_kb(JUDGED, dry_run=dry_run, validate_kb_fn=validate)
+        return QAFixService(config, db).fix_kb(
+            JUDGED,
+            dry_run=dry_run,
+            validate_kb_fn=lambda kb: qa.validate_kb(kb, readable_kbs=None),
+        )
     finally:
         db.close()
 
@@ -745,7 +735,7 @@ def test_every_assess_output_mode_shows_the_task_not_created(no_model, fmt):
     ):
         result = _invoke(no_model, run)
         shown = result.stdout + result.stderr
-        assert "EntryExistsError" in shown, (fmt, run, shown)
+        assert "already exists" in shown, (fmt, run, shown)  # the refusal's own words
 
 
 @needs_permissions

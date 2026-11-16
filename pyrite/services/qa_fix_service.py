@@ -1,8 +1,8 @@
 """
 QA Fix Service — auto-fix for safe structural issues in knowledge bases.
 
-Extracted from QAService. Handles date normalisation, missing field defaults,
-broken wikilink fixes by edit distance, and tag normalisation.
+Extracted from QAService. Handles date normalisation, broken wikilink fixes by
+edit distance, and tag normalisation.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import EntryLoadError, outside_text
 from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,6 @@ class QAFixService:
     FIXABLE_RULES = frozenset(
         {
             "invalid_date",
-            "schema_violation",  # only missing-field sub-cases
             "broken_link",
         }
     )
@@ -34,7 +34,7 @@ class QAFixService:
     #: `tag_case`, which comes from the tag index rather than an issue. A test
     #: runs each through a write that lands, raises, and finds no file
     #: (tests/test_qa_records_only_what_ran.py); add a kind here and there.
-    FIX_KINDS = ("invalid_date", "schema_violation", "broken_link", "tag_case")
+    FIX_KINDS = ("invalid_date", "broken_link", "tag_case")
 
     def __init__(self, config: PyriteConfig, db: PyriteDB, kb_svc=None):
         self.config = config
@@ -96,7 +96,10 @@ class QAFixService:
                 not_applied = write()
             except Exception as e:
                 logger.warning("Failed to apply a fix to %s: %s", fixes[0]["entry_id"], e)
-                not_applied = f"update_failed: {type(e).__name__}: {e}"
+                # Logged above; the fault's text is the operator's (ADR-0052 N3).
+                not_applied = (
+                    f"update_failed: {type(e).__name__}: {outside_text(e, already_logged=True)}"
+                )
             if not_applied:
                 failed.extend({**fix, "reason": not_applied} for fix in fixes)
             else:
@@ -139,21 +142,6 @@ class QAFixService:
                     else:
                         manual.append({**issue, "reason": "cannot_normalise_date"})
 
-                elif rule == "schema_violation" and "missing" in issue.get("message", "").lower():
-                    # Only reached by an issue whose message says "missing":
-                    # the KB schema's required-field errors say "required",
-                    # so no validator yields one today (#795 Learned).
-                    fix = self._fix_missing_field(issue)
-                    if fix:
-                        # _fix_missing_field's only default is `importance`,
-                        # a top-level field. A metadata default would have to
-                        # send only its own key (update_entry merges metadata
-                        # into the file's), never a dict read from the index.
-                        updates[fix["field"]] = fix["new_value"]
-                        field_fixes.append(fix)
-                    else:
-                        manual.append({**issue, "reason": "no_safe_default"})
-
                 elif rule == "field_spelled_twice":
                     # Andon #994 / #1001 decision 2: an *equal* pair merges
                     # into the field's own top-level spelling, losing
@@ -186,6 +174,8 @@ class QAFixService:
                         )
                     else:
                         manual.append({**issue, "reason": "no_close_match"})
+                elif rule == "schema_violation" and issue.get("schema_rule") == "required":
+                    manual.append({**issue, "reason": "no_safe_default"})
                 else:
                     manual.append({**issue, "reason": "not_auto_fixable"})
 
@@ -315,34 +305,6 @@ class QAFixService:
             "old_value": raw_date,
             "new_value": normalised,
             "message": f"Normalised date '{raw_date}' -> '{normalised}'",
-        }
-
-    @staticmethod
-    def _fix_missing_field(issue: dict[str, Any]) -> dict[str, Any] | None:
-        """Provide a type-appropriate default for a missing required field.
-
-        Only handles fields where a safe default exists.
-        Returns fix dict or None.
-        """
-        field = issue.get("field", "")
-
-        # Map of field names to safe defaults
-        safe_defaults: dict[str, Any] = {
-            "importance": 5,
-        }
-
-        default_val = safe_defaults.get(field)
-        if default_val is None:
-            return None
-
-        return {
-            "entry_id": issue["entry_id"],
-            "kb_name": issue["kb_name"],
-            "rule": "schema_violation",
-            "field": field,
-            "old_value": None,
-            "new_value": default_val,
-            "message": f"Added default {field}={default_val}",
         }
 
     @staticmethod
@@ -477,7 +439,13 @@ class QAFixService:
             return None
         if field_name in ("type", "entry_type"):
             return "field_fixed_once_created"
-        entry = KBRepository(kb_config).load(entry_id)
+        try:
+            entry = KBRepository(kb_config).load(entry_id)
+        except EntryLoadError as e:
+            # Called outside `attempt()`, so a raise would end the whole run:
+            # the file its type cannot load is a hand fix, named, and the run
+            # goes on (ADR-0042 8a: no write lands on it).
+            return f"{e.error_code}: {e}"
         source = getattr(entry, "_source_frontmatter", None)
         if entry is None or not isinstance(source, dict):
             return None
@@ -533,11 +501,17 @@ class QAFixService:
         the file, not the model's reading of it."""
         from ..storage.repository import KBRepository
         from ..utils.frontmatter import load_frontmatter
+        from ..utils.kb_files import KBFileOutsideRootError
 
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
             return None
-        found = KBRepository(kb_config).read_for_write(entry_id)
+        try:
+            # Read only inside the KB, one name: a link out or a hard link is
+            # no file this fix may read (and its write would be refused).
+            found = KBRepository(kb_config).read_for_write(entry_id)
+        except (OSError, KBFileOutsideRootError):
+            return None
         if found is None:
             return None
         _path, raw = found

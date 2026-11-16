@@ -175,8 +175,9 @@ def move_entry_text(
     """Move an entry file: publish ``text`` at ``dst``, which must not exist,
     and remove ``src``, which must still hold ``expect``, as one write under
     one lock for both paths (``file_lock(src, dst)``); return whether it ran
-    under the lock. The one move an entry file makes: rename, and
-    software-kb's ``migrate-standards`` (#978 review, item 3).
+    under the lock. The one move an entry file makes: software-kb's
+    ``migrate-standards`` (#978 review, item 3). A rename moves nothing: it
+    publishes in place (ADR-0038 I6).
 
     Raises ``FileChanged`` (nothing written, both paths as they were) when
     ``src`` no longer holds ``expect``, and ``FileExistsError`` when ``dst``

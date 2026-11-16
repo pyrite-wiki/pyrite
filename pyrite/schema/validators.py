@@ -1,13 +1,17 @@
 """Validation utilities for KB schema fields."""
 
 import re
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
+from ..exceptions import EntryTypeError, ValidationError
 
-def validate_date(date_str: str) -> bool:
-    """Validate date string format (YYYY-MM-DD)."""
-    if not date_str:
+
+def validate_date(date_str: Any) -> bool:
+    """Validate YYYY-MM-DD text or the date object YAML reads from it."""
+    if isinstance(date_str, date):
+        date_str = date_str.isoformat()
+    if not isinstance(date_str, str) or not date_str:
         return False
     pattern = r"^\d{4}-\d{2}-\d{2}$"
     if not re.match(pattern, date_str):
@@ -17,6 +21,83 @@ def validate_date(date_str: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+#: The example every ``since`` refusal shows. One spelling, so the CLI, MCP and
+#: the tests cannot disagree about what "a datetime" means.
+SINCE_EXAMPLE = "2026-10-22T00:00:00Z"
+
+
+def _since_refusal(detail: str) -> ValidationError:
+    """The one refusal for a ``since`` value that cannot be read (#1268)."""
+    return ValidationError(
+        f"since: {detail}",
+        suggestion=(
+            "Pass a date in YYYY-MM-DD form, such as 2026-10-22 (read as "
+            f"midnight UTC), or an ISO 8601 datetime such as {SINCE_EXAMPLE}, "
+            "with or without an offset. An offset is read as the instant it "
+            "names; relative forms (yesterday, 24h) are not accepted."
+        ),
+    )
+
+
+def parse_since(value: Any) -> datetime | None:
+    """Read a ``since`` parameter as the aware UTC instant it names.
+
+    Accepted: a date (``2026-10-22``, midnight UTC), an ISO 8601 datetime with
+    or without an offset (``2026-10-22T00:00:00Z``,
+    ``2026-10-23T05:00:00-04:00``, ``2026-10-22 10:00``), and an absent or
+    empty value, which means "no lower bound" and returns ``None``.
+
+    Anything else is refused with ``VALIDATION_FAILED`` naming the parameter,
+    the accepted forms and an example, rather than being compared as a string
+    and matching nothing: an empty list for a value that was never understood
+    reads as "nothing changed since then", which is a confident wrong answer.
+
+    ``models/base.parse_datetime`` is deliberately not used: it turns an
+    unparseable value into "now", which is the guess this refusal replaces.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _since_refusal(f"expected a date or an ISO datetime, got {type(value).__name__}")
+    text = value.strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(re.sub(r"[Zz]$", "+00:00", text))
+    except ValueError:
+        raise _since_refusal(f"{text!r} is not a date or an ISO datetime") from None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
+
+
+def filter_updated_since(entries: list[dict[str, Any]], since: datetime) -> list[dict[str, Any]]:
+    """Keep the entries whose ``updated_at`` is at or after ``since``.
+
+    Compares instants, not strings: ``2026-10-23T05:00:00-04:00`` is 09:00Z,
+    and a lexical comparison kept every entry updated earlier that UTC day
+    (#1268). An entry whose ``updated_at`` cannot be read is dropped -- it
+    cannot be shown to be newer.
+    """
+    kept = []
+    for entry in entries:
+        stamp = _updated_at_instant(entry.get("updated_at"))
+        if stamp is not None and stamp >= since:
+            kept.append(entry)
+    return kept
+
+
+def _updated_at_instant(value: Any) -> datetime | None:
+    """An ``updated_at`` value as an aware UTC instant, or ``None`` if unreadable."""
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(re.sub(r"[Zz]$", "+00:00", value.strip()))
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
 def validate_importance(importance: Any) -> bool:
@@ -77,9 +158,9 @@ def generate_entry_id(title: Any) -> str:
     import unicodedata
 
     if isinstance(title, (list, tuple, dict)):
-        raise TypeError(f"cannot derive an id: title is a {type(title).__name__}")
+        raise EntryTypeError(f"cannot derive an id: title is a {type(title).__name__}")
     if isinstance(title, float) and math.isnan(title):
-        raise TypeError("cannot derive an id: title is NaN")
+        raise EntryTypeError("cannot derive an id: title is NaN")
     if not title:
         # None, "" and falsy scalars (0, False, 0.0) all slug as the empty
         # title, as they did before #704, so no existing id moves.

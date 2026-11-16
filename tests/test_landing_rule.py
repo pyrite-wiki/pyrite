@@ -1,5 +1,5 @@
 """The landing rule: `KBConfig.landing` and `AccessPolicy.lands_in`
-(ADR-0044 §1, as revised 2026-10-20; markramm/pyrite-security#110).
+(ADR-0044 §1, as revised 2026-10-20).
 
 The rule's whole table, by hand, from the ADR -- not from the code:
 
@@ -297,6 +297,134 @@ def test_the_scan_sees_each_kind_of_write():
     ):
         fn = getattr(PyriteDB, name)
         assert _writes_in(getattr(fn, "__func__", fn)), name
+
+
+#: Statements that write, in forms whose first keyword reads: a write behind
+#: WITH, an assigning PRAGMA, a second statement.
+_WRITE_PROBES = [
+    "WITH t AS (SELECT 1) UPDATE kb SET description = 'x'",
+    "WITH t AS (SELECT 1) DELETE FROM kb",
+    "WITH t AS (SELECT 1) INSERT INTO kb (name, kb_type, path) VALUES ('w', 'generic', '/w')",
+    "WITH t AS (SELECT 1) REPLACE INTO kb (name, kb_type, path) VALUES ('k', 'generic', '/r')",
+    "PRAGMA user_version = 999",
+    "PRAGMA user_version(998)",
+    "  select 1; UPDATE kb SET description = 'x'",
+]
+
+
+def _main_state(db) -> tuple:
+    db.session.rollback()
+    return (
+        db.execute_sql("SELECT name, path, description FROM kb ORDER BY name"),
+        db.execute_sql("PRAGMA user_version"),
+        db.execute_sql("PRAGMA foreign_keys"),
+    )
+
+
+@pytest.mark.parametrize("sql", _WRITE_PROBES)
+def test_execute_sql_through_a_change_set_refuses_every_write_form(tmp_path, sql):
+    from pyrite.exceptions import ChangeSetRecordRefusedError
+    from pyrite.storage.backends.overlay_backend import WorktreeDB
+
+    main, diff = PyriteDB(tmp_path / "main.db"), PyriteDB(tmp_path / "diff.db")
+    try:
+        main.register_kb("k", "generic", str(tmp_path / "k"))
+        before = _main_state(main)
+        wt = WorktreeDB(main, diff)
+        with pytest.raises(ChangeSetRecordRefusedError):
+            wt.execute_sql(sql)
+        main.session.commit()  # what the next write on main would do
+        assert _main_state(main) == before
+    finally:
+        main.close()
+        diff.close()
+
+
+#: Statements that create or write a file on a read-only connection: an
+#: attached database is created (plain and URI forms), VACUUM INTO copies the
+#: whole index to a path, a temp table is a temp file, and these PRAGMAs
+#: checkpoint the index or change where SQLite puts temp files. `{d}` is a
+#: directory the test watches.
+_FILE_PROBES = [
+    "ATTACH DATABASE '{d}/attached.db' AS x",
+    "ATTACH 'file:{d}/attached-uri.db?mode=rwc' AS y",
+    "VACUUM INTO '{d}/copy.db'",
+    "VACUUM",
+    "CREATE TEMP TABLE t(a)",
+    "PRAGMA wal_checkpoint(TRUNCATE)",
+    "PRAGMA optimize",
+    "PRAGMA temp_store_directory = '{d}'",
+    "REINDEX",
+]
+
+
+@pytest.mark.control(
+    reason="the leading-keyword guard refused these too; the read-only connection must"
+)
+@pytest.mark.parametrize("sql", _FILE_PROBES)
+def test_execute_sql_through_a_change_set_creates_or_changes_no_file(tmp_path, sql):
+    from pyrite.exceptions import ChangeSetRecordRefusedError
+    from pyrite.storage.backends.overlay_backend import WorktreeDB
+
+    watched = tmp_path / "watched"
+    watched.mkdir()
+    main, diff = PyriteDB(tmp_path / "main.db"), PyriteDB(tmp_path / "diff.db")
+    try:
+        main.register_kb("k", "generic", str(tmp_path / "k"))
+        main.session.commit()
+        index_before = (tmp_path / "main.db").read_bytes()
+        wt = WorktreeDB(main, diff)
+        with pytest.raises(ChangeSetRecordRefusedError):
+            wt.execute_sql(sql.format(d=watched))
+        assert list(watched.iterdir()) == []
+        assert (tmp_path / "main.db").read_bytes() == index_before
+    finally:
+        main.close()
+        diff.close()
+
+
+@pytest.mark.control(reason="reading PRAGMAs and queries are served, as before")
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT name FROM kb",
+        "WITH r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT n FROM r",
+        "PRAGMA user_version",
+        "PRAGMA table_info(kb)",
+        "SELECT count(*) AS n FROM pragma_table_info('kb')",
+    ],
+)
+def test_execute_sql_through_a_change_set_still_reads(tmp_path, sql):
+    from pyrite.storage.backends.overlay_backend import WorktreeDB
+
+    main, diff = PyriteDB(tmp_path / "main.db"), PyriteDB(tmp_path / "diff.db")
+    try:
+        main.register_kb("k", "generic", str(tmp_path / "k"))
+        main.session.commit()
+        assert WorktreeDB(main, diff).execute_sql(sql)
+    finally:
+        main.close()
+        diff.close()
+
+
+def test_execute_sql_through_a_change_set_cannot_change_mains_connection(tmp_path):
+    """A PRAGMA that changes only a connection's settings writes no row, but on
+    main's shared connection it would change every later statement there."""
+    from pyrite.storage.backends.overlay_backend import WorktreeDB
+
+    main, diff = PyriteDB(tmp_path / "main.db"), PyriteDB(tmp_path / "diff.db")
+    try:
+        main.register_kb("k", "generic", str(tmp_path / "k"))
+        before = _main_state(main)
+        wt = WorktreeDB(main, diff)
+        try:
+            wt.execute_sql("PRAGMA foreign_keys = OFF")
+        except Exception:  # refused is as good as harmless
+            pass
+        assert _main_state(main) == before
+    finally:
+        main.close()
+        diff.close()
 
 
 def test_execute_sql_through_a_change_set_reads_and_never_writes(tmp_path):

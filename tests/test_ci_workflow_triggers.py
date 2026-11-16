@@ -310,7 +310,58 @@ class TestTheMatrixNarrowsWhereItShould:
         )
         # GitHub's `a && b || c` is Python's, and every JSON array is a
         # truthy literal, so the expression evaluates directly.
-        return json.loads(eval(python))  # noqa: S307 - a literal from our own repo
+        return json.loads(TestTheMatrixNarrowsWhereItShould._eval_boolean_literals(python))
+
+    @staticmethod
+    def _eval_boolean_literals(python: str):
+        """Evaluate and/or/==/!= over literals without `eval`.
+
+        Only the node types the translated expression needs are accepted; any
+        other node (a call, a name, an attribute) raises, so a workflow edit
+        cannot smuggle code into the test process.
+        """
+        import ast
+
+        def walk(node):
+            if isinstance(node, ast.Expression):
+                return walk(node.body)
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, (ast.List, ast.Tuple)):
+                return [walk(e) for e in node.elts]
+            if isinstance(node, ast.BoolOp):
+                # Python's and/or return an operand, as GitHub's &&/|| do.
+                if isinstance(node.op, ast.And):
+                    result = None
+                    for v in node.values:
+                        result = walk(v)
+                        if not result:
+                            return result
+                    return result
+                if isinstance(node.op, ast.Or):
+                    result = None
+                    for v in node.values:
+                        result = walk(v)
+                        if result:
+                            return result
+                    return result
+            if isinstance(node, ast.Compare):
+                left = walk(node.left)
+                for op, comparator in zip(node.ops, node.comparators, strict=True):
+                    right = walk(comparator)
+                    if isinstance(op, ast.Eq):
+                        ok = left == right
+                    elif isinstance(op, ast.NotEq):
+                        ok = left != right
+                    else:
+                        raise ValueError(f"unsupported operator {type(op).__name__}")
+                    if not ok:
+                        return False
+                    left = right
+                return True
+            raise ValueError(f"unsupported expression node {type(node).__name__}")
+
+        return walk(ast.parse(python, mode="eval"))
 
     @pytest.mark.parametrize("job", ["test", "collect"])
     @pytest.mark.parametrize(("event", "infra", "queue_passed", "expected"), CASES)
@@ -371,3 +422,10 @@ class TestWorkflowStillParses:
     def test_ci_yaml_is_valid(self, ci):
         assert ci["name"] == "CI"
         assert "gate" in ci["jobs"]
+
+
+class TestMatrixEvaluatorRefusesCode:
+    @pytest.mark.parametrize("expr", ["__import__('os').getcwd()", "x", "1 < 2", "'a'.upper()"])
+    def test_anything_beyond_literals_and_equality_raises(self, expr):
+        with pytest.raises(ValueError):
+            TestTheMatrixNarrowsWhereItShould._eval_boolean_literals(expr)

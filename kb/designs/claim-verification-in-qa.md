@@ -392,7 +392,8 @@ correction to prose is a whole `ReplaceBody`, computed from the current file
 and guarded by a unique match. If a correction must survive a concurrent edit
 elsewhere in the body, that needs a body-span operation. Question 4.
 
-`qa fix` keeps its own rules (dates, missing defaults, links, tag case).
+`qa fix` keeps its own rules (dates, links, tag case). Required fields stay manual
+with `no_safe_default`; the author must choose their values.
 ADR-0042 decision 12 already moves those onto operations as part of B6.
 `apply-verdicts` is a separate command, not a `--fix-rule`. A verdict file
 carries outside evidence, and `qa fix` repairs only what validation itself

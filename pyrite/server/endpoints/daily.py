@@ -8,11 +8,9 @@ from ...exceptions import KBNotFoundError
 from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
 from ...services.kb_service import KBService
 from ..api import (
-    TIER_LEVELS,
-    KBRoleResolver,
     get_access_policy,
-    get_kb_role_resolver,
     get_kb_service,
+    get_read_kb_service,
     limiter,
     requires_kb_tier,
 )
@@ -168,48 +166,34 @@ def _validate_date(date_str: str) -> None:
     response_model=EntryResponse,
 )
 @limiter.limit("60/minute")
-async def get_or_create_daily_note(
+async def get_daily_note(
     request: Request,
     date_str: str,
     kb: str = Query(..., description="KB name"),
-    svc: KBService = Depends(get_kb_service),
-    role_of: KBRoleResolver = Depends(get_kb_role_resolver),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Get a daily note for the given date, auto-creating it only for a
-    write-tier caller.
+    """The daily note for the given date, or 404 when there is none.
 
-    If a daily note already exists (entry id = ``daily-YYYY-MM-DD``), it is
-    returned regardless of tier. Otherwise, a write-tier caller gets a new
-    note created from the ``daily`` template (if present in the KB's
-    ``_templates/`` directory) or from a sensible default. A caller
-    without write access on this KB never triggers creation -- merely
-    viewing/navigating must not have write side effects
-    (web-daily-notes-view-side-effect) -- and gets 404 instead; the
-    frontend uses `POST /daily/{date_str}` to create explicitly.
+    A GET writes nothing, for any caller: only a write route asks where a
+    write lands (ADR-0044 §1). Creating is `POST /daily/{date_str}`, which the
+    web view's "Start today's note" calls.
     """
     _validate_date(date_str)
 
     svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     entry_id = _daily_entry_id(date_str)
-    readable = scope.as_set()
-
-    existing = _load_existing_daily_note(svc, entry_id, kb, readable)
+    existing = _load_existing_daily_note(svc, entry_id, kb, scope.as_set())
     if existing:
         return existing
-
-    effective_role = await role_of(kb)
-    if effective_role is None or TIER_LEVELS.get(effective_role, -1) < TIER_LEVELS.get("write", 99):
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "NOT_FOUND",
-                "message": f"No daily note for '{date_str}' in KB '{kb}'",
-            },
-        )
-
-    return _create_daily_note(svc, entry_id, kb, date_str, readable)
+    raise HTTPException(
+        status_code=404,
+        detail={
+            "code": "NOT_FOUND",
+            "message": f"No daily note for '{date_str}' in KB '{kb}'",
+        },
+    )
 
 
 @router.post(

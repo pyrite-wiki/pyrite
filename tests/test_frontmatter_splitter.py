@@ -4,7 +4,7 @@
 principles 1 and 8). Its reference is the convention other tools follow -- Hugo
 and YAML -- not Pyrite's old loader, which was the code under test, not the
 property (Andon #745). ``ORACLE`` below records, per input class, what Hugo
-0.151.2 does (recorded from a run; ``test_oracle_matches_live_hugo`` re-runs it
+0.168.0 does (recorded from a run; ``test_oracle_matches_live_hugo`` re-runs it
 when ``hugo`` is installed), what YAML does, and what Pyrite does, classed as
 ``agrees``, ``fixed`` (the old Pyrite disagreed with Hugo and now agrees) or
 ``departs`` (a stated choice, with the reason, that refuses visibly).
@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.exceptions import FrontmatterError
+from pyrite.services.acting import local_process
 
 
 def _mod():
@@ -208,8 +209,9 @@ def test_repository_reads_every_row_as_the_splitter_does(repo, tmp_path, case):
         return
     entry = repo._load_entry(_write(tmp_path, text))
     assert entry.body == body
-    # A mapping with no `type:` loads as a note; an empty one falls back to an event.
-    assert type(entry).__name__ == ("NoteEntry" if yaml_text.strip() else "EventEntry")
+    # A mapping with no `type:` loads as a note, and so does an empty one: the
+    # type the loader dispatches an untyped file to, never an event (#1261).
+    assert type(entry).__name__ == "NoteEntry"
 
 
 @pytest.mark.parametrize(
@@ -255,10 +257,12 @@ def test_schema_check_reads_quoted_dashes(tmp_path):
     assert body == "Body here."
 
 
+@pytest.mark.control(reason="unchanged for the local process, which the test now binds")
 def test_add_entry_from_file_reads_quoted_dashes(kb_service, tmp_path):
-    entry, result = kb_service.add_entry_from_file(
-        "test-events", _write(tmp_path, TRICKY), validate_only=True
-    )
+    with local_process():  # the CLI's `pyrite add`, the local process only
+        entry, result = kb_service.add_entry_from_file(
+            "test-events", _write(tmp_path, TRICKY), validate_only=True
+        )
     assert entry.title == "Rental --- Chicago"
     assert entry.body == "Body here."
 
@@ -269,7 +273,7 @@ def test_add_entry_from_file_reads_quoted_dashes(kb_service, tmp_path):
 def test_add_entry_from_file_unterminated_is_refused(kb_service, tmp_path):
     from pyrite.exceptions import ValidationError
 
-    with pytest.raises(ValidationError, match="closing"):
+    with local_process(), pytest.raises(ValidationError, match="closing"):
         kb_service.add_entry_from_file(
             "test-events", _write(tmp_path, "---\ntype: note\ntitle: A\n"), validate_only=True
         )
@@ -285,7 +289,8 @@ def test_template_file_reads_quoted_dashes(tmp_path):
     from pyrite.services.template_service import TemplateService
 
     parsed = TemplateService._parse_template_file(
-        _write(tmp_path, '---\ntemplate_name: T\nentry_type: note\ntitle: "a --- b"\n---\nBody\n')
+        _write(tmp_path, '---\ntemplate_name: T\nentry_type: note\ntitle: "a --- b"\n---\nBody\n'),
+        tmp_path,
     )
     assert parsed["frontmatter"]["title"] == "a --- b"
     assert parsed["body"] == "Body\n"
@@ -294,7 +299,12 @@ def test_template_file_reads_quoted_dashes(tmp_path):
 def test_export_does_not_build_an_entry_from_prose_between_two_rules(tmp_path):
     from pyrite.cli.export_commands import _load_entry_from_result
 
+    from pyrite.config import KBConfig, PyriteConfig
+
     class Svc:
+        # The export reads an entry's file only inside its KB's folder.
+        config = PyriteConfig(knowledge_bases=[KBConfig(name="k", path=tmp_path)])
+
         def load_entry_from_disk(self, entry_id, kb):
             return "from-disk"
 
@@ -302,13 +312,6 @@ def test_export_does_not_build_an_entry_from_prose_between_two_rules(tmp_path):
     path = _write(tmp_path, "Intro.\n\n---\ntitle: Not Frontmatter\n---\nmore\n")
     got = _load_entry_from_result({"file_path": str(path), "id": "x", "kb_name": "k"}, Svc(), None)
     assert got == "from-disk"
-
-
-def test_journalism_known_entities_reads_quoted_dashes(tmp_path):
-    from pyrite_journalism_investigation.known_entities import _extract_aliases
-
-    path = _write(tmp_path, TRICKY)
-    assert _extract_aliases({"file_path": str(path)}) == ["Foo", "Bar"]
 
 
 def test_markdown_importer_reads_a_file_with_no_body_and_no_final_newline():
@@ -343,7 +346,7 @@ def test_id_pin_inserts_before_a_closing_line_with_trailing_blanks():
 # ---- the oracle: Hugo and YAML, not the old loader ----------------------------
 #
 # (id, text, hugo, hugo_body, yaml, pyrite, body, status, why)
-#   hugo       "fm" | "none" | "err": Hugo 0.151.2 building the text as content/p.md
+#   hugo       "fm" | "none" | "err": Hugo 0.168.0 building the text as content/p.md
 #              (RawContent stripped = hugo_body)
 #   yaml       what a YAML parser says about the same line, in words
 #   pyrite     the result class of split_frontmatter; body when it is Frontmatter
@@ -394,13 +397,15 @@ ORACLE = [
     (
         "open-trailing-tab",
         f"---\t\n{Y}---\nbody\n",
-        ERR,
-        None,
+        FM,
+        "body",
         "",
         "Malformed",
         None,
-        "agrees",
-        "",
+        "departs",
+        "Hugo 0.168.0 reads the tabbed fence as front matter; here the file is "
+        "refused, because as a YAML stream the tabbed fence raises in PyYAML "
+        "and ruamel",
     ),
     (
         "open-comment",
@@ -822,7 +827,7 @@ def _readers(tmp_path, kb_service):
     """name -> fn(text) -> ('loaded', title, body) | ('plain',) | ('refused', why)."""
     from pyrite.cli import export_commands as ec
     from pyrite.cli.schema_commands import _parse_frontmatter
-    from pyrite.config import KBConfig
+    from pyrite.config import KBConfig, PyriteConfig
     from pyrite.exceptions import PyriteError
     from pyrite.formats.importers.markdown_importer import import_markdown
     from pyrite.services.id_pin_service import PinRefusedError, insert_id_line
@@ -853,7 +858,8 @@ def _readers(tmp_path, kb_service):
         return ("refused", "errors") if errors else ("loaded", fm["title"], body)
 
     def add_from_file(text):
-        e, _ = kb_service.add_entry_from_file("test-events", path_of(text), validate_only=True)
+        with local_process():
+            e, _ = kb_service.add_entry_from_file("test-events", path_of(text), validate_only=True)
         return ("loaded", e.title, e.body)
 
     def extract(text):
@@ -861,7 +867,7 @@ def _readers(tmp_path, kb_service):
         return ("refused", "None") if m is None else ("loaded", m["title"], "")
 
     def template(text):
-        t = TemplateService._parse_template_file(path_of(text))
+        t = TemplateService._parse_template_file(path_of(text), tmp_path)
         if t["frontmatter"] == {} and t["body"] == text:
             return ("plain",)
         return ("loaded", t["frontmatter"]["title"], t["body"].strip())
@@ -875,10 +881,15 @@ def _readers(tmp_path, kb_service):
 
     def export(text):
         class Svc:
+            # The export reads an entry's file only inside its KB's folder.
+            config = PyriteConfig(knowledge_bases=[KBConfig(name="t", path=tmp_path)])
+
             def load_entry_from_disk(self, *_):
                 return None
 
-        e = ec._load_entry_from_result({"file_path": str(path_of(text))}, Svc(), None)
+        e = ec._load_entry_from_result(
+            {"file_path": str(path_of(text)), "kb_name": "t"}, Svc(), None
+        )
         return ("refused", "None") if e is None else ("loaded", e.title, e.body)
 
     def create(text):
@@ -899,13 +910,6 @@ def _readers(tmp_path, kb_service):
         out = insert_id_line(text, "abc")
         return ("loaded", "A", "") if "id: abc" in out else ("refused", "no id")
 
-    def aliases(text):
-        from pyrite_journalism_investigation.known_entities import _extract_aliases
-
-        p = path_of(text.replace("type: note", "type: note\naliases: [Zed]"))
-        found = [a.lower() for a in _extract_aliases({"file_path": str(p)})]
-        return ("loaded", "A", "") if found == ["zed"] else ("refused", "no aliases")
-
     return {
         "repository": guard(repo),
         "schema-check": guard(schema),
@@ -916,7 +920,6 @@ def _readers(tmp_path, kb_service):
         "create-body-file": guard(create),
         "export": guard(export),
         "ids-pin": guard(pin),
-        "journalism-aliases": guard(aliases),
     }
 
 
@@ -958,7 +961,6 @@ def test_every_reader_follows_the_rule_or_refuses(row, tmp_path, kb_service):
             if name in (
                 "git-change-summary",
                 "ids-pin",
-                "journalism-aliases",
                 "create-body-file",  # drops type/title from the returned fields
             ):
                 # these read part of the file: they find what is there, from the right place

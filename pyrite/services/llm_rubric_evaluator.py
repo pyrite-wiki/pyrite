@@ -17,7 +17,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from ..exceptions import EvaluationFailedError
+from ..exceptions import EvaluationFailedError, outside_text
 from ..utils.metadata import parse_metadata
 
 if TYPE_CHECKING:
@@ -67,7 +67,9 @@ class LLMRubricEvaluator:
         except Exception as exc:
             logger.warning("LLM rubric evaluation failed", exc_info=True)
             raise EvaluationFailedError(
-                entry_id, f"the model call failed: {type(exc).__name__}: {exc}"
+                entry_id,
+                f"the model call failed: {type(exc).__name__}: "
+                f"{outside_text(exc, already_logged=True)}",
             ) from exc
 
         return self._parse_response(response, entry, rubric_items)

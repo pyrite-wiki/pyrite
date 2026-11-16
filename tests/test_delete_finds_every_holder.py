@@ -35,7 +35,7 @@ def test_delete_removes_every_file_stating_the_id(env):
     env.im.sync_incremental(KB)
     env.write("x.md", _note("gamma", "Copy"))
     env.write("keep.md", _note("keep", "Keep"))
-    assert _service(env).delete_entry("gamma", KB)
+    assert _service(env).delete_entry("gamma", KB, readable_kbs=None)
     assert not (env.root / "notes/gamma.md").exists()
     assert not (env.root / "x.md").exists()
     assert (env.root / "keep.md").exists()
@@ -52,6 +52,6 @@ def test_delete_refuses_when_a_holder_only_derives_the_id(env):
     env.write("other.md", _note(None, "Gamma"))
     before = env.snapshot()
     with pytest.raises(ValidationError) as err:
-        _service(env).delete_entry("gamma", KB)
+        _service(env).delete_entry("gamma", KB, readable_kbs=None)
     assert "notes/gamma.md" in str(err.value) and "other.md" in str(err.value)
     assert env.snapshot() == before

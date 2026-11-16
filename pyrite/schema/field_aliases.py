@@ -30,6 +30,7 @@ from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from typing import Any
 
+from ..exceptions import RefusedValueError
 from .kb_schema import KBSchema
 from .reserved import RESERVED_FIELD_NAMES
 
@@ -195,12 +196,12 @@ def refuse_conflicting_spellings(
 METADATA = "metadata"
 
 
-class NotAFieldError(ValueError):
+class NotAFieldError(RefusedValueError):
     """The path's field would be ``metadata``, which is not a field: the bare
     key, ``metadata.metadata``, or any deeper wrapping (#994)."""
 
 
-class SpelledTwiceError(ValueError):
+class SpelledTwiceError(RefusedValueError):
     """The file spells one field at two paths (``k:`` and ``metadata.k``, or a
     field and its alias). ``spellings`` are the paths found."""
 
@@ -245,7 +246,7 @@ def field_at(cls: type, entry_type: str, path: Any) -> tuple[str, tuple[Any, ...
     """
     segs = path_segments(path)
     if not segs or not isinstance(segs[0], str):
-        raise ValueError(f"an operation's path must start with a key, got {path!r}")
+        raise RefusedValueError(f"an operation's path must start with a key, got {path!r}")
     if segs[0] == METADATA:
         if len(segs) == 1 or not isinstance(segs[1], str):
             raise NotAFieldError(

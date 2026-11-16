@@ -74,6 +74,12 @@ SOFTWARE_KB_PRESET = {
             "optional": ["runbook_kind", "audience"],
             "subdirectory": "runbooks/",
         },
+        "work_log": {
+            "description": "Work session linked to a backlog item",
+            "required": ["title"],
+            "optional": ["item_id", "date", "decisions", "rejected", "open_questions"],
+            "subdirectory": "work-logs/",
+        },
         "milestone": {
             "description": "Project milestone for grouping backlog items",
             "required": ["title"],
@@ -105,6 +111,7 @@ SOFTWARE_KB_PRESET = {
         "components",
         "backlog",
         "runbooks",
+        "work-logs",
         "milestones",
         "tasks",
     ],

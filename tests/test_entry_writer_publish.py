@@ -278,3 +278,58 @@ def test_a_failed_fstat_leaves_a_file_another_writer_put_there(tmp_path: Path, m
         publish_exclusive(tmp, target)
 
     assert target.read_text(encoding="utf-8") == "theirs\n"
+
+
+# A symbolic link at the target name is never taken for the published file.
+# The publish confirms what it made by `lstat`, never by
+# following a link: a link at the name pointing at the temp file names the
+# temp file's inode through `stat`, and following it would report a publish
+# that put nothing at the name. `link_exclusive` is driven with the name
+# itself (`folder(..., named=True)`): `publish_exclusive` above resolves an
+# in-root link first, as `KBFiles` writes do by design.
+
+
+def _publish_at_the_name(tmp: str, target: Path) -> None:
+    with KBFiles(target.parent).folder(target, named=True) as (folder, name):
+        folder.link_exclusive(os.path.basename(tmp), folder, name)
+
+
+@pytest.mark.control(reason="pins the no-follow check: already lstat, must stay so")
+@pytest.mark.parametrize("failure", ["none", "eexist-after-link", "eio-no-link"])
+def test_a_symlink_at_the_target_pointing_at_the_temp_file_is_refused(
+    tmp_path: Path, monkeypatch, failure
+):
+    target = tmp_path / "note.md"
+    tmp = _tmp_with(target)
+    target.symlink_to(os.path.basename(tmp))
+    if failure == "eexist-after-link":
+
+        def link_eexist(src, dst, *args, **kwargs):
+            raise FileExistsError(errno.EEXIST, "File exists")
+
+        monkeypatch.setattr(os, "link", link_eexist)
+    elif failure == "eio-no-link":
+
+        def link_eio(src, dst, *args, **kwargs):
+            raise OSError(errno.EIO, "Input/output error")
+
+        monkeypatch.setattr(os, "link", link_eio)
+
+    with pytest.raises(FileExistsError):
+        _publish_at_the_name(tmp, target)
+
+    assert target.is_symlink(), "the link at the name was left as it was"
+    assert os.path.exists(tmp), "on a refusal the caller still owns the temp file"
+
+
+@pytest.mark.control(reason="pins the no-follow check: already lstat, must stay so")
+def test_a_dangling_symlink_at_the_target_is_refused(tmp_path: Path):
+    target = tmp_path / "note.md"
+    tmp = _tmp_with(target)
+    target.symlink_to(tmp_path / "elsewhere.md")
+
+    with pytest.raises(FileExistsError):
+        _publish_at_the_name(tmp, target)
+
+    assert target.is_symlink()
+    assert not (tmp_path / "elsewhere.md").exists(), "nothing written through the link"

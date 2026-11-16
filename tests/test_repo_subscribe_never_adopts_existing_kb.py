@@ -106,7 +106,9 @@ def env(tmp_path, monkeypatch):
 
     sources: dict[str, Path] = {}
 
-    def clone_from_local(remote_url, local_path, branch="main", depth=1, token=None):
+    def clone_from_local(
+        remote_url, local_path, branch="main", depth=1, token=None, allowed_hosts=None, **_
+    ):
         src = sources[remote_url]
         cmd = ["git", "clone", "-q", "--branch", branch, "--", str(src), str(local_path)]
         subprocess.run(cmd, check=True, capture_output=True, env=_git_env(), timeout=120)
@@ -117,7 +119,7 @@ def env(tmp_path, monkeypatch):
         GitService,
         "fork_repo",
         staticmethod(
-            lambda owner, repo, token: (
+            lambda owner, repo, token, proxy=None: (
                 True,
                 {"clone_url": FORK_CLONE_URL, "full_name": "me/notes"},
             )

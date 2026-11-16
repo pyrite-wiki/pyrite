@@ -154,7 +154,7 @@ def sw_adrs(
 
         table = Table(title="Architecture Decision Records")
         table.add_column("KB", style="dim")
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="dim", no_wrap=True, overflow="fold")
         table.add_column("#", style="cyan", justify="right")
         table.add_column("Title")
         table.add_column("Status", style="yellow")
@@ -304,6 +304,8 @@ def sw_backlog(
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import DEFAULT_LIST_LIMIT, SoftwareKBPlugin
 
+    if epic:
+        kb_name = require_entry_kb(epic, kb_name, entry_type="backlog_item", output_format=fmt)
     plugin = SoftwareKBPlugin()
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
     result = plugin._mcp_backlog(
@@ -327,7 +329,7 @@ def sw_backlog(
             return
         for group in groups:
             table = Table(title=f"Epic: {group['epic_title']} ({group['count']} items)")
-            table.add_column("ID", style="cyan")
+            table.add_column("ID", style="cyan", no_wrap=True, overflow="fold")
             table.add_column("Title")
             table.add_column("Kind", style="blue")
             table.add_column("Status", style="yellow")
@@ -337,7 +339,7 @@ def sw_backlog(
                 table.add_column("Rank", style="magenta")
             for item in group["items"]:
                 row_data = [
-                    item["id"][:12],
+                    item["id"],
                     item["title"],
                     item.get("kind", ""),
                     item["status"],
@@ -364,7 +366,7 @@ def sw_backlog(
         return
 
     table = Table(title="Backlog")
-    table.add_column("ID", style="cyan")
+    table.add_column("ID", style="cyan", no_wrap=True, overflow="fold")
     table.add_column("Title")
     table.add_column("Kind", style="blue")
     table.add_column("Status", style="yellow")
@@ -375,7 +377,7 @@ def sw_backlog(
 
     for item in items:
         row_data = [
-            item["id"][:12],
+            item["id"],
             item["title"],
             item.get("kind", ""),
             item["status"],
@@ -421,7 +423,7 @@ def sw_epics(
         return
 
     table = Table(title="Epics")
-    table.add_column("ID", style="cyan")
+    table.add_column("ID", style="cyan", no_wrap=True, overflow="fold")
     table.add_column("Title")
     table.add_column("Status", style="yellow")
     table.add_column("Priority", style="red")
@@ -431,7 +433,7 @@ def sw_epics(
         pct = ep["completion_pct"]
         bar = f"{ep['done']}/{ep['total']} ({pct}%)"
         table.add_row(
-            ep["id"][:20],
+            ep["id"],
             ep["title"],
             ep["status"],
             ep["priority"],
@@ -483,7 +485,7 @@ def sw_epic_detail(
             continue
         console.print(f"[bold yellow]{status}[/bold yellow] ({len(items)})")
         for item in items:
-            console.print(f"  {item['id'][:20]}  {item['title']}")
+            console.print(f"  {item['id']}  {item['title']}")
     console.print()
 
 
@@ -721,10 +723,12 @@ def sw_conventions(
 
 def _link_reason(e: Exception) -> str:
     """Why a standard was not migrated, without a path."""
+    from pyrite.exceptions import outside_text
+
     links = getattr(e, "links", None)
     if links is not None:
         return f"its file has {links} hard links; break the link, then run again"
-    return str(e)
+    return outside_text(e)
 
 
 @sw_app.command("migrate-standards")
@@ -735,9 +739,11 @@ def sw_migrate_standards(
     """Migrate type:standard entries to programmatic_validation or development_convention."""
     from pathlib import Path
 
+    from pyrite.exceptions import EntryLoadError, KBReadOnlyError
     from pyrite.storage.database import PyriteDB
     from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
     from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
+    from pyrite.storage.repository import KBRepository
     from pyrite.utils.atomic_write import HardLinked
     from pyrite.utils.frontmatter import Frontmatter, describe, split_frontmatter
     from pyrite.utils.kb_files import KBFileIsLinkError, KBFileOutsideRootError
@@ -789,6 +795,14 @@ def sw_migrate_standards(
                 console.print(f"  [red]Skip[/red] {row['title']}: its KB is not registered")
                 skipped += 1
                 continue
+            try:
+                # A read-only KB takes no write, from any command: the one
+                # check every writer asks (`KBConfig.refuse_writes`).
+                row_kb.refuse_writes()
+            except KBReadOnlyError:
+                console.print(f"  [red]Skip[/red] {row['title']}: its KB is read-only")
+                skipped += 1
+                continue
             root = row_kb.path
             if not path.exists():
                 console.print(
@@ -817,6 +831,16 @@ def sw_migrate_standards(
                 console.print(f"  [red]Skip[/red] {row['title']}: {describe(split)}")
                 skipped += 1
                 continue
+            # A row can be older than the file: one its type can no longer
+            # load is written not at all (ADR-0042 decision 8a).
+            try:
+                KBRepository(row_kb).load_entry_from_bytes(path, raw)
+            except EntryLoadError as e:
+                console.print(f"  [red]Skip[/red] {row['title']}: {e}", markup=False)
+                skipped += 1
+                continue
+            except Exception:  # noqa: BLE001 - not this rule's cause; apply() decides
+                pass
             values = load_yaml(split.text)
             ops: list[Any] = [Set("type", new_type)]
             if isinstance(values, dict) and "enforced" in values:
@@ -1437,6 +1461,8 @@ def sw_log_cmd(
         console.print(path_line("  File: ", result.get("filename", ""), path_style="cyan"))
     else:
         console.print(f"[red]Error:[/red] {result.get('error', 'Unknown error')}")
+        if result.get("suggestion"):
+            console.print(result["suggestion"], markup=False, highlight=False)
         raise typer.Exit(1)
 
 
@@ -1488,10 +1514,12 @@ def sw_components(
             _json_output(
                 [
                     {
+                        "id": r["id"],
                         "title": r["title"],
                         "kind": r["_meta"].get("kind", ""),
                         "path": r["_meta"].get("path", ""),
                         "owner": r["_meta"].get("owner", ""),
+                        "kb_name": r.get("kb_name", kb_name or ""),
                     }
                     for r in rows
                 ]
@@ -1499,6 +1527,7 @@ def sw_components(
             return
 
         table = Table(title="Components")
+        table.add_column("ID", style="cyan", no_wrap=True, overflow="fold")
         table.add_column("Title")
         table.add_column("Kind", style="blue")
         table.add_column("Path", style="dim")
@@ -1507,6 +1536,7 @@ def sw_components(
         for row in rows:
             meta = row["_meta"]
             table.add_row(
+                row["id"],
                 row["title"],
                 meta.get("kind", ""),
                 meta.get("path", ""),

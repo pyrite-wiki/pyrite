@@ -63,10 +63,18 @@ DEFAULT_BOARD_CONFIG = {
 
 
 def load_board_config(kb_path: Path) -> dict:
-    """Load board config from board.yaml in KB root, falling back to defaults."""
+    """Load board config from board.yaml in KB root, falling back to defaults.
+
+    Read only inside the KB: a board.yaml that is a link out of it, or a file
+    with more than one hard link, raises ``KBFileReadOutsideRootError``
+    (``OUTSIDE_KB_ROOT``); its lanes are not the KB's to show."""
+    from pyrite.utils.kb_files import KBFiles
+
     board_file = kb_path / "board.yaml"
-    if board_file.exists():
+    # The KB's own probe: a link out is there whatever it points at, and the
+    # read below refuses it, so the answer never says what lies outside.
+    if KBFiles(kb_path).present(board_file):
         from pyrite.utils.yaml import load_yaml_file
 
-        return load_yaml_file(board_file)
+        return load_yaml_file(board_file, kb_root=kb_path)
     return DEFAULT_BOARD_CONFIG.copy()

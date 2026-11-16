@@ -518,7 +518,7 @@ CALL_SITES: dict[tuple[str, str], tuple[int, str]] = {
         "create_entry",
     ): (
         1,
-        "safe: persist_entry, the investigation tools' file write over MCP (bulk edges' "
+        "safe: persist_entry, the investigation tools' one file write, MCP and CLI (bulk edges' "
         "caller `fields` and FtM metadata go under `metadata`); create_entry refuses a "
         "managed field at any spelling, metadata included (#1010), and owns nothing",
     ),
@@ -545,8 +545,9 @@ CALL_SITES: dict[tuple[str, str], tuple[int, str]] = {
         "owner: `sw new-adr` names owns={adr_number}; test_create_entry_lets_an_in_process_owner...",
     ),
     ("extensions/software-kb/src/pyrite_software_kb/plugin.py", "create_entry"): (
-        1,
-        "safe: fixed backlog_item fields (kind, priority, status, effort, tags)",
+        3,
+        "owner: ADR creation owns only its computed adr_number; backlog items and work logs "
+        "forward fixed fields and own no managed fields",
     ),
     ("extensions/zettelkasten/src/pyrite_zettelkasten/cli.py", "create_entry"): (
         1,

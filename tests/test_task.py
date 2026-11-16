@@ -738,9 +738,12 @@ class TestMCPToolSchemas:
         assert tags["items"] == {"type": "string"}
         assert "tags" not in schema["required"]
 
-    def test_task_claim_requires_all_fields(self):
+    def test_task_claim_requires_the_task_and_kb(self):
+        # The assignee defaults to the signed-in caller, so the schema
+        # cannot require it; the handler requires it when there is no caller.
         schema = WRITE_TOOLS["task_claim"]["inputSchema"]
-        assert set(schema["required"]) == {"task_id", "kb_name", "assignee"}
+        assert set(schema["required"]) == {"task_id", "kb_name"}
+        assert "assignee" in schema["properties"]
 
     def test_task_decompose_schema(self):
         schema = WRITE_TOOLS["task_decompose"]["inputSchema"]

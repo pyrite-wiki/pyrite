@@ -15,8 +15,21 @@ from ..config import PyriteConfig
 from ..exceptions import EntryNotFoundError
 from ..storage.database import PyriteDB
 from ..storage.repository import KBRepository
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles
 
 logger = logging.getLogger(__name__)
+
+
+def _read_entry_file(root: Path, file_path: Path | str) -> bytes | None:
+    """The entry file's bytes, read inside the KB at ``root``
+    (``KBFiles.read_bytes``), or None: absent, or not the KB's (a link out of
+    it, a file with more than one hard link). A review records, and its
+    status compares, the blob hash of these bytes, and a hash of a file
+    outside the KB is not the KB's to give."""
+    try:
+        return KBFiles(root).read_bytes(Path(file_path))
+    except KBFileOutsideRootError:
+        return None
 
 
 class ReviewService:
@@ -45,7 +58,9 @@ class ReviewService:
         if not file_path:
             raise EntryNotFoundError(f"Entry not found on disk: {entry_id}")
 
-        content = Path(file_path).read_bytes()
+        content = _read_entry_file(kb_config.path, file_path)
+        if content is None:
+            raise EntryNotFoundError(f"Entry not found on disk: {entry_id}")
         content_hash = git_blob_hash(content)
 
         return self.db.create_review(
@@ -94,7 +109,9 @@ class ReviewService:
         if not file_path:
             return {"current": False, "review": review}
 
-        content = Path(file_path).read_bytes()
+        content = _read_entry_file(kb_config.path, file_path)
+        if content is None:
+            return {"current": False, "review": review}
         current_hash = git_blob_hash(content)
 
         return {

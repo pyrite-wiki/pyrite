@@ -743,6 +743,38 @@ class TestTimeline:
         assert timeline[0]["id"] == "e1"
         assert timeline[1]["id"] == "e2"
 
+    def test_timeline_status_filters_use_the_effective_status(self, backend):
+        """One conformance case for #62: `status` matches the effective
+        status (a parent done by its children counts though its file says
+        `open`), `exclude_status` keeps rows with no status, and both run
+        before `LIMIT`."""
+        backend.upsert_entry(_make_entry("e1", date="2024-01-15", importance=1))
+        backend.upsert_entry(
+            _make_entry("p", date="2024-01-20", importance=1, entry_type="task", status="open")
+        )
+        backend.upsert_entry(
+            _make_entry("p-a", entry_type="task", status="done", metadata={"parent": "p"})
+        )
+        backend.upsert_entry(
+            _make_entry("p-b", entry_type="task", status="cancelled", metadata={"parent": "p"})
+        )
+
+        timeline = backend.get_timeline(status="done")
+        assert [row["id"] for row in timeline] == ["p"]
+
+        timeline = backend.get_timeline(exclude_status=["done"], limit=1)
+        # `p` (effective `done`) is dropped, `e1` has no status and is kept:
+        # what fills the one-row page proves the filter ran before LIMIT.
+        assert [row["id"] for row in timeline] == ["e1"]
+
+    def test_timeline_status_and_exclude_status_serve_both_kinds(self, backend):
+        backend.upsert_entry(_make_entry("e1", date="2024-01-15", importance=1, status="draft"))
+        backend.upsert_entry(_make_entry("e2", date="2024-01-16", importance=1))
+        timeline = backend.get_timeline(exclude_status=["draft"])
+        assert [row["id"] for row in timeline] == ["e2"]
+        timeline = backend.get_timeline(status="draft")
+        assert [row["id"] for row in timeline] == ["e1"]
+
 
 # =========================================================================
 # Folder queries
@@ -1055,6 +1087,25 @@ def embedded_backend(backend):
     if not backend.has_embeddings():
         pytest.skip("backend cannot store embeddings (no vector support)")
     return backend
+
+
+class TestRepeatedTypeFilterConformance:
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        ("filters", "expected"),
+        [
+            ({"entry_types": ["mechanism", "theme"]}, {"mech", "theme"}),
+            ({"exclude_types": ["mechanism"]}, {"theme", "task"}),
+            ({"entry_types": ["mechanism"], "exclude_types": ["mechanism"]}, set()),
+        ],
+        ids=["include-many", "exclude", "same-type-included-and-excluded"],
+    )
+    def test_type_sets_filter_real_backend_rows(self, embedded_backend, leg, filters, expected):
+        if leg == "keyword":
+            rows = embedded_backend.search("Title", kb_name="test", **filters)
+        else:
+            rows = embedded_backend.search_semantic(_near_vector(), kb_name="test", **filters)
+        assert {row["id"] for row in rows} == expected
 
 
 class TestSemanticFilterConformance:
@@ -1931,3 +1982,91 @@ class TestArchivedExclusionRetry:
         knn = self._knn(sql_log)
         assert [p[1] for _, p in knn] == [4, 8], knn
         assert all("rowid IN" in q for q, _ in knn), knn
+
+
+# Filters on a column of the row itself, correlated with its KB before the fix;
+# the tag filters were not.
+_FILTERS_SAFE_BEFORE = {
+    "entry_type",
+    "entry_types",
+    "state",
+    "fips",
+    "status",
+    "date_from",
+    "date_to",
+}
+
+
+class TestEveryFilterIsScopedToTheRowsKB:
+    """A filter on a search of KB K is evaluated against K's row only.
+
+    Entry ids are unique within a KB, not across KBs. Every filter of both
+    legs is listed here, each with a same-id entry in a second KB that
+    satisfies it while K's entry does not: K's entry must not match.
+    """
+
+    # (search kwargs, what the other KB's same-id entry carries)
+    FILTERS = {
+        "tags": ({"tags": ["only-elsewhere"]}, {"tags": ["only-elsewhere"]}),
+        "two-tags": (
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+        ),
+        "entry_type": ({"entry_type": "event"}, {"entry_type": "event"}),
+        "entry_types": ({"entry_types": ["event"]}, {"entry_type": "event"}),
+        "state": ({"state": "MI"}, {"state": "MI"}),
+        "fips": ({"fips": "26163"}, {"fips": "26163"}),
+        "status": ({"status": "processed"}, {"status": "processed"}),
+        "date_from": ({"date_from": "2030-01-01"}, {"date": "2030-06-01"}),
+        "date_to": ({"date_to": "2000-01-01"}, {"date": "1999-06-01"}),
+    }
+
+    @pytest.fixture
+    def two_kbs(self, backend_with_db):
+        backend, _ = backend_with_db
+        return backend
+
+    @pytest.mark.parametrize("scope", ["kb_name", "kb_names"])
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param(
+                n,
+                marks=[pytest.mark.control(reason="a column of the row itself, never wrong")]
+                if n in _FILTERS_SAFE_BEFORE
+                else [],
+                id=n,
+            )
+            for n in FILTERS
+        ],
+    )
+    def test_a_same_id_entry_in_another_kb_does_not_satisfy_the_filter(
+        self, two_kbs, name, leg, scope
+    ):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        where = {"kb_name": "test"} if scope == "kb_name" else {"kb_names": ["test"]}
+        if leg == "keyword":
+            rows = backend.search("Title", **where, **search)
+        else:
+            if not (
+                backend.upsert_embedding("dup", "test", _near_vector(1))
+                and backend.upsert_embedding("dup", "other", _near_vector(2))
+                and backend.has_embeddings()
+            ):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+            rows = backend.search_semantic(_near_vector(), limit=10, **where, **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == []
+
+    @pytest.mark.control(reason="each filter still matches the entry that carries it")
+    @pytest.mark.parametrize("name", list(FILTERS))
+    def test_the_filter_matches_its_own_kbs_entry(self, two_kbs, name):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        rows = backend.search("Title", kb_name="other", **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == [("other", "dup")]

@@ -14,6 +14,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
+from ..exceptions import EntryTypeError, json_safe_value
 from ..schema import Link, Provenance, Source
 from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import load_yaml
@@ -29,6 +30,21 @@ def _utcnow() -> datetime:
 # The value `importance` takes when frontmatter does not set it. Kept as a name
 # so the write path can tell "unset" from "deliberately 5".
 DEFAULT_IMPORTANCE = 5
+
+
+def lifecycle_validation_error(value: Any) -> dict[str, Any] | None:
+    """The same lifecycle rule for writes and QA's file-value checks."""
+    if value in ("active", "archived"):
+        return None
+    return {
+        "field": "lifecycle",
+        "rule": "enum",
+        # Write validation compares messages to recognize a violation kept
+        # from disk. Different invalid values must remain different errors.
+        "message": f"Invalid lifecycle: {value!r} (expected active or archived)",
+        "expected": ["active", "archived"],
+        "got": json_safe_value(value),
+    }
 
 
 # Base keys every class handles through _base_kwargs / _base_frontmatter even
@@ -440,9 +456,9 @@ class Entry(ABC):
         # so an `id:` line cannot smuggle an unindexable title into the index.
         if isinstance(title, (list, tuple, dict)):
             kind = "a mapping" if isinstance(title, dict) else "a list"
-            raise TypeError(f"title must be a string, got {kind}")
+            raise EntryTypeError(f"title must be a string, got {kind}")
         if isinstance(title, float) and title != title:  # NaN
-            raise TypeError("title must be a string, got NaN")
+            raise EntryTypeError("title must be a string, got NaN")
         if isinstance(title, bool):
             title = "true" if title else "false"
         elif title is not None and not isinstance(title, str):
@@ -697,14 +713,6 @@ class Entry(ABC):
             capture_extra_frontmatter(entry, meta)
         return entry
 
-    @classmethod
-    def load(cls, path: Path) -> "Entry":
-        """Load entry from file."""
-        text = path.read_text(encoding="utf-8")
-        entry = cls.from_markdown(text)
-        entry.file_path = path
-        return entry
-
     def add_link(self, target: str, relation: str, note: str = "", kb: str = "") -> None:
         """Add a link to another entry."""
         self.links.append(Link(target=target, relation=relation, note=note, kb=kb))
@@ -713,13 +721,23 @@ class Entry(ABC):
         """Add a source reference."""
         self.sources.append(Source(title=title, url=url, **kwargs))
 
-    def validate(self) -> list[str]:
-        """Validate entry. Returns list of errors."""
-        errors = []
+    def validation_errors(self) -> list[dict[str, Any]]:
+        """Structured form of :meth:`validate`: one row per problem (#1284).
+
+        Each row carries ``field``, ``rule`` and ``message``, plus ``expected``
+        where the fix is mechanical. A write refusal ships these rows as
+        ``errors`` on REST, MCP and the CLI through ``refusal_fields``, so the
+        caller learns which field failed instead of having to read the
+        sentence. ``validate()`` stays the string view every existing caller
+        (plugins, ``pyrite qa``, the loader) already reads.
+        """
+        errors: list[dict[str, Any]] = []
         if not self.id:
-            errors.append("Entry must have an ID")
+            errors.append({"field": "id", "rule": "required", "message": "Entry must have an ID"})
         if not self.title:
-            errors.append("Entry must have a title")
+            errors.append(
+                {"field": "title", "rule": "required", "message": "Entry must have a title"}
+            )
         elif isinstance(self.title, (list, tuple, dict)) or (
             isinstance(self.title, float) and self.title != self.title
         ):
@@ -732,8 +750,21 @@ class Entry(ABC):
                 kind = "NaN"
             else:
                 kind = "a list"
-            errors.append(f"Entry title must be a string, got {kind} (#711)")
+            errors.append(
+                {
+                    "field": "title",
+                    "rule": "type",
+                    "message": f"Entry title must be a string, got {kind} (#711)",
+                    "expected": "a string",
+                }
+            )
+        if problem := lifecycle_validation_error(self.lifecycle):
+            errors.append(problem)
         return errors
+
+    def validate(self) -> list[str]:
+        """Validate entry. Returns list of error messages."""
+        return [error["message"] for error in self.validation_errors()]
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(id={self.id!r}, title={self.title!r})"

@@ -357,9 +357,13 @@ class LLMService:
                         with urllib.request.urlopen(req, timeout=5) as resp:
                             data = _json.loads(resp.read())
                     except (urllib.error.URLError, OSError) as exc:
+                        # The address and the OS's text are the operator's.
+                        logger.warning(
+                            "AI connection test: cannot reach Ollama at %s: %s", ollama_root, exc
+                        )
                         return {
                             "ok": False,
-                            "message": f"Cannot reach Ollama at {ollama_root}: {exc}",
+                            "message": "Cannot reach Ollama; the server log has the details.",
                         }
                     available = [m["name"] for m in data.get("models", [])]
                     model = self._settings.ai_model
@@ -388,11 +392,13 @@ class LLMService:
                     }
 
         except Exception as exc:
-            msg = str(exc)
-            # Truncate long error messages
-            if len(msg) > 200:
-                msg = msg[:200] + "..."
-            return {"ok": False, "message": f"Connection failed: {msg}"}
+            # The provider's text (an endpoint, a request id, a key prefix) is
+            # the operator's: it goes to the log, the caller gets its class.
+            logger.warning("AI connection test failed: %s", exc, exc_info=True)
+            return {
+                "ok": False,
+                "message": ("Connection failed; the server log has the details."),
+            }
 
         return {"ok": False, "message": f"Unknown provider: {self._provider}"}
 

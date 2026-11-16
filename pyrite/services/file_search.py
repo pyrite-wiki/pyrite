@@ -9,7 +9,7 @@ import logging
 from dataclasses import dataclass, field
 
 from ..config import KBConfig
-from ..storage.repository import KBRepository
+from ..storage.repository import KBRepository, _text_of
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +24,20 @@ class FileSearchResult:
 
 
 def search_kb_files(
-    kbs: list[KBConfig], query: str, entry_type: str | None, limit: int
+    kbs: list[KBConfig],
+    query: str,
+    entry_type: str | None,
+    limit: int,
+    entry_types: list[str] | None = None,
+    exclude_types: list[str] | None = None,
 ) -> FileSearchResult:
-    """Scan ``kbs`` in order for ``query`` (case-insensitive), stopping at ``limit`` hits."""
+    """Scan ``kbs`` in order for ``query`` (case-insensitive), stopping at ``limit`` hits.
+
+    ``entry_types`` and ``exclude_types`` (from the repeatable ``--type`` and
+    ``--exclude-type`` flags, #627) filter the same types the indexed search
+    does: the fallback must print the answers the filters asked for, not a
+    second, less filtered truth.
+    """
     out = FileSearchResult()
     needle = query.lower()
     for kb in kbs:
@@ -36,12 +47,20 @@ def search_kb_files(
         repo = KBRepository(kb)
         for md_file in repo.list_files():
             try:
-                content = md_file.read_text(encoding="utf-8")
+                # Only inside the KB, one name, as every entry load reads: a
+                # link out of the KB is unreadable here, never matched.
+                content = _text_of(repo._read_inside(md_file))
                 out.scanned += 1
                 if needle in content.lower():
                     entry = repo._load_entry(md_file)
 
                     if entry_type and entry.entry_type != entry_type:
+                        continue
+
+                    if entry_types and entry.entry_type not in entry_types:
+                        continue
+
+                    if exclude_types and entry.entry_type in exclude_types:
                         continue
 
                     out.hits.append((kb.name, entry, md_file))

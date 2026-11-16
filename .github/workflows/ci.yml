@@ -77,7 +77,7 @@ jobs:
       infra: ${{ steps.all.outputs.infra || steps.filter.outputs.infra }}
       queue_passed: ${{ steps.all.outputs.queue_passed || steps.queue.outputs.passed }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # ---------------------------------------------------------------------
       # FAIL CLOSED on a merge group. dorny/paths-filter reads the PR's
@@ -147,7 +147,7 @@ jobs:
 
       - id: filter
         if: github.event_name != 'merge_group'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3
         with:
           filters: |
             backend:
@@ -156,6 +156,7 @@ jobs:
               - 'tests/**'
               - 'conftest.py'
               - 'pyproject.toml'
+              - 'uv.lock'
               - 'kb/kb.yaml'
               - '.pre-commit-config.yaml'
               - '.github/workflows/**'
@@ -176,6 +177,7 @@ jobs:
               - 'tests/conftest.py'
               - 'tests/**/conftest.py'
               - 'pyproject.toml'
+              - 'uv.lock'
               - '.pre-commit-config.yaml'
               - '.github/workflows/ci.yml'
               - 'scripts/*.sh'
@@ -185,6 +187,18 @@ jobs:
               - 'conftest.py'
               - 'tests/experimental_surface.py'
 
+  # uv.lock pins every version CI and contributor installs use
+  # (#1357). This fails when pyproject.toml's ranges no longer agree with it;
+  # the fix is `scripts/lock-deps.sh`. Seconds, so it always runs. It does not
+  # fail because a newer release exists: that is `unlocked.yml`'s job.
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: scripts/lock-deps.sh --check
+
   # Fast check for KB-only changes: schema validation, seconds.
   kb:
     needs: changes
@@ -192,18 +206,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
       - run: |
-          uv pip install --system -e ".[cli]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[cli]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
       - name: Validate KB entries
         run: pyrite schema validate kb/
@@ -285,7 +301,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # fetch-depth: 0 -- the fix-commit-has-tests step below walks
           # base.sha..head over the PR's own commit range; the default shallow
@@ -293,7 +309,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -301,12 +317,13 @@ jobs:
         # pip took 80-130 s per job to resolve and build seven editable
         # installs even with a warm wheel cache; uv does it in seconds, and it
         # is the install path the README documents (`uv tool install`).
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         # `.[dev]` is test TOOLING ONLY (pytest/mypy/ruff/xdist) -- it pulls
@@ -317,7 +334,7 @@ jobs:
         # while pip still exited 0 so the install step reported success.
         # `.[all]` is the whole optional surface (API, MCP, CLI, AI).
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           # Extensions are separate distributions, covered by NO pyrite extra.
           # Without this loop 37 test modules fail at collection with
           # ModuleNotFoundError (pyrite_journalism_investigation,
@@ -327,7 +344,7 @@ jobs:
           # pure duplicate.
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -452,7 +469,7 @@ jobs:
 
       - name: Keep the junit report and the durations
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: junit-test-${{ matrix.python-version }}-${{ matrix.shard }}
           path: |
@@ -465,7 +482,7 @@ jobs:
       - name: Keep this shard's coverage for diff coverage
         if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-${{ matrix.shard }}
           path: coverage-${{ matrix.shard }}.xml
@@ -486,22 +503,23 @@ jobs:
       matrix:
         python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || github.event_name == 'merge_group' && '["3.13"]' || needs.changes.outputs.queue_passed == 'true' && '["3.11", "3.12"]' || '["3.11", "3.12", "3.13"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
       - name: Count the selection
@@ -511,7 +529,7 @@ jobs:
             -p no:cacheprovider | tee collect.txt | tail -3
           python scripts/check_shard_union.py count collect.txt > collected-${{ matrix.python-version }}.txt
           cat collected-${{ matrix.python-version }}.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: collected-${{ matrix.python-version }}
           path: collected-${{ matrix.python-version }}.txt
@@ -532,17 +550,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: junit-test-*
           path: reports
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: collected-*
           path: reports
@@ -555,14 +573,14 @@ jobs:
       - name: Merge the durations
         if: ${{ !cancelled() }}
         run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-*/.test_durations || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ !cancelled() }}
         with:
           name: test-durations
           path: test_durations.gz
           if-no-files-found: ignore
           retention-days: 30
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test.result == 'success' }}
         continue-on-error: true
         with:
@@ -590,7 +608,7 @@ jobs:
       - name: Keep the diff coverage for verify-red
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: diff-cover
           path: diff-cover.json
@@ -613,27 +631,28 @@ jobs:
     timeout-minutes: 15
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 2  # HEAD^1 of the PR merge ref is the base commit
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -681,25 +700,26 @@ jobs:
     # bounds each test; this bounds the job.
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
       - name: Run tests with coverage
         run: pytest -n auto --cov=pyrite --cov-report=term-missing --cov-report=xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-xml
           path: coverage.xml
@@ -718,10 +738,10 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: "npm"
@@ -771,21 +791,23 @@ jobs:
     # acceptance criteria include flipping this back.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: "npm"
@@ -796,7 +818,7 @@ jobs:
         # so the venv path must match that expectation.
         run: |
           uv venv .venv
-          uv pip install --python .venv/bin/python -e ".[all]"
+          uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e ".[all]"
 
       - name: Install web dependencies
         working-directory: web
@@ -804,7 +826,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
@@ -825,7 +847,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: web/playwright-report/
@@ -850,28 +872,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         # Same surface as `test`: the smoke layer drives the installed console
         # scripts (pyrite, pyrite-server), so the install has to be the one a
         # user gets, extensions included.
         run: |
-          uv pip install --system -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -900,7 +923,7 @@ jobs:
 
       - name: Keep the junit report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: junit-smoke
           path: junit-smoke.xml
@@ -944,34 +967,35 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The merge base with the PR's base must be in history.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       # The tests run in the throwaway tree with it first on PYTHONPATH; the
       # script refuses (#189) if any package there imports from elsewhere.
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
 
       - name: Fetch the diff coverage
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: diff-cover
 
@@ -991,7 +1015,7 @@ jobs:
 
       - name: Keep the evidence
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-evidence
           path: test-evidence.json
@@ -1040,27 +1064,28 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The base's known-failures file, to check the list only shrank.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
 
       # Never fails the job itself: the ratchet below reads the report and
@@ -1107,7 +1132,7 @@ jobs:
 
       - name: Keep the result for issue filing
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: experimental-result
           path: |
@@ -1139,10 +1164,10 @@ jobs:
       # gh label create / issue create / issue comment.
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # No artifact (the job timed out or crashed) is itself the news.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         continue-on-error: true
         with:
           name: experimental-result
@@ -1167,7 +1192,7 @@ jobs:
   # is what the classifier means by it.
   # ===========================================================================
   gate:
-    needs: [changes, kb, test, shard-report, frontend]
+    needs: [changes, kb, lock, test, shard-report, frontend]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 10

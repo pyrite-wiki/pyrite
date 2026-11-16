@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -27,11 +28,13 @@ from rich.console import Console
 
 from ..exceptions import (
     AmbiguousEntryError,
+    EntryLoadError,
     EntryNotFoundError,
     KBNotFoundError,
     PyriteError,
     UndeclaredTypeError,
     ValidationError,
+    refusal_row_text,
 )
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
@@ -124,7 +127,11 @@ def _parse_link_option(spec: str) -> tuple[str, str]:
     try:
         target, relation, _note = check_link_spec(target, relation)
     except ValidationError as e:
-        raise ValidationError(f"--link '{spec}': {e}") from None
+        raise ValidationError(
+            f"--link '{spec}': {e}",
+            errors=getattr(e, "errors", None),
+            suggestion=getattr(e, "suggestion", None),
+        ) from None
     return target, relation
 
 
@@ -363,11 +370,17 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         # Require title for non-template mode
         if title is None:
-            raise ValidationError("--title is required (unless using --template)")
+            message = "--title is required (unless using --template)"
+            raise ValidationError(
+                message, errors=[{"field": "title", "rule": "required", "message": message}]
+            )
 
         # Require kb for non-template mode
         if kb_name is None:
-            raise ValidationError("--kb is required (unless using --template)")
+            message = "--kb is required (unless using --template)"
+            raise ValidationError(
+                message, errors=[{"field": "kb", "rule": "required", "message": message}]
+            )
 
         # Every --link is parsed and checked before anything is written: a
         # malformed one refuses the create instead of leaving an entry behind
@@ -398,7 +411,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             if field:
                 for fv in field:
                     if "=" not in fv:
-                        raise ValidationError(f"--field must be key=value, got '{fv}'")
+                        message = f"--field must be key=value, got '{fv}'"
+                        raise ValidationError(
+                            message,
+                            errors=[{"field": "--field", "rule": "format", "message": message}],
+                        )
                     k, v = fv.split("=", 1)
                     extra[k] = _parse_field_value(
                         v, _field_type_for(config, kb_name, entry_type, k)
@@ -509,7 +526,14 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         errors = result.get("errors", [])
         if validate_only and errors:
-            raise ValidationError("Validation failed: " + "; ".join(str(e) for e in errors))
+            # The service answers rows, not a sentence, so the sentence is built
+            # here -- `str(row)` printed the dict where the message belonged. The
+            # rows travel with the refusal so a caller can still read the field
+            # and the rule (#1381 review).
+            raise ValidationError(
+                "Validation failed: " + "; ".join(refusal_row_text(row) for row in errors),
+                errors=[row for row in errors if isinstance(row, dict)] or None,
+            )
 
         warnings = list(result.get("warnings", []))
         data: dict[str, Any] = {
@@ -605,7 +629,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             if field:
                 for fv in field:
                     if "=" not in fv:
-                        raise ValidationError(f"--field must be key=value, got '{fv}'")
+                        message = f"--field must be key=value, got '{fv}'"
+                        raise ValidationError(
+                            message,
+                            errors=[{"field": "--field", "rule": "format", "message": message}],
+                        )
                     k, v = fv.split("=", 1)
                     updates[k] = _parse_field_value(
                         v, _field_type_for(config, kb_name, entry_type, k)
@@ -618,7 +646,11 @@ def register_entry_commands(app: typer.Typer) -> None:
                 out: dict[str, Any] = {}
                 for fv in pairs or []:
                     if "=" not in fv:
-                        raise ValidationError(f"expected key=value, got '{fv}'")
+                        message = f"expected key=value, got '{fv}'"
+                        raise ValidationError(
+                            message,
+                            errors=[{"field": "--field", "rule": "format", "message": message}],
+                        )
                     k, v = fv.split("=", 1)
                     value = _parse_field_value(v, _field_type_for(config, kb_name, entry_type, k))
                     out.setdefault(k, []).extend(value if isinstance(value, list) else [value])
@@ -673,27 +705,56 @@ def register_entry_commands(app: typer.Typer) -> None:
         entry_id: str = typer.Argument(..., help="Entry ID to delete"),
         kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
         force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+        output_format: str = typer.Option(
+            "rich", "--format", callback=validate_output_format, help="Output format"
+        ),
     ):
         """Delete an entry from a knowledge base."""
         # Asks before it deletes, so it stays off the outcome contract: a command on
         # the contract does not prompt (ADR-0046, amendment; the prompt rule is the
         # maintainer's open question).
         if not force:
+            if not sys.stdin.isatty():
+                cli_error(
+                    "Deletion needs confirmation, but the input is not a terminal.",
+                    output_format,
+                    error_code="USAGE_ERROR",
+                    suggestion="Pass --force to delete without an interactive confirmation.",
+                )
             if not typer.confirm(f"Delete entry '{entry_id}' from KB '{kb_name}'?"):
                 raise typer.Abort()
 
-        with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
             try:
-                deleted = svc.delete_entry(entry_id, kb_name)
+                deleted = svc.delete_entry(entry_id, kb_name, readable_kbs=UNSCOPED)
                 if not deleted:
-                    cli_error(f"Entry '{entry_id}' not found", "rich", error_code="NOT_FOUND")
+                    cli_error(
+                        f"Entry '{entry_id}' not found", output_format, error_code="NOT_FOUND"
+                    )
+                payload = {"entry_id": entry_id, **deleted.as_dict()}
+                formatted = _format_output(payload, output_format)
+                if formatted is not None:
+                    typer.echo(formatted)
+                    return
                 console.print(f"[green]Deleted:[/green] {entry_id}")
+                if deleted.inbound_links:
+                    console.print(payload["warnings"][0], markup=False)
+                    for link in deleted.inbound_links:
+                        console.print(
+                            f"  {link['kb_name']}:{link['id']} ({link['relation']})",
+                            markup=False,
+                            highlight=False,
+                        )
             except EntryNotFoundError as e:
-                cli_error(str(e), "rich", error_code="NOT_FOUND")
+                cli_error(str(e), output_format, error_code="NOT_FOUND")
             except KBNotFoundError as e:
-                cli_error(str(e), "rich", error_code="KB_NOT_FOUND")
+                cli_error(str(e), output_format, error_code="KB_NOT_FOUND")
+            except EntryLoadError as e:
+                # Nothing deleted: a file its type cannot load is written not
+                # at all (ADR-0042 8a).
+                cli_error(str(e), output_format, error_code=e.error_code)
             except (PyriteError, ValueError) as e:
-                cli_error(str(e), "rich", error_code="ERROR")
+                cli_error(str(e), output_format, error_code="ERROR")
 
     @app.command("rename")
     def rename_entry(
@@ -768,6 +829,16 @@ def register_entry_commands(app: typer.Typer) -> None:
         target_kb: str | None = typer.Option(None, "--target-kb", help="Target KB (if different)"),
         note: str = typer.Option("", "--note", "-n", help="Note about the link"),
         bidirectional: bool = typer.Option(False, "--bidi", help="Create link in both directions"),
+        allow_dangling: bool = typer.Option(
+            False,
+            "--allow-dangling",
+            help=(
+                "Write the link even when the target does not exist yet "
+                "(a forward reference, like MCP kb_link's allow_dangling). With --bidi "
+                "the inverse cannot be written on a target that does not exist: the "
+                "forward link lands and the run ends partial, exit 3"
+            ),
+        ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
         """Create a link between two entries."""
@@ -782,13 +853,24 @@ def register_entry_commands(app: typer.Typer) -> None:
                 target_kb,
             )
         ) as (config, db, svc):
-            result = svc.add_link(source, kb_name, target, relation, target_kb=target_kb, note=note)
+            result = svc.add_link(
+                source,
+                kb_name,
+                target,
+                relation,
+                target_kb=target_kb,
+                note=note,
+                allow_dangling=allow_dangling,
+            )
             tkb = target_kb or kb_name
             # `result["relation"]` is what is actually on disk, not the
             # caller's own `relation` argument -- on a no-op (already
             # linked) those can differ in spelling while still matching
             # under the service's normalisation (round-2 cold read): the
             # confirmation must name what a `grep` of the file would find.
+            # `resolved` is the same field the read surfaces report (#64):
+            # a forward reference written with --allow-dangling answers
+            # `false` here and flips to `true` when the target appears.
             links.append(
                 {
                     "created": result["created"],
@@ -796,6 +878,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                     "relation": result["relation"],
                     "target": target,
                     "target_kb": tkb,
+                    "resolved": result["resolved"],
                 }
             )
 
@@ -839,6 +922,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                             "relation": inv_result["relation"],
                             "target": source,
                             "target_kb": kb_name,
+                            "resolved": inv_result["resolved"],
                         }
                     )
 

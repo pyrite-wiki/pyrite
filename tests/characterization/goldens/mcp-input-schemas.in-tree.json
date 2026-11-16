@@ -1658,7 +1658,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -1867,10 +1867,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -1898,6 +1900,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -1909,6 +1925,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -2043,7 +2063,7 @@
       "inputSchema": {
         "properties": {
           "author_id": {
-            "description": "Author user ID",
+            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "body": {
@@ -2080,8 +2100,7 @@
         "required": [
           "kb_name",
           "title",
-          "body",
-          "author_id"
+          "body"
         ],
         "type": "object"
       }
@@ -2147,7 +2166,7 @@
             "type": "string"
           },
           "user_id": {
-            "description": "Voter user ID",
+            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "value": {
@@ -2161,7 +2180,6 @@
         },
         "required": [
           "entry_id",
-          "user_id",
           "value"
         ],
         "type": "object"
@@ -2225,7 +2243,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -2321,7 +2346,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Who is claiming the item",
+            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "item_id": {
@@ -2334,8 +2359,7 @@
           }
         },
         "required": [
-          "item_id",
-          "assignee"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2500,7 +2524,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -2743,14 +2774,13 @@
             "type": "string"
           },
           "reviewer": {
-            "description": "Who is reviewing",
+            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "item_id",
-          "outcome",
-          "reviewer"
+          "outcome"
         ],
         "type": "object"
       }
@@ -2975,7 +3005,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -2989,8 +3019,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -3003,7 +3032,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -3084,6 +3113,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -3206,7 +3236,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -3391,13 +3421,12 @@
             "type": "string"
           },
           "reviewer_id": {
-            "description": "Reviewer user ID",
+            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "entry_id",
-          "reviewer_id",
           "action"
         ],
         "type": "object"
@@ -4370,7 +4399,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -4497,10 +4526,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -4528,6 +4559,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -4539,6 +4584,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -4676,7 +4725,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -6787,7 +6843,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -6914,10 +6970,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -6945,6 +7003,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -6956,6 +7028,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -7090,7 +7166,7 @@
       "inputSchema": {
         "properties": {
           "author_id": {
-            "description": "Author user ID",
+            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "body": {
@@ -7127,8 +7203,7 @@
         "required": [
           "kb_name",
           "title",
-          "body",
-          "author_id"
+          "body"
         ],
         "type": "object"
       }
@@ -7194,7 +7269,7 @@
             "type": "string"
           },
           "user_id": {
-            "description": "Voter user ID",
+            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "value": {
@@ -7208,7 +7283,6 @@
         },
         "required": [
           "entry_id",
-          "user_id",
           "value"
         ],
         "type": "object"
@@ -7272,7 +7346,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -7368,7 +7449,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Who is claiming the item",
+            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "item_id": {
@@ -7381,8 +7462,7 @@
           }
         },
         "required": [
-          "item_id",
-          "assignee"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7547,7 +7627,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -7790,14 +7877,13 @@
             "type": "string"
           },
           "reviewer": {
-            "description": "Who is reviewing",
+            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "item_id",
-          "outcome",
-          "reviewer"
+          "outcome"
         ],
         "type": "object"
       }
@@ -8022,7 +8108,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -8036,8 +8122,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -8050,7 +8135,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -8131,6 +8216,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -8253,7 +8339,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -8405,13 +8491,12 @@
             "type": "string"
           },
           "reviewer_id": {
-            "description": "Reviewer user ID",
+            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "entry_id",
-          "reviewer_id",
           "action"
         ],
         "type": "object"

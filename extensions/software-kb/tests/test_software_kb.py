@@ -812,11 +812,17 @@ class TestValidators:
         warnings = [e for e in errors if e.get("rule") == "path_not_found"]
         assert warnings == []
 
+    @pytest.mark.control(
+        reason="the local operator's path check is unchanged; the test now binds the local process"
+    )
     def test_component_path_not_found_warning(self, tmp_path):
+        from pyrite.services.acting import local_process
+
         context = {"kb_path": str(tmp_path)}
-        errors = validate_software_kb(
-            "component", {"kind": "module", "path": "nonexistent/module/"}, context
-        )
+        with local_process():  # the check is the local operator's (ADR-0052 N4)
+            errors = validate_software_kb(
+                "component", {"kind": "module", "path": "nonexistent/module/"}, context
+            )
         warnings = [e for e in errors if e.get("rule") == "path_not_found"]
         assert len(warnings) == 1
         assert warnings[0]["severity"] == "warning"
@@ -2239,7 +2245,9 @@ class TestSwCreateAdrNumbersFromFiles:
             result = plugin._mcp_create_adr({"kb_name": "test", "title": "Next Decision"})
             assert result["created"] is True
             assert result["adr_number"] == 2
-            assert result["filename"] == "adrs/0002-next-decision.md"
+            assert result["filename"] == "adrs/adr-0002.md"
+            assert (tmp_path / result["filename"]).is_file()
+            assert db.get_entry("adr-0002", "test") is not None
         finally:
             db.close()
 
@@ -2252,7 +2260,9 @@ class TestSwCreateAdrNumbersFromFiles:
             result = plugin._mcp_create_adr({"title": "No KB Flag"})
             assert result["created"] is True
             assert result["adr_number"] == 1
-            assert result["filename"] == "adrs/0001-no-kb-flag.md"
+            assert result["filename"] == "adrs/adr-0001.md"
+            assert (tmp_path / result["filename"]).is_file()
+            assert db.get_entry("adr-0001", "test") is not None
         finally:
             db.close()
 
@@ -2276,7 +2286,9 @@ class TestSwCreateAdrNumbersFromFiles:
             result = plugin._mcp_create_adr({"kb_name": "test", "title": "First File ADR"})
             assert result["created"] is True
             assert result["adr_number"] == 1
-            assert result["filename"] == "adrs/0001-first-file-adr.md"
+            assert result["filename"] == "adrs/adr-0001.md"
+            assert (tmp_path / result["filename"]).is_file()
+            assert db.get_entry("adr-0001", "test") is not None
         finally:
             db.close()
 
@@ -2288,6 +2300,189 @@ class TestSwCreateAdrNumbersFromFiles:
 
 class TestBacklogDependencies:
     """Tests for blocks/blocked_by dependency support in flow tools."""
+
+    @pytest.mark.parametrize(
+        "links",
+        [
+            pytest.param(
+                [
+                    {
+                        "source": "item-y",
+                        "target": "item-x",
+                        "relation": "blocked_by",
+                        "inverse": "blocks",
+                    }
+                ],
+                id="blocked-by-on-y",
+            ),
+            pytest.param(
+                [
+                    {
+                        "source": "item-x",
+                        "target": "item-y",
+                        "relation": "blocks",
+                        "inverse": "blocked_by",
+                    }
+                ],
+                id="blocks-on-x",
+            ),
+            pytest.param(
+                [
+                    {
+                        "source": "item-y",
+                        "target": "item-x",
+                        "relation": "blocked_by",
+                        "inverse": "blocks",
+                    },
+                    {
+                        "source": "item-x",
+                        "target": "item-y",
+                        "relation": "blocks",
+                        "inverse": "blocked_by",
+                    },
+                ],
+                id="both-directions",
+            ),
+        ],
+    )
+    def test_dependency_relations_are_consistent_in_both_directions(self, links):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-x",
+                        "title": "Blocker",
+                        "status": "accepted",
+                        "priority": "high",
+                        "meta": {"kind": "feature", "status": "accepted", "priority": "high"},
+                        "entry_type": "backlog_item",
+                    },
+                    {
+                        "id": "item-y",
+                        "title": "Blocked item",
+                        "status": "accepted",
+                        "priority": "critical",
+                        "meta": {"kind": "feature", "status": "accepted", "priority": "critical"},
+                        "entry_type": "backlog_item",
+                    },
+                ],
+                links=links,
+            )
+            try:
+                plugin = _make_plugin_with_db(db)
+                blocked_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-y", "kb_name": "test"}
+                )
+                blocker_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-x", "kb_name": "test"}
+                )
+                blocked_deps = blocked_context["dependencies"]
+                blocker_deps = blocker_context["dependencies"]
+
+                assert [dep["id"] for dep in blocked_deps["blocked_by"]] == ["item-x"]
+                assert blocked_deps["is_blocked"] is True
+                assert [dep["id"] for dep in blocker_deps["blocks"]] == ["item-y"]
+
+                next_result = plugin._mcp_pull_next({"kb_name": "test"})
+                assert next_result["recommendation"]["id"] == "item-x"
+                assert [item["id"] for item in next_result["blocked_items"]] == [
+                    "item-y",
+                ]
+
+                # A blocked item cannot be claimed through the MCP workflow.
+                result = plugin._mcp_claim(
+                    {"item_id": "item-y", "kb_name": "test", "assignee": "agent"}
+                )
+                assert result["claimed"] is False
+                assert "unresolved dependencies" in result["error"]
+            finally:
+                db.close()
+
+    def test_unreadable_blocker_remains_unknown_and_unresolved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-y",
+                        "title": "Blocked item",
+                        "status": "accepted",
+                        "priority": "high",
+                        "meta": {"kind": "feature", "status": "accepted", "priority": "high"},
+                    },
+                ],
+            )
+            try:
+                db._raw_conn.execute(
+                    "INSERT INTO kb (name, path, kb_type) VALUES (?, ?, ?)",
+                    ("private", str(Path(tmpdir) / "private"), "generic"),
+                )
+                db._raw_conn.execute(
+                    "INSERT INTO entry (id, kb_name, entry_type, title, body, status, priority, assignee, metadata, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "item-x",
+                        "private",
+                        "backlog_item",
+                        "Private blocker",
+                        "",
+                        "accepted",
+                        "high",
+                        None,
+                        json.dumps(
+                            {
+                                "kind": "feature",
+                                "status": "accepted",
+                                "priority": "high",
+                            }
+                        ),
+                        "2026-01-01T00:00:00",
+                        "2026-01-01T00:00:00",
+                    ),
+                )
+                db._raw_conn.execute(
+                    "INSERT INTO link (source_id, source_kb, target_id, target_kb, relation, inverse_relation) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    ("item-y", "test", "item-x", "private", "blocked_by", "blocks"),
+                )
+                db._raw_conn.commit()
+
+                plugin = _make_plugin_with_db(db)
+                blocked_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-y", "kb_name": "test"},
+                    readable_kbs={"test"},
+                )
+                blocker_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-x", "kb_name": "private"},
+                    readable_kbs={"private"},
+                )
+                blocked_by = blocked_context["dependencies"]["blocked_by"]
+                assert len(blocked_by) == 1
+                assert blocked_by[0]["id"] == "item-x"
+                assert blocked_by[0]["status"] == "unknown"
+                assert blocked_by[0]["resolved"] is False
+                assert blocked_by[0]["title"] is None
+                assert blocked_context["dependencies"]["is_blocked"] is True
+                assert blocker_context["dependencies"]["blocks"] == []
+
+                next_result = plugin._mcp_pull_next({"kb_name": "test"}, readable_kbs={"test"})
+                assert next_result["recommendation"] is None
+                assert [item["id"] for item in next_result["blocked_items"]] == [
+                    "item-y",
+                ]
+
+                result = plugin._mcp_claim(
+                    {"item_id": "item-y", "kb_name": "test", "assignee": "agent"},
+                    readable_kbs={"test"},
+                )
+                assert result["claimed"] is False
+                assert "unresolved dependencies" in result["error"]
+                assert result["unresolved_dependencies"] == [
+                    {"id": "item-x", "title": None, "status": "unknown"}
+                ]
+            finally:
+                db.close()
 
     def test_relationship_types_include_blocks(self):
         plugin = SoftwareKBPlugin()
@@ -4428,6 +4623,13 @@ class TestBacklogSortAndFilter:
                         "meta": {"kind": "feature", "status": "proposed"},
                     },
                     {
+                        "id": "in-epic-backlink",
+                        "title": "In Epic via child-side link",
+                        "entry_type": "backlog_item",
+                        "status": "proposed",
+                        "meta": {"kind": "feature", "status": "proposed"},
+                    },
+                    {
                         "id": "out-epic",
                         "title": "Outside Epic",
                         "entry_type": "backlog_item",
@@ -4442,6 +4644,12 @@ class TestBacklogSortAndFilter:
                         "relation": "has_subtask",
                         "inverse": "subtask_of",
                     },
+                    {
+                        "source": "in-epic-backlink",
+                        "target": "epic-f",
+                        "relation": "subtask_of",
+                        "inverse": "has_subtask",
+                    },
                 ],
             )
             try:
@@ -4449,7 +4657,9 @@ class TestBacklogSortAndFilter:
                 result = plugin._mcp_backlog({"kb_name": "test", "epic": "epic-f"})
                 ids = [i["id"] for i in result["items"]]
                 assert "in-epic" in ids
+                assert "in-epic-backlink" in ids
                 assert "out-epic" not in ids
+                assert len(ids) == len(set(ids))
             finally:
                 db.close()
 
@@ -4621,6 +4831,13 @@ class TestBacklogSortAndFilter:
                         "meta": {"kind": "feature", "status": "proposed"},
                     },
                     {
+                        "id": "grouped-epic-side",
+                        "title": "Grouped via epic-side link",
+                        "entry_type": "backlog_item",
+                        "status": "proposed",
+                        "meta": {"kind": "feature", "status": "proposed"},
+                    },
+                    {
                         "id": "orphan",
                         "title": "Orphan Item",
                         "entry_type": "backlog_item",
@@ -4635,6 +4852,12 @@ class TestBacklogSortAndFilter:
                         "relation": "subtask_of",
                         "inverse": "has_subtask",
                     },
+                    {
+                        "source": "epic-g",
+                        "target": "grouped-epic-side",
+                        "relation": "has_subtask",
+                        "inverse": "subtask_of",
+                    },
                 ],
             )
             try:
@@ -4645,7 +4868,11 @@ class TestBacklogSortAndFilter:
                 epic_group = [g for g in groups if g["epic_id"] == "epic-g"]
                 unassigned = [g for g in groups if g["epic_id"] is None]
                 assert len(epic_group) == 1
-                assert epic_group[0]["count"] >= 1
+                assert epic_group[0]["count"] == 2
+                assert {item["id"] for item in epic_group[0]["items"]} == {
+                    "grouped",
+                    "grouped-epic-side",
+                }
                 assert len(unassigned) == 1
             finally:
                 db.close()
@@ -5067,3 +5294,98 @@ class TestSwListCommandsAreBounded:
                 assert {item["id"] for item in result[key]} <= {f"match-{i}" for i in range(5)}
             finally:
                 db.close()
+
+
+NEW_BACKLOG_KINDS = ("refactor", "chore", "process")
+
+
+class TestNewBacklogKindsThroughTheCli:
+    """Create and update accept each kind the maintainer added (2026-10-14)."""
+
+    @pytest.fixture
+    def world(self, tmp_path):
+        import yaml
+
+        from pyrite.config import KBConfig
+        from pyrite.plugins import get_registry
+        from tests._world import build_world
+
+        get_registry().register(SoftwareKBPlugin())
+        kb_path = tmp_path / "sw-kb"
+        kb_path.mkdir()
+        (kb_path / "kb.yaml").write_text(
+            yaml.safe_dump(SOFTWARE_KB_PRESET, sort_keys=False), encoding="utf-8"
+        )
+        world = build_world(
+            tmp_path / "cli-world",
+            kbs=[KBConfig(name="sw-kb", path=kb_path, kb_type="software")],
+            rest=False,
+        )
+        yield world
+        world.close()
+
+    def _run(self, world, args):
+        return world.cli(*args)
+
+    def _kind_on_disk(self, world, entry_id):
+        import yaml
+
+        kb_path = world.kb_path("sw-kb")
+        for candidate in kb_path.rglob(f"{entry_id}.md"):
+            text = candidate.read_text(encoding="utf-8")
+            return yaml.safe_load(text.split("---", 2)[1])["kind"]
+        raise AssertionError(f"{entry_id}.md not written under {kb_path}")
+
+    @pytest.mark.parametrize("kind", NEW_BACKLOG_KINDS)
+    def test_create_writes_the_kind(self, world, kind):
+        result = self._run(
+            world,
+            [
+                "create",
+                "-k",
+                "sw-kb",
+                "-t",
+                "backlog_item",
+                "--title",
+                f"A {kind} item",
+                "-f",
+                f"kind={kind}",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert self._kind_on_disk(world, payload["entry_id"]) == kind
+
+    @pytest.mark.parametrize("kind", NEW_BACKLOG_KINDS)
+    def test_update_writes_the_kind(self, world, kind):
+        created = self._run(
+            world,
+            [
+                "create",
+                "-k",
+                "sw-kb",
+                "-t",
+                "backlog_item",
+                "--title",
+                f"Update to {kind}",
+                "-f",
+                "kind=feature",
+            ],
+        )
+        assert created.exit_code == 0, created.output
+        entry_id = json.loads(created.stdout)["entry_id"]
+
+        result = self._run(world, ["update", entry_id, "-k", "sw-kb", "-f", f"kind={kind}"])
+
+        assert result.exit_code == 0, result.output
+        assert self._kind_on_disk(world, entry_id) == kind
+
+
+class TestBacklogKindToolSchemas:
+    @pytest.mark.parametrize("tool_name", ["sw_backlog", "sw_create_backlog_item"])
+    def test_kind_enum_matches_the_shared_vocabulary(self, tool_name):
+        registry = PluginRegistry()
+        registry.register(SoftwareKBPlugin())
+        schema = registry.get_all_mcp_tools("write")[tool_name]["inputSchema"]
+        assert schema["properties"]["kind"]["enum"] == list(BACKLOG_KINDS)

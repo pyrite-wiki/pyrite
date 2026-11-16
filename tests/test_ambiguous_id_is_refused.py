@@ -560,8 +560,7 @@ CLI_BLANK_KB_CASES = {
 CLI_EXCLUDED = {
     "pyrite export collection": "without -k it loads from no KB (`kb or ''`): a miss, never a pick",
     "pyrite qa validate": (
-        "--entry without a KB drops the id and validates every KB: a wrong answer, "
-        "not a pick or a write (#1312)"
+        "KB is positional rather than -k; entry resolution is covered in test_qa_entry_scope.py"
     ),
 }
 

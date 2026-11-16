@@ -140,6 +140,8 @@ def storage_error_from(
         err.suggestion = BUSY_SUGGESTION
         return err
     err = cls(f"{what}: {root}" if with_detail else what)
-    if suggestion is not None:
-        err.suggestion = disk_suggestion if is_disk_fault(error) else suggestion
+    if is_disk_fault(error):
+        err.suggestion = disk_suggestion
+    elif suggestion is not None:
+        err.suggestion = suggestion
     return err

@@ -98,7 +98,7 @@ def _run(world, tier_filter, principal_name, golden, collector):
     against `world`, for one principal across every `KB_STATES` value.
     Returns the tools actually iterated, for the union computed by the two
     calls in `test_mcp_tool_principal_matrix` (read tools against `world`,
-    everything else against `write_world` -- #476 round-2 blocker 1).
+    everything else against `mcp_write_world`).
     """
     principal = world.principals[principal_name]
     live_tools = {
@@ -156,17 +156,18 @@ def _run(world, tier_filter, principal_name, golden, collector):
 
 
 @pytest.mark.parametrize("principal_name", PRINCIPAL_NAMES)
-def test_mcp_tool_principal_matrix(world, write_world, principal_name):
+def test_mcp_tool_principal_matrix(world, mcp_write_world, principal_name):
     golden = load(GOLDEN_NAME)
     collector = MismatchCollector()
     # Read tools against the session-scoped, read-only `world`; every other
     # tier (write, admin, or a plugin-declared tier) against the
-    # module-scoped `write_world` -- #476 round-2 blocker 1: a write tool's
-    # case must never be able to leave a mutation for a read tool's case
+    # per-principal `mcp_write_world`: file-based ADR numbering must not
+    # depend on which principals ran earlier or on which xdist worker.
+    # A write case must never leave a mutation for a read case
     # (in this module, or in test_unscoped_calls.py, which reads through
     # `world` too) to trip over.
     _run(world, lambda tier: tier == "read", principal_name, golden, collector)
-    _run(write_world, lambda tier: tier != "read", principal_name, golden, collector)
+    _run(mcp_write_world, lambda tier: tier != "read", principal_name, golden, collector)
     if regenerating():
         save(GOLDEN_NAME, golden, principal_scope=principal_name)
     collector.assert_clean()

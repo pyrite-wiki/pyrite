@@ -166,6 +166,31 @@ READ_TOOLS = {
                     "type": "integer",
                     "description": "Minimum importance score (1-10)",
                 },
+                "kb_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Limit the timeline to these KBs. Omit for every KB the caller "
+                        "can read; an empty list or a blank name is refused."
+                    ),
+                },
+                "status": {
+                    "type": "string",
+                    "description": (
+                        "Only entries whose status matches, the effective status: a task "
+                        "whose children are all resolved counts as done while its file "
+                        "still says open (or in_progress)."
+                    ),
+                },
+                "exclude_status": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Drop entries whose status matches any of these, the effective "
+                        "status; an entry with no status is kept. An empty list is "
+                        "refused; omit this argument to keep every status."
+                    ),
+                },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum results (default 50)",
@@ -226,10 +251,12 @@ READ_TOOLS = {
                 },
                 "limit": {
                     "type": "integer",
+                    "minimum": 1,
                     "description": "Maximum tags to return (default 100)",
                 },
                 "offset": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Pagination offset (default 0)",
                 },
             },
@@ -418,7 +445,12 @@ READ_TOOLS = {
                 "limit": {"type": "integer", "description": "Max entries to return (default 20)"},
                 "since": {
                     "type": "string",
-                    "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+                    "description": (
+                        "Lower bound on updated_at, inclusive: entries updated at or after "
+                        "this instant. A date (2026-10-22, read as midnight UTC) or an "
+                        "ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). "
+                        "Any other form is refused with VALIDATION_FAILED, not matched as text."
+                    ),
                 },
                 "fields": {
                     "type": "array",
@@ -954,7 +986,7 @@ WRITE_TOOLS = {
                 },
                 "assignee": {
                     "type": "string",
-                    "description": "Assignee (e.g. agent:claude-code-7a3f)",
+                    "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
                 },
                 "body": {"type": "string", "description": "Task description"},
                 "dependencies": {
@@ -991,7 +1023,10 @@ WRITE_TOOLS = {
                     ],
                     "description": "New status",
                 },
-                "assignee": {"type": "string", "description": "New assignee"},
+                "assignee": {
+                    "type": "string",
+                    "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
+                },
                 "priority": {
                     "type": "integer",
                     "description": "New priority 1-10",
@@ -1011,10 +1046,10 @@ WRITE_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name"},
                 "assignee": {
                     "type": "string",
-                    "description": "Assignee (e.g. agent:claude-code-7a3f)",
+                    "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
                 },
             },
-            "required": ["task_id", "kb_name", "assignee"],
+            "required": ["task_id", "kb_name"],
         },
     },
     "task_decompose": {
@@ -1032,7 +1067,10 @@ WRITE_TOOLS = {
                             "title": {"type": "string"},
                             "body": {"type": "string"},
                             "priority": {"type": "integer", "minimum": 1, "maximum": 10},
-                            "assignee": {"type": "string"},
+                            "assignee": {
+                                "type": "string",
+                                "description": "Optional; over a signed-in session it must be you",
+                            },
                         },
                         "required": ["title"],
                     },
@@ -1247,3 +1285,10 @@ ADMIN_TOOLS = {
         },
     },
 }
+
+#: Every name the core registers, at any tier. A plugin tool under one of
+#: these names is refused at registration (ADR-0040 §3): the core tool,
+#: with its tier and its scoping, is the one served.
+CORE_TOOL_NAMES: frozenset[str] = (
+    frozenset(READ_TOOLS) | frozenset(WRITE_TOOLS) | frozenset(ADMIN_TOOLS)
+)

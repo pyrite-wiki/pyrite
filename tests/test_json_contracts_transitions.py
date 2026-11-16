@@ -73,11 +73,12 @@ def test_removal_versions_follow_the_maintainer_decision(page, heading):
         assert not re.search(r"for one\s+release|a\s+later release", paragraph)
 
 
+@pytest.mark.control(reason="the central REST mappings keep their existing documented statuses")
 def test_server_account_table_statuses_match_the_central_rest_mapping():
     from pyrite.server.errors import _STATUS_BY_CODE
 
     text = PAGE.read_text(encoding="utf-8")
-    table = text.split("## Server and account codes\n", 1)[1].split("## Write refusals", 1)[0]
+    table = text.split("## Server and account codes\n", 1)[1].split("\n## ", 1)[0]
     checked = set()
     for line in table.splitlines():
         row = re.match(r"\| `([A-Z_]+)` \| (.*?) \|", line)
@@ -88,4 +89,4 @@ def test_server_account_table_statuses_match_the_central_rest_mapping():
         assert status is not None, line
         assert _STATUS_BY_CODE[code] == int(status.group(1)), line
         checked.add(code)
-    assert len(checked) == 10
+    assert len(checked) == 12

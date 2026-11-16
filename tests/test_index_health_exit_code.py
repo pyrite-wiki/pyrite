@@ -387,6 +387,30 @@ class TestFolderTheProcessCannotSearch:
         finally:
             sub.chmod(0o755)
 
+    @pytest.mark.parametrize("mode", [0o600, 0o000], ids=["no-search-bit", "no-access"])
+    def test_the_kbs_presence_probe_does_not_call_an_unreachable_file_absent(self, tmp_path, mode):
+        """`KBFiles.present` raises where the path cannot be searched: "absent"
+        would make index health report the file missing. Python 3.11 and 3.12
+        walk past the folder silently, so on them this probe is the only
+        place the folder is noticed; `os.path.exists` answers False for it on
+        every version."""
+        import os
+
+        from pyrite.utils.kb_files import KBFiles
+
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "d.md").write_text("d\n", encoding="utf-8")
+        sub.chmod(mode)
+        try:
+            if os.access(sub / "d.md", os.R_OK):
+                pytest.skip(f"running as a user that can read through a mode-{mode:o} folder")
+            with pytest.raises(PermissionError):
+                KBFiles(tmp_path).present(sub / "d.md")
+            assert KBFiles(tmp_path).present(tmp_path / "gone.md") is False
+        finally:
+            sub.chmod(0o755)
+
 
 class TestAPathSyncCannotReadIsNeverHealthy:
     def test_a_stat_failure_during_the_walk_is_reported_by_both_commands(

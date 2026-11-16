@@ -141,6 +141,8 @@ def from_frontmatter(cls, meta, body):
 
 If you forget a base field, it silently gets the dataclass default (often empty string or None), and the data appears to "vanish" on roundtrip.
 
+**Do not raise on a value a validator could report** (`int(meta["rank"])` on `rank: .inf`). A loader that raises makes the file read-only through Pyrite: reads return your type without the refused fields (`load_problems`), and every write is refused with `ENTRY_UNREADABLE` until the user fixes the file by hand (ADR-0042 decision 8a). Convert leniently (`pyrite.utils.parse.safe_int`) or keep the value as written, and report it from a validator instead. The opposite design, a model built with your default in place of the refused value, was tried twice in #1311 and let a hook-guarded write land: a dataclass cannot be missing a field, so every consumer of such a model has to know which values are fake.
+
 ## MCP Tool Handlers: Import Inside Handler
 
 MCP tool handlers run in a separate context. Import pyrite modules inside the handler, not at the top of the plugin file:
@@ -599,3 +601,25 @@ taken as deliberate. Reading a field more leniently (a task's word
 `priority`, `tags: Foo` as `['Foo']`) is safe for the file for the same
 reason: the kept-key rule writes the file's own value back until the field
 is assigned.
+
+## A rewrite of a stacked branch commits stale files unless you check the base moved
+
+When a branch is stacked on another branch that other sessions push to, the base
+can move while you work, and a rewrite then turns the new base commits into
+reverts. Three ways it has happened (three times in the security batches):
+
+- `git reset --soft <base>` followed by `git add <explicit paths>` after the
+  shared base ref had advanced: the working tree still held the old base's
+  content for the files you touched, and committing them whole reverted the
+  newer base commits in those files.
+- `git apply --3way` stages every file it touches. A later `git add <paths>` and
+  `git commit` of "one group" commits everything the patch staged, so six
+  planned commits became one. Run `git reset -q` after `git apply --3way`, then
+  commit by explicit paths.
+- `git fetch` in any worktree moves the remote-tracking refs for all of them.
+
+Before a rewrite: `git fetch <remote>` and `git merge-base --is-ancestor
+<base> HEAD`; after it: `git diff <base> HEAD --stat` must list only your
+files, and `git diff <old-head> HEAD` must be empty. If the base moved,
+re-apply your diff (`git diff <old-base> <old-head>`) onto the new base rather
+than resetting onto it with a stale working tree.

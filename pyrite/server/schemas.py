@@ -177,6 +177,8 @@ class EntryResponse(BaseModel):
     date: str | None = None
     importance: int | None = None
     status: str | None = None
+    # A list is a list: a column a file's type refused is left out of the reply
+    # (ADR-0042 8a, ``get_entry``), never sent as null.
     tags: list[str] = []
     participants: list[str] = []
     sources: list[dict] = []
@@ -411,6 +413,14 @@ class DeleteResponse(BaseModel):
 
     deleted: bool
     id: str
+
+
+class EntryDeleteResponse(DeleteResponse):
+    """Entry deletion includes the readable links left dangling."""
+
+    inbound_links: list[dict[str, Any]]
+    inbound_link_count: int
+    warnings: list[str]
 
 
 class SyncResponse(BaseModel):

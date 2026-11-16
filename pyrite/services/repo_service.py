@@ -7,6 +7,7 @@ operations.
 """
 
 import logging
+import os
 import shutil
 from pathlib import Path
 
@@ -21,6 +22,7 @@ from ..config import (
     check_config_save,
     save_config,
 )
+from ..exceptions import RemoteNotAllowedError
 from ..github_auth import get_github_token
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
@@ -50,10 +52,25 @@ class RepoService:
         self._github_token = github_token
 
     def _get_token(self) -> str | None:
-        """Get GitHub token: injected token first, then CLI fallback."""
+        """The caller's GitHub token: the one injected for this caller, else,
+        for the operator's own local process only, the token ``pyrite auth
+        github-login`` stored for the CLI. A network caller with no token of
+        its own gets none: the stored token is the operator's (ADR-0052 N2,
+        D3), and an operator grant for network git is ``git_credentials``."""
         if self._github_token:
             return self._github_token
-        return get_github_token()
+        from .acting import is_local_process
+
+        return get_github_token() if is_local_process() else None
+
+    def _current_user(self) -> dict:
+        """Who the workspace rows are recorded for: the caller's own GitHub
+        identity (by its own token), else, for the local process only, the
+        operator's stored CLI token's; else the local sentinel. Never the
+        operator's stored token for a network caller."""
+        return self.user_service.get_current_user(
+            token=self._github_token, proxy=self.config.settings.git_proxy
+        )
 
     def subscribe(
         self,
@@ -71,6 +88,9 @@ class RepoService:
             return {"success": False, "error": "Could not parse GitHub URL"}
 
         owner, repo_name = parsed
+        refusal = self._refuse_remote(remote_url)
+        if refusal:
+            return refusal
         full_name = name or f"{owner}/{repo_name}"
         refusal = self._refuse_repo_name(full_name)
         if refusal:
@@ -79,7 +99,9 @@ class RepoService:
         check_config_save(self.config)
 
         # Determine workspace path
-        workspace_path = self.config.settings.workspace_path / owner / repo_name
+        workspace_path, refusal = self._workspace_clone_path(owner, repo_name)
+        if refusal:
+            return refusal
         if workspace_path.exists():
             # The absolute path is for the operator only (CodeQL #51): a caller
             # who can name owner/repo learns nothing from "already subscribed".
@@ -95,7 +117,14 @@ class RepoService:
         # Clone (shallow for subscriptions)
         token = self._get_token()
         success, code, msg = GitService.clone_with_code(
-            remote_url, workspace_path, branch=branch, depth=1, token=token
+            remote_url,
+            workspace_path,
+            branch=branch,
+            depth=1,
+            token=token,
+            allowed_hosts=self.config.settings.git_allowed_hosts,
+            credentials=self.config.settings.git_credentials,
+            proxy=self.config.settings.git_proxy,
         )
         if not success:
             return {"success": False, "error_code": code, "error": msg}
@@ -133,6 +162,9 @@ class RepoService:
             return {"success": False, "error": "Could not parse GitHub URL"}
 
         owner, repo_name = parsed
+        refusal = self._refuse_remote(remote_url)
+        if refusal:
+            return refusal
         token = self._get_token()
         if not token:
             return {"success": False, "error": "GitHub authentication required for forking"}
@@ -140,7 +172,9 @@ class RepoService:
         check_config_save(self.config)
 
         # Fork on GitHub
-        success, fork_data = GitService.fork_repo(owner, repo_name, token)
+        success, fork_data = GitService.fork_repo(
+            owner, repo_name, token, proxy=self.config.settings.git_proxy
+        )
         if not success:
             return {"success": False, "error": fork_data.get("error", "Fork failed")}
 
@@ -163,16 +197,34 @@ class RepoService:
 
         # Add upstream remote
         workspace_path = Path(result["path"])
-        GitService.add_remote(workspace_path, "upstream", remote_url)
+        GitService.add_remote(
+            workspace_path,
+            "upstream",
+            remote_url,
+            allowed_hosts=self.config.settings.git_allowed_hosts,
+        )
 
         # Update workspace role
-        user = self.user_service.get_current_user()
+        user = self._current_user()
         if fork_repo:
             self.db.update_workspace_role(user["id"], fork_repo["id"], "contributor")
 
         result["is_fork"] = True
         result["upstream"] = f"{owner}/{repo_name}"
         return result
+
+    def scrub_workspace_remotes(self) -> int:
+        """Remove embedded credentials from the remote URLs of every registered
+        workspace (a clone made by an earlier version carries the token it was
+        cloned with). Idempotent; returns the number of URLs rewritten. Run at
+        server start and by the repo commands, so a workspace is clean without
+        waiting for its next pull or push."""
+        scrubbed = 0
+        for repo in self.db.list_repos():
+            local_path = Path(repo["local_path"])
+            if local_path.exists():
+                scrubbed += GitService.scrub_remote_credentials(local_path)
+        return scrubbed
 
     def sync(self, repo_name: str | None = None) -> dict:
         """
@@ -208,7 +260,16 @@ class RepoService:
             old_head = repo.get("last_synced_commit") or GitService.get_head_commit(local_path)
 
             # Pull
-            success, msg = GitService.pull(local_path, token=token)
+            success, msg = GitService.pull(
+                local_path,
+                token=token,
+                allowed_hosts=self.config.settings.git_allowed_hosts,
+                credentials=self.config.settings.git_credentials,
+                # The subscribed clone's own remote, configured when it was
+                # registered: an unscoped git_credentials entry may serve it.
+                registered_remote=True,
+                proxy=self.config.settings.git_proxy,
+            )
             if not success:
                 results[name] = {"success": False, "error": msg}
                 continue
@@ -276,7 +337,7 @@ class RepoService:
             announce_kb_policy_change(kb_row["name"])
 
         # Remove workspace membership
-        user = self.user_service.get_current_user()
+        user = self._current_user()
         self.db.remove_workspace_repo(user["id"], repo["id"])
 
         # Remove repo from DB
@@ -343,7 +404,14 @@ class RepoService:
             return {"success": False, "error": "GitHub authentication required for PR creation"}
 
         success, result = GitService.create_pull_request(
-            upstream_owner, upstream_repo, title, body, head, base, token
+            upstream_owner,
+            upstream_repo,
+            title,
+            body,
+            head,
+            base,
+            token,
+            proxy=self.config.settings.git_proxy,
         )
         if success:
             return {"success": True, **result}
@@ -409,7 +477,7 @@ class RepoService:
             kb_yaml = repo_path / "kb.yaml"
             if kb_yaml.exists():
                 try:
-                    data = load_yaml_file(kb_yaml)
+                    data = load_yaml_file(kb_yaml, kb_root=repo_path)  # inside the clone
                     kb = KBConfig(
                         name=data.get("name", repo_path.name),
                         path=repo_path,
@@ -436,10 +504,12 @@ class RepoService:
             return {"success": False, "error": "Could not parse clone URL"}
 
         owner, repo_name = parsed
-        refusal = self._refuse_repo_name(full_name)
+        refusal = self._refuse_remote(clone_url) or self._refuse_repo_name(full_name)
         if refusal:
             return refusal
-        workspace_path = self.config.settings.workspace_path / owner / repo_name
+        workspace_path, refusal = self._workspace_clone_path(owner, repo_name)
+        if refusal:
+            return refusal
 
         if workspace_path.exists():
             logger.warning("Clone refused: %s already exists", workspace_path)
@@ -453,7 +523,14 @@ class RepoService:
         token = self._get_token()
 
         success, code, msg = GitService.clone_with_code(
-            clone_url, workspace_path, branch=branch, depth=depth, token=token
+            clone_url,
+            workspace_path,
+            branch=branch,
+            depth=depth,
+            token=token,
+            allowed_hosts=self.config.settings.git_allowed_hosts,
+            credentials=self.config.settings.git_credentials,
+            proxy=self.config.settings.git_proxy,
         )
         if not success:
             return {"success": False, "error_code": code, "error": msg}
@@ -490,6 +567,37 @@ class RepoService:
     #
     # KBs registered from a clone have no default_role: every user reaches
     # them at their global role (subscriptions are also read-only).
+
+    def _refuse_remote(self, url: str) -> dict | None:
+        """A refusal result unless `url` is https on a `git_allowed_hosts` host.
+
+        Checked before anything is created or any call leaves the process, so
+        the CLI and the server are bound alike; GitService repeats the check
+        before git runs.
+        """
+        try:
+            GitService.check_remote_allowed(url, self.config.settings.git_allowed_hosts)
+        except RemoteNotAllowedError as e:
+            return {"success": False, "error_code": e.error_code, "error": str(e)}
+        return None
+
+    def _workspace_clone_path(self, owner: str, repo_name: str) -> tuple[Path, dict | None]:
+        """`<workspace root>/<owner>/<repo>`, refused unless it resolves
+        strictly inside the workspace root without passing through a link.
+
+        parse_github_url already refuses dot segments and leading dots; this
+        is the check on the path itself, made before any mkdir or clone.
+        """
+        root = Path(os.path.realpath(self.config.settings.workspace_path))
+        path = root / owner / repo_name
+        if os.path.realpath(path) != str(path) or root not in path.parents:
+            logger.warning("Clone refused: %s does not resolve inside %s", path, root)
+            return path, {
+                "success": False,
+                "error_code": "INVALID_REQUEST",
+                "error": f"'{owner}/{repo_name}' cannot be placed in the workspace",
+            }
+        return path, None
 
     def _refuse_repo_name(self, full_name: str) -> dict | None:
         """A refusal result when a repository row already has this name."""
@@ -583,7 +691,7 @@ class RepoService:
                 self.db.link_kb_to_repo(kb_config.name, repo_row["id"], kb_config.repo_subpath)
             index_mgr.index_with_attribution(kb_config.name, self.git)
 
-        user = self.user_service.get_current_user()
+        user = self._current_user()
         if repo_row.get("id"):
             self.db.add_workspace_repo(user["id"], repo_row["id"], workspace_role)
 

@@ -721,9 +721,9 @@ class TestKBService:
             entry_type="actor",
         )
 
-        result = service.delete_entry("delete-test", "test-research")
+        result = service.delete_entry("delete-test", "test-research", readable_kbs=None)
 
-        assert result is True
+        assert result.deleted is True
         assert service.get_entry("delete-test", "test-research", readable_kbs=UNSCOPED) is None
 
 
