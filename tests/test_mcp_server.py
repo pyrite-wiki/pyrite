@@ -1273,49 +1273,6 @@ class TestPyriteMCPServer:
             write_names = [t["name"] for t in write_env["server"].get_tools_list()]
             assert "kb_link" in write_names
 
-    # ------------------------------------------------------------------
-    # Entry type resolution (plugin subtype)
-    # ------------------------------------------------------------------
-
-    def test_kb_create_resolves_plugin_subtype(self, mcp_admin_server):
-        """Test that create with a core type resolves to plugin subtype."""
-        from unittest.mock import patch
-
-        from pyrite.models import EventEntry
-
-        # Create a mock plugin subclass of EventEntry
-        class MockTimelineEvent(EventEntry):
-            entry_type = "timeline_event"
-
-        mock_plugin_types = {"timeline_event": MockTimelineEvent}
-
-        server = mcp_admin_server["server"]
-
-        with patch("pyrite.plugins.get_registry") as mock_reg:
-            mock_reg.return_value.get_all_entry_types.return_value = mock_plugin_types
-            # Also patch the hooks to avoid plugin lookup issues
-            with patch.object(type(server.svc), "_run_hooks", side_effect=lambda _n, e, _c: e):
-                result = server._dispatch_tool(
-                    "kb_create",
-                    {
-                        "kb_name": "test-events",
-                        "entry_type": "event",
-                        "title": "Resolved Event",
-                        "date": "2025-05-01",
-                        "body": "Should resolve to timeline_event.",
-                    },
-                )
-
-        assert result.get("created") is True
-        entry_id = result["entry_id"]
-
-        # Verify the entry was created — the type depends on whether
-        # build_entry dispatches correctly for the resolved type
-        get_result = server._dispatch_tool(
-            "kb_get", {"entry_id": entry_id, "kb_name": "test-events"}
-        )
-        assert "entry" in get_result
-
 
 # ---------------------------------------------------------------------------
 # TestMCPProtocol — protocol-level tests

@@ -195,7 +195,7 @@ class TestKBSchemaToAgentSchemaEdgeType:
             }
         }
         schema = KBSchema.from_dict(data)
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         authored = agent["types"]["authored_by"]
         assert authored["edge_type"] is True
         assert "endpoints" in authored

@@ -214,8 +214,8 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
     ),
     "tests/test_kb_scoped_writes.py": (1, "behind TestClient: clipper.ClipperService.clip_url"),
     "tests/test_mcp_server.py": (
-        2,
-        "behind PyriteMCPServer, _dispatch_tool: <unresolved>:_run_hooks",
+        1,
+        "behind PyriteMCPServer: build_sdk_server",
     ),
     "tests/test_one_reconcile.py": (
         3,

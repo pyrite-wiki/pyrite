@@ -1396,62 +1396,24 @@ class KBService:
         result["outlinks"] = self.db.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
         result["backlinks"] = self.db.get_backlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
-    def _resolve_entry_type(self, entry_type: str, kb_type: str = "") -> str:
-        """Resolve a generic core type to a plugin subtype if one exists.
+    def _resolve_entry_type(self, entry_type: str, kb_config: KBConfig) -> str:
+        """The type a create of ``entry_type`` stores in this KB (#468).
 
-        If a plugin ACTIVE FOR THIS KB provides a type that subclasses the
-        core type for the given name, prefer the plugin type. E.g.
-        "event" -> "investigation_event" in a journalism-investigation KB,
-        because that plugin registers InvestigationEventEntry(EventEntry)
-        and declares journalism-investigation in get_kb_types().
-
-        Scoping by kb_type is load-bearing, not an optimization. Resolution
-        picks the FIRST subclass found, and the unscoped registry dict is
-        ordered by plugin discovery, which follows site-packages enumeration
-        and therefore varies between machines. Two plugins' PersonEntry
-        subclasses (the former cascade `actor` and social's `user_profile`)
-        made an unscoped `person` resolve to `actor` on one host and
-        `user_profile` on another for identical code -- with the wrong answer silently written
-        to disk. It also meant installing an unrelated extension rewrote
-        types in every KB (the tutorial-KB `undeclared_types` symptom).
-        See plugin-type-resolution-scoping.
-
-        An empty kb_type means "no KB context", which matches every plugin
-        and preserves the previous global behavior for callers that have no
-        KB in hand.
+        The type the caller named, unless a plugin active for the KB's
+        ``kb_type`` declares that core type maps to one of its own -- e.g.
+        journalism-investigation's ``event -> investigation_event`` -- and the
+        KB's kb.yaml declares both the core type and the target, or declares no
+        types at all (a pair either end of which the vocabulary leaves out is
+        not applied, even under ``allow_undeclared``). Nothing
+        is inferred from subclassing: that rule (the most-derived subclass,
+        tie-broken by name) wrote every ``note`` in a software KB as an ADR.
+        The one resolver is ``pyrite.schema.type_mapping``, which orient and
+        ``kb_schema`` read too. Scoped by kb_type so an unrelated installed
+        extension cannot change a KB's types (plugin-type-resolution-scoping).
         """
-        from ..models.core_types import ENTRY_TYPE_REGISTRY
+        from ..schema.type_mapping import resolve_entry_type
 
-        core_cls = ENTRY_TYPE_REGISTRY.get(entry_type)
-        if not core_cls:
-            return entry_type
-        try:
-            from ..plugins import get_registry
-
-            plugin_types = get_registry().get_all_entry_types_for_kb(kb_type)
-            # Even within one KB type several types can subclass the same
-            # core type (journalism-investigation declares investigation_event,
-            # transaction and legal_action, all EventEntry subclasses).
-            # Discovery order must not decide the winner, but neither may
-            # alphabetical order -- that once picked `cascade_event` over
-            # `timeline_event`, silently changing the type of every new entry
-            # in a 5,505-entry timeline KB. Prefer the MOST DERIVED class
-            # (longest MRO): a subclass of InvestigationEventEntry ->
-            # EventEntry beats a direct EventEntry subclass, because a deeper
-            # chain is a strictly more specific declaration of the same
-            # concept. Name is the final tiebreak so equal-depth candidates
-            # still resolve identically on every machine.
-            candidates = [
-                (name, cls)
-                for name, cls in plugin_types.items()
-                if name != entry_type and isinstance(cls, type) and issubclass(cls, core_cls)
-            ]
-            if candidates:
-                candidates.sort(key=lambda nc: (-len(nc[1].__mro__), nc[0]))
-                return candidates[0][0]
-        except Exception:
-            logger.warning("Plugin type resolution failed for %s", entry_type, exc_info=True)
-        return entry_type
+        return resolve_entry_type(entry_type, kb_config.kb_type, kb_config.kb_schema)
 
     # =========================================================================
     # The write pipeline (#378)
@@ -1504,11 +1466,12 @@ class KBService:
         """Refuse a type the KB's kb.yaml does not declare, when it declares any.
 
         Core types are NOT exempt (#197): a KB that declares a schema declares
-        the vocabulary for that KB, and exempting core names is how `-t note`
-        against a software KB skipped this refusal and then had plugin type
-        resolution rewrite it to its most-derived `note` subtype -- an ADR with
-        `adr_number: 0` under `kb/adrs/`. Checked on the type as the caller
-        named it, before that resolution.
+        the vocabulary for that KB (exempting core names once let `-t note`
+        into a software KB, where the subclass inference #468 removed wrote it
+        as an ADR). Checked on the type as the caller named it, before a
+        declared mapping applies; the stored type is checked by
+        :meth:`_refuse_undeclared_mapping_target`, and the resolver never
+        offers a pair whose key or target the vocabulary leaves out.
         """
         schema = kb_config.kb_schema
         declared = schema.declared_types() if schema else []
@@ -1521,6 +1484,31 @@ class KBService:
                 declared,
             )
 
+    @staticmethod
+    def _refuse_undeclared_mapping_target(
+        named: str, target: str, kb_name: str, kb_config: KBConfig
+    ) -> None:
+        """Refuse a declared mapping whose target the KB's kb.yaml does not
+        declare, when it declares any (#468). The named type passed
+        :meth:`_refuse_undeclared_type` already; the type that would be
+        stored must be in the vocabulary too.
+
+        No caller reaches this today: the resolver never offers a pair whose
+        target the vocabulary leaves out. It is a guard for a later source of
+        mappings (a kb.yaml ``type_map:`` override) that might, and is tested
+        by patching the resolver."""
+        schema = kb_config.kb_schema
+        declared = schema.declared_types() if schema else []
+        if declared and target not in declared:
+            raise UndeclaredTypeError(
+                f"type '{named}' maps to '{target}' in KB '{kb_name}' (a plugin's "
+                f"declared mapping; see type_mappings in the KB schema), and "
+                f"'{target}' is not declared there. Declared types: "
+                f"{', '.join(declared)}. Declare '{target}' in kb.yaml, or override "
+                f"with allow_undeclared.",
+                declared,
+            )
+
     def _prepare(
         self,
         kb_name: str,
@@ -1529,7 +1517,6 @@ class KBService:
         *,
         allow_undeclared: bool,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
-        resolve_type: bool = True,
         pending_ids: set[str] | None = None,
         pending_paths: set[Path] | None = None,
         owns: frozenset[str] = frozenset(),
@@ -1547,9 +1534,10 @@ class KBService:
         the default is :func:`build_entry`. ``add_entry_from_file`` passes its
         own so a file's frontmatter round-trips exactly as the loader reads it.
 
-        ``resolve_type=False`` keeps the type exactly as named. A file's
-        frontmatter declares its type; rewriting `type: note` to a plugin's
-        most-derived `note` subtype is how #197 filed an ADR. ``pending_ids``
+        The stored type is the named one unless a plugin declares the core
+        type maps to its own and the KB's vocabulary admits both types (or the
+        KB declares none) (:meth:`_resolve_entry_type`, #468) -- the same on
+        every surface, a file given to ``add`` included. ``pending_ids``
         are ids an earlier item of the same dry run would have created;
         ``pending_paths`` are resolved file paths an earlier item of the same
         dry run would have created -- needed because a `file_pattern` type's
@@ -1598,11 +1586,11 @@ class KBService:
         entry_id = fields.pop("id", None) or generate_entry_id(title)
         body = fields.pop("body", "")
 
-        # Resolve a generic core type to a plugin subtype, scoped to THIS KB's
-        # type so an unrelated installed extension can't rewrite the type
-        # (plugin-type-resolution-scoping).
-        if resolve_type:
-            entry_type = self._resolve_entry_type(entry_type, kb_config.kb_type)
+        # A declared mapping, if any (#468); otherwise the named type.
+        named = entry_type
+        entry_type = self._resolve_entry_type(named, kb_config)
+        if entry_type != named and not allow_undeclared:
+            self._refuse_undeclared_mapping_target(named, entry_type, kb_name, kb_config)
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
             fields, attributes = self._with_declared_fields(entry_type, kb_config, fields)
@@ -1739,7 +1727,6 @@ class KBService:
         hook_ctx: PluginContext | None = None,
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
-        resolve_type: bool = True,
         owns: frozenset[str] = frozenset(),
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
@@ -1749,7 +1736,6 @@ class KBService:
             spec,
             allow_undeclared=allow_undeclared,
             builder=builder,
-            resolve_type=resolve_type,
             owns=owns,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
@@ -2038,7 +2024,6 @@ class KBService:
                     spec,
                     allow_undeclared=allow_undeclared,
                     builder=from_file,
-                    resolve_type=False,
                 )
             except ValidationError as e:
                 fallback = {k: v for k, v in meta.items() if k not in MARKER_KEYS}
@@ -2054,7 +2039,6 @@ class KBService:
             spec,
             allow_undeclared=allow_undeclared,
             builder=from_file,
-            resolve_type=False,
         )
         return written.entry, {"errors": [], "warnings": written.warnings}
 
@@ -2579,7 +2563,7 @@ class KBService:
             return spec, []
         named = spec.get("entry_type") or spec.get("type") or "note"
         try:
-            entry_type = self._resolve_entry_type(named, kb_config.kb_type)
+            entry_type = self._resolve_entry_type(named, kb_config)
             managed = self._managed_spellings(entry_type, kb_config, spec)
         except Exception:  # an unknown type or bad envelope key: the create says why
             return spec, []
@@ -3789,7 +3773,7 @@ class KBService:
         schema_info = {}
         if kb_config.kb_schema:
             try:
-                schema_info = kb_config.kb_schema.to_agent_schema()
+                schema_info = kb_config.kb_schema.to_agent_schema(kb_type=kb_config.kb_type)
             except Exception:
                 logger.warning("Failed schema-to-agent conversion", exc_info=True)
 

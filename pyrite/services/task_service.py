@@ -1103,7 +1103,7 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
                 f"Allowed next: {allowed_msg} "
                 f"Tasks follow open → claimed → in_progress → done/failed/blocked/review; "
                 f"walk through the intermediate states rather than skipping "
-                f"(or use 'cancelled' to retire an obsolete task from any state)."
+                f"(or use 'cancelled' to retire an obsolete task from any unfinished state)."
             )
             if (
                 entry.entry_type == "task"

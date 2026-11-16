@@ -3177,7 +3177,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -3258,7 +3259,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           },
@@ -5162,7 +5164,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -8280,7 +8283,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -8361,7 +8365,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           },

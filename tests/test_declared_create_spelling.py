@@ -69,6 +69,9 @@ def world(tmp_path):
 VALUES = {"x_text": "mine", "x_multi": ["a"], "x_num": 0, "x_bool": False}
 
 
+@pytest.mark.control(
+    reason="pre-existing; #468 only removed the resolve_type kwarg _prepare no longer takes"
+)
 @pytest.mark.parametrize("entry_type", registered_types())
 @pytest.mark.parametrize("nested", [False, True])
 def test_prepared_create_serializes_declared_values_canonically(world, entry_type, nested):
@@ -79,7 +82,7 @@ def test_prepared_create_serializes_declared_values_canonically(world, entry_typ
     if entry_type in {"event", "investigation_event", "legal_action", "transaction"}:
         spec["date"] = "2026-01-01"
     original_request = copy.deepcopy(spec)
-    entry, _ = svc._prepare("notes", kb, spec, allow_undeclared=False, resolve_type=False)
+    entry, _ = svc._prepare("notes", kb, spec, allow_undeclared=False)
     metadata_before = copy.deepcopy(entry.metadata)
     parsed = load_frontmatter(new_entry_text(entry))
     assert parsed is not None
