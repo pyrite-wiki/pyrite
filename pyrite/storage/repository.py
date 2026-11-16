@@ -1536,8 +1536,10 @@ class KBRepository:
             real_root = os.path.realpath(self.path, strict=True)
         except (OSError, ValueError, RuntimeError):
             return None  # dangling or a loop: the reconcile reports it malformed
+        # Leaves the KB. Stated, not left to the lexical rule below (a `..`
+        # part reads as hidden): ``relpath`` raises across Windows drives.
         if os.path.commonpath([real_root, real]) != real_root or real == real_root:
-            return None  # leaves the KB
+            return None
         target = self.path / os.path.relpath(real, real_root)
         if (
             not fnmatch.fnmatch(target.name, "*.md")
