@@ -1298,7 +1298,8 @@ decision 8a). Pyrite reads such a file partially and writes it not at all.
   (not `0`), and a refused `status` is not `open`. REST leaves a refused
   column out of the reply too (`metadata` is absent, not `{}` or `null`, when
   the whole `metadata:` was refused; likewise `tags`, `participants` and
-  `sources`). A list is never `null`: `tags`, `participants`, `sources`,
+  `sources`). GET and POST `/api/daily/{date}` follow the same rule for an
+  existing note (#1490). A list is never `null`: `tags`, `participants`, `sources`,
   `outlinks` and `backlinks` are lists when present, and the ones `load_problems`
   does not name keep the value the read gave them or the empty list, so a
   client may read `.length` of any of them and must treat an absent one as
