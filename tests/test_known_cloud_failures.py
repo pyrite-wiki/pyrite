@@ -114,6 +114,7 @@ def test_no_registry_text_leaves_a_data_line(tmp_path):
         b"[{,}",
         b"\xff\xfe not utf-8",
         None,
+        b"[" * 200000,
     ],
     ids=[
         "object",
@@ -123,9 +124,12 @@ def test_no_registry_text_leaves_a_data_line(tmp_path):
         "invalid-json",
         "not-utf-8",
         "missing",
+        "nested-200000-deep",
     ],
 )
-def test_a_malformed_or_missing_registry_is_one_line_and_no_traceback(tmp_path, content):
+def test_a_malformed_or_missing_registry_is_a_notice_and_the_trailer_with_no_traceback(
+    tmp_path, content
+):
     path = tmp_path / "registry.json"
     if content is not None:
         path.write_bytes(content)
@@ -138,6 +142,7 @@ def test_a_malformed_or_missing_registry_is_one_line_and_no_traceback(tmp_path, 
     assert "Traceback" not in result.stderr
     assert "registry is malformed" in result.stdout
     assert "CI remains required" in result.stdout
+    assert len(result.stdout.splitlines()) == 2  # the notice, then the trailer
     assert "just a string" not in result.stdout
 
 

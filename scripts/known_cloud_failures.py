@@ -8,10 +8,11 @@ not to the raw file. Every value an entry carries that the brief prints
 so each prints on a line of its own that starts with the field's name and
 "(data):", as one JSON string, with control characters and newlines flattened
 and its length capped: none of it can start a line of the brief or carry a
-terminal escape (#1369). A registry that is missing, or is not a list of
-entries with those three string fields, is reported in one line with exit
-status 2 and no traceback; the session start hook then prints its own warning
-and goes on.
+terminal escape (#1369). A registry that is missing, cannot be parsed
+(nesting too deep included), or is not a list of entries with those three
+string fields prints a notice line and the trailer line, exits with status 2
+and no traceback; the session start hook then prints its own warning and goes
+on.
 """
 
 import json
@@ -39,7 +40,8 @@ def _entries(path: Path) -> list[dict[str, str]] | None:
     whose printed fields are all strings."""
     try:
         failures = json.loads(path.read_bytes().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+        # RecursionError: a registry nested deeper than json can parse.
         return None
     if not isinstance(failures, list):
         return None
