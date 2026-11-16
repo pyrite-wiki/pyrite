@@ -997,13 +997,17 @@ class KBRepository:
                 self._refuse_if_derived(entry_id, held)
                 return list(held)
         candidates: list[Path] = []
-        # The index row is a cache, never evidence of which file is the
-        # entry: its path is a candidate only where the walk would list it
-        # (``_listed``, the rule ``_filename_candidates`` applies). A row
-        # naming an in-KB link to the real file -- dev's sync wrote one when
-        # the link sorted first, and any row can be stale -- would otherwise
-        # read through the link as an explicit holder, and the delete would
-        # remove the user's link and keep the entry (#1262).
+        # The index row's path is a candidate only where the walk would list
+        # it: the whole of ``_listed``, the rule ``_filename_candidates``
+        # applies. That excludes an in-KB link to another walked file (an
+        # alias; dev's sync wrote such a row when the link sorted first, and
+        # any row can be stale: read through, it would count as an explicit
+        # holder, and the delete would remove the user's link and keep the
+        # entry, #1262). It also excludes a path the walk skips: a README, a
+        # path with a dot-prefixed part, one under ``_templates``. Such a file
+        # can hold an entry (a create titled "README" writes one, #1552); a
+        # delete before the next sync then answers not found for it, its row
+        # is dropped, and the file stays.
         if (
             indexed_path is not None
             and self._lexically_inside(indexed_path)
@@ -1590,9 +1594,11 @@ class KBRepository:
         return found
 
     def _listed(self, md_file: Path) -> bool:
-        """Whether ``list_files`` walks ``md_file``; ``find_file`` uses the
-        same rule, so what sync indexes is what lookup finds. An alias of
-        another walked file is not listed (``alias_target``)."""
+        """Whether ``list_files`` walks ``md_file``. ``find_file`` and
+        ``files_to_delete`` use the same rule, so they find only what sync
+        would index; a read by id (``KBService._entry_file``) tries the index
+        row's path first whatever this says. An alias of another walked file
+        is not listed (``alias_target``)."""
         return self._lexically_listed(md_file) and self.alias_target(md_file) is None
 
     def _lexically_listed(self, md_file: Path) -> bool:
