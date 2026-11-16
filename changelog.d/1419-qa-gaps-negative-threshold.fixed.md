@@ -1,1 +1,1 @@
-`pyrite qa gaps --threshold` now rejects negative values as CLI usage errors. Zero remains valid.
+- `pyrite qa gaps --threshold` (`-t`) now refuses a negative value as a usage error (exit 2); `0` is still accepted (#1419).

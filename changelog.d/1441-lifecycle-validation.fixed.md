@@ -1,3 +1,1 @@
-Reject lifecycle values other than `active` and `archived` on create and update,
-and report invalid values in existing Markdown files through `qa validate`.
-Unrelated edits preserve existing invalid values with a warning. (#1441)
+- **`lifecycle` must be `active` or `archived`.** `pyrite create` and `pyrite update`, MCP `kb_create`/`kb_update` and REST `POST /api/entries`/`PUT /api/entries/{id}` refuse any other value with `VALIDATION_FAILED` and a `lifecycle` row (`rule: enum`, `expected`, `got`); nothing is written. An update that leaves an off-list value already in a file as it was still succeeds, with a warning. `pyrite qa validate` reports such a file as `invalid_lifecycle` (#1441).
