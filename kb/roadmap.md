@@ -51,6 +51,7 @@ community needs and feedback.
 | 0.26.2 | A network call borrows nothing of the server account | 2026-11-11 |
 | 0.26.3 | A network call borrows nothing of the server account, continued | 2026-11-16 |
 | 0.26.4 | Symlink identity and note typing; bugs and dependency alerts | 2026-11-19 |
+| 0.26.5 | One answer per question: the five structural themes of the 2026-11-16 code audit | 2026-12-10 |
 | 0.27 | One operator, many users | undated |
 | 0.28 | Alpha plugin and API contracts | undated |
 
@@ -89,6 +90,16 @@ milestones carry the issues; this table carries the promise and the gate.
   from #637; the rename half went to #811). A short train (maintainer,
   2026-11-16): also the milestone's bugs, the high Dependabot alerts and the
   open CodeQL error; what is not done by Thursday moves on.
+- **0.26.5: one answer per question.** The five themes of
+  `kb/designs/code-audit-2026-11-16.md` (maintainer, 2026-11-16): a type is
+  one schema per KB (#1528); a plugin passes the same single points as core,
+  behind an alpha `pyrite.plugin_api` (#1529); a KB name resolves once at the
+  boundary (#1530); a failure is never a success-shaped answer (#1531); a
+  surface translates and the service decides (#1532). Order of work and the
+  estimate are in #1533. *Checkpoint:* 2026-11-26, the five fences and the
+  first two waves merged. *Slips first:* the `KBService` split, then the last
+  plugin conversions. A dated target, not a train: the date moves before a
+  theme is cut.
 - **0.27: one operator, many users.** Design first: the authorization model
   and its executable matrix (#587), the security review (#586), and one
   operator-owned KB registry ([[adr-0039]]; #539, #602, #382).
