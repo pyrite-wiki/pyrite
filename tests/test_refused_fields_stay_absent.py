@@ -203,6 +203,76 @@ def test_a_rest_read_omits_a_refused_list_column_rather_than_nulling_it(make_wor
         assert isinstance(data[other], list), (other, data[other])
 
 
+def _daily_note_text(column: str) -> str:
+    """A daily note whose type refuses one column."""
+    return f"---\ntype: note\nid: daily-2026-11-16\ntitle: Daily\n{column}: oops\n---\n\nToday.\n"
+
+
+@pytest.mark.parametrize("column", ["tags", "metadata"])
+def test_a_daily_read_omits_a_refused_column(make_world, column):
+    # GET /api/daily/{date} follows the same never-a-placeholder rule as
+    # GET /api/entries/{id} (#1490): a refused column is absent, never []
+    # or {}. The other list columns keep their lists.
+    from pyrite.models.core_types import NoteEntry
+
+    original = NoteEntry.from_frontmatter.__func__
+
+    def refusing(klass, meta, body=""):
+        if column in meta:
+            raise ValueError(f"{column} must be a list of strings")
+        return original(klass, meta, body)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(NoteEntry, "from_frontmatter", classmethod(refusing))
+        world = make_world(_daily_note_text(column))
+
+        data = world.client.get("/api/daily/2026-11-16", params={"kb": "sw"}).json()
+
+    assert data["id"] == "daily-2026-11-16"
+    assert column not in data, data
+    assert [p["field"] for p in data["load_problems"]] == [column]
+    for other in {"tags", "participants", "sources", "outlinks", "backlinks"} - {column}:
+        assert isinstance(data[other], list), (other, data[other])
+
+
+def test_a_daily_post_on_an_existing_note_omits_a_refused_column(make_world):
+    # POST /api/daily/{date} on a note that already exists returns the same
+    # body as the GET: the refused column stays out (#1490).
+    from pyrite.models.core_types import NoteEntry
+
+    original = NoteEntry.from_frontmatter.__func__
+
+    def refusing(klass, meta, body=""):
+        if "tags" in meta:
+            raise ValueError("tags must be a list of strings")
+        return original(klass, meta, body)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(NoteEntry, "from_frontmatter", classmethod(refusing))
+        world = make_world(_daily_note_text("tags"))
+
+        posted = world.client.post("/api/daily/2026-11-16", params={"kb": "sw"}).json()
+
+    assert posted["id"] == "daily-2026-11-16"
+    assert "tags" not in posted, posted
+    assert [p["field"] for p in posted["load_problems"]] == ["tags"]
+
+
+def test_a_daily_read_of_a_note_that_loads_has_no_load_problems(make_world):
+    # Control: a daily note that loads reads as before, with today's body
+    # and no load_problems key (#1490).
+    world = make_world(
+        "---\ntype: note\nid: daily-2026-11-16\ntitle: Daily\ntags: [daily]\n---\n\nToday.\n"
+    )
+
+    data = world.client.get("/api/daily/2026-11-16", params={"kb": "sw"}).json()
+
+    assert data["id"] == "daily-2026-11-16"
+    assert "Today." in data["body"]
+    assert "load_problems" not in data
+    assert data["tags"] == ["daily"]
+
+
 @pytest.mark.control(reason="a file that loads reads as before, with no load_problems key")
 @pytest.mark.parametrize("surface", SURFACES)
 def test_a_file_that_loads_has_no_load_problems(make_world, surface):

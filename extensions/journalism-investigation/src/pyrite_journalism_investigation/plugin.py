@@ -186,6 +186,11 @@ class JournalismInvestigationPlugin:
             "funding": FundingEntry,
         }
 
+    def get_type_mappings(self) -> dict[str, str]:
+        """A core ``event`` or ``document`` in an investigation KB is stored as
+        this plugin's type (#468: declared, never inferred from subclassing)."""
+        return {"event": "investigation_event", "document": "document_source"}
+
     def get_type_metadata(self) -> dict[str, dict]:
         """Aliases for keys older files spell another way (ADR-0045 decision 8)."""
         return {

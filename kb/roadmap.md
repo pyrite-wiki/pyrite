@@ -50,7 +50,7 @@ community needs and feedback.
 | 0.26.1 | Search flags, link resolution and cross-KB tools | 2026-11-10 |
 | 0.26.2 | A network call borrows nothing of the server account | 2026-11-11 |
 | 0.26.3 | A network call borrows nothing of the server account, continued | 2026-11-16 |
-| 0.26.4 | Symlink identity and note typing | undated |
+| 0.26.4 | Symlink identity and note typing; bugs and dependency alerts | 2026-11-19 |
 | 0.27 | One operator, many users | undated |
 | 0.28 | Alpha plugin and API contracts | undated |
 
@@ -86,7 +86,9 @@ milestones carry the issues; this table carries the promise and the gate.
   who may read it (ADR-0052, proposed). Release notes in `CHANGELOG.md`.
 - **0.26.4.** What slipped from 0.26.1: #468 (note entries in a software KB
   resolve to ADREntry) and #1262 (the duplicate-id half of the symlink case
-  from #637; the rename half went to #811).
+  from #637; the rename half went to #811). A short train (maintainer,
+  2026-11-16): also the milestone's bugs, the high Dependabot alerts and the
+  open CodeQL error; what is not done by Thursday moves on.
 - **0.27: one operator, many users.** Design first: the authorization model
   and its executable matrix (#587), the security review (#586), and one
   operator-owned KB registry ([[adr-0039]]; #539, #602, #382).

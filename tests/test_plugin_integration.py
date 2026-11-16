@@ -699,7 +699,7 @@ class TestRelationshipTypes:
 
     def test_agent_schema_includes_plugin_rels(self, patched_registry):
         schema = KBSchema(name="test")
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         rels = agent.get("relationship_types", {})
         assert "elaborates" in rels
         assert "branches_from" in rels

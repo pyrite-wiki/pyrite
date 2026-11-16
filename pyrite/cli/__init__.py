@@ -104,10 +104,18 @@ class _LazyPluginTyper(typer.Typer):
             # A plugin whose get_cli_commands raised would vanish from `app`;
             # say so on stderr rather than only in a logger nobody listens to
             # (#900).
+            # A refused type mapping (#468) leaves that core type stored as
+            # named: say so too, or the dropped mapping is invisible.
             for plugin, method, exc in registry.aggregate_failures:
                 if method == "get_cli_commands":
                     print(
                         f"pyrite: plugin '{plugin}' CLI commands are unavailable: "
+                        f"{exc.type_name}: {exc.text(local=True)}",
+                        file=sys.stderr,
+                    )
+                elif method == "get_type_mappings":
+                    print(
+                        f"pyrite: plugin '{plugin}' type mappings refused: "
                         f"{exc.type_name}: {exc.text(local=True)}",
                         file=sys.stderr,
                     )
