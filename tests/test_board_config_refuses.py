@@ -457,7 +457,17 @@ def test_a_checker_that_cannot_run_on_an_entry_refuses(world, monkeypatch):
     assert _snapshot(world) == before
 
 
-@pytest.mark.parametrize("tool", BOARD_TOOLS)
+@pytest.mark.parametrize(
+    "tool",
+    [
+        t
+        if t == "sw_refine"
+        else pytest.param(
+            t, marks=pytest.mark.control(reason="answered without INTERNAL before #1538 too")
+        )
+        for t in BOARD_TOOLS
+    ],
+)
 def test_a_call_with_no_kb_is_never_an_internal_error(world, tool):
     """No `kb_name` key at all: a refusal, or the built-in board's answer for
     the cross-KB views; never INTERNAL."""
@@ -473,10 +483,15 @@ def test_refine_naming_no_kb_is_refused_over_mcp(world):
 
 
 @pytest.mark.control(reason="the built-in board against rules this PR adds: no base to be red on")
-def test_the_built_in_board_passes_the_loaders_own_checks():
-    from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG, _validated
+def test_the_built_in_board_passes_the_loaders_own_checks(world):
+    """Written out as a board.yaml, the built-in board loads: it obeys every
+    rule the loader enforces."""
+    import yaml
+    from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG
 
-    assert _validated(DEFAULT_BOARD_CONFIG)["lanes"] == DEFAULT_BOARD_CONFIG["lanes"]
+    _write_board(world, yaml.safe_dump(DEFAULT_BOARD_CONFIG))
+    answer = _mcp(world, "sw_board", MCP_CALLS["sw_board"])
+    assert [lane["name"] for lane in answer["lanes"]] == DEFAULT_LANES, answer
 
 
 # -- controls: what does not change ------------------------------------------------
