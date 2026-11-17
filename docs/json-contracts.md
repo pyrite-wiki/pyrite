@@ -1848,7 +1848,7 @@ checked against each command's Typer signature by
 | `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
 | `task create` | yes (shared; `-f` deprecated) | `json` |
-| `task get` | yes (shared; `-f` deprecated) | `rich` |
+| `task get` | yes (shared; `-f` deprecated) | `json` |
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.

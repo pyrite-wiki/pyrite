@@ -222,7 +222,7 @@ def test_task_get_and_mcp_status_refuse_when_file_missing_behind_index_row(task_
 def test_task_get_rich_prints_body_under_fields(task_body_world):
     """Rich output of task get prints the body under the metadata fields (#1681)."""
     world, _ = task_body_world
-    secret_instruction = "Crucial autonomous instructions for the agent."
+    agent_instruction = "Crucial autonomous instructions for the agent."
     res = world.cli(
         "task",
         "create",
@@ -230,7 +230,7 @@ def test_task_get_rich_prints_body_under_fields(task_body_world):
         "-k",
         "test-tasks",
         "--body",
-        secret_instruction,
+        agent_instruction,
         "--format",
         "json",
     )
@@ -244,9 +244,9 @@ def test_task_get_rich_prints_body_under_fields(task_body_world):
             env={"COLUMNS": "120"},
         )
     assert rich_res.exit_code == 0, rich_res.output
-    assert secret_instruction in rich_res.output
+    assert agent_instruction in rich_res.output
     # Body appears after metadata fields
     status_pos = rich_res.output.find("Status: open")
-    body_pos = rich_res.output.find(secret_instruction)
+    body_pos = rich_res.output.find(agent_instruction)
     assert status_pos != -1
     assert body_pos > status_pos
