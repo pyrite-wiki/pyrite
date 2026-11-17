@@ -414,6 +414,9 @@ KINDS = {
     "float_1e1": ("1e1", "1e1", 1e1, "good", "good", "good"),
     # a string is plain ASCII digit text only; the command line reads numeric text as a number
     "str_10.9": ('"10.9"', "10.9", "10.9", "bad", "bad", "bad"),
+    "str_10.7": ('"10.7"', "10.7", "10.7", "bad", "bad", "bad"),
+    "str_true": ('"true"', "true", "true", "bad", "bad", "bad"),
+    "str_7": ('"7"', "7", "7", "good", "good", "good"),
     "str_1e1": ('"1e1"', "1e1", "1e1", "bad", "good", "bad"),
     "inf": (".inf", ".inf", float("inf"), "bad", "bad", "bad"),
     "-inf": ("-.inf", "-.inf", float("-inf"), "bad", "bad", "bad"),
@@ -877,3 +880,92 @@ def test_a_cli_update_setting_importance_to_blank_or_null_text_is_refused(world,
     code, res = _surface_call(world, "cli", "update", etype, value=text)
     _assert_refused(code, res)
     assert path.read_bytes() == before
+
+
+# -- a CSV import judges the cell's text with the same rule ----------------------------------
+#
+# A CSV cell is text, sent as given (#1588): its verdict is the KINDS row whose JSON value is
+# that text (`mcp_set`), so the cells are derived from the table, not listed. One exception,
+# CSV's own: an empty cell is no value at all, so it is absent, as before (the default 5 is
+# written, as for every create without importance).
+CSV_KINDS = sorted(k for k, row in KINDS.items() if isinstance(row[2], str))
+
+
+def _csv(rows: list[dict]) -> bytes:
+    import csv
+    import io
+
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=["title", "body", "importance"])
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue().encode("utf-8")
+
+
+def _rest_import(w, name: str, payload: bytes, fmt: str) -> dict:
+    response = w.client.post(
+        "/api/entries/import",
+        params={"kb": KB, "format": fmt},
+        files={"file": (name, payload, "text/plain")},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def _imported_file(w, entry_id: str) -> Path:
+    (path,) = [p for p in w.kb_path(KB).rglob("*.md") if p.stem == entry_id]
+    return path
+
+
+@pytest.mark.parametrize("kind", CSV_KINDS)
+def test_a_csv_import_judges_the_cell_as_given_and_keeps_its_siblings(rest, kind):
+    """A refused row is reported beside its title with the importance row; the good row
+    beside it is imported (the per-item answer every import gives)."""
+    cell = KINDS[kind][2]
+    verdict = "absent" if cell == "" else KINDS[kind][5]
+    body = _rest_import(
+        rest,
+        "x.csv",
+        _csv(
+            [
+                {"title": "Sibling", "body": "x", "importance": "7"},
+                {"title": "Cell", "body": "x", "importance": cell},
+            ]
+        ),
+        "csv",
+    )
+    assert _stored_value(_imported_file(rest, "sibling")) == 7
+    if verdict == "bad":
+        assert body["imported"] == 1 and body["errors"] == 1, body
+        (refused,) = body["error_details"]
+        assert refused["title"] == "Cell" and refused["error_code"] == "VALIDATION_FAILED", body
+        assert [r["rule"] for r in refused["errors"] if r["field"] == "importance"] == ["range"]
+        assert not [p for p in rest.kb_path(KB).rglob("*.md") if p.stem == "cell"]
+    else:
+        assert body["imported"] == 2 and body["errors"] == 0, body
+        path = _imported_file(rest, "cell")
+        if verdict == "good":
+            assert _stored_is_in_range(path), path.read_text()
+        else:
+            assert _stored_value(path) == 5  # an empty cell: no value, the create default
+
+
+@pytest.mark.parametrize("value", ["10.7", "true", "high", "+5", " 5 "])
+def test_a_csv_import_and_a_json_import_answer_a_bad_row_alike(rest, value):
+    rows = [
+        {"title": "Sibling", "body": "x", "importance": "7"},
+        {"title": "Cell", "body": "x", "importance": value},
+    ]
+    from_csv = _rest_import(rest, "x.csv", _csv(rows), "csv")
+    for row in rows:
+        row["title"] += " J"
+    from_json = _rest_import(rest, "x.json", json.dumps(rows).encode(), "json")
+
+    def shape(body):
+        return (
+            body["imported"],
+            body["errors"],
+            [(d["error_code"], d["errors"]) for d in body["error_details"]],
+        )
+
+    assert shape(from_csv) == shape(from_json), (from_csv, from_json)
