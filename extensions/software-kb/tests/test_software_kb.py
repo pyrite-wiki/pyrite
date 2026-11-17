@@ -1816,6 +1816,7 @@ class TestPullNext:
             finally:
                 db.close()
 
+    @pytest.mark.control(reason="behaviour kept by #1538; rewritten to read the KB's own board")
     def test_pull_next_wip_limit_enforce(self):
         """When WIP limit is reached and policy is enforce, return no recommendation."""
 

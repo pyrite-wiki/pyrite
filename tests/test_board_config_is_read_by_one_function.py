@@ -229,6 +229,7 @@ PLANTED: dict[str, tuple[str, str]] = {
 }
 
 
+@pytest.mark.control(reason="the checker's own test: a planted violation is found on any tree")
 @pytest.mark.parametrize("plant", sorted(PLANTED))
 def test_the_checker_finds_a_planted_violation(plant):
     sources = _sources()

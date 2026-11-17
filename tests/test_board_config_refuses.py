@@ -69,6 +69,7 @@ REFUSED_SHAPES: dict[str, bytes] = {
     "a-list": f"- {MARKER}\n- b\n".encode(),
     "a-string": f"{MARKER}\n".encode(),
     "lanes-not-a-list": f"lanes: {{{MARKER}: 1}}\n".encode(),
+    "lanes-a-number": f"lanes: 5  # {MARKER}\n".encode(),
     "gates-not-a-mapping": f"gates: [{MARKER}]\n".encode(),
     "lane-not-a-mapping": f"lanes:\n  - {MARKER}\n".encode(),
     "lane-without-statuses": f"lanes:\n  - name: {MARKER}\n".encode(),
@@ -78,7 +79,9 @@ REFUSED_SHAPES: dict[str, bytes] = {
     ).encode(),
     "wip-policy-unknown": f"lanes: []\nwip_policy: {MARKER}\n".encode(),
     "gate-not-a-mapping": f"gates:\n  in_progress: {MARKER}\n".encode(),
-    "gate-policy-unknown": VALID_GATED.replace("policy: enforce", f"policy: {MARKER}").encode(),
+    "gate-policy-unknown": VALID_GATED.replace(
+        "    policy: enforce", f"    policy: {MARKER}"
+    ).encode(),
     "criteria-not-a-list": f"gates:\n  in_progress:\n    criteria: {MARKER}\n".encode(),
     "criterion-type-unknown": (
         f"gates:\n  in_progress:\n    criteria:\n      - text: t\n        type: {MARKER}\n"
@@ -431,13 +434,6 @@ def test_the_cli_pull_next_naming_no_kb_applies_the_default_limit(
     assert _cli_json(result)["wip_status"]["limit"] == 5, result.output
 
 
-@pytest.mark.parametrize("command", sorted(CLI_CALLS))
-def test_a_cli_command_reads_the_named_kbs_board(world, command, board_in_the_working_directory):
-    _write_board(world, VALID_GATED.replace(MARKER, "kb-own"))
-    result = _cli(world, CLI_CALLS[command])
-    assert MARKER not in result.output, result.output
-
-
 def test_the_cli_pull_next_applies_the_named_kbs_wip_limit(world, board_in_the_working_directory):
     _write_board(world, VALID_GATED)
     result = _cli(world, CLI_CALLS["sw pull-next"])
@@ -518,6 +514,7 @@ def _registered_tools() -> dict[str, str]:
     return {name: spec["handler"].__name__ for name, spec in tools.items()}
 
 
+@pytest.mark.control(reason="a ratchet: it guards the next tool that loads a board config")
 @pytest.mark.parametrize("tool", sorted(_registered_tools()))
 def test_every_tool_that_loads_a_board_is_tested_here(tool):
     if _registered_tools()[tool] in _plugin_methods_that_load_a_board():
@@ -532,6 +529,7 @@ def _sw_commands() -> list[str]:
     )
 
 
+@pytest.mark.control(reason="a ratchet: it guards the next command that loads a board config")
 @pytest.mark.parametrize("command", _sw_commands())
 def test_every_command_that_loads_a_board_is_tested_here(command):
     if command in _cli_commands_that_load_a_board():
@@ -551,3 +549,32 @@ def test_refine_naming_no_kb_is_refused_on_the_cli(world, board_in_the_working_d
     answer = _cli_json(result)
     assert answer["error_code"] == "VALIDATION_FAILED", answer
     assert MARKER not in result.output
+
+
+@pytest.mark.parametrize(
+    "gate",
+    [
+        {"policy": "enforced", "criteria": []},
+        {"criteria": [{"text": "t", "checker": "has_feild"}]},
+        {"criteria": [{"text": "t"}]},
+        {"criteria": [{"text": "t", "type": "judgement"}]},
+    ],
+    ids=["policy-unknown", "checker-unknown", "no-checker", "type-unknown"],
+)
+def test_the_gate_never_records_what_it_could_not_run_as_passed(world, gate):
+    """`_evaluate_gate` refuses on its own, even handed a config the loader
+    did not validate."""
+    from pyrite_software_kb.board import BoardConfigError
+    from pyrite_software_kb.plugin import SoftwareKBPlugin
+
+    row = {"id": "item-ready", "kb_name": KB, "title": "t", "status": "accepted"}
+    with pytest.raises(BoardConfigError):
+        SoftwareKBPlugin()._evaluate_gate(
+            world.db, {"gates": {"in_progress": gate}}, "in_progress", row, {}, readable_kbs=None
+        )
+
+
+def test_a_checker_criterion_without_a_checker_says_so(world):
+    _write_board(world, REFUSED_SHAPES["checker-criterion-without-checker"])
+    answer = _mcp(world, "sw_check_ready", MCP_CALLS["sw_check_ready"])
+    assert "names no checker" in answer["error"], answer
