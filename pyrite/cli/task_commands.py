@@ -13,15 +13,15 @@ one of them). Notices go to stderr, which the root leaves open.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.table import Table
 
 from ..exceptions import EntryNotFoundError, ValidationError
-from ..services.access_policy import UNSCOPED
-from .outcome import Outcome
-from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT, cli_console
+from ..utils.frontmatter import Frontmatter, split_frontmatter
+from .context import read_input_file
 
 if TYPE_CHECKING:
     from ..services.task_service import TaskService
@@ -174,6 +174,49 @@ def _parse_task_create_fields(
         fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
     return fields
 
+def _resolve_task_body(
+    body: str | None,
+    body_file: Path | None,
+    stdin_flag: bool,
+) -> str | None:
+    """One body source for task create/update. Returns None if none given."""
+    given = []
+    if body is not None:
+        given.append("--body")
+    if body_file is not None:
+        given.append("--body-file")
+    if stdin_flag:
+        given.append("--stdin")
+    if len(given) > 1:
+        raise ValidationError(
+            f"Provide only one body source: {' and '.join(given)} given. "
+            "Use --body, --body-file, or --stdin, not more than one."
+        )
+    if stdin_flag:
+        # Same as pyrite create: read stdin as-is, even if terminal
+        import sys
+        resolved = sys.stdin.read()
+    elif body_file is not None:
+        try:
+            resolved = read_input_file(body_file, "Body file")
+        except UnicodeDecodeError:
+            raise ValidationError(
+                f"Body file is not valid UTF-8: {body_file}"
+            ) from None
+    elif body is not None:
+        resolved = body
+    else:
+        return None
+
+    # Option C: frontmatter at start is refused
+    split = split_frontmatter(resolved)
+    if isinstance(split, Frontmatter):
+        raise ValidationError(
+            "Task body starts with a frontmatter block (---). "
+            "Task bodies do not read frontmatter. "
+            "Use `pyrite create -t task --body-file <file>` if you want frontmatter fields."
+        )
+    return resolved
 
 @task_app.command("create")
 def task_create(
@@ -188,6 +231,8 @@ def task_create(
         None, "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
     body: str | None = typer.Option(None, "--body", "-b", help="Task description"),
+    body_file: Path | None = typer.Option(None, "--body-file", help="Read body from file"),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Read body from stdin"),
     tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
     due_date: str | None = typer.Option(None, "--due-date", "-d", help="Due date (YYYY-MM-DD)"),
     link: list[str] | None = typer.Option(
@@ -229,10 +274,11 @@ def task_create(
     svc, db = _get_service(kb_name)
     try:
         fields = _parse_task_create_fields(field, config=svc.config, kb_name=kb_name)
+        resolved_body = _resolve_task_body(body, body_file, stdin_flag)
         result = svc.create_task(
             kb_name=kb_name,
             title=title,
-            body=body or "",
+            body=resolved_body or "",
             parent=parent or "",
             priority=priority,
             assignee=assignee or "",
@@ -452,6 +498,9 @@ def task_update(
     priority: int | None = typer.Option(
         None, "--priority", min=1, max=10, help="New priority 1-10"
     ),
+    body: str | None = typer.Option(None, "--body", "-b", help="New body text"),
+    body_file: Path | None = typer.Option(None, "--body-file", help="Read body from file"),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Read body from stdin"),
     reason: str | None = typer.Option(
         None,
         "--reason",
@@ -477,7 +526,7 @@ def task_update(
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
-    """Update task fields (status, assignee, priority, reason)."""
+    """Update task fields (status, assignee, priority, body, reason)."""
     updates: dict[str, Any] = {}
     if status is not None:
         updates["status"] = status
@@ -495,11 +544,13 @@ def task_update(
         updates["comment"] = comment
     if by is not None:
         updates["by"] = by
-
+    resolved_body = _resolve_task_body(body, body_file, stdin_flag)
+    if resolved_body is not None:
+        updates["body"] = resolved_body
     if not updates:
         raise ValidationError(
-            "No updates specified: pass --status, --assignee, --priority, --reason, "
-            "--comment or --by."
+            "No updates specified: pass --status, --assignee, --priority, --body, "
+            "--body-file, --stdin, --reason, --comment or --by."
         )
 
     svc, db = _get_service(kb_name)
