@@ -345,9 +345,10 @@ def register_search_command(app: typer.Typer):
                 date = r.get("date", "")[:10] if r.get("date") else ""
                 raw_snippet = r.get("snippet", "") or ""
                 snippet = (raw_snippet[:97] + "...") if len(raw_snippet) > 100 else raw_snippet
-                snippet = snippet.replace("<mark>", "[bold]").replace("</mark>", "[/bold]")
+                snippet = escape(snippet).replace("<mark>", "[bold]").replace("</mark>", "[/bold]")
                 raw_title = r.get("title", "") or ""
                 title = (raw_title[:37] + "...") if len(raw_title) > 40 else raw_title
+                title = escape(title)
                 cells = [
                     r.get("kb_name", ""),
                     r.get("id", ""),

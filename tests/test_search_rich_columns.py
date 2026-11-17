@@ -6,6 +6,7 @@ Verifies that:
 - Raw `<mark>` tags from FTS5 snippets are replaced with Rich bold markup in rich output.
 - `pyrite search --files --format rich` retains the ID column with matching settings.
 - `pyrite search --format json` preserves raw `<mark>` tags untouched.
+- Brackets like `[[key-store]]` and `array[/end]` in snippets or titles are escaped and rendered as written without raising MarkupError.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import json
 
 
 def test_search_rich_preserves_id_and_replaces_mark_tags(cli_world, console_width, monkeypatch):
-    """Rich search output shows the full ID and replaces <mark> with bold."""
+    """Rich search output shows the full ID, keeps matched word, and replaces <mark> with bold."""
     console_width(80)
     monkeypatch.setenv("COLUMNS", "80")
     monkeypatch.setenv("TERM", "xterm-256color")
@@ -43,9 +44,34 @@ def test_search_rich_preserves_id_and_replaces_mark_tags(cli_world, console_widt
     lines_with_id = [line for line in result.output.splitlines() if expected_id in line]
     assert len(lines_with_id) == 1
 
-    # Raw <mark> and </mark> tags are not present in rich output
+    # Raw <mark> and </mark> tags are not present in rich output, and matched term is present
     assert "<mark>" not in result.output
     assert "</mark>" not in result.output
+    assert "store" in result.output
+
+
+def test_search_rich_escapes_brackets_in_snippet_and_title(cli_world):
+    """Snippet and title with wikilinks and brackets survive Rich markup parsing."""
+    world = cli_world()
+    world.add_entry(
+        "test-kb",
+        text=(
+            "---\n"
+            "id: bracket-markup-test-entry\n"
+            "type: note\n"
+            "title: Notice with [brackets] in title\n"
+            "---\n"
+            "\n"
+            "See [[key-store]] and array[/end] next to the search term store.\n"
+        ),
+    )
+
+    result = world.cli("search", "store", "-k", "test-kb", "--format", "rich")
+    assert result.exit_code == 0, result.output
+    assert "[[key-store]]" in result.output
+    assert "array[/end]" in result.output
+    assert "[brackets]" in result.output
+    assert "store" in result.output
 
 
 def test_search_files_rich_preserves_id_at_80_columns(cli_world, console_width, monkeypatch):
