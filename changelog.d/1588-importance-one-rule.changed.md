@@ -1,4 +1,4 @@
-- **`importance` now gets one answer on every write (#1588).** It must be a whole number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as plain ASCII digits (`"7"`, `"05"`). Every create and update stores it as that number (`5.0`, `"05"` → `5`; `1e1` → `10`). Anything else is refused with `VALIDATION_FAILED` and the `importance` row (`rule: range`). The row is the same on every surface, and nothing is written. **Upgrade note:** a write that used to succeed with a changed or unnormalised value is now refused or stored differently, as listed below.
+- **`importance` now gets one answer on every write (#1588).** It must be a whole number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as plain ASCII digits (`"7"`, `"05"`). Every create and update stores it as that number (`5.0`, `"05"` → `5`; `1e1` → `10`), except that `pyrite add` leaves a file's own spelling of accepted digit text (`'05'`, `"7"`) as written; every reader sees the number. Anything else is refused with `VALIDATION_FAILED` and the `importance` row (`rule: range`). The row is the same on every surface, and nothing is written. **Upgrade note:** a write that used to succeed with a changed or unnormalised value is now refused or stored differently, as listed below.
 - **A create no longer changes the value before checking it.** This covers CLI `create -f importance=`, `pyrite add`, `pyrite import`, MCP `kb_create` and `kb_bulk_create`. These used to exit 0 and store something else:
   - `10.7` was stored as `10`, and `3.9` as `3`.
   - `true` was stored as `1`.
@@ -8,6 +8,7 @@
 - **A CSV import (REST `POST /api/entries/import`, `format=csv`) refuses a row whose `importance` cell is not a whole number from 1 to 10.**
   - It used to store `5` instead, without a word, when the cell did not read as a whole number (`10.7`, `true`, `high`). It also read `+5`, ` 5 ` or `1_0` as numbers.
   - Now that row is refused and reported beside its title with the `importance` row, and the other rows are still imported, as in a JSON import.
+  - A cell is text, so `5.0` is refused there; write `5`.
   - An empty cell still means no value. A script that relied on the old default should send a whole number or leave the cell empty.
 - **An update that sets importance stores the number, on every surface.** This covers CLI `update -f`, MCP `kb_update`, REST `PUT` and `PATCH`.
   - CLI `update -f`, MCP `kb_update` and REST `PATCH` used to write the value as sent: `5.0` as `5.0`, `1e1` as `10.0`, and (on MCP and PATCH) `"05"` as `"05"`. They now store `5`, `10` and `5`.

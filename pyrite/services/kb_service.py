@@ -2154,7 +2154,8 @@ class KBService:
         ``importance: high`` read as 5 became ``importance: 5``, and a task
         grew the ``importance``/``priority`` defaults it never had. A request
         naming fields on its own (``{importance: 5}``) is the caller's values,
-        each written as sent; the CLI's ``-f`` never passes through here.
+        each written as sent (an accepted ``importance`` as its int,
+        ``Entry.file_value``); the CLI's ``-f`` never passes through here.
         """
         # `kb_get` answers `{"entry": {...}}`; sent back whole, that is one
         # undeclared key holding the read, which an update would write into
@@ -2669,7 +2670,9 @@ class KBService:
         An appended link or source item is checked as one before anything is
         written (``check_link_target``: what the index could not store).
         Values are validated as the field's type (``_value_for_file``) and
-        written as the caller sent them, never as the model's reading.
+        written as the caller sent them, never as the model's reading,
+        except where the model names a storage form (``Entry.file_value``:
+        an accepted ``importance`` is written as its int).
         """
         from ..schema.field_aliases import (
             NotAFieldError,

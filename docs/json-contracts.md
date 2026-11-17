@@ -432,7 +432,8 @@ allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried.
 `importance` has one rule on every type, write and surface (#1588): a whole
 number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as
 plain ASCII digits (`"05"`), and every create and update stores it as that number
-(`5.0` and `"05"` are written as `5`); anything else (`5.5`, `true`, `" 5 "`,
+(`5.0` and `"05"` are written as `5`; `pyrite add` leaves a file's own `'05'` as
+written, and every reader sees `5`); anything else (`5.5`, `true`, `" 5 "`,
 `"+5"`, `"１０"`, `high`) is refused with the model row `{"field": "importance",
 "rule": "range", ...}` (over REST, HTTP 400 `VALIDATION_FAILED`, where `99` and
 `10.7` used to get pydantic's 422; the OpenAPI schema names the integer to send).
@@ -855,7 +856,8 @@ what the read returned is not a change: it is not written, and is listed
 in the result's `unchanged` field (apart from `ignored`, which names keys no
 update writes), so the file keeps `importance: high` rather than Pyrite's
 reading `5` (#561). A request that names fields on its own writes each one
-as sent, even a value equal to the reading.
+as sent, even a value equal to the reading (`importance` is written as the int
+the rule reads: `"05"` and `5.0` as `5`).
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 

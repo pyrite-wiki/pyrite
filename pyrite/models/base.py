@@ -803,7 +803,7 @@ class Entry(ABC):
         return errors
 
     def file_value(self, field_name: str, value: Any) -> Any:
-        """The form a write stores ``value`` in, for ``field_name``.
+        """The form an update's ``Set`` stores ``value`` in, for ``field_name``.
 
         An accepted ``importance`` is stored as the int the one rule reads it
         as (``importance_value``): an update writes ``5`` for ``5.0`` or
@@ -811,7 +811,9 @@ class Entry(ABC):
         A value the rule refuses is returned as it is, for the rule to refuse
         on the written result. Every other field: the value as sent. The
         update's write path (``KBService._value_for_file``) asks this for
-        every field it sets, so no field's storage rule lives there.
+        every field it sets, so no field's storage rule lives there. A create
+        does not call it: it stores the model's serialisation (``_base_kwargs``),
+        so an override here changes updates only.
         """
         if field_name == "importance":
             accepted = importance_value(value)
