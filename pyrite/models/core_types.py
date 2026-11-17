@@ -197,9 +197,10 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
     def validation_errors(self) -> list[dict[str, Any]]:
         """Event rules as structured rows (#1284), each naming its field."""
         errors = super().validation_errors()
+        date_rows: list[dict[str, Any]] = []
 
         if not self.date:
-            errors.append(
+            date_rows.append(
                 {
                     "field": "date",
                     "rule": "required",
@@ -208,7 +209,7 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
                 }
             )
         elif not validate_date(self.date):
-            errors.append(
+            date_rows.append(
                 {
                     "field": "date",
                     "rule": "format",
@@ -217,6 +218,10 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
                 }
             )
 
+        # The date row sits before the base class's importance row (#1537), the
+        # order an event's refusal has always had.
+        at = next((i for i, e in enumerate(errors) if e.get("field") == "importance"), len(errors))
+        errors[at:at] = date_rows
         return errors
 
     @classmethod
