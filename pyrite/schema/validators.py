@@ -104,19 +104,28 @@ def validate_importance(importance: Any) -> bool:
     """True when ``importance`` is a number in 1-10; never raises (#1537).
 
     The one place a value becomes "in range or not", and it is asked about
-    whatever a file, JSON or ``-f`` text puts there. A value ``int()`` cannot
-    read (``.inf`` is an OverflowError, ``.nan`` and ``high`` a ValueError, a
-    list or date a TypeError) is out of range, never an exception. A bool is
-    not a number: ``true`` would otherwise pass as 1. A blank or null value is
-    absent, which the caller decides (``None`` is False here).
+    whatever a file, JSON or ``-f`` text puts there. A number is compared as
+    it is, not truncated first (``10.9`` is above 10 and ``0.99`` below 1; an
+    ``int()`` first would pass the one and refuse the other). A string is
+    numeric only as whole-number text (``"5"``, ``" 5 "``, ``"05"``). A value
+    nothing here can read (``.nan`` and ``high``, a list, a date) is out of
+    range, never an exception, and a bool is not a number: ``true`` would
+    otherwise pass as 1. A blank or null value is absent, which the caller
+    decides (``None`` is False here). ``5.5`` is accepted: the check is the
+    range, not whole-ness.
     """
     if isinstance(importance, bool):
         return False
     try:
-        val = int(importance)
+        if isinstance(importance, (int, float)):
+            value = importance
+        elif isinstance(importance, str):
+            value = int(importance)
+        else:
+            value = float(importance)
     except (ValueError, TypeError, OverflowError):
         return False
-    return 1 <= val <= 10
+    return 1 <= value <= 10
 
 
 def validate_event_id(event_id: str) -> bool:

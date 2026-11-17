@@ -381,7 +381,21 @@ KINDS = {
     "big_30_digits": (str(_I), str(_I), _I, "bad", "bad", "bad", "refused", "refused"),
     "float_5.0": ("5.0", "5.0", 5.0, "good", "good", "good", "safe", "safe"),
     "float_10.0": ("10.0", "10.0", 10.0, "good", "good", "good", "safe", "safe"),
+    # 5.5 is "good" because the range is the rule and whole-ness is not checked: the
+    # stated limit of this change (a write of 5.5 is stored as given), not a verdict
+    # that 5.5 is a sensible importance.
     "float_5.5": ("5.5", "5.5", 5.5, "good", "good", "good", "safe", "safe"),
+    # the edges of the range that are not whole: compared as numbers, not truncated first
+    "float_10.000001": ("10.000001", "10.000001", 10.000001, "bad", "bad", "bad", "safe", "safe"),
+    "float_10.5": ("10.5", "10.5", 10.5, "bad", "bad", "bad", "safe", "safe"),
+    "float_10.9": ("10.9", "10.9", 10.9, "bad", "bad", "bad", "safe", "safe"),
+    "float_0.5": ("0.5", "0.5", 0.5, "bad", "bad", "bad", "safe", "safe"),
+    "float_0.99": ("0.99", "0.99", 0.99, "bad", "bad", "bad", "safe", "safe"),
+    "float_-0.5": ("-0.5", "-0.5", -0.5, "bad", "bad", "bad", "safe", "safe"),
+    "float_1e1": ("1e1", "1e1", 1e1, "good", "good", "good", "safe", "safe"),
+    # a string is whole-number text only; the command line reads numeric text as a number
+    "str_10.9": ('"10.9"', "10.9", "10.9", "bad", "bad", "bad", "safe", "safe"),
+    "str_1e1": ('"1e1"', "1e1", "1e1", "bad", "good", "bad", "safe", "safe"),
     "inf": (".inf", ".inf", float("inf"), "bad", "bad", "bad", "safe", "safe"),
     "-inf": ("-.inf", "-.inf", float("-inf"), "bad", "bad", "bad", "safe", "safe"),
     "nan": (".nan", ".nan", float("nan"), "bad", "bad", "bad", "safe", "safe"),
@@ -402,11 +416,22 @@ KINDS = {
 ETYPES = ["note", "event"]
 kinds = pytest.mark.parametrize("kind", sorted(KINDS))
 etypes = pytest.mark.parametrize("etype", ETYPES)
+
+
 # An update that leaves a 30-digit importance on disk writes the file, then the index
-# upsert raises OverflowError (pyrite/storage/crud.py -> SQLite INTEGER), so the command
-# answers NO_OUTCOME / INTERNAL. Same on dev; outside this change (the check is a row).
+# upsert raises OverflowError (SQLite INTEGER), so the command answers NO_OUTCOME (CLI) or
+# INTERNAL (MCP) and the index has no row for the entry. Same on dev; the storage defect is
+# #1584 and not part of this change (the check answers with a row). The cell is expected
+# to fail only that way: `_IndexOverflowError` is raised only for that answer, with the file
+# rewritten, and `raises=` makes any other failure a real one.
+class _IndexOverflowError(Exception):
+    pass
+
+
 _INDEX_OVERFLOW = pytest.mark.xfail(
-    strict=True, reason="index upsert overflows SQLite INTEGER on a 30-digit value on disk"
+    strict=True,
+    raises=_IndexOverflowError,
+    reason="#1584: the index upsert overflows SQLite INTEGER on a 30-digit value on disk",
 )
 
 
@@ -486,6 +511,9 @@ def test_a_value_already_on_disk_never_stops_an_update_of_another_field(world, e
     path = world.add_entry(KB, _raw_file(etype, "seed", yaml_text))
     before_text = path.read_text()
     code, res = _surface_call(world, surf, "update", etype, body="changed")
+    if kind == "big_30_digits" and res.get("error_code") in ("NO_OUTCOME", "INTERNAL"):
+        assert "changed" in path.read_text(), "the known failure comes after the file is written"
+        raise _IndexOverflowError(res)
     _no_crash(code, res)
     assert code == 0, res
     assert (file == "bad") == _kept(res), res  # kept and reported only when it is a violation
@@ -561,3 +589,31 @@ def test_the_check_never_raises_and_says_row_or_nothing(etype, kind):
     rows = [r for r in entry.validation_errors() if r.get("field") == "importance"]
     assert bool(rows) == (file == "bad"), rows
     assert validate_importance(mcp) is (file == "good")
+
+
+# -- a write that sets null or blank: one answer on every type -----------------------------
+#
+# Null is absent (no row), so over MCP an update with `"importance": null` is accepted
+# on a note and on an event alike, and the file then holds no number (on 0.26.3 an event
+# refused it). On the command line `-f importance=` and `-f importance=null` are text,
+# not null: a string that is not a number, refused on every type.
+
+
+@etypes
+def test_an_mcp_update_setting_importance_null_is_accepted_on_every_type(world, etype):
+    from pyrite.utils.yaml import load_yaml
+
+    path = world.add_entry(KB, _raw_file(etype, "seed", "5"))
+    code, res = _surface_call(world, "mcp", "update", etype, value=None)
+    assert code == 0, res
+    assert load_yaml(path.read_text().split("---", 2)[1]).get("importance") is None
+
+
+@etypes
+@pytest.mark.parametrize("text", ["", "null"], ids=["blank", "null-text"])
+def test_a_cli_update_setting_importance_to_blank_or_null_text_is_refused(world, etype, text):
+    path = world.add_entry(KB, _raw_file(etype, "seed", "5"))
+    before = path.read_bytes()
+    code, res = _surface_call(world, "cli", "update", etype, value=text)
+    _assert_refused(code, res)
+    assert path.read_bytes() == before
