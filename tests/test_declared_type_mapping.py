@@ -185,7 +185,24 @@ def _frontmatter_file(env: dict, entry_type: str, title: str, extra: dict) -> Pa
     return src
 
 
-def create_cli(env, entry_type, title, extra):
+def _cli_outcome(r, expect: str | None) -> None:
+    """A CLI create succeeded, or was refused with ``expect`` named in its output."""
+    if expect is None:
+        assert r.exit_code == 0, r.output
+    else:
+        assert r.exit_code != 0 and expect in r.output, (expect, r.exit_code, r.output)
+
+
+def _override(allow_undeclared: bool) -> list[str]:
+    return ["--allow-undeclared"] if allow_undeclared else []
+
+
+# Each named-type surface takes the override (default on, as #1482's tests
+# used it) and ``expect``: None for "created", else the refusal code it must
+# answer with (#1526: the same answer on every surface).
+
+
+def create_cli(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     fields = [a for k, v in extra.items() for a in ("-f", f"{k}={v}")]
     r = _cli(
         env,
@@ -199,35 +216,44 @@ def create_cli(env, entry_type, title, extra):
             title,
             "-b",
             "body",
-            "--allow-undeclared",
+            *_override(allow_undeclared),
             *fields,
         ],
     )
-    assert r.exit_code == 0, r.output
+    _cli_outcome(r, expect)
 
 
-def create_import_json(env, entry_type, title, extra):
+def create_import_json(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     src = env["tmp_path"] / f"import-{abs(hash(title))}.json"
     src.write_text(json.dumps([{"entry_type": entry_type, "title": title, "body": "b", **extra}]))
-    r = _cli(env, ["import", str(src), "-k", env["name"], "--allow-undeclared"])
-    assert r.exit_code == 0, r.output
+    r = _cli(env, ["import", str(src), "-k", env["name"], *_override(allow_undeclared)])
+    _cli_outcome(r, expect)
 
 
-def create_import_markdown(env, entry_type, title, extra):
+def create_import_markdown(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     src = _frontmatter_file(env, entry_type, title, extra)
     r = _cli(
-        env, ["import", str(src), "-k", env["name"], "--format", "markdown", "--allow-undeclared"]
+        env,
+        [
+            "import",
+            str(src),
+            "-k",
+            env["name"],
+            "--format",
+            "markdown",
+            *_override(allow_undeclared),
+        ],
     )
-    assert r.exit_code == 0, r.output
+    _cli_outcome(r, expect)
 
 
-def create_add_file(env, entry_type, title, extra):
+def create_add_file(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     src = _frontmatter_file(env, entry_type, title, extra)
-    r = _cli(env, ["add", str(src), "-k", env["name"], "--allow-undeclared"])
-    assert r.exit_code == 0, r.output
+    r = _cli(env, ["add", str(src), "-k", env["name"], *_override(allow_undeclared)])
+    _cli_outcome(r, expect)
 
 
-def create_mcp_kb_create(env, entry_type, title, extra):
+def create_mcp_kb_create(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     res = _mcp(
         env,
         "kb_create",
@@ -236,27 +262,33 @@ def create_mcp_kb_create(env, entry_type, title, extra):
             "entry_type": entry_type,
             "title": title,
             "body": "b",
-            "allow_undeclared": True,
+            "allow_undeclared": allow_undeclared,
             **extra,
         },
     )
-    assert res.get("created") or res.get("entry_id"), res
+    if expect is None:
+        assert res.get("created") or res.get("entry_id"), res
+    else:
+        assert res.get("error_code") == expect, res
 
 
-def create_mcp_kb_bulk_create(env, entry_type, title, extra):
+def create_mcp_kb_bulk_create(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     res = _mcp(
         env,
         "kb_bulk_create",
         {
             "kb_name": env["name"],
-            "allow_undeclared": True,
+            "allow_undeclared": allow_undeclared,
             "entries": [{"entry_type": entry_type, "title": title, "body": "b", **extra}],
         },
     )
-    assert res.get("created") == 1, res
+    if expect is None:
+        assert res.get("created") == 1, res
+    else:
+        assert res.get("created") == 0 and res["results"][0].get("error_code") == expect, res
 
 
-def create_rest_post(env, entry_type, title, extra):
+def create_rest_post(env, entry_type, title, extra, *, allow_undeclared=True, expect=None):
     client, close = _rest(env)
     try:
         resp = client.post(
@@ -266,11 +298,15 @@ def create_rest_post(env, entry_type, title, extra):
                 "entry_type": entry_type,
                 "title": title,
                 "body": "b",
-                "allow_undeclared": True,
+                "allow_undeclared": allow_undeclared,
                 **extra,
             },
         )
-        assert resp.status_code == 200, resp.text
+        if expect is None:
+            assert resp.status_code == 200, resp.text
+        else:
+            assert resp.status_code == 400, resp.text
+            assert resp.json()["detail"]["code"] == expect, resp.text
     finally:
         close()
 
@@ -777,17 +813,32 @@ def _preset_env(tmp_path: Path, name: str, kb_type: str) -> dict:
     }
 
 
-@pytest.mark.parametrize("kb_type", ["journalism-investigation", "known-entities"])
-def test_a_preset_kb_shows_exactly_the_mappings_a_create_applies(tmp_path, kb_type):
-    """Round 1's property. The journalism presets declare `investigation_event`
-    and `document_source` (journalism-investigation) or neither (known-entities),
-    but never `event` or `document`: a create refuses those names, so no surface
-    may advertise them as mappings."""
+BOTH_PAIRS = {"event": "investigation_event", "document": "document_source"}
+
+
+@pytest.mark.parametrize(
+    ("kb_type", "expected"),
+    [("journalism-investigation", BOTH_PAIRS), ("known-entities", {})],
+)
+def test_a_preset_kb_shows_exactly_the_mappings_a_create_applies(tmp_path, kb_type, expected):
+    """Round 1's property, under option (a) (#1526). The journalism presets
+    declare `investigation_event` and `document_source` (journalism-investigation)
+    or neither (known-entities), but never `event` or `document`. A pair applies
+    where the KB declares its target, so the journalism-investigation preset
+    shows and applies both pairs with no override; known-entities shows none and
+    refuses the core names, as before."""
     env = _preset_env(tmp_path, "inv", kb_type)
     declared = env["config"].get_kb("inv").kb_schema.declared_types()
     assert declared and "event" not in declared and "document" not in declared, declared
     shown = _shown_mappings(env)
-    assert shown == env["cli_shown"] == {}, (shown, env["cli_shown"])
+    assert shown == env["cli_shown"] == expected, (shown, env["cli_shown"])
+    doc = env["world"].cli("create", "-k", "inv", "-t", "document", "--title", "Doc via CLI")
+    if expected:
+        assert _stored_type(env, "Via kb add") == "investigation_event"
+        assert doc.exit_code == 0, doc.output
+        assert _stored_type(env, "Doc via CLI") == "document_source"
+    else:
+        assert doc.exit_code != 0 and "UNDECLARED_TYPE" in doc.output, doc.output
     _assert_creates_agree_with_what_is_shown(env, shown)
 
 
@@ -799,7 +850,10 @@ def test_a_preset_kb_shows_exactly_the_mappings_a_create_applies(tmp_path, kb_ty
             "name: inv\ntypes:\n  event: {}\n  investigation_event: {}\n  document: {}\n",
             {"event": "investigation_event"},
         ),
-        ("name: inv\ntypes:\n  investigation_event: {}\n  document_source: {}\n", {}),
+        (
+            "name: inv\ntypes:\n  investigation_event: {}\n  document_source: {}\n",
+            {"event": "investigation_event", "document": "document_source"},
+        ),
     ],
     ids=["no-vocabulary", "event-pair-declared", "targets-only"],
 )
@@ -808,6 +862,151 @@ def test_every_surface_shows_what_a_create_applies(tmp_path, kb_yaml, expected):
     shown = _shown_mappings(env)
     assert shown == expected, shown
     _assert_creates_agree_with_what_is_shown(env, shown)
+
+
+# ---------------------------------------------------------------------------
+# #1526, option (a): a pair applies where the KB declares its target
+# ---------------------------------------------------------------------------
+
+REFUSED = "UNDECLARED_TYPE"
+
+#: The five vocabulary regimes for journalism-investigation's two pairs, each
+#: with the mappings every surface must show, written by hand from the rule
+#: "a pair applies when the KB declares its target, or declares no types".
+REGIMES = {
+    "no-types": ("name: inv\n", BOTH_PAIRS),
+    "key-and-target": (
+        "name: inv\ntypes:\n  event: {}\n  investigation_event: {}\n"
+        "  document: {}\n  document_source: {}\n",
+        BOTH_PAIRS,
+    ),
+    "key-only": ("name: inv\ntypes:\n  event: {}\n  document: {}\n", {}),
+    "target-only": (
+        "name: inv\ntypes:\n  investigation_event: {}\n  document_source: {}\n",
+        BOTH_PAIRS,
+    ),
+    "neither": ("name: inv\ntypes:\n  person: {}\n  organization: {}\n", {}),
+}
+
+#: (regime, allow_undeclared) -> {named: stored type, or REFUSED}, by hand.
+#: Where a pair applies the override changes nothing; where none applies the
+#: named type is checked as before #1526.
+OUTCOMES = {
+    ("no-types", True): BOTH_PAIRS,
+    ("no-types", False): BOTH_PAIRS,
+    ("key-and-target", True): BOTH_PAIRS,
+    ("key-and-target", False): BOTH_PAIRS,
+    ("key-only", True): {"event": "event", "document": "document"},
+    ("key-only", False): {"event": "event", "document": "document"},
+    ("target-only", True): BOTH_PAIRS,
+    ("target-only", False): BOTH_PAIRS,
+    ("neither", True): {"event": "event", "document": "document"},
+    ("neither", False): {"event": REFUSED, "document": REFUSED},
+}
+
+
+@pytest.mark.parametrize("surface", sorted(NAMED_SURFACES))
+@pytest.mark.parametrize("allow_undeclared", [True, False], ids=["override", "no-override"])
+@pytest.mark.parametrize("regime", sorted(REGIMES))
+def test_shown_equals_applied_in_every_vocabulary_regime(
+    tmp_path, regime, allow_undeclared, surface
+):
+    """#1482's property in every regime (#1526): the six show surfaces agree on
+    the pairs, and each of the seven create surfaces stores exactly what they
+    show -- the mapped target where a pair is shown, the named type otherwise,
+    or the same UNDECLARED_TYPE refusal on every surface. Built from
+    NAMED_SURFACES and _shown_mappings, so a new surface gets its cases."""
+    kb_yaml, expected_shown = REGIMES[regime]
+    env = _kb_env(tmp_path, "inv", "journalism-investigation", kb_yaml)
+    shown = _shown_mappings(env)
+    assert shown == expected_shown, shown
+    for named, outcome in OUTCOMES[(regime, allow_undeclared)].items():
+        assert outcome == shown.get(named, outcome), (named, outcome, shown)
+        title = f"{surface} {named}"
+        extra = {"date": "2026-01-02"} if named == "event" else {}
+        if outcome == REFUSED:
+            NAMED_SURFACES[surface](
+                env, named, title, extra, allow_undeclared=allow_undeclared, expect=REFUSED
+            )
+            assert not [
+                p for p in env["kb_path"].rglob("*.md") if title in p.read_text(encoding="utf-8")
+            ]
+        else:
+            NAMED_SURFACES[surface](env, named, title, extra, allow_undeclared=allow_undeclared)
+            assert _stored_type(env, title) == outcome
+
+
+def test_the_override_does_not_change_which_pair_applies(tmp_path):
+    """In a target-only KB, `-t event --allow-undeclared` stores the mapped
+    `investigation_event`, as orient shows; the override matters only where no
+    pair applies (#1526, section 5)."""
+    env = _kb_env(tmp_path, "inv", "journalism-investigation", REGIMES["target-only"][0])
+    for flag, title in (([], "Plain"), (["--allow-undeclared"], "Overridden")):
+        r = _cli(
+            env,
+            [
+                "create",
+                "-k",
+                "inv",
+                "-t",
+                "event",
+                "--title",
+                title,
+                "-f",
+                "date=2026-01-02",
+                *flag,
+            ],
+        )
+        assert r.exit_code == 0, r.output
+        assert _stored_type(env, title) == "investigation_event"
+
+
+def test_add_file_in_a_target_only_kb_changes_only_the_type_line(tmp_path):
+    """`add FILE` with `type: event` in a target-only KB stores
+    `investigation_event`. The written file is byte for byte what the same file
+    naming `type: investigation_event` writes: the mapping changes the `type:`
+    line and nothing else of the user's frontmatter (principle 3)."""
+    kb_yaml = REGIMES["target-only"][0]
+    written = {}
+    for named in ("event", "investigation_event"):
+        (tmp_path / named).mkdir()
+        env = _kb_env(tmp_path / named, "inv", "journalism-investigation", kb_yaml)
+        src = env["tmp_path"] / "src.md"
+        src.write_text(
+            f"---\ntype: {named}\ntitle: Hearing\ndate: '2026-01-02'\n"
+            "tags:\n- court\nimportance: 7\nmy_note: kept as written\n---\nThe body.\n",
+            encoding="utf-8",
+        )
+        r = _cli(env, ["add", str(src), "-k", "inv"])
+        assert r.exit_code == 0, r.output
+        files = list(env["kb_path"].rglob("*.md"))
+        assert len(files) == 1, files
+        written[named] = (files[0].relative_to(env["kb_path"]), files[0].read_bytes())
+    assert written["event"] == written["investigation_event"]
+    meta = load_yaml(written["event"][1].decode().split("---", 2)[1])
+    assert meta["type"] == "investigation_event"
+    assert meta["my_note"] == "kept as written" and meta["tags"] == ["court"], meta
+    assert meta["importance"] == 7 and str(meta["date"]) == "2026-01-02", meta
+
+
+def test_an_entry_already_on_disk_as_event_is_not_retyped(tmp_path):
+    """A file already typed `event` in a target-only KB stays `event`: the
+    mapping is applied by a create, never to files on disk (out of scope)."""
+    env = _kb_env(tmp_path, "inv", "journalism-investigation", REGIMES["target-only"][0])
+    old = env["kb_path"] / "events" / "old.md"
+    old.parent.mkdir()
+    old.write_text(
+        "---\nid: old\ntype: event\ntitle: Old\ndate: '2025-01-01'\n---\nOld body.\n",
+        encoding="utf-8",
+    )
+    before = old.read_bytes()
+    assert _cli(env, ["index", "sync"]).exit_code == 0
+    r = _cli(env, ["create", "-k", "inv", "-t", "event", "--title", "New", "-f", "date=2026-01-02"])
+    assert r.exit_code == 0, r.output
+    assert _stored_type(env, "New") == "investigation_event"
+    assert old.read_bytes() == before
+    got = _mcp(env, "kb_get", {"kb_name": "inv", "entry_id": "old"})
+    assert got.get("entry_type", got.get("entry", {}).get("entry_type")) == "event", got
 
 
 def test_kb_schema_shows_no_mapping_in_a_software_kb(tmp_path):

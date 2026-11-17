@@ -201,7 +201,7 @@ class KBSchema:
         Read by the write path's refusals (`KBService._refuse_undeclared_type`
         and `_refuse_undeclared_mapping_target`), by the type-mapping resolver
         (`schema.type_mapping.resolve_type_mappings`, which offers a pair only
-        when both its types are declared here), by `to_agent_schema` -- whose
+        when its target is declared here, #1526), by `to_agent_schema` -- whose
         output is MCP `kb_schema` and `kb_orient`, REST `GET /kbs/{kb}/schema`
         and `GET /kbs/{kb}/orient`, CLI `pyrite orient --format json`, and
         `pyrite-admin schema` -- and by the web type picker's route. They used
