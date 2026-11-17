@@ -263,6 +263,23 @@ class TestResolveFilenameEntryFieldPlaceholders:
         with pytest.raises(ValidationError):
             schema.resolve_filename(entry)
 
+    def test_private_field_placeholder_is_refused(self):
+        """#1639: private bookkeeping fields (_schema_version, _create_fields,
+        _importance_given, etc.) are internal entry state, not data fields, and
+        must be refused rather than resolved into file names."""
+        from pyrite.exceptions import ValidationError
+
+        for field_name in (
+            "_schema_version",
+            "_create_fields",
+            "_importance_given",
+            "_custom_private",
+        ):
+            schema = TypeSchema(name="adr", file_pattern=f"{{{field_name}}}.md")
+            entry = self._adr_entry()
+            with pytest.raises(ValidationError, match="not a data field of entry"):
+                schema.resolve_filename(entry)
+
     def test_nul_byte_in_resolved_filename_is_refused(self):
         from pyrite.exceptions import ValidationError
 

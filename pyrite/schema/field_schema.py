@@ -284,7 +284,7 @@ class TypeSchema:
         from string import Formatter
 
         data_fields = (
-            {f.name for f in dataclasses.fields(entry)}
+            {f.name for f in dataclasses.fields(entry) if not f.name.startswith("_")}
             if dataclasses.is_dataclass(entry)
             else set()
         )
@@ -333,6 +333,15 @@ class TypeSchema:
                     f"{{{field_name}}}, which is not a plain field name (no "
                     "attribute/index access, no positional placeholders); "
                     "refusing to resolve it"
+                )
+            if field_name.startswith("_"):
+                # Private bookkeeping fields (_schema_version, _create_fields,
+                # _importance_given, etc.) are internal entry state, not data
+                # fields, and must not be resolved into file names (#1639).
+                raise ValidationError(
+                    f"file_pattern {self.file_pattern!r} names {{{field_name}}}, "
+                    f"which is not a data field of entry {entry.id!r} (type "
+                    f"{entry.entry_type!r}); refusing to resolve it"
                 )
             if field_name in data_fields:
                 value = getattr(entry, field_name, None)
