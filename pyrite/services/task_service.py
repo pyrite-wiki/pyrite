@@ -84,8 +84,6 @@ class TaskService:
         Returns:
             Dict with created=True and entry details.
         """
-        from ..schema import generate_entry_id
-
         # Support legacy parent_task parameter
         parent = parent or parent_task
 
@@ -140,7 +138,6 @@ class TaskService:
                 target, relation, _ = check_link_spec(t, rel)
                 parsed_links.append({"target": target, "relation": relation})
 
-        entry_id = generate_entry_id(title)
         kwargs: dict[str, Any] = {"status": "open", "priority": priority}
         if parent:
             kwargs["parent"] = parent
@@ -160,7 +157,7 @@ class TaskService:
         # of the answer, not dropped.
         written = self.kb_svc.create(
             kb_name,
-            {**kwargs, "id": entry_id, "title": title, "entry_type": "task", "body": body},
+            {**kwargs, "title": title, "entry_type": "task", "body": body},
         )
         entry = written.entry
 

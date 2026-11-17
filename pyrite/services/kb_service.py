@@ -1531,6 +1531,26 @@ class KBService:
                 declared,
             )
 
+    def _title_of_existing(
+        self,
+        entry_id: str,
+        repo: KBRepository,
+        pending_ids: Any,
+    ) -> str | None:
+        """Return the title of an existing entry with this id, if known (#1682)."""
+        from collections.abc import Mapping
+
+        if isinstance(pending_ids, Mapping) and entry_id in pending_ids:
+            return pending_ids[entry_id]
+        if repo.exists(entry_id):
+            try:
+                existing = repo.load(entry_id)
+                if existing is not None:
+                    return getattr(existing, "title", None)
+            except Exception:
+                return None
+        return None
+
     def _prepare(
         self,
         kb_name: str,
@@ -1539,7 +1559,7 @@ class KBService:
         *,
         allow_undeclared: bool,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
-        pending_ids: set[str] | None = None,
+        pending_ids: set[str] | dict[str, str] | None = None,
         pending_paths: set[Path] | None = None,
         owns: frozenset[str] = frozenset(),
     ) -> tuple[Entry, list[dict[str, Any]]]:
@@ -1617,7 +1637,26 @@ class KBService:
             else:
                 self._refuse_undeclared_type(named, kb_name, kb_config)
 
-        entry_id = fields.pop("id", None) or generate_entry_id(title)
+        explicit_id = fields.pop("id", None)
+        repo = KBRepository(kb_config)
+        if explicit_id is not None:
+            entry_id = explicit_id
+        else:
+            base_id = generate_entry_id(title)
+            entry_id = base_id
+            existing_title = self._title_of_existing(entry_id, repo, pending_ids)
+            if existing_title is not None and existing_title != title:
+                import hashlib
+
+                h = hashlib.sha256(title.encode("utf-8")).hexdigest()
+                for length in (4, 6, 8, 12):
+                    candidate = f"{base_id}-{h[:length]}"
+                    cand_title = self._title_of_existing(candidate, repo, pending_ids)
+                    if cand_title is None or cand_title == title:
+                        entry_id = candidate
+                        break
+                else:
+                    entry_id = f"{base_id}-{h[:16]}"
         body = fields.pop("body", "")
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
@@ -1650,7 +1689,7 @@ class KBService:
         # Create never replaces. Ids are derived from titles, so two entries
         # sharing a title is ordinary -- and used to destroy the first one while
         # reporting "Created". Callers that mean to replace use update_entry.
-        if KBRepository(kb_config).exists(entry.id) or entry.id in (pending_ids or ()):
+        if repo.exists(entry.id) or entry.id in (pending_ids or ()):
             raise EntryExistsError(
                 f"Entry with ID '{entry.id}' already exists in KB '{kb_name}'. "
                 "Use update to change it, or choose a different title/id."
@@ -1912,7 +1951,7 @@ class KBService:
         # A dry run writes nothing, so the exists check alone cannot see an id
         # -- or, for a file_pattern type, a resolved PATH -- an earlier item
         # of the same batch would have created.
-        would_create: set[str] = set()
+        would_create: dict[str, str] = {}
         would_create_paths: set[Path] = set()
 
         for spec in entries:
@@ -1929,7 +1968,7 @@ class KBService:
                         pending_ids=would_create,
                         pending_paths=would_create_paths,
                     )
-                    would_create.add(entry.id)
+                    would_create[entry.id] = entry.title
                     repo = KBRepository(kb_config)
                     would_create_paths.add(
                         repo._resolve_file_path(

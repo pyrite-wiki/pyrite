@@ -1,0 +1,1 @@
+- Disambiguate derived entry ID collisions when creating entries whose titles share their first 80 characters: `pyrite create`, `task create`, `task decompose`, and MCP `kb_create` now derive a unique hash-suffixed ID instead of refusing the distinct entry with `ENTRY_EXISTS`. Identical titles and explicitly given duplicate IDs continue to be refused (#1682).
