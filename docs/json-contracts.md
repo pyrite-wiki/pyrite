@@ -1638,10 +1638,19 @@ writes anything.
 - A quoted `"true"`, `"false"`, `"1"` or `"0"` in a field declared a
   checkbox: it reads as a boolean, and writing that back stores `true` or
   `false`.
+- An unquoted `1` or `0` in a field declared a checkbox: it reads as a
+  boolean, and writing that back stores `true` or `false` (on earlier
+  releases it was stored as the quoted text `"1"` or `"0"`).
+- A YAML boolean in a field declared a number: `priority: true` reads 1
+  (and `false` reads 0), and writing that back stores the number
+  (`priority: 1`; earlier releases stored the quoted text `"1"`).
 - A number the index spells with an exponent, in a field declared a number:
-  `priority: 0.00001` reads `"1e-05"` (the index's text for it, which the
-  strict rule keeps as text), and writing that back stores it quoted
-  (`priority: "1e-05"`).
+  `priority: 0.00001` reads as the index's text for it, which the strict
+  rule keeps as text, and writing that back stores that text quoted. The
+  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
+  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
+  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
+  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
 
 `kb_timeline` returns `date` and `location` as stored text: its rows carry
 no `entry_type`, so no declaration applies. The type-specific tools
