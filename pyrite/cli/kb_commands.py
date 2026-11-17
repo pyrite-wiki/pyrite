@@ -47,12 +47,17 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         KBProtectedError,
         KBUnreadableError,
         ValidationError,
+        public_text,
     )
     from ..utils.errors import cli_error
 
     code = "ERROR"
+    message = str(exc)
     if isinstance(exc, KBUnreadableError):
         code = exc.error_code  # KB_UNREADABLE, as on every surface (#1542)
+        # KB_CONFIG_INVALID's text names the file and the parser's words; it
+        # shows its fixed public message, as on every surface (#1547).
+        message = public_text(exc)
     elif isinstance(exc, EntryNotFoundError):
         code = "NOT_FOUND"
     elif isinstance(exc, KBNotFoundError):
@@ -61,7 +66,7 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         code = "PERMISSION_DENIED"
     elif isinstance(exc, ValidationError):
         code = "VALIDATION_FAILED"
-    cli_error(str(exc), fmt, error_code=code)
+    cli_error(message, fmt, error_code=code)
 
 
 @kb_app.command("list")
@@ -79,13 +84,26 @@ def kb_list(
     """List all configured knowledge bases."""
     with cli_registry_context() as (config, db, svc, registry):
         kbs = registry.list_kbs(type_filter=kb_type)
-        # A KB whose kb.yaml could not be checked or read is listed, by name,
-        # with why (``KBConfig.unreadable``, set at config load): never
-        # dropped, and never the reason the list fails (#1542).
+        # A KB whose kb.yaml could not be checked or read (#1542), or loaded
+        # (#1547), is listed, by name, with why: never dropped, and never the
+        # reason the list fails. Asked now (``check_readable``), for a KB in
+        # config.yaml and one `pyrite kb add` registered alike (a registry
+        # KB never runs ``load_kb_yaml``).
+        from ..exceptions import KBConfigInvalidError, KBUnreadableError, outside_text, public_text
+
         for kb in kbs:
-            cfg = config.get_kb(kb["name"])
-            if cfg is not None and cfg.unreadable:
-                kb["unreadable"] = cfg.unreadable
+            cfg = registry.get_kb_config(kb["name"])
+            if cfg is None:
+                continue
+            try:
+                cfg.check_readable()
+            except KBUnreadableError as exc:
+                kb["unreadable"] = public_text(exc)  # the code's fixed text
+                kb["error_code"] = exc.error_code
+                if isinstance(exc, KBConfigInvalidError) and exc.__cause__ is not None:
+                    # The parser's own words: `kb list` is the local CLI, the
+                    # operator's own process (ADR-0052 N3).
+                    kb["error_detail"] = outside_text(exc.__cause__)
 
         if not kbs:
             console.print("[yellow]No knowledge bases configured.[/yellow]")
@@ -504,11 +522,13 @@ def kb_reindex(
         svc,
         registry,
     ):
-        from ..exceptions import KBNotFoundError
+        from ..exceptions import KBNotFoundError, KBUnreadableError
 
         try:
             result = registry.reindex_kb(kb_name)
-        except KBNotFoundError as e:
+        except (KBNotFoundError, KBUnreadableError) as e:
+            # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
+            # (#1547); the reconcile refused before planning, rows kept.
             _kb_error(e, output_format)
 
         data = {"name": kb_name, **result}

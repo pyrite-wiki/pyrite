@@ -24,7 +24,9 @@ from sqlalchemy import exc as sa_exc
 from ..config import KBConfig, PyriteConfig, load_config
 from ..exceptions import (
     EntryValueError,
+    KBConfigInvalidError,
     KBNotInConfigError,
+    KBUnreadableError,
     StorageError,
     outside_text,
     public_text,
@@ -1365,9 +1367,10 @@ class IndexManager:
 
             try:
                 count = self.index_kb(kb.name, make_kb_progress(kb.name))
-            except KBFilesUnreadableError as e:
-                # One unreadable KB does not stop the others; its rows are
-                # kept (the reconcile refused before planning) (#1542).
+            except KBUnreadableError as e:
+                # One unreadable KB (#1542), or one whose kb.yaml does not load
+                # (#1547), does not stop the others; its rows are kept (the
+                # reconcile refused before planning).
                 logger.warning("Skipping %s: %s", kb.name, public_text(e))
                 continue
             results[kb.name] = count
@@ -1687,11 +1690,21 @@ class IndexManager:
         # fails to load is reported in `schema_errors` and its KB counts as
         # declaring no types, so health still answers for the broken KB.
         schemas = self._load_schemas(kbs)
+        config_invalid: set[str] = set()
         for kb in kbs:
             try:
                 kb.check_readable()  # asked now: a server's config is loaded once
             except KBFilesUnreadableError as e:
-                health["unreadable_kbs"].append({"kb": kb.name, "error": public_text(e)})
+                health["unreadable_kbs"].append(
+                    {"kb": kb.name, "error": public_text(e), "error_code": e.error_code}
+                )
+            except KBConfigInvalidError:
+                # A kb.yaml that does not load (#1547): named once, in
+                # `schema_errors` (``_load_schemas``), with its code and the
+                # parser's words for the local process; the verdict reads
+                # that row as unhealthy. Its files are not compared below:
+                # each would parse against no schema and read as malformed.
+                config_invalid.add(kb.name)
 
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
@@ -1716,7 +1729,7 @@ class IndexManager:
                 )
 
         for kb in kbs:
-            if not kb.path.exists():
+            if not kb.path.exists() or kb.name in config_invalid:
                 continue
 
             indexed = self._load_indexed_state(kb.name)
@@ -2015,8 +2028,13 @@ class IndexManager:
         return health
 
     @staticmethod
-    def _load_schemas(kbs: Iterable[KBConfig]) -> dict[str, tuple[Any, str | None]]:
+    def _load_schemas(kbs: Iterable[KBConfig]) -> dict[str, tuple[Any, dict[str, str] | None]]:
         """Each KB's schema, loaded once: ``{kb: (schema or None, error or None)}``.
+
+        ``error`` is the ``schema_errors`` row's fields: ``error`` (text) and,
+        for a typed cause, ``error_code`` (``KB_CONFIG_INVALID`` for a kb.yaml
+        that does not load, #1547; ``KB_UNREADABLE`` for one that cannot be
+        read).
 
         Health diagnoses broken KBs, so a kb.yaml that fails to load (invalid
         YAML, `types: null`, `types: [a, b]`) gives ``(None, error)`` -- the KB
@@ -2024,28 +2042,36 @@ class IndexManager:
         cache a failure, so every later read would raise again. A KB with no
         kb.yaml gives ``(None, None)``.
         """
-        loaded: dict[str, tuple[Any, str | None]] = {}
+        loaded: dict[str, tuple[Any, dict[str, str] | None]] = {}
         for kb in kbs:
             try:
                 present = kb.kb_yaml_present
             except KBFilesUnreadableError as exc:
                 # A root this process cannot search (#1542): reported here,
                 # and in ``unreadable_kbs``; never the end of the report.
-                loaded[kb.name] = (None, public_text(exc))
+                loaded[kb.name] = (
+                    None,
+                    {"error": public_text(exc), "error_code": exc.error_code},
+                )
                 continue
             if not present:
                 loaded[kb.name] = (None, None)
                 continue
             try:
                 loaded[kb.name] = (kb.kb_schema, None)
+            except KBConfigInvalidError as exc:
+                # A kb.yaml that does not load (#1547): the parser's words for
+                # the local process, withheld from a network caller (N3).
+                why = outside_text(exc.__cause__ or exc)
+                loaded[kb.name] = (None, {"error": why, "error_code": exc.error_code})
             except Exception as exc:
-                loaded[kb.name] = (None, outside_text(exc) or type(exc).__name__)
+                loaded[kb.name] = (None, {"error": outside_text(exc) or type(exc).__name__})
         return loaded
 
     def _type_name_drift(
         self,
         kbs: Iterable[KBConfig],
-        schemas: dict[str, tuple[Any, str | None]] | None = None,
+        schemas: dict[str, tuple[Any, dict[str, str] | None]] | None = None,
     ) -> dict[str, Any]:
         """Report exact case/underscore/space variants, independently per KB.
 
@@ -2062,7 +2088,7 @@ class IndexManager:
         for kb in kbs:
             schema, error = schemas[kb.name]
             if error is not None:
-                schema_errors.append({"kb": kb.name, "error": error})
+                schema_errors.append({"kb": kb.name, **error})
             declared: set[str] = schema.declared_types() if schema is not None else set()
             by_name: dict[str, list[dict[str, Any]]] = {}
             rows = self.db.execute_sql(
@@ -2318,12 +2344,16 @@ class IndexManager:
                     one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
                 else:
                     one = self.reconcile_kb(kb, progress_callback=callback)
-            except KBFilesUnreadableError as e:
+            except KBUnreadableError as e:
+                # Files the OS will not let Pyrite read (#1542), or a kb.yaml
+                # that does not load (#1547): not synced, rows kept, named.
                 if kb_name:
                     raise
                 reason = public_text(e)  # the error's fixed text (ADR-0052 N3)
                 logger.warning("Not syncing %s: %s", kb.name, reason)
-                results["unreadable_kbs"].append({"kb": kb.name, "error": reason})
+                results["unreadable_kbs"].append(
+                    {"kb": kb.name, "error": reason, "error_code": e.error_code}
+                )
                 continue
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]

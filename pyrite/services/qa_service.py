@@ -23,6 +23,7 @@ from ..exceptions import (
     EntryNotFoundError,
     EvaluationFailedError,
     InvalidQATierError,
+    KBConfigInvalidError,
     KBUnreadableError,
     PyriteError,
     public_attribute,
@@ -38,6 +39,9 @@ from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableE
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
+
+#: ``_kb_folder_problem``'s answer for a kb.yaml that does not load (#1547).
+_KB_CONFIG_INVALID_PROBLEM = "its kb.yaml could not be loaded (KB_CONFIG_INVALID)"
 
 #: The tiers QA runs: 1 = structural and deterministic rubric checks, 2 = tier
 #: 1 plus the model-judged rubric. Every surface that takes a tier refuses any
@@ -356,6 +360,9 @@ class QAService:
         recreate a missing folder (#950 round 2).
         """
         problem = self._kb_folder_problem(kb_name)
+        if problem == _KB_CONFIG_INVALID_PROBLEM:
+            # Its own code, the same as every other operation on this KB (#1547).
+            raise KBConfigInvalidError()
         if problem is not None:
             raise KBUnreadableError(f"KB '{kb_name}': {problem}; nothing was assessed")
 
@@ -382,6 +389,10 @@ class QAService:
             kb_config.check_readable()
         except KBFilesUnreadableError:
             return "its files cannot be read (the operating system refused)"
+        except KBConfigInvalidError:
+            # Read, and not loadable as a mapping (#1547): reported, never
+            # the end of a QA run over every KB.
+            return _KB_CONFIG_INVALID_PROBLEM
         return None
 
     def validate_all(

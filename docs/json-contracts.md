@@ -191,6 +191,7 @@ CLI and MCP report the code without an HTTP status.
 | `CLIP_TOO_LARGE` | Clipper, central REST mapping 413 | The page is larger than the clipper's 5 MiB cap, counted after decompression; clip a smaller page. |
 | `BRANDING_INVALID` | Branding configuration, REST 500 | Ask the operator to repair `branding.yaml`; repeating the request will not fix configuration. |
 | `INTERNAL_ERROR` | Unclassified domain failure, REST 500 | Consult the server log; do not assume retrying is safe. |
+| `KB_CONFIG_INVALID` | A KB whose `kb.yaml` Pyrite can read but cannot load as a mapping: bytes that are not UTF-8, a YAML syntax error, a duplicate key, a document over the YAML limits, or a top level that is not a mapping (#1547). Every operation that needs that KB's schema, on every verb (get, create, update, delete, schema show/add/remove/set, sync, rebuild or reindex of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message; it names no KB, no path and nothing the parser said. The KB's index rows are kept, `kb.yaml` is never rewritten, and every other KB still works. `pyrite kb list` and `pyrite index health` on the local CLI show the parser's words; a network caller does not get them. | Correct `kb.yaml` by hand (`pyrite kb list` or `pyrite index health` says what is wrong), then `pyrite index sync`. |
 | `KB_UNREADABLE` | A KB whose files Pyrite cannot read (its folder cannot be listed or searched, its `kb.yaml` cannot be opened): every operation that needs that KB's files, on every verb (get, create, update, delete, schema, sync of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message, whatever the operating system refused; it names no path. The KB's index rows are kept, and every other KB still works. | Fix the folder's or `kb.yaml`'s permissions, then `pyrite index sync`. |
 
 ## MCP operation codes
@@ -526,7 +527,7 @@ a row here (a test compares this table with the command's output).
 | `type_name_drift` | Groups of one type spelled more than one way after case, `_` and spaces are folded to `-`. | Warning | Hand edit the `type:` spellings, then `pyrite index sync`. |
 | `type_name_drift_total` | Number of drift groups before the report's cap. | Metadata, not a finding | Fix the groups listed there. |
 | `type_name_drift_has_more` | Whether more drift groups exist beyond the 100-group cap. | Metadata, not a finding | Narrow with `-k <kb>`; fix the groups listed. |
-| `schema_errors` | KBs whose `kb.yaml` failed to load. | Warning | Hand edit `kb.yaml`, then `pyrite index sync`. |
+| `schema_errors` | KBs whose `kb.yaml` failed to load. A row with `error_code: KB_CONFIG_INVALID` (the file does not load as a mapping, #1547) is Unhealthy; a row with no `error_code` (a key with the wrong shape, such as `types: null`) is a Warning. | Unhealthy / Warning | Hand edit `kb.yaml`, then `pyrite index sync`. |
 | `unmodellable_frontmatter` | Files whose frontmatter Pyrite cannot model (a non-string key, a set, a duplicate key). | Warning | Hand edit the unsupported frontmatter, then `pyrite index sync`. |
 | `double_spellings` | Fields one file spells twice (`k:` and `metadata.k`, or a field and its alias). | Warning | `pyrite qa fix <kb>` when both values are identical; otherwise hand edit both spellings. |
 | `checks` | The detailed arrays behind the counts above, under the same key names. | Not a finding | Fix the rows above; this key repeats them for callers that want paths and ids. |
@@ -580,8 +581,14 @@ group. Read-only: nothing is renamed. Any group makes the status
 `kb.yaml` failed to load (invalid YAML, `types: null`, `types` a list).
 Health still answers for that KB: it counts as declaring no types, so its
 non-core types appear in `undeclared_types` and no spelling is `declared`.
-Any row makes the status `warning`. The same field is on `kb health`, REST
-and MCP `kb_registry_health`.
+A row whose cause is typed also carries `error_code`. `KB_CONFIG_INVALID`
+(the file is not UTF-8, not valid YAML, over the YAML limits, or not a
+mapping, #1547) makes the status `unhealthy`; its `error` is the parser's
+words on the local CLI and stdio MCP and `the server log has the details` for
+a network caller, and that KB's files are not compared with the index (each
+would read as malformed against no schema). Any other row makes the status
+`warning`. The same field is on `kb health`, REST and MCP
+`kb_registry_health`.
 
 **`index health` → `double_spellings`; `qa validate` →
 `field_spelled_twice`.** `metadata` is not a field: `metadata.k` is a
@@ -1847,10 +1854,11 @@ cannot be opened, every command on every other KB still works, and that KB is
 named rather than dropped:
 
 - `pyrite kb list --format json` gives its row an `unreadable` key holding
-  the fixed `KB_UNREADABLE` message; a readable KB's row has no such key.
+  the fixed `KB_UNREADABLE` message, and `error_code`; a readable KB's row
+  has neither key.
   REST `GET /api/kbs` and MCP `kb_list` do not carry it.
-- `pyrite index health` lists it in `unreadable_kbs` (`{kb, error}`), and the
-  status is `unhealthy`.
+- `pyrite index health` lists it in `unreadable_kbs` (`{kb, error,
+  error_code}`), and the status is `unhealthy`.
 - `pyrite index sync` (every KB) does not sync it and keeps its index rows;
   it prints `Not synced: <kb>: <message>` and exits 3 when other KBs synced
   (1 when none did). A sync that runs in the foreground (REST
@@ -1861,6 +1869,20 @@ named rather than dropped:
   one KB answers `KB_UNREADABLE` and changes nothing. `pyrite index build`
   skips it, names it, and exits 3 or 1 the same way.
 - Every operation that needs its files answers `KB_UNREADABLE`.
+
+A registered KB whose `kb.yaml` can be read but cannot be loaded as a mapping
+(not UTF-8, a YAML syntax error, a duplicate key, over the YAML limits, a top
+level that is not a mapping; #1547) is handled the same way, whether it is in
+`config.yaml` or was added with `pyrite kb add`, with its own code,
+`KB_CONFIG_INVALID`, and three differences: the fix is to correct the file, not
+its permissions; `pyrite kb list` gives its row `error_code` and `error_detail`
+(the parser's words: `kb list` is the local CLI only) beside `unreadable`; and
+`pyrite index health` names it in `schema_errors` with `error_code`, not in
+`unreadable_kbs`, and is `unhealthy`. Each `unreadable_kbs` row of a sync
+result, and each `kb list` row with `unreadable`, carries `error_code`
+(`KB_UNREADABLE` or `KB_CONFIG_INVALID`). Pyrite never rewrites the file:
+`pyrite kb schema add-type`, `remove-type` and `set` answer
+`KB_CONFIG_INVALID` before they write.
 
 ## Operational contracts
 

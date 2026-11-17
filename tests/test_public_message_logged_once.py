@@ -38,6 +38,7 @@ from pyrite.exceptions import (
     ConfigFileUnreadableError,
     ConfigSaveRefusedError,
     KBAlreadyExistsError,
+    KBConfigInvalidError,
     PluginError,
     PyriteError,
     StorageError,
@@ -66,6 +67,8 @@ CLASSES = [
     BrandingInvalidError,
     ConfigSaveRefusedError,
     ConfigFileUnreadableError,
+    # #1547: str() names kb.yaml and the parser's words, for the log.
+    KBConfigInvalidError,
 ]
 
 

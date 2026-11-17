@@ -466,6 +466,42 @@ def load_yaml_file(path: str | Path, *, kb_root: str | Path | None = None) -> di
     return result if result is not None else {}
 
 
+def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
+    """A KB's ``kb.yaml`` as a mapping: the one function that turns it into one (#1547).
+
+    ``{}`` when the KB has no kb.yaml (``KBFiles.present``), and for an empty
+    one. Read only inside the KB (``load_yaml_file(kb_root=...)``): a link
+    out raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``), a read
+    the OS refuses ``KBFilesUnreadableError`` (``KB_UNREADABLE``). Bytes that
+    can be read and cannot be loaded as a mapping -- not UTF-8, a YAML error
+    (a syntax error, a control character, a duplicate key), a document over
+    the YAML limits, a top level that is a list or a scalar -- raise
+    ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``), the parser's error as
+    its cause. Never writes the file.
+
+    Every reader of a kb.yaml calls this; ``load_yaml_file`` itself is left
+    as it is, since a plugin's own YAML (``board.yaml``) is read through it
+    and is not a kb.yaml. ``tests/test_a_kb_yaml_that_does_not_load.py``
+    fails on a new ``load_yaml_file(kb_root=...)`` elsewhere.
+    """
+    from ..exceptions import KBConfigInvalidError
+    from .kb_files import KBFiles
+
+    root = Path(kb_root)
+    path = root / "kb.yaml"
+    if not KBFiles(root).present(path):
+        return {}
+    try:
+        data = load_yaml_file(path, kb_root=root)
+    except (UnicodeDecodeError, YAMLError, YamlLimitError) as e:
+        # The parser's words in str() for the log; public_message for a reply.
+        raise KBConfigInvalidError(f"{path}: {type(e).__name__}: {e}") from e
+    if not isinstance(data, Mapping):
+        shape = TypeError(f"the top level of kb.yaml is a {type(data).__name__}, not a mapping")
+        raise KBConfigInvalidError(f"{path}: {shape}") from shape
+    return data
+
+
 def dump_yaml_text(data: Any) -> str:
     """The text ``dump_yaml_file`` writes for ``data``, for a caller that
     publishes it itself (a KB's kb.yaml goes through ``KBFiles``)."""

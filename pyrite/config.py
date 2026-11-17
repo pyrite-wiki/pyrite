@@ -31,7 +31,7 @@ from pyrite.exceptions import (
     ValidationError,
 )
 from pyrite.utils.private_files import create_private_file
-from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
+from pyrite.utils.yaml import dump_yaml_file, load_yaml_file, read_kb_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class KBConfig:
     # Internal cache — not serialized
     _schema_cache: Any = field(default=None, init=False, repr=False)
     #: Set by ``load_kb_yaml`` when this KB's kb.yaml could not be checked or
-    #: read: the fixed text to show for it (``pyrite kb list``, index health).
+    #: read (#1542) or loaded (#1547): the fixed text to show for it.
     #: Not serialized. One unreadable KB must not stop the others (#1542).
     unreadable: str | None = field(default=None, init=False, repr=False)
 
@@ -159,14 +159,15 @@ class KBConfig:
 
     @property
     def kb_schema(self) -> "Any":
-        """Lazily load and cache the KBSchema object for this KB."""
+        """Lazily load and cache the KBSchema object for this KB.
+
+        From ``read_kb_yaml``: a kb.yaml that cannot be loaded raises
+        ``KBConfigInvalidError`` (never cached), so this KB is never read
+        as having no schema (#1547)."""
         if self._schema_cache is None:
             from .schema import KBSchema
 
-            if self.kb_yaml_present:
-                self._schema_cache = KBSchema.from_yaml(self.kb_yaml_path)
-            else:
-                self._schema_cache = KBSchema()
+            self._schema_cache = KBSchema.from_dict(read_kb_yaml(self.path))
         return self._schema_cache
 
     def invalidate_schema_cache(self) -> None:
@@ -191,26 +192,37 @@ class KBConfig:
         The gate in front of anything that would read the KB's absence of
         files as a fact: the reconcile asks it before it may remove a row
         (#1542), so a KB the process cannot read keeps its index rows.
+
+        A kb.yaml that can be read and cannot be loaded as a mapping raises
+        ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``) here too, through
+        the one loader (``read_kb_yaml``): otherwise every file would parse
+        against no schema and the removal pass would retire every row
+        (#1547).
         """
+        from .utils.kb_files import KBFileOutsideRootError
+
+        try:
+            self._read_kb_yaml_or_raise()
+        except KBFileOutsideRootError:
+            return
+
+    def _read_kb_yaml_or_raise(self) -> dict[str, Any] | None:
+        """``check_readable``'s work, returning the kb.yaml mapping it loaded
+        (``{}`` with none), or None when the KB's folder is missing (or is
+        not a folder). A kb.yaml that leads outside the KB raises
+        ``KBFileOutsideRootError``, for the caller to decide."""
         import os
 
-        from .utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
+        from .utils.kb_files import KBFilesUnreadableError
 
         try:
             with os.scandir(self.path) as listing:
                 next(listing, None)
         except (FileNotFoundError, NotADirectoryError):
-            return
+            return None
         except OSError as e:
             raise KBFilesUnreadableError() from e
-        if not self.kb_yaml_present:  # KBPresenceUnknownError when it cannot tell
-            return
-        try:
-            KBFiles(self.path).read_bytes(self.kb_yaml_path)
-        except KBFileOutsideRootError:
-            return
-        except OSError as e:
-            raise KBFilesUnreadableError() from e
+        return read_kb_yaml(self.path)  # KBPresenceUnknownError when it cannot tell
 
     def load_kb_yaml(self) -> bool:
         """Load kb.yaml if it exists. Returns True if loaded.
@@ -227,15 +239,19 @@ class KBConfig:
         logged by name; it never stops the load, or one such KB would stop
         every command on every other KB (#1542). Every operation on this KB
         that needs its files then stops with ``KBFilesUnreadableError``,
-        whose fixed message ``unreadable`` holds."""
-        from .utils.kb_files import KBFileOutsideRootError, KBFilesUnreadableError
+        whose fixed message ``unreadable`` holds.
+
+        A kb.yaml that can be read and cannot be loaded as a mapping is the
+        same at this point (#1547): marked ``unreadable`` with
+        ``KBConfigInvalidError``'s fixed text, logged by name, and the load
+        goes on. ``pyrite kb list`` and index health ask ``check_readable``
+        again for the code and the parser's words."""
+        from .exceptions import KBUnreadableError, public_text
+        from .utils.kb_files import KBFileOutsideRootError
 
         self.unreadable = None
         try:
-            self.check_readable()
-            if not self.kb_yaml_present:
-                return False
-            data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
+            data = self._read_kb_yaml_or_raise()
         except KBFileOutsideRootError:
             logger.warning(
                 "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
@@ -243,12 +259,12 @@ class KBConfig:
                 self.name,
             )
             return False
-        except KBFilesUnreadableError as e:
-            from .exceptions import public_text
-
+        except KBUnreadableError as e:
             self.unreadable = public_text(e)  # its fixed text (ADR-0052 N3)
             logger.warning("KB %s is unreadable: %s", self.name, self.unreadable)
             return False
+        if data is None or (not data and not self.kb_yaml_present):
+            return False  # no folder, or no kb.yaml
         self.schema = data.get("schema")
         self.types = data.get("types")
         self.policies = data.get("policies")
@@ -2372,8 +2388,9 @@ def auto_discover_kbs(search_paths: list[Path] | None = None) -> list[KBConfig]:
             try:
                 # Read inside the folder it names as a KB: a kb.yaml that is
                 # a link out of it, or a hard link, is not that KB's (a
-                # subscribed repository's files are anyone's).
-                data = load_yaml_file(kb_yaml, kb_root=kb_yaml.parent)
+                # subscribed repository's files are anyone's). The one kb.yaml
+                # loader (#1547): one that does not load is skipped below.
+                data = read_kb_yaml(kb_yaml.parent)
 
                 name = data.get("name", kb_yaml.parent.name)
                 kb_type_str = data.get("kb_type", "generic")

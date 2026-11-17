@@ -2316,7 +2316,9 @@ class PyriteMCPServer:
                     return _error("MISSING_PARAMETER", "kb_name required for set_schema")
                 return svc.set_schema(kb_name, schema)
 
-        except KBReadOnlyError as e:
+        except (KBReadOnlyError, KBUnreadableError) as e:
+            # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
+            # (#1547) keeps its own code, never retryable; nothing written.
             return _refusal(e)
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))
