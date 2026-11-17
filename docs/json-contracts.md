@@ -426,16 +426,16 @@ it — and `expected` when the fix is mechanical; a row from the KB schema or a
 plugin validator carries `expected` and, where the rule knows it, `got`: the
 allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried.
 `importance` has one rule on every type, write and surface (#1588): a whole
-number from 1 to 10, as a number or as plain ASCII digits (`"05"`); anything
-else (`5.5`, `true`, `" 5 "`, `"+5"`, `"１０"`, `high`) is refused with the model
-row `{"field": "importance", "rule": "range", ...}` (over REST, HTTP 400
-`VALIDATION_FAILED`, where `99` and `10.7` used to get pydantic's 422; the
-OpenAPI schema still names the integer to send). A create writes the number
-(`"07"` is stored as `7`); an update writes the value as sent (`"05"` stays
-`'05'`). A value already in a file, at the top level or under `metadata:`, is
-kept with a warning carrying that `rule` only while the write leaves it as it
-is or sends that same value in the same YAML type (`"5.5"` over `5.5` is a new
-value, judged and refused). A row from
+number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as
+plain ASCII digits (`"05"`), and every create and update stores it as that number
+(`5.0` and `"05"` are written as `5`); anything else (`5.5`, `true`, `" 5 "`,
+`"+5"`, `"１０"`, `high`) is refused with the model row `{"field": "importance",
+"rule": "range", ...}` (over REST, HTTP 400 `VALIDATION_FAILED`, where `99` and
+`10.7` used to get pydantic's 422; the OpenAPI schema names the integer to send).
+A value already in a file, at the top level or under `metadata:`, is never
+rewritten by a write that does not set it, and is kept with a warning carrying
+that `rule` only while the write leaves it as it is or sends that same value in
+the same YAML type (`"10.7"` over `10.7` is a new value, judged and refused). A row from
 the KB schema's enum pass also names `origin` (`field` for a field's own
 `options:`/`values:` list, `rule` for a `validation.rules` entry), `severity`
 (`error`, or `warning` when the field has `allow_other: true`), and
