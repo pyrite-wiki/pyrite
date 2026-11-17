@@ -357,6 +357,20 @@ class TestRangeMode:
         assert result.returncode == 1
         assert "fix: fix bug without test" in result.stderr
 
+    def test_range_empty_range_returns_zero(self, tmp_path):
+        """Empty range (e.g. HEAD..HEAD) returns 0."""
+        repo = self._repo(tmp_path)
+        head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--range", head, head],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+
 
 class TestLocalCommitMsgHook:
     """The local commit-msg hook runs on a single commit being prepared."""
@@ -424,6 +438,7 @@ class TestLocalCommitMsgHook:
         assert result.returncode == 1
         assert "staged file" in result.stderr
         assert "fix:" in result.stderr
+        assert "Put the test in the same commit as the fix" in result.stderr
 
     def test_local_hook_passes_for_non_fix_commit(self, tmp_path):
         repo = tmp_path / "repo"

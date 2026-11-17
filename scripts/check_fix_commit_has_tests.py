@@ -165,7 +165,8 @@ def main() -> int:
 
     print(
         "ERROR: commit message starts with a fix prefix (fix:, fix(scope):, fix!:) but "
-        + _NO_TEST_MESSAGE.format(what="staged file"),
+        + _NO_TEST_MESSAGE.format(what="staged file")
+        + "\n  Put the test in the same commit as the fix.",
         file=sys.stderr,
     )
     return 1

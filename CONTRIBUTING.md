@@ -554,7 +554,7 @@ Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration un
 - Branch from `dev`, open the PR against `dev`. Name the branch for what it
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
   `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
-  each pull request into a single commit on `dev`.
+  each pull request into a single commit on `dev` by default.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
