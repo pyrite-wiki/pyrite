@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from pathlib import Path
 
 import httpx
@@ -18,13 +17,7 @@ from pyrite.config import KBConfig
 from pyrite.formats.importers import get_importer_registry
 from tests._world import build_world
 
-SEEN: dict[str, int] = {}
-
-
-def _slow_importer(content, **kwargs):
-    SEEN["thread"] = threading.get_ident()
-    time.sleep(1.0)
-    return []
+WAIT = 30
 
 
 @pytest.fixture
@@ -34,32 +27,49 @@ def world(tmp_path: Path):
     )
     registry = get_importer_registry()
     original = registry.get("json")
-    registry.register("json", _slow_importer)
-    yield w
-    registry.register("json", original)
-    w.close()
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+    seen = {}
+
+    def slow_importer(content, **kwargs):
+        seen["thread"] = threading.get_ident()
+        started.set()
+        try:
+            assert release.wait(timeout=WAIT), "the other request did not release the importer"
+            return []
+        finally:
+            finished.set()
+
+    registry.register("json", slow_importer)
+    try:
+        yield w, started, release, finished, seen
+    finally:
+        release.set()
+        registry.register("json", original)
+        w.close()
 
 
 def test_a_slow_import_does_not_hold_up_another_request(world):
+    w, started, release, finished, seen = world
+
     async def go():
-        transport = httpx.ASGITransport(app=world.app)
+        transport = httpx.ASGITransport(app=w.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             loop_thread = threading.get_ident()
-            started = time.monotonic()
             slow = asyncio.create_task(
                 client.post(
                     "/api/entries/import?kb=k&format=json",
                     files={"file": ("a.json", b"[]", "application/json")},
                 )
             )
-            await asyncio.sleep(0.2)  # the importer is running
-            other = await client.get("/api/kbs")
-            other_took = time.monotonic() - started
-            resp = await slow
-            return loop_thread, other.status_code, other_took, resp.status_code
+            try:
+                assert await asyncio.to_thread(started.wait, timeout=WAIT), "importer never started"
+                other = await asyncio.wait_for(client.get("/api/kbs"), timeout=WAIT)
+                assert other.status_code == 200
+                assert not finished.is_set(), "another request waited for the importer to finish"
+                assert seen["thread"] != loop_thread
+            finally:
+                release.set()
+                resp = await asyncio.wait_for(slow, timeout=WAIT)
+            assert resp.status_code == 200
 
-    loop_thread, other_status, other_took, import_status = asyncio.run(go())
-    assert import_status == 200
-    assert other_status == 200
-    assert SEEN["thread"] != loop_thread
-    assert other_took < 0.8, f"another request waited {other_took:.2f}s behind the import"
+    asyncio.run(go())

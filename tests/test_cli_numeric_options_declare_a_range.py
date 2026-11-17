@@ -334,8 +334,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite investigation export", "min_importance"),
     ("pyrite investigation dedup", "threshold"),
     #
-    # extensions/encyclopedia/src/pyrite_encyclopedia/cli.py
-    ("pyrite wiki stubs", "limit"),
     #
     # extensions/social/src/pyrite_social/cli.py
     ("pyrite social newest", "limit"),
