@@ -452,3 +452,94 @@ def test_the_loader_takes_a_resolved_kb_only(tmp_path):
         load_board_config(tmp_path)
     with pytest.raises(TypeError):
         load_board_config(os.fspath(tmp_path))
+
+
+@pytest.mark.control(reason="a valid enforced gate on review and transition runs and blocks")
+def test_a_valid_enforced_gate_blocks_review_and_transition(world):
+    _write_board(world, VALID_GATED)
+    before = _snapshot(world)
+    review = _mcp(world, "sw_review", MCP_CALLS["sw_review"])
+    assert review["reviewed"] is False and review["error"] == "DoD gate check failed", review
+    move = _mcp(world, "sw_transition", MCP_CALLS["sw_transition"])
+    assert move["transitioned"] is False and move["error"] == "Gate check failed", move
+    assert _snapshot(world) == before
+
+
+# -- every tool and command that loads a board config is covered here ------------
+
+_SW = Path(__file__).resolve().parent.parent / "extensions/software-kb/src/pyrite_software_kb"
+
+
+def _plugin_methods_that_load_a_board() -> set[str]:
+    """Methods of SoftwareKBPlugin that reach `_board_config`, directly or
+    through another method (the plugin's source, walked)."""
+    import ast
+
+    tree = ast.parse((_SW / "plugin.py").read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SoftwareKBPlugin")
+    calls: dict[str, set[str]] = {}
+    for fn in cls.body:
+        if isinstance(fn, ast.FunctionDef):
+            calls[fn.name] = {
+                n.func.attr
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            }
+    reach = {"_board_config"}
+    while True:
+        more = {name for name, called in calls.items() if called & reach} - reach
+        if not more:
+            return reach - {"_board_config"}
+        reach |= more
+
+
+def _cli_commands_that_load_a_board() -> set[str]:
+    """`pyrite sw` commands whose function calls a plugin method that loads one."""
+    import ast
+
+    from pyrite_software_kb.cli import sw_app
+
+    loaders = _plugin_methods_that_load_a_board() | {"_board_config"}
+    tree = ast.parse((_SW / "cli.py").read_text(encoding="utf-8"))
+    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    out = set()
+    for command in sw_app.registered_commands:
+        fn = functions.get(command.callback.__name__)
+        called = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)} if fn else set()
+        if called & loaders:
+            out.add(f"sw {command.name or command.callback.__name__.replace('_', '-')}")
+    return out
+
+
+def _registered_tools() -> dict[str, str]:
+    from pyrite_software_kb.plugin import SoftwareKBPlugin
+
+    tools = SoftwareKBPlugin().get_mcp_tools("admin")
+    return {name: spec["handler"].__name__ for name, spec in tools.items()}
+
+
+@pytest.mark.parametrize("tool", sorted(_registered_tools()))
+def test_every_tool_that_loads_a_board_is_tested_here(tool):
+    if _registered_tools()[tool] in _plugin_methods_that_load_a_board():
+        assert tool in MCP_CALLS, f"{tool} loads a board config: add it to MCP_CALLS"
+
+
+def _sw_commands() -> list[str]:
+    from pyrite_software_kb.cli import sw_app
+
+    return sorted(
+        f"sw {c.name or c.callback.__name__.replace('_', '-')}" for c in sw_app.registered_commands
+    )
+
+
+@pytest.mark.parametrize("command", _sw_commands())
+def test_every_command_that_loads_a_board_is_tested_here(command):
+    if command in _cli_commands_that_load_a_board():
+        assert command in CLI_CALLS, f"`pyrite {command}` loads a board config: add it to CLI_CALLS"
+
+
+def test_the_walk_finds_the_known_loaders():
+    """Not vacuous: the walk sees the handlers and commands this file tests."""
+    methods = _plugin_methods_that_load_a_board()
+    assert {"_mcp_claim", "get_orient_supplement", "_mcp_board"} <= methods, methods
+    assert set(CLI_CALLS) <= _cli_commands_that_load_a_board()
