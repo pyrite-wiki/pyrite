@@ -6,7 +6,7 @@ Extracted from api.py to reduce file size and improve organization.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # =============================================================================
 # Knowledge Bases
@@ -94,6 +94,21 @@ class KBReindexResponse(BaseModel):
     # In-KB links with nothing at the path they name, left as they are
     # (#1262): {"kb", "path", "target"}, KB-relative.
     dangling_links: list[dict[str, str]] = Field(default_factory=list)
+    #: How many folders it could not list (their rows kept, #1546): a count,
+    #: never a path, over the network. The local CLI names them.
+    unreadable_folders: int = 0
+
+    @field_validator("unreadable_folders", mode="before")
+    @classmethod
+    def _folders_as_counted(cls, value: Any) -> Any:
+        """The route builds this from the registry's dict (``**result``):
+        the folder rows are shaped by ``network_shape``, the one place that
+        decides what a network caller gets, whichever way the dict arrives."""
+        if isinstance(value, list):
+            from ..services.index_health import network_shape
+
+            return network_shape({"unreadable_folders": value})["unreadable_folders"]
+        return value
 
 
 # =============================================================================
@@ -446,6 +461,9 @@ class SyncResponse(BaseModel):
     skipped: list[dict[str, str]] = Field(default_factory=list)
     #: KBs whose files could not be read: not synced, rows kept (#1542).
     unreadable_kbs: list[dict[str, str]] = Field(default_factory=list)
+    #: How many folders it could not list in the KBs it synced: their rows
+    #: kept (#1546). A count, never a path; the local CLI names them.
+    unreadable_folders: int = 0
 
 
 class ErrorResponse(BaseModel):

@@ -242,9 +242,9 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBConfig.kb_yaml_present": 1},
         "kb_yaml_present (KBFiles.present)",
     ),
-    ("pyrite/storage/repository.py", "KBRepository._named"): (
+    ("pyrite/storage/repository.py", "KBRepository._folders"): (
         {"os.walk": 1},
-        "names under the root by os.walk: a link is listed as its name, never followed or checked, and a folder link is not walked into, on every Python (fixed here)",
+        "names under the root by os.walk: a link is listed as its name, never followed or checked, and a folder link is not walked into, on every Python (fixed here). The one walk behind _named and walk_files since #1546 (which moved _named's os.walk here and replaced walk_files' rglob('*.md')), so a folder it could not list is recorded (onerror), never read as empty",
     ),
     ("pyrite/storage/repository.py", "KBRepository._publish_rewrite"): (
         {"repo._read_inside": 1},
@@ -275,8 +275,8 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "_in_kb_link (KBFiles.resolved), then a stat of a target KBFiles placed inside: is it a regular file. Nothing is read: the entry is read at the target through KBFiles",
     ),
     ("pyrite/storage/repository.py", "KBRepository.dangling_target"): (
-        {"os.path.lexists": 1},
-        "_in_kb_link (KBFiles.resolved), then lexists of the name KBFiles placed inside the root: is anything there. A link out is never asked (None first), so no answer depends on outside",
+        {"KBFiles.present": 1, "os.path.lexists": 1},
+        "_in_kb_link (KBFiles.resolved), then KBFiles.present of the name KBFiles placed inside the root (could not tell is not dangling, #1546), then lexists of that name (a loop is there). A link out is never asked (None first), so no answer depends on outside",
     ),
     ("pyrite/storage/repository.py", "KBRepository.list_collection_files"): (
         {"repo._named": 1},
@@ -365,8 +365,8 @@ SAME_ANSWER: dict[Site, Entry] = {
         "the stat of a file the reconcile just read through KBFiles",
     ),
     ("pyrite/storage/index.py", "IndexManager.plan_reconcile"): (
-        {"KBFiles.contains": 1, "path.stat": 1},
-        "after KBFiles.contains: a link out is skipped before the stat",
+        {"KBFiles.contains": 1, "KBFiles.present": 1, "path.stat": 1},
+        "after KBFiles.contains: a link out is skipped before the stat; KBFiles.present asks only about an indexed path the walk did not reach, to keep its row when the OS will not tell (#1546)",
     ),
     ("pyrite/storage/index.py", "unmodellable_files"): (
         {"path.stat": 1, "repo._read_inside": 1},
@@ -375,10 +375,6 @@ SAME_ANSWER: dict[Site, Entry] = {
     ("pyrite/storage/repository.py", "KBRepository.list_entries"): (
         {"_is_regular_file": 1, "repo._named": 1},
         "_named for collections; _is_regular_file skips a non-file, and a link out that is a file is refused by the load and skipped: the same answer",
-    ),
-    ("pyrite/storage/repository.py", "KBRepository.walk_files"): (
-        {"path.rglob": 1},
-        "rglob('*.md'): a wildcard lists a link by its name on every Python and walks into no folder link; each file is then read through KBFiles (list_files filters this walk, #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.read_for_write"): (
         {"path.stat": 1, "repo._read_inside": 1},
@@ -724,7 +720,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 
 SIZES = {
     "DECIDED_INSIDE": 56,
-    "SAME_ANSWER": 20,
+    "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
 }
