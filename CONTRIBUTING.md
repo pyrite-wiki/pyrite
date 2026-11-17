@@ -391,6 +391,14 @@ experimental tests it left out. A new test of an experimental surface needs
 no marker if its path is mapped; a new file for one needs a line in
 `tests/experimental_surface.py`.
 
+**Ratchets.** To remove a row from a list that may only shrink, delete its line:
+there is no count to edit, so two pull requests that remove different rows
+merge. A row is added only by a commit whose final paragraph carries
+`Ratchet-raise: <list> <reason>`; the CI step `scripts/check_ratchets_only_shrink.py
+--range` refuses the pull request otherwise. This applies to `NOT_YET` in
+`tests/test_cli_numeric_options_declare_a_range.py` today; #1608 converts the
+other pinned lists.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
