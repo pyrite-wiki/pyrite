@@ -290,7 +290,9 @@ def task_list(
     parent: str | None = typer.Option(None, "--parent", "-p", help="Filter by parent task"),
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
-    priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
+    priority: int | None = typer.Option(
+        None, "--priority", min=1, max=10, help="Filter by priority (1-10)"
+    ),
 ) -> Outcome:
     """List tasks with optional filters."""
     svc, db = _get_service(kb_name)
