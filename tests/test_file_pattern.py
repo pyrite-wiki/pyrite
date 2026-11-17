@@ -400,7 +400,9 @@ def _collect_entry_private_field_pairs():
 
     all_classes = {Entry} | _subclasses(Entry)
     pairs = []
-    for cls in sorted(all_classes, key=lambda c: c.__name__):
+    for cls in sorted(all_classes, key=lambda c: (c.__module__, c.__qualname__)):
+        if not cls.__module__.startswith(("pyrite.", "pyrite_")):
+            continue
         if not dataclasses.is_dataclass(cls):
             continue
         for f in dataclasses.fields(cls):
@@ -455,7 +457,7 @@ assert len(_ENTRY_PRIVATE_FIELD_PAIRS) > 0, "collected entry private field pairs
 @pytest.mark.parametrize(
     ("cls", "field_name"),
     _ENTRY_PRIVATE_FIELD_PAIRS,
-    ids=[f"{cls.__name__}-{field_name}" for cls, field_name in _ENTRY_PRIVATE_FIELD_PAIRS],
+    ids=[f"{cls.__qualname__}-{field_name}" for cls, field_name in _ENTRY_PRIVATE_FIELD_PAIRS],
 )
 def test_private_field_placeholder_is_refused(cls, field_name):
     """#1639: placeholders naming private fields of the entry (e.g.

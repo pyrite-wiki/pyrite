@@ -288,8 +288,8 @@ class TypeSchema:
             if dataclasses.is_dataclass(entry)
             else set()
         )
-        data_fields = {name for name in dataclass_fields if not name.startswith("_")}
         private_fields = {name for name in dataclass_fields if name.startswith("_")}
+        data_fields = dataclass_fields - private_fields
         meta = getattr(entry, "metadata", None) or {}
 
         def _is_missing(value: Any) -> bool:
