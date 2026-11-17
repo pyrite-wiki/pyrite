@@ -239,35 +239,75 @@ def test_cli_index_health_names_the_file_and_exits_zero(tmp_path, cli_world):
     assert "README.md (" not in text.output  # the hand-kept README is not named
 
 
-def test_rest_kb_health_carries_the_key(tmp_path):
-    pytest.importorskip("fastapi", reason="fastapi not installed")
+#: Every surface that returns an index-health answer, with what it carries
+#: for `unlisted_entry_files` (maintainer, 2026-11-17, issue #1552): the local
+#: CLI's `pyrite index health` names the files; every answer built by
+#: `KBRegistryService.health_kb` (REST and MCP `kb health`, and the CLI's
+#: `kb health`, which shares that boundary) carries a count and names no
+#: file. A new surface goes in this table, and
+#: `test_no_network_surface_reads_the_health_report_directly` keeps a new
+#: network surface from going around `health_kb`.
+HEALTH_SURFACES = {
+    "cli index health": "rows",
+    "cli kb health": "count",
+    "rest kb health": "count",
+    "mcp kb_registry_health": "count",
+}
+ROW = {"kb": KB, "path": "notes/readme.md", "reason": "readme"}
+
+
+def _health_on(surface: str, tmp_path: Path, cli_world) -> dict:
     from tests._world import build_world
 
     root = _world_kb(tmp_path)
-    world = build_world(tmp_path / "w", kbs=[KBConfig(name=KB, path=root, kb_type="generic")])
+    kbs = [KBConfig(name=KB, path=root, kb_type="generic")]
+    if surface.startswith("cli"):
+        world = cli_world(kbs=kbs)
+        args = ("index", "health") if surface == "cli index health" else ("kb", "health", "-k", KB)
+        result = world.cli(*args, "--format", "json")
+        assert result.exit_code == 0, result.output
+        return json.loads(result.stdout)
+    if surface == "rest kb health":
+        pytest.importorskip("fastapi", reason="fastapi not installed")
+        world = build_world(tmp_path / "w", kbs=kbs)
+        try:
+            res = world.client.get(f"/api/kbs/{KB}/health")
+            assert res.status_code == 200, res.text
+            return res.json()
+        finally:
+            world.close()
+    world = build_world(tmp_path / "w", kbs=kbs, rest=False)
     try:
-        res = world.client.get(f"/api/kbs/{KB}/health")
-        assert res.status_code == 200, res.text
-        body = res.json()
-        assert body["unlisted_entry_files"] == [
-            {"kb": KB, "path": "notes/readme.md", "reason": "readme"}
-        ]
-        assert body["healthy"] is True  # a warning, not unhealthy
+        return world.mcp()._dispatch_tool("kb_registry_health", {"name": KB})
     finally:
         world.close()
 
 
-def test_mcp_kb_health_carries_the_key(tmp_path):
-    from tests._world import build_world
+@pytest.mark.parametrize("surface", list(HEALTH_SURFACES))
+def test_each_surface_carries_rows_or_a_count_as_decided(tmp_path, cli_world, surface):
+    body = _health_on(surface, tmp_path, cli_world)
+    if HEALTH_SURFACES[surface] == "rows":
+        assert body["unlisted_entry_files"] == [ROW], body
+    else:
+        assert body["unlisted_entry_files"] == 1, body
+        # Names no file, anywhere in the answer.
+        assert "notes/readme.md" not in json.dumps(body), body
+        assert body.get("healthy", True) is True  # a warning, never unhealthy
 
-    root = _world_kb(tmp_path)
-    world = build_world(
-        tmp_path / "w", kbs=[KBConfig(name=KB, path=root, kb_type="generic")], rest=False
-    )
-    try:
-        result = world.mcp()._dispatch_tool("kb_registry_health", {"name": KB})
-        assert result["unlisted_entry_files"] == [
-            {"kb": KB, "path": "notes/readme.md", "reason": "readme"}
-        ], result
-    finally:
-        world.close()
+
+def test_no_network_surface_reads_the_health_report_directly():
+    """REST and MCP reach index health only through
+    `KBRegistryService.health_kb`, the one place that turns
+    `unlisted_entry_files` into a count; a module under `pyrite/server/`
+    that called `check_health` (or `KBService.check_index_health`) itself
+    could hand a network caller the file rows."""
+    import ast
+
+    server = Path(__file__).resolve().parent.parent / "pyrite" / "server"
+    direct = []
+    for path in sorted(server.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if node.func.attr in ("check_health", "check_index_health"):
+                    direct.append(f"{path.relative_to(server.parent.parent)}:{node.lineno}")
+    assert direct == [], direct

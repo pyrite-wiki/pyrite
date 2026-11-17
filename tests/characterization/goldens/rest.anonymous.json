@@ -2811,7 +2811,7 @@
       "type_name_drift": [],
       "type_name_drift_has_more": false,
       "type_name_drift_total": 0,
-      "unlisted_entry_files": []
+      "unlisted_entry_files": 0
     },
     "status": 200
   },
@@ -2841,7 +2841,7 @@
       "type_name_drift": [],
       "type_name_drift_has_more": false,
       "type_name_drift_total": 0,
-      "unlisted_entry_files": []
+      "unlisted_entry_files": 0
     },
     "status": 200
   },
