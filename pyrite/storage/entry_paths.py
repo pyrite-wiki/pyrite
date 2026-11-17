@@ -59,7 +59,8 @@ OUTSIDE = "outside"
 
 #: The reasons ``index health`` reports a skipped file under
 #: ``unlisted_entry_files`` (#1552). ``not_markdown`` is not among them: the
-#: walk's ``rglob("*.md")`` never meets such a file.
+#: walk's ``rglob("*.md")`` meets no such file on POSIX; on Windows it matches
+#: ``x.MD``, which this rule then skips, unreported (a name no writer places).
 HEALTH_REASONS = (README, HIDDEN, TEMPLATES)
 
 _WHY = {
