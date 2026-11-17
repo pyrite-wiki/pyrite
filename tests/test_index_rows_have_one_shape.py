@@ -60,6 +60,10 @@ types:
     fields:
       priority: {type: number}
       urgent: {type: checkbox}
+  flag:
+    fields:
+      priority: {type: number}
+      status: {type: checkbox}
 """
 
 FILES = {
@@ -912,47 +916,83 @@ def test_a_value_a_declared_number_cannot_read_stays_text(rt_world):
 # The rule is structural: no storage reader builds entry rows past the shaper
 # ---------------------------------------------------------------------------
 
-#: SQL that selects whole entry rows (or their `metadata` column).
-_ENTRY_ROW_SQL = re.compile(
-    r"SELECT\s+(DISTINCT\s+)?(e\.\*|\*)[\s\S]*?FROM\s+entry\b|\be\.metadata\b",
-    re.IGNORECASE,
+#: The columns whose value the shaper decodes or casts: a SELECT from (or
+#: joining) `entry` that returns any of them, or `*`, returns entry rows.
+_SHAPED_COLUMNS = (
+    r"metadata|aliases|date|status|location|lifecycle|assignee|assigned_at|priority"
+    r"|due_date|start_date|end_date|coordinates"
 )
+_ENTRY_SELECT = re.compile(
+    r"SELECT\s+(?P<sel>(?:(?!SELECT)[\s\S])*?)\b(?:FROM|JOIN)\s+entry\b", re.IGNORECASE
+)
+_SHAPED_SELECTION = re.compile(rf"(^|[\s,.])\*|\b({_SHAPED_COLUMNS})\b", re.IGNORECASE)
+_AGGREGATE = re.compile(r"\s*(COUNT|MAX|MIN|1\b)", re.IGNORECASE)
 
-#: Functions that select entry rows and never return them to a caller.
+#: Functions whose SQL selects such columns and that return no entry row to a
+#: caller, or one the shaper cannot read, each with why.
 STRUCTURAL_ALLOWLIST = {
     ("pyrite/storage/index.py", "_check_off_list_values"): (
         "index health's enum scan reads the stored column itself; returns findings, not rows"
     ),
+    ("pyrite/storage/index.py", "check_health"): (
+        "index health compares stored columns with the files; returns findings, not rows"
+    ),
+    ("pyrite/storage/backends/base_backend.py", "get_timeline"): (
+        "a fixed subset (date, location) with no entry_type, so no declared type applies; "
+        "it returns text, as docs/json-contracts.md says"
+    ),
+    ("pyrite/storage/kb_ops.py", "get_kb_stats"): "`k.*` is the kb table, not entry rows",
 }
 
 
-def _functions_with_entry_sql() -> Iterator[tuple[str, str, str]]:
+def _calls(node: ast.AST) -> set[str]:
+    return {
+        getattr(c.func, "id", None) or getattr(c.func, "attr", None)
+        for c in ast.walk(node)
+        if isinstance(c, ast.Call)
+    }
+
+
+def _functions_with_entry_sql() -> Iterator[tuple[str, str, ast.AST]]:
     for path in sorted((REPO / "pyrite" / "storage").rglob("*.py")):
         rel = path.relative_to(REPO).as_posix()
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
+        for node in ast.walk(ast.parse(path.read_text())):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
-            strings = [
-                c.value
-                for c in ast.walk(node)
-                if isinstance(c, ast.Constant) and isinstance(c.value, str)
-            ]
-            if any(_ENTRY_ROW_SQL.search(s) for s in strings):
-                yield rel, node.name, ast.get_source_segment(path.read_text(), node) or ""
+            for c in ast.walk(node):
+                if not (isinstance(c, ast.Constant) and isinstance(c.value, str)):
+                    continue
+                if any(
+                    _SHAPED_SELECTION.search(m.group("sel"))
+                    and not _AGGREGATE.match(m.group("sel"))
+                    for m in _ENTRY_SELECT.finditer(c.value)
+                ):
+                    yield rel, node.name, node
+                    break
 
 
 def test_every_storage_reader_of_entry_rows_returns_through_the_shaper():
+    """Any function in `pyrite/storage` whose SQL selects `*` or a shaped
+    column from `entry` calls `shape_entry_row(s)` (a call in its AST, not the
+    name in its text), or is allowlisted with a reason."""
     offenders = []
     found = set()
-    for rel, name, source in _functions_with_entry_sql():
+    for rel, name, node in _functions_with_entry_sql():
         found.add((rel, name))
         if (rel, name) in STRUCTURAL_ALLOWLIST:
             continue
-        if "shape_entry_row" not in source:
+        if not _calls(node) & {"shape_entry_row", "shape_entry_rows"}:
             offenders.append(f"{rel}::{name}")
     assert offenders == [], "entry rows built without shape_entry_row(s)"
     assert set(STRUCTURAL_ALLOWLIST) <= found, "stale allowlist entries"
+    # The scan sees the readers it must: a pattern that matched nothing would
+    # pass every function.
+    assert {
+        ("pyrite/storage/queries.py", "find_by_status"),
+        ("pyrite/storage/backends/sqlite_backend.py", "search"),
+        ("pyrite/storage/backends/sqlite_backend.py", "search_semantic"),
+        ("pyrite/storage/backends/postgres_backend.py", "search"),
+    } <= found
 
 
 @pytest.mark.control(
@@ -992,3 +1032,63 @@ def test_qa_validate_reports_text_in_a_field_declared_a_number(rt_world):
         ("c-zeros", "priority"),
         ("t-quoted", "priority"),
     }, result["issues"]
+
+
+@pytest.mark.parametrize("method", ["get_entry", "list_entries", "search_by_date_range"])
+def test_typed_values_the_indexer_binds_read_the_same_on_every_backend(seeded_backend, method):
+    """Finding 3 of the cold read: the indexer binds a model's int, float and
+    bool as they are (`crud.bindable`), and each backend spells them in its
+    TEXT column its own way (SQLite `1` for true, Postgres `true`). Whatever
+    the spelling, a declared number reads as that number and a declared
+    checkbox as that bool, on SQLite and on Postgres.
+
+    A whole-valued float (`7.0`) is the one spelling the backends cannot be
+    made to agree on (SQLite keeps `7.0`, Postgres prints `7`); it reads as
+    a number on both, not pinned here."""
+    from pyrite.storage.crud import bindable
+
+    common = {
+        "kb_name": KB,
+        "entry_type": "flag",
+        "summary": "",
+        "date": "2020-06-01",
+        "tags": [],
+        "sources": [],
+        "links": [],
+        "metadata": {},
+    }
+    seeded_backend.upsert_entry(
+        bindable(
+            {
+                **common,
+                "id": "f-int",
+                "title": "F int",
+                "body": "zebra",
+                "priority": 7,
+                "status": True,
+            }
+        )
+    )
+    seeded_backend.upsert_entry(
+        bindable(
+            {
+                **common,
+                "id": "f-dec",
+                "title": "F dec",
+                "body": "zebra",
+                "priority": 2.5,
+                "status": False,
+            }
+        )
+    )
+    if method == "get_entry":
+        rows = [seeded_backend.get_entry("f-int", KB), seeded_backend.get_entry("f-dec", KB)]
+    elif method == "list_entries":
+        rows = seeded_backend.list_entries(kb_name=KB, entry_type="flag")
+    else:
+        rows = seeded_backend.search_by_date_range("2020-01-01", "2020-12-31", kb_name=KB)
+    by_id = {r["id"]: r for r in rows if r["id"].startswith("f-")}
+    assert by_id["f-int"]["priority"] == 7 and type(by_id["f-int"]["priority"]) is int
+    assert by_id["f-dec"]["priority"] == 2.5 and type(by_id["f-dec"]["priority"]) is float
+    assert by_id["f-int"]["status"] is True
+    assert by_id["f-dec"]["status"] is False
