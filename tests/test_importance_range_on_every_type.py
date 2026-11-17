@@ -1,8 +1,8 @@
-"""A write stores importance as sent, a whole number 1-10, or refuses it (#1537, #1588).
+"""A write stores importance as the whole number 1-10 it reads, or refuses it (#1537, #1588).
 
 The property: ``importance`` is a base field, a whole number from 1 to 10 on every
 entry. For any value, by any surface, a create, ``pyrite add``, a bulk create or
-import and an update that sets it either store it as it was sent or refuse it with
+import and an update that sets it either store the int the rule reads or refuse it with
 ``VALIDATION_FAILED``, the same ``errors`` row naming ``importance``, and no file
 written or changed -- on every entry type and on every surface (the CLI's
 ``-f importance=``, MCP ``kb_create`` / ``kb_update`` / ``kb_bulk_create``, REST
@@ -372,7 +372,7 @@ def test_a_journalism_kb_refuses_importance_99_with_the_models_answer(cli_world,
 #
 # The property, for any value: the check answers with a row or with nothing and
 # never raises; a value this write did not set never stops the write; a write
-# that is accepted stores a whole number in 1-10 as it was sent. One row per kind,
+# that is accepted stores the whole number in 1-10 the rule reads. One row per kind,
 # each with the verdict the property gives it by hand (not read off the code), so
 # a new kind of value cannot be added without saying what it must do.
 #
@@ -692,6 +692,30 @@ def test_the_check_never_raises_and_says_row_or_nothing(etype, spelling, kind):
     assert validate_importance(mcp) is (file == "good")
     # every reader still sees an int (#1588: option C, a raw Entry.importance, is not built)
     assert type(entry.importance) is int
+
+
+# Digit text longer than Python's int() conversion limit (4,300 digits) is refused like any
+# other out-of-range value: the rule never raises, a file holding it still loads, and an
+# update that sends it answers VALIDATION_FAILED and writes nothing (#1633 delta read).
+_LONG_DIGITS = "9" * 5000
+
+
+@etypes
+def test_digit_text_too_long_for_int_is_refused_and_never_raises(world, etype):
+    from pyrite.models.core_types import get_entry_class
+    from pyrite.schema.validators import importance_value
+
+    assert importance_value(_LONG_DIGITS) is None
+    assert importance_value("0" * 5000 + "7") == 7
+    entry = get_entry_class(etype).from_markdown(_raw_file(etype, "seed", f'"{_LONG_DIGITS}"'))
+    assert [r for r in entry.validation_errors() if r.get("field") == "importance"]
+    assert type(entry.importance) is int
+    path = world.add_entry(KB, _raw_file(etype, "seed", "5"))
+    before = path.read_bytes()
+    code, res = _surface_call(world, "mcp", "update", etype, value=_LONG_DIGITS)
+    _no_crash(code, res)
+    _assert_refused(code, res)
+    assert path.read_bytes() == before
 
 
 # -- every entry class judges what its frontmatter gave, not its int() of it ---------------

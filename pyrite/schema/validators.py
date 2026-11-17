@@ -137,7 +137,12 @@ def importance_value(importance: Any) -> int | None:
             importance = getattr(importance, "value", None)
         if not (isinstance(importance, str) and importance.isascii() and importance.isdigit()):
             return None
-        value = int(importance)
+        # More than two significant digits is never 1-10; judging the length first keeps
+        # int() off digit text longer than Python's conversion limit, which raises.
+        significant = importance.lstrip("0")
+        if len(significant) > 2:
+            return None
+        value = int(significant or "0")
     return value if 1 <= value <= 10 else None
 
 
