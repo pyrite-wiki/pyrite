@@ -100,32 +100,39 @@ def _updated_at_instant(value: Any) -> datetime | None:
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
-def validate_importance(importance: Any) -> bool:
-    """True when ``importance`` is a number in 1-10; never raises (#1537).
+_YAML_STR_TAG = "tag:yaml.org,2002:str"
 
-    The one place a value becomes "in range or not", and it is asked about
-    whatever a file, JSON or ``-f`` text puts there. A number is compared as
-    it is, not truncated first (``10.9`` is above 10 and ``0.99`` below 1; an
-    ``int()`` first would pass the one and refuse the other). A string is
-    numeric only as whole-number text (``"5"``, ``" 5 "``, ``"05"``). A value
-    nothing here can read (``.nan`` and ``high``, a list, a date) is out of
-    range, never an exception, and a bool is not a number: ``true`` would
-    otherwise pass as 1. A blank or null value is absent, which the caller
-    decides (``None`` is False here). ``5.5`` is accepted: the check is the
-    range, not whole-ness.
+
+def validate_importance(importance: Any) -> bool:
+    """True when ``importance`` is a whole number in 1-10; never raises (#1537, #1588).
+
+    The one place a value becomes "in range or not", and it is asked about the
+    value as given, whatever a file, JSON or ``-f`` text puts there: the model
+    keeps it for this check (``Entry._importance_given``), so a create, an
+    update and a file are judged alike. A number is compared as it is, never
+    truncated first, and must be whole: ``5.5`` and ``10.7`` are refused
+    (#1588 decision), as are ``.inf`` and ``.nan``. A float whose value is
+    whole (``5.0``, ``1e1``) keeps the answer it had before #1588 (accepted)
+    while that question is with the maintainer. A string is a number only as
+    plain ASCII digits (``"5"``, ``"05"``); ``" 5 "``, ``"+5"``, ``"1_0"`` and
+    fullwidth ``"１０"`` are text, refused rather than written to a file as a
+    string. A YAML ``!!str`` scalar is text and is judged as its text. A bool
+    is not a number (``true`` would otherwise pass as 1), and neither are
+    bytes, whatever they spell. A blank or null value is absent, which the
+    caller decides (``None`` is False here).
     """
     if isinstance(importance, bool):
         return False
-    try:
-        if isinstance(importance, (int, float)):
-            value = importance
-        elif isinstance(importance, str):
-            value = int(importance)
-        else:
-            value = float(importance)
-    except (ValueError, TypeError, OverflowError):
-        return False
-    return 1 <= value <= 10
+    if isinstance(importance, int):
+        return 1 <= importance <= 10
+    if isinstance(importance, float):
+        return importance.is_integer() and 1 <= importance <= 10
+    if not isinstance(importance, str) and str(getattr(importance, "tag", "")) == _YAML_STR_TAG:
+        # ruamel's TaggedScalar for `!!str 7`; duck-typed so this layer imports no YAML library.
+        importance = getattr(importance, "value", None)
+    if isinstance(importance, str):
+        return importance.isascii() and importance.isdigit() and 1 <= int(importance) <= 10
+    return False
 
 
 def validate_event_id(event_id: str) -> bool:

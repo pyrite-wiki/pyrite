@@ -457,6 +457,11 @@ class ErrorResponse(BaseModel):
 # =============================================================================
 
 
+# What `importance` accepts, for the OpenAPI document; the rule itself is
+# `validate_importance`, applied by the write gate to the value as sent.
+_IMPORTANCE_SCHEMA = {"type": "integer", "minimum": 1, "maximum": 10}
+
+
 class CreateEntryRequest(BaseModel):
     """JSON body for creating an entry.
 
@@ -475,7 +480,10 @@ class CreateEntryRequest(BaseModel):
     title: str
     body: str = ""
     date: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] = []
     participants: list[str] = []
     role: str | None = None
@@ -492,7 +500,10 @@ class UpdateEntryRequest(BaseModel):
     kb: str
     title: str | None = None
     body: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
 

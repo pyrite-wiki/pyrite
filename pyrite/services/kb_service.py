@@ -832,7 +832,7 @@ class KBService:
                 model_warnings.append(
                     {
                         "field": row.get("field", ""),
-                        "rule": "model_validation",
+                        "rule": row.get("rule", "model_validation"),
                         "severity": "warning",
                         "message": message,
                         "note": "violation already on disk; kept",

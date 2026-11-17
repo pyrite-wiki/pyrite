@@ -293,6 +293,17 @@ class Entry(ABC):
     kb_name: str = ""
     file_path: Path | None = None
     _schema_version: int = 0
+    # The `importance` value this entry was built from, as given (#1588): a
+    # file's node, a request's JSON value, a `-f` value. `importance` itself is
+    # the model's int of it (`safe_int`) for every reader; this is what the rule
+    # in `validation_errors` judges, so `10.7`, `true` and `high` are refused on
+    # a create as on an update instead of being judged as 10, 1 and 5. Set by
+    # `_base_kwargs`, which every `from_frontmatter` goes through (a create via
+    # `build_entry`, `pyrite add`, an update's reload of the new file), from the
+    # read view, so a file spelling `metadata: {importance: ...}` is judged too.
+    # Never serialized: nothing here reaches a file or the index. An assignment
+    # to `importance` resets it (see `__setattr__`). `_ABSENT` when not given.
+    _importance_given: Any = field(default=_ABSENT, repr=False, compare=False)
     # Top-level frontmatter keys this class did not declare, captured at load
     # and written back at save, so a load -> save through a typed class never
     # deletes what it does not understand (`milestone:`, `github_issue:`, a
@@ -355,6 +366,9 @@ class Entry(ABC):
             # Same rule for a timestamp the source carried but did not parse:
             # the assignment is the user's value and must reach the file.
             super().__setattr__("_unparsed_timestamp_keys", self._unparsed_timestamp_keys - {name})
+        if name == "importance" and self._importance_given is not _ABSENT:
+            # The value now is the one assigned, and that is what the rule judges.
+            super().__setattr__("_importance_given", _ABSENT)
         kept = self._unrepresented_keys
         if kept and name in kept:
             # #557: the file's own value is kept only while nobody sets the
@@ -479,6 +493,8 @@ class Entry(ABC):
             "body": body,
             "summary": meta.get("summary", ""),
             "importance": safe_int(meta.get("importance"), 5),
+            # What the rule judges (#1588): the value as given, not its int.
+            "_importance_given": meta.get("importance", _ABSENT),
             "tags": _as_list(meta.get("tags")),
             "aliases": _as_list(meta.get("aliases")),
             "sources": parse_sources(meta.get("sources")),
@@ -761,11 +777,15 @@ class Entry(ABC):
         if problem := lifecycle_validation_error(self.lifecycle):
             errors.append(problem)
 
-        # `importance` is a base field, 1-10 on every type (#1537). Check the
-        # file's value when loading fell back to a default (`importance: high`).
-        # A blank or null `importance:` is absent, not a violation: the file is
-        # a person's, and a blank key is common in a hand-made template.
-        importance = self.unrepresented_frontmatter().get("importance", self.importance)
+        # `importance` is a base field, a whole number 1-10 on every type
+        # (#1537, #1588). Judged on the value as given (`_importance_given`),
+        # never on the model's int of it, so a create, an update and either
+        # spelling in a file get one answer. A blank or null `importance:` is
+        # absent, not a violation: the file is a person's, and a blank key is
+        # common in a hand-made template.
+        importance = self._importance_given
+        if importance is _ABSENT:
+            importance = self.importance
         if importance is not None and not validate_importance(importance):
             errors.append(
                 {

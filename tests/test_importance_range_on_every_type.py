@@ -1,27 +1,31 @@
-"""A write never stores an importance outside 1-10, on any type, by any surface (#1537).
+"""A write stores importance as sent, a whole number 1-10, or refuses it (#1537, #1588).
 
-The property: ``importance`` is a base field, 1 to 10 on every entry. An update
-that sets it outside that range, ``pyrite add`` of a file that holds it, and a
-create of a whole number outside it are refused with ``VALIDATION_FAILED``, an
-``errors`` row naming ``importance``, and no file written or changed -- on every
-entry type and on every surface (the CLI's ``-f importance=`` and MCP
-``kb_create`` / ``kb_update``). A create first turns a non-number into the
-default (or ``true`` into 1) and cuts a decimal to a whole number in the model,
-so the create rows assert "refused, or what is stored is in 1 to 10", not that
-every bad value is refused. A value the file already holds is the file's: an
-update of another field succeeds and reports it ("violation already on disk;
-kept", design principle 2).
+The property: ``importance`` is a base field, a whole number from 1 to 10 on every
+entry. For any value, by any surface, a create, ``pyrite add``, a bulk create or
+import and an update that sets it either store it as it was sent or refuse it with
+``VALIDATION_FAILED``, the same ``errors`` row naming ``importance``, and no file
+written or changed -- on every entry type and on every surface (the CLI's
+``-f importance=``, MCP ``kb_create`` / ``kb_update`` / ``kb_bulk_create``, REST
+``POST`` / ``PUT`` / ``PATCH /api/entries``). A value the file already holds, at the
+top level or under ``metadata:``, is judged by the same rule and is the file's: an
+update of another field succeeds and reports it ("violation already on disk; kept",
+design principle 2), with the refusal's own rule.
 
 Before #1537 only ``EventEntry`` carried the rule, so a ``person`` stored
 ``importance: 99`` and ``pyrite qa validate`` then reported what Pyrite had just
 written. The rule now sits on ``Entry.validation_errors`` (one place, design
 principle 8), and the one write gate (``KBService._validate_write``) applies it
-to every type.
+to every type. Before #1588 a create judged the model's ``int()`` of the value
+(10.7 stored as 10, ``true`` as 1, ``high`` as 5) and an update of a file spelling
+``metadata: {importance: ...}`` judged it the same way; the model now keeps the
+value as given for the rule (``Entry._importance_given``) and ``Entry.importance``
+stays an int for every reader.
 
 The types are not listed by hand: the core registry (``ENTRY_TYPE_REGISTRY``),
 every plugin-declared class (``get_registry().get_all_entry_types()``), and a
 type a ``kb.yaml`` declares alone (``GenericEntry``). A type added to any of
-them is covered by ``test_every_entry_class_carries_the_rule`` without a new
+them is covered by ``test_every_entry_class_carries_the_rule`` and
+``test_every_entry_class_judges_the_value_its_frontmatter_gives`` without a new
 line here.
 
 Event rows. These are controls (``_EVENT_CONTROL``): they passed before #1537
@@ -29,17 +33,13 @@ and must still pass -- the ``core-event`` rows of the create, update, on-disk
 and add tests for 0, 11, -5, 99, the in-range values and an absent value, and
 the ``EventEntry`` class rows (and its subclasses) for 0, 11, -5, 99. These are
 not controls: the ``event`` cells of the value-kind block below (``KINDS``, run
-for a note and an event) pin the answers on both types, and on an event some
-changed with #1537 -- ``.inf`` / ``-.inf`` (they crashed an update and ``add``),
-``true`` (it passed as 1), a number above 10 that is not whole such as 10.9 (an
-update and ``add`` accepted it), blank and null (an update no longer warns about
-them, and an MCP update that sets null was refused), and numeric text ``10.9``
-on a CLI update.
+for a note and an event) pin the answers on both types.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -372,67 +372,92 @@ def test_a_journalism_kb_refuses_importance_99_with_the_models_answer(cli_world,
 #
 # The property, for any value: the check answers with a row or with nothing and
 # never raises; a value this write did not set never stops the write; a write
-# that is accepted never leaves an importance outside 1-10 in the file. One row
-# per kind, each with the verdict the property gives it by hand (not read off the
-# code), so a new kind of value cannot be added without saying what it must do.
+# that is accepted stores a whole number in 1-10 as it was sent. One row per kind,
+# each with the verdict the property gives it by hand (not read off the code), so
+# a new kind of value cannot be added without saying what it must do.
 #
-#   file:       "good" (a number in 1-10, or numeric text), "absent" (blank or null:
-#               a guest in a person's file does not call a blank key a violation),
-#               "bad" (everything else: kept and reported when already on disk,
-#               refused by `pyrite add`)
-#   cli_set:    the verdict of the `-f importance=<text>` text as text ("null" and
-#               "" are strings on the command line)
+#   file:       "good" (a whole number in 1-10, or plain ASCII digit text for one),
+#               "absent" (blank or null: a guest in a person's file does not call a
+#               blank key a violation), "bad" (everything else: kept and reported
+#               when already on disk, refused by `pyrite add`)
+#   cli_set:    the verdict of the `-f importance=<text>` text ("null" and "" are
+#               strings on the command line). The command line's `-f` parser reads
+#               numeric text as a number for every field before any rule sees it
+#               (`+5`, `1_0`, `１０`, ` 5 ` arrive as 5 or 10): that parser is out of
+#               scope for #1588 (the groom's "Out of scope"), so those cells are
+#               "good" and store the number.
 #   mcp_set:    the verdict of the JSON value
-#   create_*:   "refused" for a whole number out of range (and for a value that the
-#               model turns into 0), "safe" for anything else: a create turns a
-#               non-number into the default or into 1 (`true`), and cuts a decimal
-#               to a whole number (10.7 stores 10), in the model before the check (a
-#               known limit, not part of this fix), so the property is "refused, or
-#               what is stored is in 1-10"
+#
+# A create answers as an update that sets the same value on the same surface does
+# (#1588, decision (a)): no create column. Whole floats (`5.0`, `10.0`, `1e1`) are
+# with the maintainer (#1588); their rows keep the verdicts they had before #1588.
 _I = 123456789012345678901234567890
 KINDS = {
-    # kind: (yaml, cli text, json value, file, cli_set, mcp_set, create_cli, create_mcp)
-    "in_range_7": ("7", "7", 7, "good", "good", "good", "safe", "safe"),
-    "out_99": ("99", "99", 99, "bad", "bad", "bad", "refused", "refused"),
-    "zero": ("0", "0", 0, "bad", "bad", "bad", "refused", "refused"),
-    "big_30_digits": (str(_I), str(_I), _I, "bad", "bad", "bad", "refused", "refused"),
-    "float_5.0": ("5.0", "5.0", 5.0, "good", "good", "good", "safe", "safe"),
-    "float_10.0": ("10.0", "10.0", 10.0, "good", "good", "good", "safe", "safe"),
-    # 5.5 is "good" because the range is the rule and whole-ness is not checked: the
-    # stated limit of this change (a write of 5.5 is stored as given), not a verdict
-    # that 5.5 is a sensible importance.
-    "float_5.5": ("5.5", "5.5", 5.5, "good", "good", "good", "safe", "safe"),
+    # kind: (yaml, cli text, json value, file, cli_set, mcp_set)
+    "in_range_7": ("7", "7", 7, "good", "good", "good"),
+    "out_99": ("99", "99", 99, "bad", "bad", "bad"),
+    "zero": ("0", "0", 0, "bad", "bad", "bad"),
+    "big_30_digits": (str(_I), str(_I), _I, "bad", "bad", "bad"),
+    "float_5.0": ("5.0", "5.0", 5.0, "good", "good", "good"),
+    "float_10.0": ("10.0", "10.0", 10.0, "good", "good", "good"),
+    # importance is a whole number (#1588 decision): 5.5 is refused, not stored as given
+    "float_5.5": ("5.5", "5.5", 5.5, "bad", "bad", "bad"),
     # the edges of the range that are not whole: compared as numbers, not truncated first
-    "float_10.000001": ("10.000001", "10.000001", 10.000001, "bad", "bad", "bad", "safe", "safe"),
-    "float_10.5": ("10.5", "10.5", 10.5, "bad", "bad", "bad", "safe", "safe"),
-    "float_10.9": ("10.9", "10.9", 10.9, "bad", "bad", "bad", "safe", "safe"),
-    "float_0.5": ("0.5", "0.5", 0.5, "bad", "bad", "bad", "safe", "safe"),
-    "float_0.99": ("0.99", "0.99", 0.99, "bad", "bad", "bad", "safe", "safe"),
-    "float_-0.5": ("-0.5", "-0.5", -0.5, "bad", "bad", "bad", "safe", "safe"),
-    "float_1e1": ("1e1", "1e1", 1e1, "good", "good", "good", "safe", "safe"),
-    # a string is whole-number text only; the command line reads numeric text as a number
-    "str_10.9": ('"10.9"', "10.9", "10.9", "bad", "bad", "bad", "safe", "safe"),
-    "str_1e1": ('"1e1"', "1e1", "1e1", "bad", "good", "bad", "safe", "safe"),
-    "inf": (".inf", ".inf", float("inf"), "bad", "bad", "bad", "safe", "safe"),
-    "-inf": ("-.inf", "-.inf", float("-inf"), "bad", "bad", "bad", "safe", "safe"),
-    "nan": (".nan", ".nan", float("nan"), "bad", "bad", "bad", "safe", "safe"),
-    "true": ("true", "true", True, "bad", "bad", "bad", "safe", "safe"),
-    "false": ("false", "false", False, "bad", "bad", "bad", "refused", "refused"),
-    "null": ("null", "null", None, "absent", "bad", "absent", "safe", "safe"),
-    "blank": ("", "", None, "absent", "bad", "absent", "safe", "safe"),
-    "empty_string": ('""', "", "", "bad", "bad", "bad", "safe", "safe"),
-    "str_5": ('"5"', "5", "5", "good", "good", "good", "safe", "safe"),
-    "str_spaces_5": ('" 5 "', " 5 ", " 5 ", "good", "good", "good", "safe", "safe"),
-    "str_05": ('"05"', "05", "05", "good", "good", "good", "safe", "safe"),
-    "high": ("high", "high", "high", "bad", "bad", "bad", "safe", "safe"),
-    "abc": ('"abc"', "abc", "abc", "bad", "bad", "bad", "safe", "safe"),
-    "list": ("[5]", "[5]", [5], "bad", "bad", "bad", "safe", "safe"),
-    "mapping": ("{a: 1}", "{a: 1}", {"a": 1}, "bad", "bad", "bad", "safe", "safe"),
-    "date": ("2026-01-02", "2026-01-02", "2026-01-02", "bad", "bad", "bad", "safe", "safe"),
+    "float_10.000001": ("10.000001", "10.000001", 10.000001, "bad", "bad", "bad"),
+    "float_10.5": ("10.5", "10.5", 10.5, "bad", "bad", "bad"),
+    "float_10.7": ("10.7", "10.7", 10.7, "bad", "bad", "bad"),
+    "float_10.9": ("10.9", "10.9", 10.9, "bad", "bad", "bad"),
+    "float_3.9": ("3.9", "3.9", 3.9, "bad", "bad", "bad"),
+    "float_0.5": ("0.5", "0.5", 0.5, "bad", "bad", "bad"),
+    "float_0.99": ("0.99", "0.99", 0.99, "bad", "bad", "bad"),
+    "float_-0.5": ("-0.5", "-0.5", -0.5, "bad", "bad", "bad"),
+    "float_1e1": ("1e1", "1e1", 1e1, "good", "good", "good"),
+    # a string is plain ASCII digit text only; the command line reads numeric text as a number
+    "str_10.9": ('"10.9"', "10.9", "10.9", "bad", "bad", "bad"),
+    "str_1e1": ('"1e1"', "1e1", "1e1", "bad", "good", "bad"),
+    "inf": (".inf", ".inf", float("inf"), "bad", "bad", "bad"),
+    "-inf": ("-.inf", "-.inf", float("-inf"), "bad", "bad", "bad"),
+    "nan": (".nan", ".nan", float("nan"), "bad", "bad", "bad"),
+    "true": ("true", "true", True, "bad", "bad", "bad"),
+    "false": ("false", "false", False, "bad", "bad", "bad"),
+    "null": ("null", "null", None, "absent", "bad", "absent"),
+    "blank": ("", "", None, "absent", "bad", "absent"),
+    "empty_string": ('""', "", "", "bad", "bad", "bad"),
+    "str_5": ('"5"', "5", "5", "good", "good", "good"),
+    # padded text is not plain digits (#1588 decision); the CLI parser strips it first
+    "str_spaces_5": ('" 5 "', " 5 ", " 5 ", "bad", "good", "bad"),
+    "str_padded_newline": ('" 5\\n"', " 5\n", " 5\n", "bad", "good", "bad"),
+    "str_05": ('"05"', "05", "05", "good", "good", "good"),
+    "str_fullwidth_10": ('"１０"', "１０", "１０", "bad", "good", "bad"),
+    "str_1_0": ('"1_0"', "1_0", "1_0", "bad", "good", "bad"),
+    "str_plus_5": ('"+5"', "+5", "+5", "bad", "good", "bad"),
+    # bytes are not a number, whatever they spell (b"5"); JSON cannot carry bytes, so the
+    # MCP cell sends the YAML text itself (a string that is not digits)
+    "binary_5": ("!!binary NQ==", "!!binary NQ==", "!!binary NQ==", "bad", "bad", "bad"),
+    # a YAML `!!str` scalar is text and is judged as its text ("7", accepted on a write)
+    "str_tag_7": ("!!str 7", "7", "7", "good", "good", "good"),
+    "high": ("high", "high", "high", "bad", "bad", "bad"),
+    "abc": ('"abc"', "abc", "abc", "bad", "bad", "bad"),
+    "list": ("[5]", "[5]", [5], "bad", "bad", "bad"),
+    "mapping": ("{a: 1}", "{a: 1}", {"a": 1}, "bad", "bad", "bad"),
+    "date": ("2026-01-02", "2026-01-02", "2026-01-02", "bad", "bad", "bad"),
 }
 ETYPES = ["note", "event"]
 kinds = pytest.mark.parametrize("kind", sorted(KINDS))
 etypes = pytest.mark.parametrize("etype", ETYPES)
+# The two places a file can spell importance (#1025): its own key, or under `metadata:`.
+SPELLINGS = ["top", "nested"]
+spellings = pytest.mark.parametrize("spelling", SPELLINGS)
+
+# YAML nodes with no JSON form (`!!binary`, a `!!str`-tagged scalar). Not about importance:
+# the same on dev before #1588, for any key.
+#  - Under `metadata:` the file cannot be read at all (the metadata column is JSON): an
+#    update of it answers VALIDATION_FAILED, "a value Pyrite cannot read", and writes
+#    nothing (#1035's answer for an unmodellable file).
+#  - `pyrite add` cannot write such a node back (its writer refuses a value it cannot
+#    represent), so it refuses the file whatever the importance rule says.
+_NO_JSON_FORM = {"binary_5", "str_tag_7"}
+_UNREADABLE = "a value Pyrite cannot read"
 
 
 # An update that leaves a 30-digit importance on disk writes the file, then the index
@@ -452,26 +477,47 @@ _INDEX_OVERFLOW = pytest.mark.xfail(
 )
 
 
-def _raw_file(etype: str, entry_id: str, raw: str | None) -> str:
+def _raw_file(etype: str, entry_id: str, raw: str | None, spelling: str = "top") -> str:
     lines = ["---", f"id: {entry_id}", f"type: {etype}", f"title: {entry_id}"]
     if etype == "event":
         lines.append("date: 2026-01-02")
     if raw is not None:
-        lines.append("importance:" + (f" {raw}" if raw else ""))
+        value = f" {raw}" if raw else ""
+        if spelling == "nested":
+            lines += ["metadata:", "  importance:" + value]
+        else:
+            lines.append("importance:" + value)
     return "\n".join([*lines, "---", "", "Body.", ""])
 
 
-def _stored_is_in_range(path: Path) -> bool:
-    """What the file now holds is a number (or numeric text) in 1-10."""
+def _importance_lines(text: str) -> list[str]:
+    return [ln for ln in text.splitlines() if ln.lstrip().startswith("importance:")]
+
+
+def _stored_value(path: Path):
     from pyrite.utils.yaml import load_yaml
 
-    value = load_yaml(path.read_text().split("---", 2)[1]).get("importance")
-    if isinstance(value, bool) or value is None:
+    fm = load_yaml(path.read_text().split("---", 2)[1]) or {}
+    if "importance" in fm:
+        return fm["importance"]
+    nested = fm.get("metadata")
+    return nested.get("importance") if isinstance(nested, dict) else None
+
+
+def _stored_is_in_range(path: Path) -> bool:
+    """What the file now holds is a whole number in 1-10, by hand from the decision:
+    an int, plain ASCII digit text, or a whole float (whole floats are undecided and
+    keep the answer they had before #1588)."""
+    value = _stored_value(path)
+    if isinstance(value, bool):
         return False
-    try:
-        return 1 <= float(str(value).strip()) <= 10
-    except ValueError:
-        return False
+    if isinstance(value, int):
+        return 1 <= value <= 10
+    if isinstance(value, float):
+        return math.isfinite(value) and value == int(value) and 1 <= value <= 10
+    if isinstance(value, str):
+        return value != "" and all(c in "0123456789" for c in value) and 1 <= int(value) <= 10
+    return False
 
 
 def _md_files(world) -> list[Path]:
@@ -514,8 +560,13 @@ def _no_crash(code, res):
     assert res.get("error_code") not in ("NO_OUTCOME", "INTERNAL"), res
 
 
+def _importance_rows(res: dict) -> list[dict]:
+    return [r for r in res.get("errors") or [] if r.get("field") == "importance"]
+
+
 @etypes
 @surface
+@spellings
 @pytest.mark.parametrize(
     "kind",
     [
@@ -523,31 +574,41 @@ def _no_crash(code, res):
         for k in sorted(KINDS)
     ],
 )
-def test_a_value_already_on_disk_never_stops_an_update_of_another_field(world, etype, surf, kind):
+def test_a_value_already_on_disk_never_stops_an_update_of_another_field(
+    world, etype, surf, spelling, kind
+):
     yaml_text, _cli, _mcp, file, *_ = KINDS[kind]
-    path = world.add_entry(KB, _raw_file(etype, "seed", yaml_text))
+    path = world.add_entry(KB, _raw_file(etype, "seed", yaml_text, spelling))
     before_text = path.read_text()
     code, res = _surface_call(world, surf, "update", etype, body="changed")
+    if kind in _NO_JSON_FORM and spelling == "nested":
+        assert res.get("error_code") == "VALIDATION_FAILED", res
+        assert _UNREADABLE in res["error"], res
+        assert path.read_text() == before_text
+        return
     if kind == "big_30_digits" and res.get("error_code") in ("NO_OUTCOME", "INTERNAL"):
         assert "changed" in path.read_text(), "the known failure comes after the file is written"
         raise _IndexOverflowError(res)
     _no_crash(code, res)
     assert code == 0, res
     assert (file == "bad") == _kept(res), res  # kept and reported only when it is a violation
+    if file == "bad":
+        # the kept row carries the refusal's own rule, not a generic one (#1588 acceptance 5)
+        kept = [w for w in res["warnings"] if w.get("field") == "importance"]
+        assert [w["rule"] for w in kept] == ["range"], res
     text = path.read_text()
     assert "changed" in text
     # the importance line itself is not touched by a write that did not set it
-    assert [ln for ln in text.splitlines() if ln.startswith("importance:")] == [
-        ln for ln in before_text.splitlines() if ln.startswith("importance:")
-    ]
+    assert _importance_lines(text) == _importance_lines(before_text)
 
 
 @etypes
 @surface
+@spellings
 @kinds
-def test_a_set_importance_is_refused_or_in_1_to_10(world, etype, surf, kind):
-    _y, cli, mcp, _f, cli_set, mcp_set, *_ = KINDS[kind]
-    path = world.add_entry(KB, _raw_file(etype, "seed", "5"))
+def test_a_set_importance_is_refused_or_stored_as_sent(world, etype, surf, spelling, kind):
+    _y, cli, mcp, _f, cli_set, mcp_set = KINDS[kind]
+    path = world.add_entry(KB, _raw_file(etype, "seed", "5", spelling))
     before = path.read_bytes()
     verdict = cli_set if surf == "cli" else mcp_set
     code, res = _surface_call(world, surf, "update", etype, value=cli if surf == "cli" else mcp)
@@ -558,37 +619,64 @@ def test_a_set_importance_is_refused_or_in_1_to_10(world, etype, surf, kind):
     else:
         assert code == 0, res
         if verdict == "good":
-            assert _stored_is_in_range(path)
+            assert _stored_is_in_range(path), path.read_text()
 
 
 @etypes
 @surface
 @kinds
-def test_a_created_importance_is_refused_or_stored_in_1_to_10(world, etype, surf, kind):
-    _y, cli, mcp, _f, _cs, _ms, create_cli, create_mcp = KINDS[kind]
-    verdict = create_cli if surf == "cli" else create_mcp
+def test_a_create_answers_as_an_update_of_the_same_value_does(world, etype, surf, kind):
+    """#1588 decision (a): a create refuses what an update refuses; it never stores the
+    model's reading of the value (10.7 as 10, true as 1, high as the default 5)."""
+    _y, cli, mcp, _f, cli_set, mcp_set = KINDS[kind]
+    verdict = cli_set if surf == "cli" else mcp_set
     before = _snapshot(world)
     code, res = _surface_call(world, surf, "create", etype, value=cli if surf == "cli" else mcp)
     _no_crash(code, res)
-    if verdict == "refused":
+    if verdict == "bad":
         _assert_refused(code, res)
         assert _snapshot(world) == before
-    elif code == 0:
+    else:
+        assert code == 0, res
         (path,) = _md_files(world)
-        assert _stored_is_in_range(path), path.read_text()
+        if verdict == "good":
+            assert _stored_is_in_range(path), path.read_text()
+
+
+@surface
+@pytest.mark.parametrize(
+    "kind", ["float_10.7", "float_5.5", "true", "high", "str_fullwidth_10", "out_99"]
+)
+def test_a_create_refuses_with_the_same_row_an_update_gives(world, surf, kind):
+    _y, cli, mcp, _f, cli_set, mcp_set = KINDS[kind]
+    value = cli if surf == "cli" else mcp
+    if (cli_set if surf == "cli" else mcp_set) != "bad":
+        pytest.skip("the CLI parser reads this text as a number (out of scope)")
+    world.add_entry(KB, _raw_file("note", "seed", "5"))
+    _ucode, updated = _surface_call(world, surf, "update", "note", value=value)
+    _ccode, created = _surface_call(world, surf, "create", "note", value=value)
+    assert _importance_rows(created) == _importance_rows(updated) != [], (created, updated)
 
 
 @etypes
+@spellings
 @kinds
-def test_add_refuses_a_file_holding_a_bad_value_and_accepts_the_rest(world, tmp_path, etype, kind):
+def test_add_refuses_a_file_holding_a_bad_value_and_accepts_the_rest(
+    world, tmp_path, etype, spelling, kind
+):
     yaml_text, _cli, _mcp, file, *_ = KINDS[kind]
     src = tmp_path / "src.md"
-    src.write_text(_raw_file(etype, "seed", yaml_text))
+    src.write_text(_raw_file(etype, "seed", yaml_text, spelling))
     before = _snapshot(world)
     res = world.cli("add", str(src), "-k", KB, "--format", "json")
     body = _json(res.output)
     _no_crash(res.exit_code, body)
-    if file == "bad":
+    if kind in _NO_JSON_FORM and file != "bad":
+        # refused by the writer, not by the importance rule (which accepts it)
+        assert res.exit_code != 0 and body.get("error_code") == "VALIDATION_FAILED", body
+        assert not _importance_rows(body), body
+        assert _snapshot(world) == before
+    elif file == "bad":
         _assert_refused(res.exit_code, body)
         assert _snapshot(world) == before
     else:
@@ -596,16 +684,171 @@ def test_add_refuses_a_file_holding_a_bad_value_and_accepts_the_rest(world, tmp_
 
 
 @etypes
+@spellings
 @kinds
-def test_the_check_never_raises_and_says_row_or_nothing(etype, kind):
+def test_the_check_never_raises_and_says_row_or_nothing(etype, spelling, kind):
     from pyrite.models.core_types import get_entry_class
     from pyrite.schema import validate_importance
 
     yaml_text, _cli, mcp, file, *_ = KINDS[kind]
-    entry = get_entry_class(etype).from_markdown(_raw_file(etype, "seed", yaml_text))
+    entry = get_entry_class(etype).from_markdown(_raw_file(etype, "seed", yaml_text, spelling))
     rows = [r for r in entry.validation_errors() if r.get("field") == "importance"]
     assert bool(rows) == (file == "bad"), rows
     assert validate_importance(mcp) is (file == "good")
+    # every reader still sees an int (#1588: option C, a raw Entry.importance, is not built)
+    assert type(entry.importance) is int
+
+
+# -- every entry class judges what its frontmatter gave, not its int() of it ---------------
+
+
+@pytest.mark.parametrize("cls", _every_class())
+@pytest.mark.parametrize("value", [10.7, 5.5, True, "high", "１０", b"5"], ids=repr)
+def test_every_entry_class_judges_the_value_its_frontmatter_gives(cls, value):
+    """Every create path builds through some ``from_frontmatter`` (``build_entry``,
+    ``pyrite add``, an update's reload). The value it was given is what the rule
+    judges; the attribute is the model's int for every reader."""
+    meta = {"id": "x", "title": "X", "type": "event", "date": "2026-01-02", "importance": value}
+    entry = cls.from_frontmatter(meta, "")
+    rows = [r for r in entry.validation_errors() if r.get("field") == "importance"]
+    assert rows, f"{cls.__name__} accepted importance={value!r}"
+    assert rows[0]["rule"] == "range"
+    assert type(entry.importance) is int
+
+
+def test_an_assignment_is_judged_as_assigned():
+    """An in-process write assigns the attribute; the value read from the file is then
+    no longer the one to judge, in either direction."""
+    from pyrite.models.core_types import NoteEntry
+
+    entry = NoteEntry.from_frontmatter({"id": "x", "title": "X", "importance": "high"}, "")
+    assert [r for r in entry.validation_errors() if r["field"] == "importance"]
+    entry.importance = 7
+    assert not [r for r in entry.validation_errors() if r["field"] == "importance"]
+    entry = NoteEntry.from_frontmatter({"id": "x", "title": "X", "importance": 7}, "")
+    entry.importance = 10.7
+    assert [r for r in entry.validation_errors() if r["field"] == "importance"]
+
+
+# -- bulk create and import go through the same rule ----------------------------------------
+
+
+@pytest.mark.parametrize("value", [10.7, True, "high", "1_0", 5.5])
+def test_a_bulk_create_and_an_import_refuse_what_a_create_refuses(world, tmp_path, value):
+    before = _snapshot(world)
+    res = world.mcp()._dispatch_tool(
+        "kb_bulk_create",
+        {"kb_name": KB, "entries": [{"entry_type": "note", "title": "B1", "importance": value}]},
+    )
+    (row,) = res["results"]
+    assert row.get("error_code") == "VALIDATION_FAILED", res
+    assert _snapshot(world) == before
+
+    src = tmp_path / "import.json"
+    src.write_text(json.dumps([{"entry_type": "note", "title": "I1", "importance": value}]))
+    out = world.cli("import", str(src), "-k", KB)
+    assert out.exit_code != 0, out.output
+    assert "VALIDATION_FAILED" in out.output, out.output
+    assert _snapshot(world) == before
+
+
+@_ACCEPTS
+def test_a_bulk_create_of_a_whole_number_is_stored_as_sent(world):
+    res = world.mcp()._dispatch_tool(
+        "kb_bulk_create",
+        {"kb_name": KB, "entries": [{"entry_type": "note", "title": "B1", "importance": 7}]},
+    )
+    assert res["results"][0].get("created") is not False, res
+    (path,) = _md_files(world)
+    assert _stored_value(path) == 7
+
+
+# -- update --unset clears it (the issue's item 3) -------------------------------------------
+
+
+@_ACCEPTS
+@spellings
+def test_update_unset_clears_importance(world, spelling):
+    path = world.add_entry(KB, _raw_file("note", "seed", "5", spelling))
+    res = world.cli("update", "seed", "-k", KB, "--unset", "importance", "--format", "json")
+    assert res.exit_code == 0, res.output
+    assert _importance_lines(path.read_text()) == []
+
+
+# -- REST answers as the CLI and MCP do -------------------------------------------------------
+
+
+@pytest.fixture
+def rest(tmp_path):
+    from tests._world import build_world
+
+    w = build_world(
+        tmp_path / "rest",
+        kbs=[KBConfig(name=KB, path=tmp_path / "rest-kb", kb_type="generic")],
+        rest=True,
+    )
+    try:
+        yield w
+    finally:
+        w.close()
+
+
+def _rest_snapshot(w) -> dict[str, bytes]:
+    root = w.kb_path(KB)
+    return {
+        str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()
+    }
+
+
+def _rest_refused(response) -> dict:
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "VALIDATION_FAILED", detail
+    rows = [r for r in detail.get("errors") or [] if r.get("field") == "importance"]
+    assert rows and rows[0]["rule"] == "range", detail
+    return detail
+
+
+REST_BAD = [True, 10.7, 5.5, "１０", 99]
+
+
+@pytest.mark.parametrize("value", REST_BAD, ids=repr)
+def test_a_rest_create_refuses_a_bad_importance_with_the_row(rest, value):
+    before = _rest_snapshot(rest)
+    response = rest.client.post(
+        "/api/entries", json={"kb": KB, "title": "R1", "body": "x", "importance": value}
+    )
+    _rest_refused(response)
+    assert _rest_snapshot(rest) == before
+
+
+@pytest.mark.parametrize("verb", ["PUT", "PATCH"])
+@pytest.mark.parametrize("value", REST_BAD, ids=repr)
+def test_a_rest_update_refuses_a_bad_importance_with_the_row(rest, verb, value):
+    rest.add_entry(KB, _raw_file("note", "seed", "5"))
+    before = _rest_snapshot(rest)
+    body = (
+        {"kb": KB, "importance": value}
+        if verb == "PUT"
+        else {"kb": KB, "field": "importance", "value": value}
+    )
+    response = rest.client.request(verb, "/api/entries/seed", json=body)
+    _rest_refused(response)
+    assert _rest_snapshot(rest) == before
+
+
+@_ACCEPTS
+def test_a_rest_create_and_update_store_a_whole_number_as_sent(rest):
+    response = rest.client.post(
+        "/api/entries", json={"kb": KB, "title": "R1", "body": "x", "importance": 7}
+    )
+    assert response.status_code in (200, 201), response.text
+    (path,) = sorted(rest.kb_path(KB).rglob("*.md"))
+    assert _stored_value(path) == 7
+    entry_id = response.json()["id"]
+    response = rest.client.put(f"/api/entries/{entry_id}", json={"kb": KB, "importance": 3})
+    assert response.status_code == 200, response.text
+    assert _stored_value(path) == 3
 
 
 # -- a write that sets null or blank: one answer on every type -----------------------------
