@@ -28,7 +28,6 @@ from tests.test_board_config_refuses import (
     MARKER,
     MCP_CALLS,
     _cli,
-    _cli_json,
     _mcp,
     _snapshot,
     _write_board,
@@ -85,7 +84,9 @@ def _the_gate_names_the_lookup(regime: str, status: str) -> bool:
 
 @pytest.mark.control(reason="guards a future sixth caller; the five callers exist on the base")
 def test_every_caller_of_the_gate_has_a_cell():
-    """A sixth caller of ``_evaluate_gate`` cannot be added without a cell."""
+    """A sixth caller of ``_evaluate_gate`` in ``plugin.py`` cannot be added
+    without a cell. It reads only ``plugin.py``: a caller added in another
+    module is not covered by this guard."""
     tree = ast.parse(_PLUGIN.read_text())
     callers: set[str] = set()
     for fn in ast.walk(tree):
@@ -181,39 +182,80 @@ def test_a_failed_blockers_lookup_keeps_its_own_error(world, raised, tool, regim
     assert _snapshot(world) == before
 
 
-@pytest.mark.parametrize("regime", sorted(_regimes()))
-@pytest.mark.parametrize("raised", ["StorageError", "OSError"])
-def test_check_ready_on_the_cli_gives_the_causes_code_and_exit_code(
+#: The `pyrite sw` commands that call a handler which evaluates a gate (the
+#: CLI never reaches `_mcp_claim` or `_mcp_transition`: those commands go
+#: through KBService and do not consult the board, #1288). name -> (argv,
+#: the gate's status, whether it prints the CLI's error shape as JSON).
+CLI_GATE_COMMANDS = {
+    "sw check-ready": (["sw", "check-ready", "item-ready", "-k", KB], "in_progress", True),
+    "sw refine": (["sw", "refine", "-k", KB], "in_progress", True),
+    "sw review -o approved": (
+        ["sw", "review", "item-review", "-o", "approved", "--reviewer", "r", "-k", KB],
+        "done",
+        False,  # always the rich line
+    ),
+}
+
+
+def _cli_cells():
+    cells = []
+    for name, (_argv, status, _json) in CLI_GATE_COMMANDS.items():
+        for regime in sorted(_regimes()):
+            if _the_gate_names_the_lookup(regime, status):
+                cells.append(pytest.param(name, regime))
+            else:
+                why = "the built-in board's done gate never reads the index: nothing fails"
+                cells.append(pytest.param(name, regime, marks=pytest.mark.control(reason=why)))
+    return cells
+
+
+@pytest.mark.parametrize(("command", "regime"), _cli_cells())
+@pytest.mark.parametrize("raised", sorted(RAISED))
+def test_a_gate_command_renders_the_causes_error(
     world,  # noqa: F811
     raised,
     regime,
+    command,
     monkeypatch,
+    caplog,
 ):
-    """The oracle is `sw pull-next`, which looks dependencies up with no gate.
-    A Pyrite error is rendered in the CLI's error shape with its own code; any
-    other exception is not Pyrite's to render, so it escapes the command as it
-    does from `pull-next` (exit 1, no JSON) and never as the board's refusal."""
+    """Every `pyrite sw` command that evaluates a gate answers a failed
+    blockers lookup in the CLI's error shape (exit 1, JSON where the command
+    prints JSON), with the code and `retryable` the MCP tool answers for the
+    same exception: its own for a Pyrite error, `INTERNAL` (retryable, a fixed
+    text, the cause in the log) for one Pyrite did not raise. Never an
+    uncaught exception, never `board.yaml`, never `VALIDATION_FAILED`."""
     make = RAISED[raised]
-    _write_board(world, _NO_GATES)
-    _the_lookup_raises(monkeypatch, make)
-    oracle = _cli(world, ["sw", "pull-next", "-k", KB])
-    (world.kb_path(KB) / "board.yaml").unlink()
+    oracle = _oracle(world, make, monkeypatch)  # the MCP dispatcher's answer
+    argv, status, prints_json = CLI_GATE_COMMANDS[command]
     board = _regimes()[regime]
     if board is not None:
         _write_board(world, board)
     before = _snapshot(world)
+    calls = _the_lookup_raises(monkeypatch, make)
 
-    result = _cli(world, ["sw", "check-ready", "item-ready", "-k", KB])
+    with caplog.at_level("ERROR"):
+        result = _cli(world, argv)
 
-    assert result.exit_code != 0 and result.exit_code == oracle.exit_code, (result, oracle)
-    assert "board.yaml" not in result.output and MARKER not in result.output, result.output
-    assert "VALIDATION_FAILED" not in result.output, result.output
-    if raised == "StorageError":
-        answer, oracle_answer = _cli_json(result), _cli_json(oracle)
-        assert answer["error_code"] == oracle_answer["error_code"] != "VALIDATION_FAILED"
-        assert answer["retryable"] == oracle_answer["retryable"], answer
-        assert answer["error"] == oracle_answer["error"], answer
+    if not _the_gate_names_the_lookup(regime, status):
+        assert calls == [] and result.exit_code == 0, result.output
+        return
+    assert calls, "the lookup was not reached"
+    assert isinstance(result.exception, SystemExit), repr(result.exception)  # not a traceback
+    assert result.exit_code != 0, result.output
+    out = result.stdout
+    assert "board.yaml" not in out and "VALIDATION_FAILED" not in out, out
+    assert MARKER not in out or raised in ("StorageError", "KBNotFoundError"), out
+    if prints_json:
+        answer = json.loads(out[out.index("{") :])
+        assert answer["error_code"] == oracle["error_code"], (answer, oracle)
+        assert answer["retryable"] == oracle["retryable"], (answer, oracle)
+        assert answer.get("ready") is not True, answer
+        if raised not in ("StorageError", "KBNotFoundError"):
+            assert answer["error"] == oracle["error"], (answer, oracle)
     else:
-        assert type(result.exception) is type(oracle.exception) is OSError, result.exception
-        assert _the_gate_names_the_lookup(regime, "in_progress")
+        assert f"[{oracle['error_code']}]" in out, out
+    if raised not in ("StorageError", "KBNotFoundError"):
+        # The cause is in the log, so an `out` free of it is a real result.
+        assert MARKER in caplog.text, "the cause was not logged"
     assert _snapshot(world) == before
