@@ -188,6 +188,9 @@ def _placing_calls() -> set[tuple[str, str]]:
     return found
 
 
+@pytest.mark.control(
+    reason="a structural ratchet: it holds on dev and goes red when a new placing call appears"
+)
 def test_the_placing_writers_are_the_ones_in_the_code():
     found = _placing_calls()
     assert found == set(PLACING_CALLS), {

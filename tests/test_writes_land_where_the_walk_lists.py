@@ -774,6 +774,10 @@ def _verdict(result: dict, *, dry: bool) -> tuple:
     return ("ok",) if result.get("created") else ("refused", result.get("error_code"))
 
 
+@pytest.mark.control(
+    reason="parity already held on dev, which had no -N name; this PR's round 0 broke it "
+    "(red on 03225dd: readme then readme-2, readme-2 then readme, a chain of -N)"
+)
 @pytest.mark.parametrize("batch", list(PARITY_BATCHES))
 def test_bulk_validate_answers_each_item_as_the_real_batch_does(tmp_path, batch):
     specs = [_spec_of(i) for i in PARITY_BATCHES[batch]]
@@ -793,6 +797,10 @@ def test_bulk_validate_answers_each_item_as_the_real_batch_does(tmp_path, batch)
         dry_env.close()
 
 
+@pytest.mark.control(
+    reason="parity already held on dev, which had no -N name; this PR's round 0 broke it "
+    "(red on 03225dd: readme then readme-2, readme-2 then readme, a chain of -N)"
+)
 @pytest.mark.parametrize("batch", list(PARITY_BATCHES))
 def test_cli_import_dry_run_answers_as_the_import(tmp_path, cli_world, batch):
     """The same parity on the CLI's `import --dry-run`: the exit code and the
