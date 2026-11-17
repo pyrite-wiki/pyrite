@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -26,13 +29,15 @@ from ..exceptions import (
     KBConfigInvalidError,
     KBUnreadableError,
     PyriteError,
+    ValidationError,
     public_attribute,
     public_text,
 )
 from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
-from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
+from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_statuses
+from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
@@ -62,6 +67,47 @@ def require_qa_tier(tier: int, *, llm_available: Callable[[], bool]) -> None:
             "QA tier 2 runs the model-judged rubric and no model is configured; "
             "nothing was assessed"
         )
+
+
+_WORD_SPLIT = re.compile(r"[\W_]+")
+
+
+def _fold(value: str) -> str:
+    """Casefold, then drop accents: NFKD, remove the marks with a non-zero combining class, recompose (NFC).
+
+    ``Élection`` and ``election`` agree. Supported: scripts whose words are runs
+    of letters (Latin, Cyrillic, Greek, CJK ideographs, Hangul). Not supported:
+    scripts that write vowels or voicing as combining marks (Devanagari, Thai,
+    the kana voicing marks). Removed: marks with a non-zero combining class
+    (accents, kana voicing: ``が`` folds to ``か``). Kept: marks of class 0, which then
+    split the word at the tokeniser. Some Devanagari and Thai marks are kept
+    (DEVANAGARI VOWEL SIGN AA, THAI SARA I) and some are removed (DEVANAGARI
+    VIRAMA and NUKTA, THAI SARA U, the Thai tone marks).
+    Either way two different words can fold alike or break apart. A proper tokeniser for them is a follow-up.
+    """
+    decomposed = unicodedata.normalize("NFKD", (value or "").casefold())
+    kept = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return unicodedata.normalize("NFC", kept)
+
+
+def _duplicate_tokens(value: str, prefixes: tuple[str, ...] = ()) -> set[str]:
+    """Word tokens (see ``_fold`` for the scripts supported), with at most one matching
+    id prefix removed. A word is a run of Unicode word characters; text in a
+    script written without spaces is one token per run."""
+    text = _fold(value)
+    for prefix in prefixes:
+        folded = _fold(prefix)
+        if folded and text.startswith(folded):
+            text = text[len(folded) :]
+            break
+    return {token for token in _WORD_SPLIT.split(text) if token}
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    union = left | right
+    return len(left & right) / len(union)
 
 
 class QAService:
@@ -239,6 +285,7 @@ class QAService:
             # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
             # then each entry, its typed attributes read from its file
             self._check_rubric_action_config(issues, kb_name)
+            self._check_settled_statuses_config(issues, kb_name)
             self._check_schema_retypes_core_fields(issues, kb_name)
             self._check_schema_all(issues, kb_name, sources)
 
@@ -257,6 +304,160 @@ class QAService:
             "total": total,
             "checked": total,
             "issues": issues,
+        }
+
+    def find_duplicates(
+        self,
+        entry_type: str,
+        *,
+        readable_kbs: set[str] | None,
+        statuses: set[str] | None = None,
+        threshold: float = 0.62,
+        strip_prefixes: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """Candidate near-duplicate entries of one type; never merges (#934).
+
+        Two signals are scored over word tokens: the id slug (after removing
+        a matching ``strip_prefixes`` entry) and the title. A pair is a
+        candidate when either score reaches ``threshold``; ``score`` is the
+        higher of the two and ``signal`` names every signal that matched.
+
+        With ``statuses`` the scan keeps only those statuses. Without it, an
+        entry is live while its lifecycle is ``active`` and its effective status is not
+        one the type declares settled (``core_types.settled_statuses``: the
+        type's ``settled_statuses`` metadata, kb.yaml over plugin over core). A type that declares none, or has no
+        status at all, has every entry live.
+        Tasks completed by their children use the shared derived-status rule;
+        reading duplicate candidates never rewrites their files.
+
+        Candidate pairs come from an inverted token index. Tokens shared by
+        more than ``max(64, entries // 25)`` entries are not broadly expanded;
+        ``skipped_tokens`` reports their count, so callers know that near-match
+        coverage is incomplete. Exact nonempty id/title token sets always pair,
+        including large duplicate clusters. Those clusters necessarily produce
+        quadratic output; a common word alone does not expand every pair.
+        Returned pairs are sorted by score and identity, so two runs agree.
+        """
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, int | float)
+            or not (0.0 <= threshold <= 1.0)  # also false for NaN
+        ):
+            raise ValidationError(f"threshold must be a number from 0 to 1, got {threshold!r}")
+        params: dict[str, Any] = {"entry_type": entry_type}
+        scope = kb_names_clause("kb_name", readable_kbs, params)
+        keys = (
+            effective_status.derived_done_keys(self.db.session, kb_names=readable_kbs)
+            if entry_type == "task"
+            else []
+        )
+        status_expr = effective_status.status_sql("", keys, params)
+        sql = (
+            f"SELECT id, kb_name, title, {status_expr} AS status, lifecycle "
+            "FROM entry WHERE entry_type = :entry_type"
+        )
+        if scope:
+            sql += f" AND {scope}"
+        rows = self.db.execute_sql(sql, params)
+        # A KB's kb.yaml may declare the type's settled statuses, so the set is
+        # read per KB. If the registry cannot be read the resolver logs it and
+        # the set is empty: a report that lists more candidates, never fewer
+        # pairs than exist, and it writes nothing.
+        settled_by_kb: dict[str, frozenset[str]] = {}
+
+        entries: list[dict[str, Any]] = []
+        for row in rows:
+            status = (row["status"] or "").lower()
+            lifecycle = (row["lifecycle"] or "active").lower()
+            if statuses is not None:
+                if status not in statuses:
+                    continue
+            else:
+                if row["kb_name"] not in settled_by_kb:
+                    kb_config = self.config.get_kb(row["kb_name"])
+                    settled_by_kb[row["kb_name"]] = settled_statuses(
+                        entry_type, kb_config.kb_schema if kb_config else None
+                    )
+                if lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
+                    continue
+            entries.append(
+                {
+                    "id": row["id"],
+                    "kb_name": row["kb_name"],
+                    "title": row["title"] or "",
+                    "id_tokens": _duplicate_tokens(row["id"], strip_prefixes),
+                    "title_tokens": _duplicate_tokens(row["title"] or ""),
+                }
+            )
+
+        positions: dict[str, list[int]] = {}
+        for position, entry in enumerate(entries):
+            for token in entry["id_tokens"] | entry["title_tokens"]:
+                positions.setdefault(token, []).append(position)
+
+        max_shared = max(64, len(entries) // 25)
+        candidates: set[tuple[int, int]] = set()
+        skipped_tokens = 0
+        for shared in positions.values():
+            if len(shared) > max_shared:
+                skipped_tokens += 1
+                continue
+            candidates.update(combinations(shared, 2))
+
+        exact_groups: dict[tuple[str, frozenset[str]], list[int]] = {}
+        for position, entry in enumerate(entries):
+            for signal in ("id_tokens", "title_tokens"):
+                tokens = frozenset(entry[signal])
+                if tokens:
+                    exact_groups.setdefault((signal, tokens), []).append(position)
+        for group in exact_groups.values():
+            candidates.update(combinations(group, 2))
+
+        pairs: list[dict[str, Any]] = []
+        for left, right in candidates:
+            first, second = entries[left], entries[right]
+            id_score = _jaccard(first["id_tokens"], second["id_tokens"])
+            title_score = _jaccard(first["title_tokens"], second["title_tokens"])
+            matched = [
+                (name, score)
+                for name, score in (("id", id_score), ("title", title_score))
+                if score >= threshold
+            ]
+            if not matched:
+                continue
+            if (first["kb_name"], first["id"]) > (second["kb_name"], second["id"]):
+                first, second = second, first
+            pairs.append(
+                {
+                    "a": {
+                        "id": first["id"],
+                        "kb_name": first["kb_name"],
+                        "title": first["title"],
+                    },
+                    "b": {
+                        "id": second["id"],
+                        "kb_name": second["kb_name"],
+                        "title": second["title"],
+                    },
+                    "score": round(max(score for _, score in matched), 4),
+                    "signal": "+".join(name for name, _ in matched),
+                }
+            )
+        pairs.sort(
+            key=lambda pair: (
+                -pair["score"],
+                pair["a"]["kb_name"],
+                pair["a"]["id"],
+                pair["b"]["kb_name"],
+                pair["b"]["id"],
+            )
+        )
+        return {
+            "entry_type": entry_type,
+            "threshold": threshold,
+            "skipped_tokens": skipped_tokens,
+            "count": len(pairs),
+            "pairs": pairs,
         }
 
     def _report_unreadable_kb(
@@ -1841,6 +2042,54 @@ class QAService:
                         "message": f"kb.yaml {key} must be warn or fail; got {value!r}",
                     }
                 )
+
+    def _check_settled_statuses_config(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """kb.yaml ``types.<name>.settled_statuses``: a list of status names, each
+        in the type's own ``status`` options when kb.yaml declares them (#934)."""
+        from ..schema.core_types import valid_status_list
+
+        config = self.config.get_kb(kb_name)
+        schema = config.kb_schema if config else None
+        if schema is None:
+            return
+        for name, kind in schema.types.items():
+            raw = kind.settled_statuses
+            if raw is None:
+                continue
+            path = f"types.{name}.settled_statuses"
+            declared = valid_status_list(raw)
+            if declared is None:
+                issues.append(
+                    {
+                        "entry_id": "",
+                        "kb_name": kb_name,
+                        "rule": "config_error",
+                        "severity": "error",
+                        "field": path,
+                        "message": f"kb.yaml {path} must be a list of status names; got {raw!r}",
+                    }
+                )
+                continue
+            status_field = kind.fields.get("status")
+            options = [str(o) for o in (status_field.options or [])] if status_field else []
+            if not options:
+                continue
+            known = {o.strip().lower() for o in options}
+            for status in declared:
+                if status.strip().lower() not in known:
+                    issues.append(
+                        {
+                            "entry_id": "",
+                            "kb_name": kb_name,
+                            "rule": "config_error",
+                            "severity": "warning",
+                            "field": path,
+                            "message": (
+                                f"kb.yaml {path} names {status!r}, which is not in the type's "
+                                f"status options ({', '.join(options)})"
+                            ),
+                        }
+                    )
 
     def _get_rubric_action(self, kb_name: str, item: dict[str, Any] | None = None) -> str:
         """Only a named item action overrides the KB's rubric_action (#1166)."""

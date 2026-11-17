@@ -2049,3 +2049,55 @@ key. `qa fix` offers no fix for a schema issue: a required field is reported
 in `manual` with `reason: "no_safe_default"`, any other schema issue with
 `not_auto_fixable`; `--fix-rule schema_violation` still selects them and
 writes nothing.
+
+## QA duplicate candidates
+
+`pyrite qa duplicates -t <type>` reports live entries that may describe the
+same thing, scanning every KB the caller may read. It is a **report**, not a
+merge: finding candidates is not a failure, so the exit code is `0` when the scan ran; an unknown
+`--format` or an out-of-range `--threshold` is a usage error (`2`). Empty
+`--type` or empty/comma-only `--status` values are structured
+`VALIDATION_FAILED` refusals (`1`).
+
+The command is CLI-only: there is no REST or MCP surface for it.
+
+Scores are word-overlap (Jaccard) over the id slug, after removing the first
+matching `--strip-prefix`, and over the title. A word is a run of Unicode word characters, compared after casefolding and accent folding (NFKD, then the marks with a non-zero combining class removed: accents and the kana voicing marks; then NFC), so `Élection` matches `election`, and Cyrillic and CJK titles compare as runs of letters (`选举日` is one word). Scripts whose words are runs of letters are supported. A script that writes vowels or voicing as combining marks (Devanagari, Thai, the kana voicing marks) is compared badly: the marks are dropped or split the word, so two different words can fold alike. Kana voicing marks have a non-zero combining class and are removed (`が` folds to `か`); some Devanagari and Thai marks have class 0 and are kept (DEVANAGARI VOWEL SIGN AA, THAI SARA I) and split the word at the tokeniser, while others have a non-zero class and are removed (DEVANAGARI VIRAMA and NUKTA, THAI SARA U and the tone marks). Tokenising those scripts is not built. A title match means the two titles' word sets overlap at or above the threshold; it says nothing about the entries' bodies. A pair is a candidate when either
+score is at or above `--threshold` (default `0.62`; a number from 0 to 1, `nan` and `inf` included in what is refused, as the usage error `2` / `USAGE_ERROR`; the service function refuses anything but an `int` or `float` from 0 to 1, with `ValidationError`: a `bool`, `None`, a string, a `Decimal` or a `Fraction` is refused); `score` is the
+higher one and `signal` names every signal that matched (`id`, `title`,
+or `id+title`). Within each pair, `a` sorts before `b` by `(kb_name, id)`.
+Without `--status`, an entry is live while its lifecycle is `active` and its
+status is not one the **type declares settled**: a `task`'s `done` and `cancelled`; a software-kb `backlog_item`'s `done`, `retired`, `superseded` and
+`wont_do`; an `adr`'s `rejected`, `deprecated` and `superseded`; a `milestone`'s `closed`; a `design_doc`'s `obsolete` and `implemented`. `deferred` backlog items stay live. A type whose status lives in a field other than `status` (`review_status`, `research_status`, `case_status`, `claim_status`) has no status the scan reads. A plugin
+declares them as `settled_statuses` in `get_type_metadata()`; a type declared only in `kb.yaml` declares them with the same key (`types.<name>.settled_statuses`), read per KB. The value is a list of status names. `kb.yaml` overrides a plugin, which overrides core, and an empty list in `kb.yaml` is a declaration: this KB's type has no settled statuses (a plugin's empty list is the same as not declaring). An absent or `null` key is not declared. Any other shape (a bare string, which is not read as one status; a number; a boolean; a mapping; a list holding a non-string or blank item) is treated as not declared, never stops another command, and `qa validate` reports it as a `config_error` issue (severity `error`, `field` `types.<name>.settled_statuses`, `entry_id` empty): `kb.yaml types.<name>.settled_statuses must be a list of status names; got <value>`. A name that is not in the type's own `status` options, where `kb.yaml` declares them, is reported as a `config_error` with severity `warning`, and the list is still used: it replaces the lower layer's set. A wrong shape (not a list of status names) is ignored and leaves the lower layer's set in force (core `task`: `done`, `cancelled`; software-kb `backlog_item`: its four), never an empty set. Declaring `types.task.settled_statuses` in a `kb.yaml` that declares no other type makes that the KB's whole type list, and `create -t note` is then refused with `UNDECLARED_TYPE`; declare the other types too (`note: {description: notes}`), or leave the key to a plugin. Core `task` is `done` and `cancelled`: a `failed` task can be reopened, so it stays in the scan. A type that
+declares none, or has no status field at all (a `note`), has every entry live
+and is scanned. Task status is effective: a task completed by its children
+counts as `done` even while its file still says `open`. This applies both to
+`--status` and the default live-entry scan; the scan does not rewrite files.
+
+```json
+{
+  "entry_type": "task",
+  "threshold": 0.62,
+  "skipped_tokens": 0,
+  "count": 1,
+  "pairs": [
+    {
+      "a": {"id": "2026-11-03", "kb_name": "notes", "title": "Election Day"},
+      "b": {"id": "election-day", "kb_name": "notes", "title": "Election Day"},
+      "score": 1.0,
+      "signal": "title"
+    }
+  ]
+}
+```
+
+`--format rich` prints one line per pair (`score kb/id ~ kb/id [signal]`) and
+discloses skipped common-token expansion when coverage is incomplete.
+
+To bound common-word expansion, tokens occurring in more than
+`max(64, entries // 25)` scanned entries are not broadly expanded.
+`skipped_tokens` reports how many tokens hit this bound; when nonzero, near-match
+coverage is incomplete. Identical nonempty id or title token sets are still
+paired, even in large clusters. Producing all pairs in a large identical cluster
+necessarily takes time proportional to that output.
