@@ -283,11 +283,13 @@ class TypeSchema:
         import dataclasses
         from string import Formatter
 
-        data_fields = (
-            {f.name for f in dataclasses.fields(entry) if not f.name.startswith("_")}
+        dataclass_fields = (
+            {f.name for f in dataclasses.fields(entry)}
             if dataclasses.is_dataclass(entry)
             else set()
         )
+        data_fields = {name for name in dataclass_fields if not name.startswith("_")}
+        private_fields = {name for name in dataclass_fields if name.startswith("_")}
         meta = getattr(entry, "metadata", None) or {}
 
         def _is_missing(value: Any) -> bool:
@@ -334,13 +336,13 @@ class TypeSchema:
                     "attribute/index access, no positional placeholders); "
                     "refusing to resolve it"
                 )
-            if field_name.startswith("_"):
+            if field_name in private_fields:
                 # Private bookkeeping fields (_schema_version, _create_fields,
-                # _importance_given, etc.) are internal entry state, not data
-                # fields, and must not be resolved into file names (#1639).
+                # _entry_type, etc.) are internal entry state, not data fields,
+                # and must not be resolved into file names (#1639).
                 raise ValidationError(
                     f"file_pattern {self.file_pattern!r} names {{{field_name}}}, "
-                    f"which is not a data field of entry {entry.id!r} (type "
+                    f"which is a private field of entry {entry.id!r} (type "
                     f"{entry.entry_type!r}); refusing to resolve it"
                 )
             if field_name in data_fields:
