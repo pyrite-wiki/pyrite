@@ -1591,13 +1591,13 @@ again; a target held by main and deleted in a change set still resolves, as
 
 ## Entry row shape
 
-Every reader that returns entry rows from the index returns them in one
-shape, whatever the surface (MCP, `--format json`, REST) and the backend
-(SQLite, Postgres): the list and find tools (`kb_list_entries`, `kb_recent`,
-`kb_batch_read`, `kb_find_by_status`, `kb_find_by_assignee`,
-`kb_find_overdue`, `kb_find_by_location`), search (`kb_search`, keyword and
-semantic legs), folder collections, and the single read (`kb_get`). Each
-reader keeps its own set of keys: shaping adds none. Where a row carries one of these, it has
+These readers return entry rows from the index in one shape, whatever the
+surface (MCP, `--format json`, REST) and the backend (SQLite, Postgres): the
+list and find tools (`kb_list_entries`, `kb_recent`, `kb_batch_read`,
+`kb_find_by_status`, `kb_find_by_assignee`, `kb_find_overdue`,
+`kb_find_by_location`), search (`kb_search`, keyword and semantic legs),
+folder collections, and the single read (`kb_get`). Each reader keeps its
+own set of keys: shaping adds none. Where a row carries one of these, it has
 this type:
 
 | Key | JSON type |
@@ -1606,19 +1606,27 @@ this type:
 | `aliases` | a list; `[]` when the entry has none |
 | `importance` | an integer (or `null`) |
 | a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | at its own name too on the list readers (`kb_list_entries`, `kb_recent`, `kb_batch_read`) and the single read; search and the finds return only the columns they select, so there it is in `metadata` alone (the keyword search row's `rank` is its score) |
-| a column field (`priority`, `status`, `assignee`, `due_date` ...) | its declared type (`KBSchema.type_fields`): a `number` reads as an integer or a decimal, a `checkbox` as a boolean, anything else as text; a field the type does not declare reads as text |
+| a column field (`priority`, `status`, `assignee`, `due_date` ...) | by the type's declaration (`KBSchema.type_fields`: kb.yaml, plugins, and a task's own `priority`, a number); see below |
 
-So a value read from any of these readers and written back through an
-update leaves the file as it was. The index cannot tell `7` from `"7"`, so a
-quoted number in a field declared a number reads as a number; the file
-keeps its quotes, and nothing is rewritten because of the read. A value a
-declared number cannot read (`priority: high`) stays text. A built-in type's
-column field is cast only where `KBSchema.type_fields` declares it: a task's
-`priority` is not declared there today, so it reads as text (`"7"`) on every
-index reader and on `kb_get` alike, while the `task_*` tools return their own
-integer. The type-specific
-tools (`task_*`, `sw_*` and the other plugin tools) return their own dicts,
-not index rows. (#1503)
+How a column field reads. A field declared a `number` reads as a number when
+the stored text is a plain ASCII whole number or decimal (`7`, `2.5`): no
+sign, no surrounding space, no leading zero, no exponent, no digits from
+other scripts. Any other text (`"007"`, `"+7"`, `"1e3"`, `high`) reads as
+that text. A field declared a `checkbox` reads as a boolean. Every other
+field, and one the type does not declare, reads as text. A task's
+`priority` is declared a number, so `task_list` and `kb_get` agree.
+
+What a caller reads, sent back through an update, leaves the file as it
+was, with one exception. The index cannot tell `7` from `"7"`, so a quoted
+`"7"` in a field declared a number reads as 7, and writing that 7 back
+stores `priority: 7` without the quotes. `qa validate` reports such a value
+(`number_as_text`). A read never writes anything. A whole-valued decimal
+(`7.0`) reads as `7.0` on SQLite and as `7` on Postgres.
+
+`kb_timeline` returns `date` and `location` as stored text: its rows carry
+no `entry_type`, so no declaration applies. The type-specific tools
+(`task_*`, `sw_*` and the other plugin tools) return their own dicts, not
+index rows. (#1503)
 
 ## Body truncation
 
