@@ -6,7 +6,7 @@ tags:
 - bug
 importance: 5
 kind: bug
-status: in_progress
+status: done
 priority: medium
 assignee: agent:cloud-worker
 effort: S
