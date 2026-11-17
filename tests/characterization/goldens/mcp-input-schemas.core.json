@@ -133,7 +133,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -232,7 +232,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -260,7 +260,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -1216,7 +1216,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -1411,9 +1411,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",
@@ -2668,7 +2693,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -2733,7 +2758,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -2761,7 +2786,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -3551,7 +3576,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -3746,9 +3771,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",

@@ -13,11 +13,12 @@ Two modes:
   message starts with `fix:` but no staged file lives under a tests/
   directory.
 - CI range mode (`--range BASE HEAD`): walks every commit in BASE..HEAD (a
-  pull request's own commits) and applies the same rule to each commit's own
-  message and own changed paths -- not the range's cumulative diff, so an
-  earlier offending commit isn't hidden by a later, unrelated commit that
-  happens to touch tests/. Used because outside contributors' PRs never run
-  the local commit-msg hook, so the rule has to be enforced again in CI.
+  pull request's own commits) and applies the rule to the pull request as a
+  whole: if the range holds a `fix:` commit and some commit in the range
+  touches tests/, the pull request passes. If the range holds `fix:` commits
+  but none touches tests/, each offending `fix:` commit is reported. Used
+  in CI because PRs are squashed into a single commit upon merge, so the unit
+  that lands on `dev` is the pull request.
 """
 
 from __future__ import annotations
@@ -115,26 +116,35 @@ _NO_TEST_MESSAGE = (
 
 
 def check_range(base: str, head: str) -> int:
-    """CI mode: apply the rule to every commit in base..head individually.
+    """CI mode: apply the rule to the pull request as a whole.
 
-    Returns 0 if every `fix:` commit in the range touches tests/, 1 if any
-    does not (each offender is reported, not just the first).
+    Returns 0 if no `fix:` commit exists in the range, or if at least one
+    commit in the range touches tests/. If the range has `fix:` commits but no
+    commit in the range touches tests/, returns 1 and reports each `fix:`
+    commit.
     """
-    failed = False
-    for sha in get_range_commits(base, head):
+    commits = get_range_commits(base, head)
+    fix_commits: list[tuple[str, str]] = []
+    has_test = False
+
+    for sha in commits:
         message = get_commit_message(sha)
-        if not is_fix_commit(message):
-            continue
-        if touches_tests(get_commit_paths(sha)):
-            continue
-        subject = message.strip().splitlines()[0] if message.strip() else ""
+        if is_fix_commit(message):
+            subject = message.strip().splitlines()[0] if message.strip() else ""
+            fix_commits.append((sha, subject))
+        if not has_test and touches_tests(get_commit_paths(sha)):
+            has_test = True
+
+    if not fix_commits or has_test:
+        return 0
+
+    for sha, subject in fix_commits:
         print(
             f"ERROR: {sha[:12]} '{subject}' starts with a fix prefix (fix:, fix(scope):, fix!:) but "
             + _NO_TEST_MESSAGE.format(what="changed file"),
             file=sys.stderr,
         )
-        failed = True
-    return 1 if failed else 0
+    return 1
 
 
 def main() -> int:
@@ -155,7 +165,8 @@ def main() -> int:
 
     print(
         "ERROR: commit message starts with a fix prefix (fix:, fix(scope):, fix!:) but "
-        + _NO_TEST_MESSAGE.format(what="staged file"),
+        + _NO_TEST_MESSAGE.format(what="staged file")
+        + "\n  Put the test in the same commit as the fix.",
         file=sys.stderr,
     )
     return 1

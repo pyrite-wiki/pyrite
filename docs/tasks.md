@@ -14,6 +14,10 @@ pyrite task get write-intro -k test-kb
 pyrite task claim write-intro -k test-kb --assignee alice
 ```
 
+Tasks can also be scheduled with `--due-date <YYYY-MM-DD>` (`-d`) and linked to
+other entries upon creation with `--link <target[:relation]>` (`-l`, repeatable).
+MCP `task_create` accepts optional `due_date` and `links`.
+
 A claim is atomic: competing agents do not both acquire an open task. Inspect
 the refusal and choose another task when a claim loses the race. The following
 second claim exits1; do not treat that as successful ownership.

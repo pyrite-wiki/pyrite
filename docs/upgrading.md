@@ -8,6 +8,17 @@ to tell you are done. The reasons and the full detail are in the
 [JSON contracts](json-contracts.md), which this page links and does not
 repeat.
 
+## Upgrading from 0.26.3 to 0.26.4
+
+- **A software KB's `board.yaml`** that 0.26.3 read with an extra or misspelt
+  key, or with any shape the changelog lists for #1538, now refuses the tools
+  that read the board until the file is fixed. What the file may contain is in
+  [plugins: board.yaml](plugins.md#boardyaml-lanes-wip-limits-and-gates).
+- **A `judgment` or `agent_responsibility` criterion that carries `checker` or
+  `params`** is now refused by the tools that read the board (0.26.3 loaded it
+  and never ran the checker). Remove the key, or drop `type` to make the
+  criterion a checker.
+
 ## Upgrading from 0.25.8 to 0.26.0
 
 Three things you do every day change, and every user rebuilds the index once.
@@ -383,6 +394,12 @@ a warning once per class.
   `db.execute_sql()` for read-only queries.
 - **`FRONTMATTER_ALIASES`** leaves in 0.27. Declare `field_aliases` in the
   type's schema instead.
+- **orient's `schema.guidelines`**, `schema.goals`, `schema.evaluation_rubric`,
+  the per-type `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric` under `schema.types`, and the top-level `guidelines`
+  (always `{}`) leave orient in 0.27. Read `kb_authored` (the KB's own text,
+  as written) and `pyrite_guidance` (Pyrite's defaults) instead; added in
+  0.26.4 (#1369).
 
 The table in [JSON contracts](json-contracts.md#format-defaults) says which
 commands take `--format`.

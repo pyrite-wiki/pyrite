@@ -233,7 +233,10 @@ def _report_link(console: Console, link: dict) -> None:
     arrow = escape(
         f"{link['source']} --[{link['relation']}]--> {link['target']} (in {link['target_kb']})"
     )
-    console.print(f"{verb} {arrow}")
+    suffix = ""
+    if link.get("resolved") is False:
+        suffix = " — unresolved: the target does not exist yet"
+    console.print(f"{verb} {arrow}{suffix}")
 
 
 def register_entry_commands(app: typer.Typer) -> None:
@@ -334,8 +337,10 @@ def register_entry_commands(app: typer.Typer) -> None:
         allow_undeclared: bool = typer.Option(
             False,
             "--allow-undeclared",
-            help="Allow entry types not declared in the KB's kb.yaml (the "
-            "entry will be flagged by `pyrite index health`).",
+            help="Allow an entry_type the KB does not declare. Only a KB whose "
+            "kb.yaml declares types refuses others (core types included); "
+            "`pyrite index health` then lists the entry. A KB that declares no "
+            "types accepts any type.",
         ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
@@ -500,8 +505,10 @@ def register_entry_commands(app: typer.Typer) -> None:
         allow_undeclared: bool = typer.Option(
             False,
             "--allow-undeclared",
-            help="Allow entry types not declared in the KB's kb.yaml (the "
-            "entry will be flagged by `pyrite index health`).",
+            help="Allow an entry_type the KB does not declare. Only a KB whose "
+            "kb.yaml declares types refuses others (core types included); "
+            "`pyrite index health` then lists the entry. A KB that declares no "
+            "types accepts any type.",
         ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
@@ -747,6 +754,8 @@ def register_entry_commands(app: typer.Typer) -> None:
                             markup=False,
                             highlight=False,
                         )
+                if deleted.links_left:
+                    console.print(payload["warnings"][-1], markup=False, highlight=False)
             except EntryNotFoundError as e:
                 cli_error(str(e), output_format, error_code="NOT_FOUND")
             except KBNotFoundError as e:

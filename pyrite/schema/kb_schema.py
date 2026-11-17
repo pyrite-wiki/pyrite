@@ -1,11 +1,12 @@
 """KBSchema - per-KB schema loaded from kb.yaml."""
 
+import collections.abc
+import datetime
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-from pyrite.utils.yaml import load_yaml_file
 
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
 from .enum_check import enum_findings, is_empty
@@ -51,17 +52,15 @@ class KBSchema:
     def from_yaml(cls, path: Path) -> "KBSchema":
         """Load schema from kb.yaml file, read only inside the KB's folder (the
         file's own): a link out of it, or a file with more than one hard
-        link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``)."""
-        from ..utils.kb_files import KBFiles
+        link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``).
+        Through the one kb.yaml loader, ``read_kb_yaml``: a file that cannot
+        be loaded as a mapping raises ``KBConfigInvalidError`` (#1547), and no
+        kb.yaml is an empty schema."""
+        from ..utils.yaml import read_kb_yaml
 
-        # The KB's own probe: a link out is there, and refused by the read,
-        # whatever it points at.
-        if not KBFiles(path.parent).present(path):
-            return cls()
-
-        data = load_yaml_file(path, kb_root=path.parent)
-
-        return cls.from_dict(data)
+        if path.name != "kb.yaml":
+            raise ValueError(f"KBSchema.from_yaml reads a KB's kb.yaml, not {path.name}")
+        return cls.from_dict(read_kb_yaml(path.parent))
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "KBSchema":
@@ -111,6 +110,7 @@ class KBSchema:
                     guidelines=type_data.get("guidelines", ""),
                     goals=type_data.get("goals", ""),
                     evaluation_rubric=type_data.get("evaluation_rubric", []),
+                    settled_statuses=type_data.get("settled_statuses"),
                     edge_type=type_data.get("edge_type", False),
                     endpoints=endpoints,
                     state_machine=type_data.get("state_machine"),
@@ -197,7 +197,7 @@ class KBSchema:
         Read by the write path's refusals (`KBService._refuse_undeclared_type`
         and `_refuse_undeclared_mapping_target`), by the type-mapping resolver
         (`schema.type_mapping.resolve_type_mappings`, which offers a pair only
-        when both its types are declared here), by `to_agent_schema` -- whose
+        when its target is declared here, #1526), by `to_agent_schema` -- whose
         output is MCP `kb_schema` and `kb_orient`, REST `GET /kbs/{kb}/schema`
         and `GET /kbs/{kb}/orient`, CLI `pyrite orient --format json`, and
         `pyrite-admin schema` -- and by the web type picker's route. They used
@@ -205,6 +205,76 @@ class KBSchema:
         whose `create` refused them.
         """
         return sorted(self.types)
+
+    def kb_authored_text(self) -> dict[str, Any]:
+        """The free text this KB's own `kb.yaml` carries for an agent to read.
+
+        Only what the KB's authors wrote: `guidelines`, `goals`,
+        `evaluation_rubric`, and per type `ai_instructions`, `guidelines`,
+        `goals`, `evaluation_rubric`. Pyrite's defaults (`SYSTEM_INTENT`, core
+        and plugin type metadata) are not in it; `to_agent_schema` merges both
+        and cannot tell them apart (#1369).
+
+        Each value comes back as written, in whatever shape the author gave
+        it (a mapping, string, list, number, bool, with null anywhere inside),
+        as plain JSON values. It is never coerced to the shape Pyrite
+        documents for the key: a string `guidelines` stays a string. A value
+        holding any node JSON cannot carry as written is left out whole and
+        named under `malformed` with the reason for its first such node: NaN
+        or an infinity; a number too large for JSON (`1.0e+400`, which reads
+        as infinite); a date or timestamp; binary; a set; ordered pairs
+        (`!!pairs`, `!!omap`); a mapping key that is not a string; a mapping
+        with two keys that are the same string (`!!str a` beside `a`, which
+        would otherwise lose a value); and an explicit YAML tag the loader
+        keeps: a local `!note`, a URI tag, `!!python/...`, or `!!str` on a
+        mapping or list, and a tagged merge source (`<<: !note {...}`), one
+        reason for all of them that never prints the tag. The core tags the
+        loader resolves before this sees the value are not withheld: `!!int
+        "12"` is `12`, `!!float 12` is `12.0`, `!!bool yes` is `true`, `!!map`
+        and `!!seq` are the plain mapping and list, and a `!!str` scalar, in
+        its short or long form, as a value or a mapping key, is the string.
+        A merge key (`<<`) is read through its sources: a source holding any
+        value withheld above (a tag, a date, a number too large, a key that is
+        not a string) withholds the whole value with that reason, also when an
+        own key or an earlier source hides it in the merged result.
+        Limit (#1636): a tag on a LIST of merge sources (`<<: !note [{a: 1}]`) is gone
+        from the loaded value, so it comes back merged with the tag dropped.
+        A recursive alias (`&a {self: *a}`) is not withheld: it comes back
+        with null where the alias recurses, because that is how Pyrite's YAML
+        loader reads it (#1602 tracks refusing it). A field
+        whose value is null or empty is omitted. A kb.yaml the loader cannot
+        read at all (a set or pairs used as a mapping key) fails before this,
+        as on dev. tests/test_orient_kb_authored_shapes.py holds every kind
+        in every position.
+        """
+        out: dict[str, Any] = {}
+        malformed: list[dict[str, str]] = []
+
+        def put(target: dict[str, Any], key: str, path: str, value: Any) -> None:
+            if value is None or value == "" or value == {} or value == []:
+                return
+            plain, problem = _plain_json(value)
+            if problem is None:
+                if plain == "":  # a `!!str ''` is as empty as `''`: omitted too
+                    return
+                target[key] = plain
+            else:
+                malformed.append({"key": path, "reason": _NOT_PLAIN_JSON[problem]})
+
+        for key in ("guidelines", "goals", "evaluation_rubric"):
+            put(out, key, key, getattr(self, key))
+        types: dict[str, Any] = {}
+        for name, ts in self.types.items():
+            block: dict[str, Any] = {}
+            for key in ("ai_instructions", "guidelines", "goals", "evaluation_rubric"):
+                put(block, key, f"types.{name}.{key}", getattr(ts, key))
+            if block:
+                types[name] = block
+        if types:
+            out["types"] = types
+        if malformed:
+            out["malformed"] = malformed
+        return out
 
     def to_agent_schema(self, *, kb_type: str) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
@@ -503,3 +573,126 @@ class KBSchema:
             logger.warning("Schema validation failed for %s", entry_type, exc_info=True)
 
         return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+#: Why a kb.yaml value is not returned in `kb_authored`: Pyrite's own text.
+_NOT_PLAIN_JSON = {
+    "nan": "a NaN or infinite number, which JSON cannot carry",
+    "too_large": "a number too large for JSON (it reads as infinite)",
+    "tag": "a value with a YAML tag, which JSON cannot carry as written",
+    "same_key": "a mapping with two keys that are the same string",
+    "key": "a mapping with a key that is not a string",
+    "date": "a YAML date or timestamp, which JSON cannot carry as written",
+    "binary": "a YAML binary value, which JSON cannot carry as written",
+    "set": "a YAML set, which JSON cannot carry as written",
+    "pairs": "a YAML ordered-pairs node (!!pairs or !!omap), which JSON cannot carry as written",
+    "other": "a YAML value of a kind JSON cannot carry as written",
+}
+
+
+_STR_TAG = "tag:yaml.org,2002:str"
+
+
+def _plain_json(value: Any) -> tuple[Any, str | None]:
+    """`(value as plain JSON types, None)`: str, int, float, bool, None, list,
+    dict, the same shape and contents; or `(None, problem)`, a key of
+    `_NOT_PLAIN_JSON`, for the first node JSON cannot carry as written. The
+    YAML loader's round-trip subclasses (a commented mapping, a scalar float)
+    become their plain base types; nothing else is converted.
+
+    Withheld: NaN and infinities; an overflowed number (`1.0e+400`: ruamel
+    loads it as a `ScalarFloat` equal to infinity, where a written `.inf` is
+    a plain float, so the two get different reasons); dates and timestamps;
+    binary; sets; ordered pairs (`!!pairs` loads as a list of tuples,
+    `!!omap` as an ordered mapping: JSON has neither); any explicit tag other
+    than `!!str` on a scalar (`tag`: round-trip mode keeps a tagged scalar as
+    a `TaggedScalar` and a tagged collection's tag on its `.tag`, and builds
+    nothing from it); a mapping with two keys that are the same
+    string (`same_key`: a `!!str` key and a plain one that print alike); and
+    any mapping key that is not a string. The core tags the loader resolves
+    before this sees the value (`!!int`, `!!float`, `!!bool`, `!!null`,
+    `!!map`, `!!seq`, the long form of the string tag) are read as YAML
+    defines them and returned. A `!!str` scalar is the string, as a value or a
+    key. A null anywhere inside a value is JSON null and comes back as
+    written. A merge key (`<<`) is read through its sources: the loaded value
+    still holds each source, and every source is converted too, so a source
+    holding any value withheld above (a tag, a date, a number too large, a key
+    that is not a string) withholds the whole value with that reason, also
+    when an own key or an earlier source hides that value in the merged
+    result (dev returned such a value without the hidden part). A tag on a
+    LIST of merge sources is gone from the loaded value and is not seen: a
+    limit, #1636. A recursive alias is not seen here: the loader has already
+    put null where it recurses.
+    """
+    from ruamel.yaml.comments import CommentedOrderedMap, TaggedScalar
+
+    def has_tag(node: Any) -> bool:
+        # A mapping or list keeps an explicit tag on `.tag.value`; None when
+        # untagged (the core `!!map` / `!!seq` leave it None).
+        return getattr(getattr(node, "tag", None), "value", None) is not None
+
+    if value is None:
+        return None, None
+    if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
+        return bool(value), None
+    if isinstance(value, TaggedScalar):
+        if value.tag.value == _STR_TAG:
+            return str(value.value), None
+        return None, "tag"
+    if isinstance(value, str):
+        return str(value), None
+    if isinstance(value, int):
+        return int(value), None
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return float(value), None
+        # `ScalarFloat` is the loader's class for a number written as a number
+        # (`1.0e+400`), where a written `.inf` loads as a plain float. It is a
+        # class name, not an API: if ruamel renames it this fails safe, to the
+        # "nan" reason, which still withholds the value.
+        return None, ("too_large" if type(value).__name__ == "ScalarFloat" else "nan")
+    if isinstance(value, CommentedOrderedMap | tuple):
+        return None, "pairs"
+    if isinstance(value, dict):
+        if has_tag(value):
+            return None, "tag"
+        # A merge key (`<<`) is already folded into `items()`, but the loaded
+        # value still holds its sources, each with its own tag: a tagged
+        # source is withheld like any tagged mapping, not merged with the tag
+        # dropped. (A tag on a LIST of sources is gone by then: a limit.)
+        for source in getattr(getattr(value, "merge", None), "value", None) or []:
+            _, problem = _plain_json(source)
+            if problem is not None:
+                return None, problem
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if isinstance(k, TaggedScalar):
+                if k.tag.value != _STR_TAG:
+                    return None, "tag"
+                k = str(k.value)
+            if not isinstance(k, str):
+                return None, "key"
+            plain, problem = _plain_json(v)
+            if problem is not None:
+                return None, problem
+            if k in out:  # `!!str a` beside `a`: one value would silently go
+                return None, "same_key"
+            out[str(k)] = plain
+        return out, None
+    if isinstance(value, list):
+        if has_tag(value):
+            return None, "tag"
+        items = []
+        for v in value:
+            plain, problem = _plain_json(v)
+            if problem is not None:
+                return None, problem
+            items.append(plain)
+        return items, None
+    if isinstance(value, datetime.date):
+        return None, "date"
+    if isinstance(value, bytes | bytearray):
+        return None, "binary"
+    if isinstance(value, collections.abc.Set):
+        return None, "set"
+    return None, "other"

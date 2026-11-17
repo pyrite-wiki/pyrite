@@ -94,25 +94,17 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.present": 1, "load_yaml_file(kb_root)": 1},
         "KBFiles.present, then load_yaml_file(kb_root=)",
     ),
-    ("pyrite/config.py", "KBConfig.kb_schema"): (
-        {"KBConfig.kb_yaml_present": 1},
-        "kb_yaml_present, then KBSchema.from_yaml (KBFiles)",
-    ),
-    ("pyrite/config.py", "KBConfig.check_readable"): (
-        {"KBConfig.kb_yaml_present": 1, "KBFiles.read_bytes": 1, "os.scandir": 1},
-        "the KB's folder listed (operator config); kb.yaml by kb_yaml_present and KBFiles.read_bytes (#1542)",
+    ("pyrite/config.py", "KBConfig._read_kb_yaml_or_raise"): (
+        {"os.scandir": 1},
+        "the KB's folder listed (operator config); kb.yaml through read_kb_yaml, KBFiles (#1542, #1547)",
     ),
     ("pyrite/config.py", "KBConfig.kb_yaml_present"): (
         {"KBFiles.present": 1},
         "KBFiles.present for kb.yaml",
     ),
     ("pyrite/config.py", "KBConfig.load_kb_yaml"): (
-        {"KBConfig.kb_yaml_present": 1, "load_yaml_file(kb_root)": 1},
-        "kb_yaml_present, then load_yaml_file(kb_root=)",
-    ),
-    ("pyrite/schema/kb_schema.py", "KBSchema.from_yaml"): (
-        {"KBFiles.present": 1, "load_yaml_file(kb_root)": 1},
-        "KBFiles.present, then load_yaml_file(kb_root=)",
+        {"KBConfig.kb_yaml_present": 1},
+        "kb_yaml_present; kb.yaml through read_kb_yaml (#1547)",
     ),
     ("pyrite/services/export_service.py", "ExportService.export_kb_to_directory"): (
         {"KBFiles.read_bytes": 1, "path.mkdir": 2},
@@ -177,10 +169,6 @@ DECIDED_INSIDE: dict[Site, Entry] = {
     ("pyrite/services/review_service.py", "_read_entry_file"): (
         {"KBFiles.read_bytes": 1},
         "KBFiles.read_bytes",
-    ),
-    ("pyrite/services/schema_service.py", "SchemaService._load_kb_yaml"): (
-        {"KBConfig.kb_yaml_present": 1, "load_yaml_file(kb_root)": 1},
-        "kb_yaml_present, then load_yaml_file(kb_root=)",
     ),
     ("pyrite/services/schema_service.py", "SchemaService.migrate_entries"): (
         {"repo._read_inside": 1},
@@ -274,9 +262,25 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo.present": 1},
         "present, then read_id",
     ),
-    ("pyrite/storage/repository.py", "KBRepository.list_all_files"): (
+    ("pyrite/storage/repository.py", "KBRepository._in_kb_link"): (
+        {"KBFiles.resolved": 1, "os.path.islink": 1},
+        "where an in-KB link leads (#1262): the name is decided under the root lexically first; islink is the lstat of that name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains). Nothing is read",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository.unlisted_entry_rows"): (
+        {"os.path.islink": 1, "repo._inside_text": 1},
+        "index health's unlisted_entry_files (#1552): islink is the lstat of a name the walk met, never followed (a link is not read at all); every other skipped file is read through _inside_text (KBFiles), so a hard link or a link out reads as nothing",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository.alias_target"): (
+        {"_is_regular_file": 1},
+        "_in_kb_link (KBFiles.resolved), then a stat of a target KBFiles placed inside: is it a regular file. Nothing is read: the entry is read at the target through KBFiles",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository.dangling_target"): (
+        {"os.path.lexists": 1},
+        "_in_kb_link (KBFiles.resolved), then lexists of the name KBFiles placed inside the root: is anything there. A link out is never asked (None first), so no answer depends on outside",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository.list_collection_files"): (
         {"repo._named": 1},
-        "_named (fixed here: as count)",
+        "_named (fixed here: as count; moved out of list_all_files by #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.present"): (
         {"KBFiles.present": 1},
@@ -313,9 +317,17 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.read_bytes": 1, "open": 1},
         "with kb_root, KBFiles.read_bytes; the raw `open` branch is operator config, and every raw caller is counted as load_yaml_file(raw) at its own site",
     ),
+    ("pyrite/utils/yaml.py", "read_kb_yaml"): (
+        {"KBFiles.present": 2, "load_yaml_file(kb_root)": 1},
+        "the one kb.yaml loader (#1547): KBFiles.present, then load_yaml_file(kb_root=); present again when the read finds no regular file (a directory, a FIFO, or gone)",
+    ),
 }
 
 SAME_ANSWER: dict[Site, Entry] = {
+    ("pyrite/config.py", "KBConfig._kb_yaml_stamp"): (
+        {"os.stat": 1},
+        "the schema cache's key only (#1547): any change reads kb.yaml again through read_kb_yaml (KBFiles), whose answer, a link out refused, is the same either way",
+    ),
     ("pyrite/services/kb_registry_service.py", "KBRegistryService._health_kb"): (
         {"path.exists": 1, "path.rglob": 1},
         "the KB's folder itself: the operator's registry entry, not a file in it; rglob('*.md') counts names, a link by its name on every Python",
@@ -364,9 +376,9 @@ SAME_ANSWER: dict[Site, Entry] = {
         {"_is_regular_file": 1, "repo._named": 1},
         "_named for collections; _is_regular_file skips a non-file, and a link out that is a file is refused by the load and skipped: the same answer",
     ),
-    ("pyrite/storage/repository.py", "KBRepository.list_files"): (
+    ("pyrite/storage/repository.py", "KBRepository.walk_files"): (
         {"path.rglob": 1},
-        "rglob('*.md'): a wildcard lists a link by its name on every Python and walks into no folder link; each file is then read through KBFiles",
+        "rglob('*.md'): a wildcard lists a link by its name on every Python and walks into no folder link; each file is then read through KBFiles (list_files filters this walk, #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.read_for_write"): (
         {"path.stat": 1, "repo._read_inside": 1},
@@ -444,8 +456,8 @@ NOT_A_KB_FILE: dict[Site, Entry] = {
         "config.yaml's folder: operator config",
     ),
     ("pyrite/config.py", "auto_discover_kbs"): (
-        {"load_yaml_file(kb_root)": 1, "os.walk": 1, "path.exists": 1},
-        "folders the operator names, or settings.kb_roots for a network caller (MCP discover, fixed here); kb.yaml found by name with os.walk (fixed here) and read with load_yaml_file(kb_root=)",
+        {"os.walk": 1, "path.exists": 1},
+        "folders the operator names, or settings.kb_roots for a network caller (MCP discover, fixed here); kb.yaml found by name with os.walk (fixed here) and read with read_kb_yaml, KBFiles (#1547)",
     ),
     ("pyrite/config.py", "ensure_config_dir"): (
         {"path.mkdir": 1},
@@ -560,8 +572,8 @@ NOT_A_KB_FILE: dict[Site, Entry] = {
         "the repo workspace",
     ),
     ("pyrite/services/repo_service.py", "RepoService.discover_kbs"): (
-        {"load_yaml_file(kb_root)": 1, "path.exists": 1},
-        "a cloned repository's kb.yaml, read with kb_root=, before it is registered",
+        {"path.exists": 1},
+        "a cloned repository's kb.yaml, read with read_kb_yaml (KBFiles) before it is registered (#1547)",
     ),
     ("pyrite/services/repo_service.py", "RepoService.get_repo_status"): (
         {"path.exists": 1},
@@ -711,8 +723,8 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 54,
-    "SAME_ANSWER": 19,
+    "DECIDED_INSIDE": 56,
+    "SAME_ANSWER": 20,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
 }
@@ -777,7 +789,7 @@ _OS = {"open", "stat", "lstat", "access", "scandir", "listdir", "walk", "mkdir",
 _OS_PATH = {"exists", "isfile", "isdir", "islink", "lexists", "getsize", "getmtime", "samefile"}
 _IO = {"open", "FileIO"}
 _GLOB = {"glob", "iglob"}
-_KBFILES = {"read_bytes", "present", "contains", "make_dirs", "check", "require"}
+_KBFILES = {"read_bytes", "present", "contains", "resolved", "make_dirs", "check", "require"}
 _KBFILES_NAMES = {"inside", "kbf", "files"}
 _REPO = {"_read_inside", "_inside_bytes", "_inside_text", "present", "_named"}
 _HELPERS = {"_is_regular_file", "_hard_link_fault", "FileIO", "open"}
@@ -1171,9 +1183,9 @@ MUTATIONS = [
         "path.is_file()",
     ),
     (
-        "pyrite/schema/kb_schema.py",
-        "KBFiles(path.parent).present(path)",
-        "path.read_text()",
+        "pyrite/utils/yaml.py",
+        "if not inside.present(path):  # nothing there",
+        "if not path.exists():  # nothing there",
     ),
     (
         "extensions/software-kb/src/pyrite_software_kb/board.py",
@@ -1201,9 +1213,9 @@ MUTATIONS = [
         "folder.mkdir(parents=True, exist_ok=True)",
     ),
     (
-        "pyrite/config.py",
-        "KBFiles(self.path).read_bytes(self.kb_yaml_path)",
-        "self.kb_yaml_path.read_bytes()",
+        "pyrite/utils/yaml.py",
+        "load_yaml_file(path, kb_root=root)",
+        "load_yaml_file(path)",
     ),
 ]
 

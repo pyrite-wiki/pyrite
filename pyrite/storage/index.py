@@ -6,6 +6,7 @@ Supports incremental updates based on file modification times.
 """
 
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -23,6 +24,7 @@ from sqlalchemy import exc as sa_exc
 from ..config import KBConfig, PyriteConfig, load_config
 from ..exceptions import (
     EntryValueError,
+    KBConfigInvalidError,
     KBNotInConfigError,
     StorageError,
     outside_text,
@@ -47,6 +49,7 @@ from ..schema.field_aliases import (
     read_view,
 )
 from ..utils.kb_files import (
+    KB_YAML_REFUSALS,
     OUTSIDE_KB_REASON,
     KBFileOutsideRootError,
     KBFiles,
@@ -420,6 +423,19 @@ class ReconcilePlan:
     duplicates: list[dict[str, Any]] = field(default_factory=list)
     malformed: list[dict[str, str]] = field(default_factory=list)
     skipped: list[dict[str, str]] = field(default_factory=list)
+    # In-KB links to a walked entry file (``KBRepository.alias_target``):
+    # ``{"kb", "path", "target"}``, KB-relative, sorted by path. Not read and
+    # not a claim: the entry is its target's (#1262).
+    aliases: list[dict[str, str]] = field(default_factory=list)
+    # In-KB links with nothing at the path they name
+    # (``KBRepository.dangling_target``): ``{"kb", "path", "target"}``,
+    # KB-relative, in walk order. They hold no entry (#1262).
+    dangling: list[dict[str, str]] = field(default_factory=list)
+    # ``(path, reason)`` for each ``*.md`` path the same walk met and skipped
+    # (a README, a hidden part, ``_templates``), unread. ``check_health`` asks
+    # which state an ``id:`` (``unlisted_entry_files``, #1552); a sync's result
+    # does not carry them.
+    unlisted: list[tuple[Path, str]] = field(default_factory=list)
     holders: dict[str, list[_Claim]] = field(default_factory=dict)
     # path -> "ExcType: detail" for the ``malformed`` files whose bytes could not
     # be read or decoded (OSError, UnicodeError), whatever the file's kind:
@@ -1048,13 +1064,24 @@ class IndexManager:
         plan = ReconcilePlan(kb_name=kb_config.name)
 
         files = []
-        for file_path in repo.list_all_files():
+        walk = itertools.chain(
+            repo.walk_files(unlisted=plan.unlisted),
+            ((y, None) for y in repo.list_collection_files()),
+        )
+        for file_path, alias_of in walk:
             try:
                 rel = file_path.relative_to(kb_config.path).as_posix()
             except ValueError:
                 continue
+            if alias_of is not None:
+                # Another name for a walked file (#1262): the entry is indexed
+                # once, at its real file, and this path is reported, never read.
+                target = alias_of.relative_to(kb_config.path).as_posix()
+                plan.aliases.append({"kb": kb_config.name, "path": rel, "target": target})
+                continue
             files.append((rel, file_path))
         files.sort()
+        plan.aliases.sort(key=lambda a: a["path"])
 
         # The index holds only bytes read inside the KB's root: most exports
         # write from it (REST export to a repo, GET /api/entries/export).
@@ -1075,10 +1102,24 @@ class IndexManager:
                 # targets inside the KB (a link out was skipped above).
                 file_stat = file_path.stat()
             except OSError as e:
-                # Not "removed while walking": a dangling symlink, a symlink
-                # loop or a folder this process cannot search is listed by the
-                # walk and cannot be read. Health must say so (#1119); sync
-                # already reports it as malformed.
+                # A link inside the KB with nothing there (hand-made, or left
+                # by a delete that keeps the user's link) holds no entry: it
+                # is a dangling link, a warning, never an unreadable file
+                # (#1262). Only the failure path asks, so the walk pays nothing.
+                gone_to = repo.dangling_target(file_path)
+                if gone_to is not None:
+                    plan.dangling.append(
+                        {
+                            "kb": kb_config.name,
+                            "path": rel,
+                            "target": gone_to.relative_to(kb_config.path).as_posix(),
+                        }
+                    )
+                    continue
+                # Not "removed while walking": a symlink loop or a folder this
+                # process cannot search is listed by the walk and cannot be
+                # read. Health must say so (#1119); sync reports it as
+                # malformed.
                 logger.warning("Could not stat %s: %s", file_path, e)
                 error = f"{type(e).__name__}: {outside_text(e, already_logged=True)}"
                 plan.malformed.append({"path": str(file_path), "error": error})
@@ -1169,7 +1210,9 @@ class IndexManager:
         Returns ``added``, ``updated``, ``removed`` (row counts), ``malformed``
         (``{"path", "error"}``), ``skipped`` (non-regular paths and reasons),
         ``duplicates`` (``{"kb", "id", "winner", "paths"}``, KB-relative
-        paths, the winner first) and ``written`` (rows written, counted or not).
+        paths, the winner first), ``aliases`` (``{"kb", "path", "target"}``,
+        in-KB links to an entry file, indexed once at the target: #1262) and
+        ``written`` (rows written, counted or not).
         """
         results: dict[str, Any] = {
             "added": 0,
@@ -1178,6 +1221,8 @@ class IndexManager:
             "malformed": [],
             "skipped": [],
             "duplicates": [],
+            "aliases": [],
+            "dangling_links": [],
             "written": 0,
         }
         if not kb_config.path.exists():
@@ -1205,6 +1250,8 @@ class IndexManager:
         results["malformed"] = plan.malformed
         results["skipped"] = plan.skipped
         results["duplicates"] = plan.duplicates
+        results["aliases"] = plan.aliases
+        results["dangling_links"] = plan.dangling
 
         total = len(plan.winners)
         unwritable: set[str] = set()
@@ -1328,9 +1375,10 @@ class IndexManager:
 
             try:
                 count = self.index_kb(kb.name, make_kb_progress(kb.name))
-            except KBFilesUnreadableError as e:
-                # One unreadable KB does not stop the others; its rows are
-                # kept (the reconcile refused before planning) (#1542).
+            except KB_YAML_REFUSALS as e:
+                # One unreadable KB (#1542), or one whose kb.yaml does not load
+                # or leads outside the KB (#1547), does not stop the others; its
+                # rows are kept (the reconcile refused before planning).
                 logger.warning("Skipping %s: %s", kb.name, public_text(e))
                 continue
             results[kb.name] = count
@@ -1575,6 +1623,18 @@ class IndexManager:
           holds (the lexicographically first KB-relative path). Only the
           winner is checked for staleness; a losing copy is not the indexed
           file, so it is neither stale nor changed.
+        - aliases: in-KB links to a walked entry file, ``{"kb", "path",
+          "target"}`` as ``index sync`` reports them; information, neither a
+          warning nor unhealthy (#1262).
+        - dangling_links: in-KB links with nothing at the path they name,
+          ``{"kb", "path", "target"}``; a warning (they hold no entry, so no
+          read answers from anything but the files), never an unreadable
+          file (#1262).
+        - unlisted_entry_files: ``*.md`` files the walk skips (a README, a
+          hidden part, ``_templates``) whose frontmatter states an ``id:``,
+          ``{"kb", "path", "reason"}``: an entry an earlier version wrote where
+          the walk does not list it. A warning; never indexed or repaired
+          (#1552).
         """
         health: dict[str, Any] = {
             "missing_files": [],
@@ -1592,6 +1652,9 @@ class IndexManager:
             "invalid_statuses": [],
             "off_list_values": [],
             "duplicates": [],
+            "aliases": [],
+            "dangling_links": [],
+            "unlisted_entry_files": [],
             "removed_extensions": [],
             # Files whose frontmatter Pyrite cannot model (#760 (b)): a
             # tagged, complex or duplicate key. No write reaches them, so
@@ -1641,11 +1704,21 @@ class IndexManager:
         # fails to load is reported in `schema_errors` and its KB counts as
         # declaring no types, so health still answers for the broken KB.
         schemas = self._load_schemas(kbs)
+        config_invalid: set[str] = set()
         for kb in kbs:
             try:
                 kb.check_readable()  # asked now: a server's config is loaded once
             except KBFilesUnreadableError as e:
+                # #1551's row, as it shipped: {kb, error}.
                 health["unreadable_kbs"].append({"kb": kb.name, "error": public_text(e)})
+            except (KBConfigInvalidError, KBFileOutsideRootError):
+                # A kb.yaml that does not load, or leads outside the KB
+                # (#1547): named once, in
+                # `schema_errors` (``_load_schemas``), with its code and the
+                # parser's words for the local process; the verdict reads
+                # that row as unhealthy. Its files are not compared below:
+                # each would parse against no schema and read as malformed.
+                config_invalid.add(kb.name)
 
         # A KB whose type belonged to an extension Pyrite has deleted (#953):
         # its types are undeclared for a reason the user should be told. The
@@ -1670,7 +1743,7 @@ class IndexManager:
                 )
 
         for kb in kbs:
-            if not kb.path.exists():
+            if not kb.path.exists() or kb.name in config_invalid:
                 continue
 
             indexed = self._load_indexed_state(kb.name)
@@ -1679,6 +1752,14 @@ class IndexManager:
             # rule as `pyrite index sync` (ADR-0038 step 2).
             plan = self.plan_reconcile(kb, force=True, indexed=indexed)
             health["duplicates"].extend(plan.duplicates)
+            # Reported, not a problem: a hand-made shape the index models (#1262).
+            health["aliases"].extend(plan.aliases)
+            # A warning, not unreadable: no entry is there to miss (#1262).
+            health["dangling_links"].extend(plan.dangling)
+            # Read now, and only these: the walk skipped them unread (#1552).
+            health["unlisted_entry_files"].extend(
+                KBRepository(kb).unlisted_entry_rows(plan.unlisted)
+            )
             # A path sync lists and skips because it is not a regular file
             # (a directory named `x.md`, a FIFO) used to vanish from health
             # while sync reported it in `skipped` (#1119).
@@ -1965,8 +2046,12 @@ class IndexManager:
         return health
 
     @staticmethod
-    def _load_schemas(kbs: Iterable[KBConfig]) -> dict[str, tuple[Any, str | None]]:
+    def _load_schemas(kbs: Iterable[KBConfig]) -> dict[str, tuple[Any, dict[str, str] | None]]:
         """Each KB's schema, loaded once: ``{kb: (schema or None, error or None)}``.
+
+        ``error`` is the ``schema_errors`` row's fields: ``error`` (text) and,
+        for a kb.yaml that does not load, ``error_code: KB_CONFIG_INVALID``
+        (#1547), which makes health unhealthy.
 
         Health diagnoses broken KBs, so a kb.yaml that fails to load (invalid
         YAML, `types: null`, `types: [a, b]`) gives ``(None, error)`` -- the KB
@@ -1974,28 +2059,37 @@ class IndexManager:
         cache a failure, so every later read would raise again. A KB with no
         kb.yaml gives ``(None, None)``.
         """
-        loaded: dict[str, tuple[Any, str | None]] = {}
+        loaded: dict[str, tuple[Any, dict[str, str] | None]] = {}
         for kb in kbs:
             try:
                 present = kb.kb_yaml_present
             except KBFilesUnreadableError as exc:
                 # A root this process cannot search (#1542): reported here,
                 # and in ``unreadable_kbs``; never the end of the report.
-                loaded[kb.name] = (None, public_text(exc))
+                loaded[kb.name] = (None, {"error": public_text(exc)})
                 continue
             if not present:
                 loaded[kb.name] = (None, None)
                 continue
             try:
                 loaded[kb.name] = (kb.kb_schema, None)
+            except KBConfigInvalidError as exc:
+                # A kb.yaml that does not load (#1547): the parser's words for
+                # the local process, withheld from a network caller (N3).
+                why = outside_text(exc.__cause__ or exc)
+                loaded[kb.name] = (None, {"error": why, "error_code": exc.error_code})
+            except KBFileOutsideRootError as exc:
+                # A link out of the KB, or a second hard link (#1547): the
+                # error's own text (it names no path), and its code.
+                loaded[kb.name] = (None, {"error": public_text(exc), "error_code": exc.error_code})
             except Exception as exc:
-                loaded[kb.name] = (None, outside_text(exc) or type(exc).__name__)
+                loaded[kb.name] = (None, {"error": outside_text(exc) or type(exc).__name__})
         return loaded
 
     def _type_name_drift(
         self,
         kbs: Iterable[KBConfig],
-        schemas: dict[str, tuple[Any, str | None]] | None = None,
+        schemas: dict[str, tuple[Any, dict[str, str] | None]] | None = None,
     ) -> dict[str, Any]:
         """Report exact case/underscore/space variants, independently per KB.
 
@@ -2012,7 +2106,7 @@ class IndexManager:
         for kb in kbs:
             schema, error = schemas[kb.name]
             if error is not None:
-                schema_errors.append({"kb": kb.name, "error": error})
+                schema_errors.append({"kb": kb.name, **error})
             declared: set[str] = schema.declared_types() if schema is not None else set()
             by_name: dict[str, list[dict[str, Any]]] = {}
             rows = self.db.execute_sql(
@@ -2237,7 +2331,8 @@ class IndexManager:
         those whose content hash differs.
 
         Returns ``added``, ``updated``, ``removed``, ``malformed``,
-        ``skipped`` non-regular files and ``duplicates`` summed over the KBs.
+        ``skipped`` non-regular files, ``duplicates`` and ``aliases`` summed
+        over the KBs.
         The CLI prints malformed, skipped and duplicate files as a summary
         rather than per-file tracebacks (Tier A 1080).
         """
@@ -2248,6 +2343,8 @@ class IndexManager:
             "malformed": [],
             "skipped": [],
             "duplicates": [],
+            "aliases": [],
+            "dangling_links": [],
             # KBs whose files could not be read (#1542): not synced, their
             # rows kept, named here. Only a sync of every KB collects them; a
             # sync of one named KB raises ``KBFilesUnreadableError``.
@@ -2265,18 +2362,25 @@ class IndexManager:
                     one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
                 else:
                     one = self.reconcile_kb(kb, progress_callback=callback)
-            except KBFilesUnreadableError as e:
+            except KB_YAML_REFUSALS as e:
+                # Files the OS will not let Pyrite read (#1542), or a kb.yaml
+                # that does not load or leads outside the KB (#1547): not
+                # synced, rows kept, named.
                 if kb_name:
                     raise
                 reason = public_text(e)  # the error's fixed text (ADR-0052 N3)
                 logger.warning("Not syncing %s: %s", kb.name, reason)
-                results["unreadable_kbs"].append({"kb": kb.name, "error": reason})
+                results["unreadable_kbs"].append(
+                    {"kb": kb.name, "error": reason, "error_code": e.error_code}
+                )
                 continue
             for key in ("added", "updated", "removed"):
                 results[key] += one[key]
             results["malformed"].extend(one["malformed"])
             results["skipped"].extend(one["skipped"])
             results["duplicates"].extend(one["duplicates"])
+            results["aliases"].extend(one["aliases"])
+            results["dangling_links"].extend(one["dangling_links"])
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))
         return results

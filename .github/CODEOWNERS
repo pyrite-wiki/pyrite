@@ -1,0 +1,23 @@
+# Paths that run on their own (hooks, CI, editors, test collection) or that
+# instruct agents. GitHub requests the owner's review on a pull request that
+# changes one; the dev ruleset does not require code-owner approval, so this
+# asks for a review, it does not enforce one. tests/test_agent_path_guards.py
+# keeps this list covering the paths in #1369 and the scripts session start runs.
+
+/.claude/                                   @markramm
+/AGENTS.md                                  @markramm
+/CLAUDE.md                                  @markramm
+/.github/                                   @markramm
+/scripts/cloud-session-start.sh             @markramm
+/scripts/cloud-env-setup.sh                 @markramm
+/scripts/setup-checkout.sh                  @markramm
+/scripts/lock-constraints.sh                @markramm
+/scripts/cloud-postgres.sh                  @markramm
+/scripts/check_checkout_imports.py          @markramm
+/scripts/known_cloud_failures.py            @markramm
+/scripts/known-cloud-failures.json          @markramm
+conftest.py                                 @markramm
+/.pre-commit-config.yaml                    @markramm
+/.vscode/                                   @markramm
+*.code-workspace                            @markramm
+/.devcontainer/                             @markramm

@@ -3,8 +3,10 @@
 The property: every ``int`` or ``float`` option or argument of every registered
 command has ``min`` or ``max`` on it (so click refuses an out-of-range value as a
 usage error, exit 2, before any code runs), or sits on the reviewed ``UNBOUNDED``
-list with the reason no range makes sense, or on the seeded ``NOT_YET`` list. A
-new numeric option without a range fails here.
+list with the reason no range makes sense, or on the seeded ``NOT_YET`` list, which may only
+shrink: ``scripts/check_ratchets_only_shrink.py`` refuses an added row in CI unless a
+commit carries ``Ratchet-raise: NOT_YET <reason>``. A new numeric option without a
+range fails here.
 
 The list of commands is the registry, not a scan of the source: the click tree
 Typer builds from the three root apps, extension groups included, through the
@@ -49,8 +51,8 @@ included) does with each; "planted" means a test below goes red without it:
 Ways Typer hands click a number: ``int``/``float``, ``Optional``, ``| None``,
 ``Annotated``, ``list[...]`` (``multiple``), ``tuple[...]`` (a mixed tuple is
 numeric, and bounded only if every numeric member is): seen, planted. ``min=``
-and ``max=``: a Range. ``count=True``: excluded, see above. ``parser=`` and
-``click_type=``: click gets a ``FuncParamType`` (locked Typer 0.27.3), so neither
+and ``max=``: a Range. ``count=True``: excluded, see above. ``parser=``:
+click gets a ``FuncParamType`` (locked Typer 0.27.3), so neither
 the number nor a range given that way is visible: a stated limit, refused by
 ``test_every_parameter_type_is_classified_or_listed`` (``UNCLASSIFIED``, empty),
 pinned by a control. An ``Enum`` (an int-valued one too) is a ``Choice`` of text:
@@ -203,7 +205,7 @@ class Unclassified:
 def unclassified_params(commands: Mapping[str, object]) -> list[Unclassified]:
     """Parameters whose click type is neither numeric nor a known non-numeric one,
     so the checker cannot say whether a number is typed there. Typer hands click a
-    ``FuncParamType`` for ``parser=`` and ``click_type=`` (locked Typer 0.27.3), and
+    ``FuncParamType`` for ``parser=`` (locked Typer 0.27.3), and
     a hand-written ``click.ParamType`` is the same: not guessed from the name."""
     found = []
     for path, cmd in commands.items():
@@ -252,50 +254,68 @@ def registry() -> dict[str, object]:
 UNBOUNDED: dict[tuple[str, str], str] = {}
 
 #: (command path, parameter name) -> why the checker cannot classify the type (a
-#: ``parser=`` or ``click_type=`` option) and why that is safe. Empty today.
-UNCLASSIFIED: dict[tuple[str, str], str] = {}
+#: ``parser=`` option) and why that is safe. One row: `qa duplicates --threshold`.
+UNCLASSIFIED: dict[tuple[str, str], str] = {
+    ("pyrite qa duplicates", "threshold"): (
+        "a click float range accepts NaN; its ``parser=`` function refuses a non-finite or "
+        "out-of-range value at parse time (usage error, exit 2); to be replaced by the "
+        "shared finite-float type tracked on #1541"
+    ),
+}
 
 #: #1541: unbounded on ``dev`` today, grouped by the module that declares them.
 #: Each module is a good first issue: add the range where the option is
-#: declared, delete its rows here (test (b) requires it) and lower
-#: NOT_YET_PINNED_SIZE. The ``pyrite-read`` rows are the same declarations as
-#: their ``pyrite`` twins, except ``timeline``: a second copy in read_cli.py.
+#: declared and delete its rows here (``test_listed_rows_are_not_stale`` requires
+#: it). Nothing else needs editing: this list is its own pin.
+#:
+#: It may shrink and never grow. Growth is refused on the diff, not by a count:
+#: ``scripts/check_ratchets_only_shrink.py --range BASE HEAD`` (a CI step) fails a
+#: pull request that adds a row unless one of its commits carries the trailer
+#: ``Ratchet-raise: NOT_YET <reason>``.
+#:
+#: Layout, so that two pull requests that remove different rows never touch the
+#: same line: one row per line, and a line holding only ``#`` between module
+#: groups (``ruff format`` deletes a blank line here and keeps this one). Delete
+#: a group's comment line and rows and leave the separators: an unchanged line
+#: then stands between your hunk and the next group's, so the two merge.
+#:
+#: The ``pyrite-read`` rows are the same declarations as their ``pyrite`` twins,
+#: except ``timeline``: a second copy in read_cli.py.
 NOT_YET: set[tuple[str, str]] = {
     # pyrite/cli/search_commands.py
     ("pyrite search", "limit"),
     ("pyrite-read search", "limit"),
+    #
     # pyrite/cli/entry_commands.py (see also #1537)
     ("pyrite create", "importance"),
     ("pyrite update", "importance"),
+    #
     # pyrite/cli/browse_commands.py
     ("pyrite orient", "recent"),
+    #
     # pyrite/cli/__init__.py
     ("pyrite ci", "tier"),
     ("pyrite serve", "port"),
+    #
     # pyrite/cli/kb_commands.py
     ("pyrite kb create", "ttl"),
+    #
     # pyrite/cli/collection_commands.py
     ("pyrite collections query", "limit"),
-    # pyrite/cli/qa_commands.py
-    ("pyrite qa assess", "tier"),
-    ("pyrite qa assess", "max_age"),
+    #
+    #
     # pyrite/cli/link_commands.py
     ("pyrite links batch-suggest", "limit_per_entry"),
     ("pyrite links orphans", "min_importance"),
+    #
     # pyrite/cli/task_commands.py
     ("pyrite task list", "priority"),
+    #
     # pyrite/read_cli.py
     ("pyrite-read timeline", "min_importance"),
     ("pyrite-read timeline", "limit"),
-    # extensions/software-kb/src/pyrite_software_kb/cli.py
-    ("pyrite sw adrs", "limit"),
-    ("pyrite sw adrs", "offset"),
-    ("pyrite sw backlog", "limit"),
-    ("pyrite sw backlog", "offset"),
-    ("pyrite sw standards", "limit"),
-    ("pyrite sw standards", "offset"),
-    ("pyrite sw components", "limit"),
-    ("pyrite sw components", "offset"),
+    #
+    #
     # extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py
     ("pyrite investigation timeline", "min_importance"),
     ("pyrite investigation timeline", "limit"),
@@ -310,13 +330,10 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite investigation money-flow", "hops"),
     ("pyrite investigation export", "min_importance"),
     ("pyrite investigation dedup", "threshold"),
-    # extensions/encyclopedia/src/pyrite_encyclopedia/cli.py
-    ("pyrite wiki stubs", "limit"),
+    #
+    #
+    # extensions/social/src/pyrite_social/cli.py
 }
-
-#: May shrink, never grow (#1541). Lower it in the same commit that deletes rows
-#: from NOT_YET; raising it is the thing this test exists to refuse.
-NOT_YET_PINNED_SIZE = 38
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"
 
@@ -399,7 +416,7 @@ def test_listed_rows_are_not_stale():
             elif found.bounded:
                 problems.append(
                     f"{label} row `{command}` `{name}` is bounded now; delete the row "
-                    "(and lower NOT_YET_PINNED_SIZE)"
+                    "(nothing else to edit: NOT_YET is its own pin, see its comment)"
                 )
     unclassified = {u.row for u in unclassified_params(registry())}
     for command, name in sorted(UNCLASSIFIED):
@@ -408,21 +425,6 @@ def test_listed_rows_are_not_stale():
                 f"UNCLASSIFIED row `{command}` `{name}` is not an unclassifiable option; delete the row"
             )
     assert not problems, "\n".join(problems)
-
-
-def test_not_yet_may_shrink_and_never_grow():
-    assert len(NOT_YET) <= NOT_YET_PINNED_SIZE, (
-        f"NOT_YET has {len(NOT_YET)} rows, the pinned size is {NOT_YET_PINNED_SIZE}: "
-        f"it may shrink and never grow (#1541). Give the new option a range instead: {FIX}"
-    )
-
-
-def test_the_pin_is_not_slack():
-    """The pin follows the list down: a smaller NOT_YET with the old pin would let
-    a later PR add rows back."""
-    assert len(NOT_YET) == NOT_YET_PINNED_SIZE, (
-        f"NOT_YET has {len(NOT_YET)} rows; lower NOT_YET_PINNED_SIZE ({NOT_YET_PINNED_SIZE}) to match"
-    )
 
 
 def test_the_lists_do_not_overlap_and_every_reason_is_a_sentence():

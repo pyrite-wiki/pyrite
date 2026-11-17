@@ -38,6 +38,19 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # A KB whose kb.yaml could not be checked or read: what the index
         # holds for it cannot be compared with its files (#1542).
         or health.get("unreadable_kbs")
+        # A KB whose kb.yaml does not load (#1547): every operation that needs
+        # its schema stops, so the KB is unusable, not merely warned about. A
+        # key with the wrong shape (#1498's class) carries no code and stays
+        # a warning below.
+        or any(
+            row.get("error_code") == "KB_CONFIG_INVALID"
+            for row in health.get("schema_errors") or []
+        )
+        # A kb.yaml that leads outside the KB (#1547): its schema is refused
+        # the same way, so the KB is as unusable.
+        or any(
+            row.get("error_code") == "OUTSIDE_KB_ROOT" for row in health.get("schema_errors") or []
+        )
         or health.get("orphaned_entries")
         or "error" in off_list_severities
     )
@@ -57,6 +70,14 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # A link row a rebuild would point at a different KB (a shortname
         # renamed since the file was indexed, or a row from before #980).
         or health.get("links_stale_kb")
+        # An in-KB link with nothing at the path it names (hand-made, or left
+        # by a delete that keeps the user's link): no entry is there, so no
+        # read answers from anything but the files; the user should know (#1262).
+        or health.get("dangling_links")
+        # An entry file an earlier version wrote where the walk does not list
+        # it (a create titled README wrote `readme.md`): not indexed, so no
+        # read answers from it, but its id is not findable (#1552).
+        or health.get("unlisted_entry_files")
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
     return {"status": status, "is_unhealthy": is_unhealthy, "has_warning": has_warning}

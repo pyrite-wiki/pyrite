@@ -38,6 +38,7 @@ from pyrite.exceptions import (
     ConfigFileUnreadableError,
     ConfigSaveRefusedError,
     KBAlreadyExistsError,
+    KBConfigInvalidError,
     PluginError,
     PyriteError,
     StorageError,
@@ -68,6 +69,12 @@ CLASSES = [
     ConfigFileUnreadableError,
 ]
 
+#: Classes that set ``public_message`` equal to ``str()``: the constructor
+#: takes no text, so nothing is masked and nothing is logged. Set so that no
+#: reader can fall back to a text that quotes what the class is about (a
+#: kb.yaml's bytes, #1547). Reviewed here, and pinned equal below.
+FIXED_TEXT_CLASSES = [KBConfigInvalidError]
+
 
 @pytest.mark.control(reason="pins that CLASSES covers every masking class; true before the change")
 def test_the_class_list_is_every_class_that_sets_a_public_message():
@@ -79,9 +86,21 @@ def test_the_class_list_is_every_class_that_sets_a_public_message():
     setters = {c for c in subclasses(PyriteError) if "public_message" in vars(c)}
     masking = {c for c in setters if c.public_message is not None}
     # every masking class is one of ours or a subclass of one (inherits the text)
-    assert all(issubclass(c, tuple(CLASSES)) for c in masking), masking
+    assert all(issubclass(c, tuple(CLASSES + FIXED_TEXT_CLASSES)) for c in masking), masking
     # a masking class that sets an empty string would show nothing at all
     assert all(c.public_message.strip() for c in masking), masking
+
+
+@pytest.mark.parametrize("cls", FIXED_TEXT_CLASSES, ids=lambda c: c.__name__)
+def test_a_fixed_text_class_shows_one_text_everywhere(cls, caplog):
+    """``str()`` is ``public_message``, so every print site -- ``public_text``
+    or a bare ``str(e)`` -- shows the same sentence, and ``public_text`` has
+    nothing of its own to log."""
+    from pyrite.exceptions import public_text
+
+    exc = cls()
+    assert str(exc) == cls.public_message
+    assert public_text(exc, already_logged=True, local=True) == cls.public_message
 
 
 _DRIVER = """

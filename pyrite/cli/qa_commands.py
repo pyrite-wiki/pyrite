@@ -1,15 +1,38 @@
 """
 QA validation and assessment commands for pyrite CLI.
 
-Commands: validate, status, assess
+Commands: validate, duplicates, status, assess
 """
 
 import typer
+from rich.console import Console
 from rich.table import Table
 
+from ..exceptions import ValidationError
 from ..services.access_policy import UNSCOPED, named_kb
 from .context import cli_context, require_entry_kb
-from .output import cli_console, output_format_choice, validate_output_format
+from .outcome import Outcome
+from .output import OUTPUT_FORMAT, cli_console, output_format_choice, validate_output_format
+
+
+def _unit_interval(value: str) -> float:
+    """Parse a number from 0 to 1; NaN and the infinities are refused.
+
+    ``min=0, max=1`` is not enough: NaN compares false with both bounds, so Typer
+    0.27 lets it through. A parameter *callback* is forbidden on the Outcome
+    contract, and Typer 0.29 removed the ``click_type`` keyword, so the range is checked
+    in a ``parser=`` function, at parse time, where a refusal is the usage error
+    (exit 2) a bad range already is. The error is ``typer.BadParameter``: Typer
+    vendors click, and only its own class is answered as ``USAGE_ERROR`` (exit 2).
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise typer.BadParameter(f"{value!r} is not a valid number")
+    if not 0.0 <= number <= 1.0:
+        raise typer.BadParameter(f"{value!r} is not in the range 0 to 1")
+    return number
+
 
 qa_app = typer.Typer(help="Quality assurance validation and assessment")
 console = cli_console()
@@ -122,6 +145,81 @@ def qa_validate(
             raise typer.Exit(1)
 
 
+@qa_app.command("duplicates")
+def qa_duplicates(
+    entry_type: str = typer.Option(..., "--type", "-t", help="Entry type to compare"),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Comma-separated statuses to keep; default: live entries only",
+    ),
+    threshold: float = typer.Option(
+        0.62,
+        "--threshold",
+        parser=_unit_interval,
+        help="Minimum score; a pair at or above it is a candidate",
+    ),
+    strip_prefix: list[str] | None = typer.Option(
+        None,
+        "--strip-prefix",
+        help="ID prefix to remove before comparing (repeatable, comma-separated accepted)",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+) -> Outcome:
+    """Candidate near-duplicate entries of one type; never merges.
+
+    Scores two signals, the id slug and the title, by word overlap (Jaccard).
+    Finding candidates is not a failure: the command exits 0 when it ran.
+    """
+    from ..services.qa_service import QAService
+
+    if not entry_type.strip():
+        raise ValidationError("--type must name an entry type")
+    statuses = None
+    if status is not None:
+        statuses = {part.strip().lower() for part in status.split(",") if part.strip()}
+        if not statuses:
+            raise ValidationError("--status must name at least one status")
+    prefixes = tuple(
+        part.strip() for value in (strip_prefix or []) for part in value.split(",") if part.strip()
+    )
+
+    with cli_context(kbs=()) as (config, db, _svc):
+        result = QAService(config, db).find_duplicates(
+            entry_type.strip(),
+            readable_kbs=UNSCOPED,
+            statuses=statuses,
+            threshold=threshold,
+            strip_prefixes=prefixes,
+        )
+
+    def render(console: Console, data: dict) -> None:
+        for row in data.get("unreadable_kbs", []):
+            console.print(f"Not compared: {row['kb']}: {row['error']}", markup=False)
+        if data["skipped_tokens"]:
+            console.print(
+                f"Common-token expansion skipped for {data['skipped_tokens']} tokens; "
+                "near-match coverage is incomplete. Exact token-set matches are included."
+            )
+        if not data["pairs"]:
+            console.print(f"No candidate duplicates of type {data['entry_type']!r}.")
+            return
+        for pair in data["pairs"]:
+            first, second = pair["a"], pair["b"]
+            console.print(
+                f"{pair['score']:.2f}  {first['kb_name']}/{first['id']}"
+                f"  ~  {second['kb_name']}/{second['id']}  [{pair['signal']}]",
+                markup=False,
+                highlight=False,
+            )
+
+    if result.get("unreadable_kbs"):
+        # A KB left out (its kb.yaml does not load, or its files cannot be
+        # read): the report is not whole, exit 3 (#1547).
+        return Outcome.partial(result, rich=render)
+    return Outcome.done(result, rich=render)
+
+
 @qa_app.command("assess")
 def qa_assess(
     kb_name: str = typer.Argument(..., help="KB to assess"),
@@ -130,11 +228,16 @@ def qa_assess(
         1,
         "--tier",
         "-t",
+        min=1,
+        max=2,
         help="Assessment tier: 1=structural; 2=structural plus the model-judged rubric "
         "(needs a configured model, else refused with AI_NOT_CONFIGURED)",
     ),
     max_age: int = typer.Option(
-        24, "--max-age", help="Skip entries assessed within N hours (0 = reassess all)"
+        24,
+        "--max-age",
+        min=0,
+        help="Skip entries assessed within N hours (0 = reassess all)",
     ),
     create_tasks: bool = typer.Option(
         False, "--create-tasks", help="Create tasks for failed assessments"

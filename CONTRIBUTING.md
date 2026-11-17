@@ -391,6 +391,14 @@ experimental tests it left out. A new test of an experimental surface needs
 no marker if its path is mapped; a new file for one needs a line in
 `tests/experimental_surface.py`.
 
+**Ratchets.** To remove a row from a list that may only shrink, delete its line:
+there is no count to edit, so two pull requests that remove different rows
+merge. A row is added only by a commit whose final paragraph carries
+`Ratchet-raise: <list> <reason>`; the CI step `scripts/check_ratchets_only_shrink.py
+--range` refuses the pull request otherwise. This applies to `NOT_YET` in
+`tests/test_cli_numeric_options_declare_a_range.py` today; #1608 converts the
+other pinned lists.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
@@ -504,8 +512,10 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 
 - Tests live in `tests/`; extension tests in `extensions/<name>/tests/`
 - Name test files `test_*.py`
-- A `fix:` commit must include a test that fails without the fix (a hook checks
-  that it touches `tests/`)
+- A `fix:` commit must include a test that fails without the fix (the local
+  commit-msg hook checks that a `fix:` commit touches `tests/`). In CI, the pull
+  request as a whole is judged: a branch with a `test:` commit followed by a
+  `fix:` commit passes because pull requests are squashed when merged to `dev`.
 - Use pytest fixtures for common setup (`tmp_kb`, isolated plugin registry);
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
@@ -551,9 +561,8 @@ Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration un
   only and moves by fast-forward to a commit that already passed CI.
 - Branch from `dev`, open the PR against `dev`. Name the branch for what it
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
-  `process/*` (tooling and workflow). Never push to `dev`. Rebase is the default merge
-  method (it keeps your commits and their messages); squash is fine for a
-  branch whose history is noise.
+  `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
+  each pull request into a single commit on `dev` by default.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to

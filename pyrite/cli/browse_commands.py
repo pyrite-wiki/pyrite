@@ -14,7 +14,7 @@ from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import cli_context, require_kb
-from .output import cli_console, validate_output_format
+from .output import cli_console, output_format_choice, validate_output_format
 
 console = cli_console()
 
@@ -219,8 +219,8 @@ def register_browse_commands(app: typer.Typer) -> None:
         output_format: str = typer.Option(
             "json",
             "--format",
-            callback=validate_output_format,
-            help="Output format: json, rich, markdown, csv, yaml",
+            callback=output_format_choice("json", "yaml", "rich"),
+            help="Output format: json, yaml, rich",
         ),
     ):
         """One-shot KB orientation summary — types, tags, recent changes, and schema.
@@ -321,6 +321,12 @@ def register_browse_commands(app: typer.Typer) -> None:
                     board_parts.append(part)
                 if board_parts:
                     console.print(f"\n[bold]Board:[/bold] {' | '.join(board_parts)}")
+                if sw.get("board_error"):
+                    # A plugin's board that could not be loaded: its refusal text,
+                    # in place of the lanes and the recommendation (#1538).
+                    from rich.markup import escape
+
+                    console.print(f"\n[bold]Board:[/bold] [red]{escape(sw['board_error'])}[/red]")
 
                 # In-progress table
                 ip_items = sw.get("in_progress", [])

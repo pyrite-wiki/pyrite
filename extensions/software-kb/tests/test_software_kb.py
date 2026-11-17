@@ -40,6 +40,7 @@ from pyrite_software_kb.workflows import (
     requires_reason,
 )
 
+from pyrite.config import KBConfig
 from pyrite.plugins.registry import PluginRegistry
 from pyrite.services.access_policy import UNSCOPED
 
@@ -1382,11 +1383,14 @@ class TestMilestoneValidator:
 
 
 class TestBoardConfig:
+    """`load_board_config` takes a resolved KB; the shapes it refuses are
+    tests/test_board_config_refuses.py (#1538)."""
+
     def test_fallback_to_defaults(self):
         from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG, load_board_config
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = load_board_config(Path(tmpdir))
+            config = load_board_config(KBConfig(name="t", path=Path(tmpdir), kb_type="software"))
             assert config["lanes"] == DEFAULT_BOARD_CONFIG["lanes"]
             assert config["wip_policy"] == "warn"
 
@@ -1401,12 +1405,12 @@ class TestBoardConfig:
                 "    statuses: [proposed]\n"
                 "  - name: Done\n"
                 "    statuses: [done]\n"
-                "wip_policy: block\n"
+                "wip_policy: enforce\n"
             )
-            config = load_board_config(Path(tmpdir))
+            config = load_board_config(KBConfig(name="t", path=Path(tmpdir), kb_type="software"))
             assert len(config["lanes"]) == 2
             assert config["lanes"][0]["name"] == "Todo"
-            assert config["wip_policy"] == "block"
+            assert config["wip_policy"] == "enforce"
 
     def test_lane_structure(self):
         from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG
@@ -1479,10 +1483,9 @@ class TestMilestonePluginRegistration:
     def test_preset_has_milestones_dir(self):
         assert "milestones" in SOFTWARE_KB_PRESET["directories"]
 
-    def test_preset_has_default_board(self):
-        assert "default_board" in SOFTWARE_KB_PRESET
-        assert "lanes" in SOFTWARE_KB_PRESET["default_board"]
-        assert "wip_policy" in SOFTWARE_KB_PRESET["default_board"]
+    def test_preset_holds_no_board(self):
+        """The built-in board is board.DEFAULT_BOARD_CONFIG alone (#1538)."""
+        assert "default_board" not in SOFTWARE_KB_PRESET
 
 
 # =========================================================================
@@ -1812,9 +1815,9 @@ class TestPullNext:
             finally:
                 db.close()
 
+    @pytest.mark.control(reason="behaviour kept by #1538; rewritten to read the KB's own board")
     def test_pull_next_wip_limit_enforce(self):
         """When WIP limit is reached and policy is enforce, return no recommendation."""
-        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Write a board config with enforce policy and wip_limit=1
@@ -1845,13 +1848,8 @@ class TestPullNext:
             )
             try:
                 plugin = _make_plugin_with_db(db)
-                from pyrite_software_kb.board import load_board_config as real_load
-
-                with patch(
-                    "pyrite_software_kb.board.load_board_config",
-                    side_effect=lambda p: real_load(Path(tmpdir)),
-                ):
-                    result = plugin._mcp_pull_next({"kb_name": "test"})
+                # The KB "test" is registered at tmpdir, so its board.yaml is read.
+                result = plugin._mcp_pull_next({"kb_name": "test"})
                 assert result["recommendation"] is None
                 assert "WIP limit" in result["reason"]
             finally:
@@ -2798,7 +2796,7 @@ class TestContextPreviewParity:
         world.add_entry("proj", "---\n" + yaml.safe_dump(front) + "---\nContext body.\n")
 
     @staticmethod
-    def _read(world, surface):
+    def _read(world, surface, named_kb=True):
         before = {p: p.read_bytes() for p in world.kb_path("proj").rglob("*.md")}
         if surface == "cli":
 
@@ -2808,12 +2806,12 @@ class TestContextPreviewParity:
                 return json.loads(result.stdout)
 
             call("orient", "-k", "proj", "--format", "json")
-            pull = call("sw", "pull-next", "-k", "proj")
+            pull = call("sw", "pull-next", *(("-k", "proj") if named_kb else ()))
             context = call("sw", "context-for-item", "item", "-k", "proj")
         else:
             server = world.mcp("read")
             server._dispatch_tool("kb_orient", {"kb_name": "proj"})
-            pull = server._dispatch_tool("sw_pull_next", {"kb_name": "proj"})
+            pull = server._dispatch_tool("sw_pull_next", {"kb_name": "proj"} if named_kb else {})
             context = server._dispatch_tool(
                 "sw_context_for_item", {"item_id": "item", "kb_name": "proj"}
             )
@@ -2821,16 +2819,8 @@ class TestContextPreviewParity:
         return pull, context
 
     @pytest.mark.parametrize("surface", ["cli", "mcp"])
-    @pytest.mark.parametrize(
-        "direction",
-        [
-            pytest.param(
-                "outgoing",
-                marks=pytest.mark.control(reason="outgoing context was already counted"),
-            ),
-            "incoming",
-        ],
-    )
+    @pytest.mark.parametrize("direction", ["outgoing", "incoming"])
+    @pytest.mark.parametrize("named_kb", [True, False], ids=["named", "unnamed"])
     @pytest.mark.parametrize("relation", ["related_to", "affects", "explains"])
     @pytest.mark.parametrize(
         "entry_type,bucket,expected",
@@ -2849,7 +2839,7 @@ class TestContextPreviewParity:
         ],
     )
     def test_counts_both_link_directions(
-        self, world, surface, direction, relation, entry_type, bucket, expected
+        self, world, surface, direction, named_kb, relation, entry_type, bucket, expected
     ):
         item_links = (
             [{"target": "context", "relation": relation}] if direction == "outgoing" else []
@@ -2862,10 +2852,12 @@ class TestContextPreviewParity:
         )
         self._entry(world, "context", entry_type, links=context_links)
 
-        pull, context = self._read(world, surface)
+        pull, context = self._read(world, surface, named_kb)
 
         assert pull["recommendation"]["id"] == "item"
+        assert pull["recommendation"]["kb_name"] == "proj"
         assert [entry["id"] for entry in context[bucket]] == ["context"]
+        assert context[bucket][0]["body_preview"] == "Context body."
         assert pull["context_preview"] == expected
         assert pull["context_preview"] == {
             "adr_count": len(context["adrs"]),
@@ -2949,6 +2941,44 @@ class TestContextPreviewParity:
         assert pull["recommendation"] is None
         assert pull["reason"] == reason
         assert "context_preview" not in pull
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_unnamed_kb_still_checks_blockers(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "unfinished", "relation": "blocked_by"}],
+        )
+        self._entry(world, "unfinished", "backlog_item", kind="feature", status="proposed")
+
+        named, _ = self._read(world, surface)
+        unnamed, _ = self._read(world, surface, named_kb=False)
+
+        assert unnamed == named
+        assert unnamed["recommendation"] is None
+        assert unnamed["blocked_items"][0]["blocked_by"] == ["unfinished"]
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_context_preview_truncates_the_linked_body(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "context", "relation": "related_to"}],
+        )
+        body = "Context detail. " * 30
+        world.add_entry(
+            "proj", "---\nid: context\ntype: component\ntitle: Context\n---\n" + body + "\n"
+        )
+
+        _, context = self._read(world, surface, named_kb=False)
+
+        assert context["components"][0]["body_preview"] == body[:200]
 
 
 # =========================================================================

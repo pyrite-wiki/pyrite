@@ -27,7 +27,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 ## Quick Start
 
 ```bash
-# Install (no PyPI wheel yet -- from source). Needs Python 3.11+.
+# Install (no PyPI wheel yet -- from source). Needs Python 3.11+ (3.11.5 or newer for the patched `soupsieve`).
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
@@ -195,6 +195,7 @@ Eleven built-in entry types: `note`, `person`, `organization`, `event`, `documen
 Extensions implement a Python protocol class with up to 20 methods:
 
 - `get_entry_types()` — custom entry types with serialization
+- [`get_type_mappings()`](kb/components/pyrite-plugin-protocol.md) — the core types a create stores as one of the plugin's own
 - `get_type_metadata()` — field definitions, AI instructions, presets
 - `get_collection_types()` — custom collection types
 - `get_mcp_tools(tier)` — per-tier MCP tools

@@ -303,8 +303,13 @@ def test_non_regular_entry_is_reported_before_parse(env, sync):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+@pytest.mark.control(reason="a link to a file the walk skips is followed and indexed, as before")
 def test_symlink_to_regular_markdown_remains_indexable(env):
-    target = env.write("real.md", _note("real", "Real"))
+    """A link is followed to the regular file it names, not skipped as
+    non-regular. The target sits where the walk does not look, so the link is
+    the only walked name; a link to a file the walk also lists is an alias,
+    indexed at its target (#1262, tests/test_in_kb_link_is_an_alias.py)."""
+    target = env.write("_templates/real.md", _note("real", "Real"))
     (env.root / "alias.md").symlink_to(target)
 
     result = env.im.sync_incremental(KB)
