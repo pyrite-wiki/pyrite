@@ -1,0 +1,1 @@
+- `pyrite timeline --sort` and `pyrite list-entries --sort-by`/`--sort-order` now validate their values, refusing invalid sort columns or directions before running (#1387).
