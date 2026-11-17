@@ -150,7 +150,7 @@ TASK_RESOLVED_STATUSES = ("done", "cancelled")
 #: `CORE_TYPES` spells a field: a task's `priority` is a number, so every
 #: reader of the index returns it as one (#1503, decision (a) of 2026-11-17).
 #: No default is declared, so a create adds nothing to the file.
-TASK_TYPE_METADATA = {
+TASK_TYPE_METADATA: dict[str, Any] = {
     "settled_statuses": list(TASK_RESOLVED_STATUSES),
     "fields": {"priority": "int"},
 }
