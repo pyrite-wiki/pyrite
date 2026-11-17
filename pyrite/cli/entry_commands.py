@@ -337,8 +337,10 @@ def register_entry_commands(app: typer.Typer) -> None:
         allow_undeclared: bool = typer.Option(
             False,
             "--allow-undeclared",
-            help="Allow entry types not declared in the KB's kb.yaml (the "
-            "entry will be flagged by `pyrite index health`).",
+            help="Allow an entry_type the KB does not declare. Only a KB whose "
+            "kb.yaml declares types refuses others (core types included); "
+            "`pyrite index health` then lists the entry. A KB that declares no "
+            "types accepts any type.",
         ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
@@ -503,8 +505,10 @@ def register_entry_commands(app: typer.Typer) -> None:
         allow_undeclared: bool = typer.Option(
             False,
             "--allow-undeclared",
-            help="Allow entry types not declared in the KB's kb.yaml (the "
-            "entry will be flagged by `pyrite index health`).",
+            help="Allow an entry_type the KB does not declare. Only a KB whose "
+            "kb.yaml declares types refuses others (core types included); "
+            "`pyrite index health` then lists the entry. A KB that declares no "
+            "types accepts any type.",
         ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:

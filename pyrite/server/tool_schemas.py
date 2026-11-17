@@ -793,7 +793,7 @@ WRITE_TOOLS = {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Participants involved (for events)",
+                    "description": "Participants involved (for events; written to the file as `actors`)",
                 },
                 "role": {
                     "type": "string",
@@ -809,7 +809,7 @@ WRITE_TOOLS = {
                 },
                 "allow_undeclared": {
                     "type": "boolean",
-                    "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+                    "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
                 },
             },
             "required": ["kb_name", "entry_type", "title"],
@@ -856,7 +856,7 @@ WRITE_TOOLS = {
                 },
                 "allow_undeclared": {
                     "type": "boolean",
-                    "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+                    "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
                 },
             },
             "required": ["kb_name", "entries"],
@@ -880,7 +880,7 @@ WRITE_TOOLS = {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Participants involved (for events)",
+                    "description": "Participants involved (for events; written to the file as `actors`)",
                 },
                 "metadata": {
                     "type": "object",

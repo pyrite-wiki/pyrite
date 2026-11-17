@@ -395,7 +395,11 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 All are `retryable: false` except `CONFLICT` (always `true`) and `STORAGE_ERROR`
 (`true` only for a locked database). REST reports a refusal as
 `{"detail": {"code", "message", "retryable": false, "hint"?, "declared_types"?}}`
-with status `400` (`409` for `ENTRY_EXISTS`). REST `CONFLICT` is `409` with
+with status `400` (`409` for `ENTRY_EXISTS`).
+An update whose candidate entry raises `EntryLoadError` returns `422` with
+`VALIDATION_FAILED` and, when fields are isolated, one `errors` row with
+`rule: "entry_load"` per refused field.
+REST `CONFLICT` is `409` with
 `{"detail": {"code", "message"}}`, no `retryable` key; treat it as retryable.
 `STORAGE_ERROR` is `500` and carries `retryable`. MCP and the CLI use the error
 shape above.

@@ -1,7 +1,9 @@
-"""REST import runs the importer and the bulk write off the event loop.
+"""REST import runs the importer off the event loop.
 
-``import_entries`` is ``async`` and used to parse the upload and write every
-entry on the loop, so one large import held up every other request.
+``import_entries`` is ``async`` and used to parse the upload on the loop, so
+one large import held up every other request. The bulk write is not covered
+here: the stand-in importer returns an empty list, so only the importer's
+concurrency is exercised.
 """
 
 from __future__ import annotations

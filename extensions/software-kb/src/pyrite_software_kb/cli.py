@@ -1010,8 +1010,15 @@ def _refusal_rendered(call, fmt: str):
     ``sqlite3.OperationalError`` from a lookup that reads the index) is
     answered as the MCP dispatcher answers it: its traceback goes to the log,
     and the CLI prints ``INTERNAL``, retryable, with the fixed message and none
-    of the exception's text (#1585)."""
+    of the exception's text (#1585).
+
+    The CLI's own control-flow exceptions (Click's and Typer's ``Exit``,
+    ``Abort``, ``BadParameter``) and ``MemoryError`` are re-raised rather than
+    swallowed into an ``INTERNAL`` response: unlike the MCP dispatcher which
+    catches all ``Exception`` subclasses, the CLI lets ``MemoryError`` propagate
+    so fatal out-of-memory errors terminate the process immediately (#1630)."""
     import click
+    import typer
 
     from pyrite.exceptions import INTERNAL_PUBLIC_MESSAGE, PyriteError
     from pyrite.utils.errors import cli_error, cli_error_from
@@ -1020,7 +1027,14 @@ def _refusal_rendered(call, fmt: str):
         return call()
     except PyriteError as e:
         cli_error_from(e, fmt)
-    except (click.exceptions.ClickException, click.exceptions.Exit, click.exceptions.Abort):
+    except (
+        click.exceptions.ClickException,
+        click.exceptions.Exit,
+        click.exceptions.Abort,
+        typer.Exit,
+        typer.Abort,
+        typer.BadParameter,
+    ):
         raise  # the CLI's own control flow, not a fault
     except MemoryError:
         raise
