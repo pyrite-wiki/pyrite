@@ -28,8 +28,9 @@ pyrite init -t empty -p ./notes --name notes --no-examples
 with no KB named it lists the KBs you can read. `schema.types` lists the
 types `create` accepts in that KB: only the declared ones when `kb.yaml`
 declares any, otherwise the core types. `--detail brief` drops the write-side
-blocks (`ai_instructions`, `evaluation_rubric`, `guidelines`, `goals`); use
-the default, or `--detail full`, when you are about to write.
+blocks (`ai_instructions`, `evaluation_rubric`, `guidelines`, `goals`).
+`full` is the default and `--detail brief` is opt-in, so use the default (or
+`--detail full`, the same) when you are about to write.
 
 <!-- expect-text: "note" -->
 ```bash
