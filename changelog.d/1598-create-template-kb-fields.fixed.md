@@ -1,0 +1,1 @@
+- **`pyrite create -k <kb> -t <type> --template` now shows the fields a create of that type in that KB would write (#1598).** The skeleton used to come from the core types only, so a `backlog_item` skeleton had none of the fields a real create writes, and a type the KB does not declare was not refused. Without `-k`, the skeleton is unchanged.

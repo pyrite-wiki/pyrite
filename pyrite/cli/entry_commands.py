@@ -354,17 +354,40 @@ def register_entry_commands(app: typer.Typer) -> None:
                 "title": title or "Your Title Here",
                 "tags": [],
             }
-            # Add type-specific fields as empty values
-            type_info = CORE_TYPES.get(entry_type, {})
-            for field_name, field_type in type_info.get("fields", {}).items():
-                if field_name in ("tags", "links"):
-                    continue
-                if "list" in field_type:
-                    fm[field_name] = []
-                elif field_type == "int":
-                    fm[field_name] = 0
-                else:
-                    fm[field_name] = ""
+            if kb_name is not None:
+                # A KB's skeleton shows the fields a create of this type in
+                # this KB would write, read from the same place (#1598).
+                # Opening the context refuses a -k that names no KB the way
+                # a create does (KB_NOT_FOUND).
+                with cli_context(kbs=(kb_name,)) as (config, db, svc):
+                    kb_config = config.get_kb(kb_name)
+                    assert kb_config is not None  # cli_context resolved -k above
+                    try:
+                        fm.update(
+                            svc.create_template_fields(
+                                entry_type, kb_config, allow_undeclared=allow_undeclared
+                            )
+                        )
+                    except ValidationError as e:
+                        raise _with_cli_hint(e) from None
+                    # The preview's own base fields, not the built entry's.
+                    fm["id"] = ""
+                    fm["type"] = entry_type
+                    fm["title"] = title or "Your Title Here"
+                    fm["tags"] = []
+                    fm["importance"] = importance
+            else:
+                # Add type-specific fields as empty values
+                type_info = CORE_TYPES.get(entry_type, {})
+                for field_name, field_type in type_info.get("fields", {}).items():
+                    if field_name in ("tags", "links"):
+                        continue
+                    if "list" in field_type:
+                        fm[field_name] = []
+                    elif field_type == "int":
+                        fm[field_name] = 0
+                    else:
+                        fm[field_name] = ""
             skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
 
             def raw(console: Console, data: dict) -> None:

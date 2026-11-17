@@ -1720,6 +1720,30 @@ class KBService:
                 attributes[field] = None
         return {**fields, **added}, attributes
 
+    def create_template_fields(
+        self, entry_type: str, kb_config: KBConfig, *, allow_undeclared: bool = False
+    ) -> dict[str, Any]:
+        """The fields a create of this type in this KB would write, with their values (#1598).
+
+        Read-only: the entry is built the way :meth:`_prepare` builds one
+        (:meth:`_with_declared_fields` + :func:`build_entry`), but nothing is
+        checked against the filesystem and nothing is written, so a preview
+        never refuses an id that already exists and never runs a validator
+        on placeholder values. The base fields the skeleton sets itself
+        (``id``, ``title``, ``type``, ``tags``, ``importance``) are left
+        out; the caller adds those. An undeclared type is refused exactly
+        as a create refuses it, unless `allow_undeclared` says otherwise.
+        """
+        if not allow_undeclared:
+            self._refuse_undeclared_type(entry_type, kb_config.name, kb_config)
+        fields, attributes = self._with_declared_fields(entry_type, kb_config, {})
+        entry = build_entry(entry_type, entry_id="", title="Your Title Here", body="", **fields)
+        entry._create_fields = attributes
+        meta = entry.declared_frontmatter()
+        for key in ("id", "title", "type", "tags", "importance"):
+            meta.pop(key, None)
+        return meta
+
     def _prepare_and_save(
         self,
         kb_name: str,
