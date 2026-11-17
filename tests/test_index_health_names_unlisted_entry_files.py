@@ -239,6 +239,39 @@ def test_cli_index_health_names_the_file_and_exits_zero(tmp_path, cli_world):
     assert "README.md (" not in text.output  # the hand-kept README is not named
 
 
+def test_cli_kb_health_text_names_the_pointer_when_files_exist(tmp_path, cli_world):
+    root = _world_kb(tmp_path)
+    world = cli_world(kbs=[KBConfig(name=KB, path=root, kb_type="generic")])
+
+    text = world.cli("kb", "health", "-k", KB, "--format", "rich")
+    assert text.exit_code == 0, text.output
+    assert "1 entry file the index does not list; `pyrite index health` names them" in text.output
+    assert "notes/readme.md" not in text.output
+
+
+def test_cli_kb_health_text_prints_plural_entry_files_when_multiple(tmp_path, cli_world):
+    root = _world_kb(tmp_path)
+    (root / "_templates").mkdir(parents=True)
+    (root / "_templates" / "t.md").write_text(_note("tmpl", "Template"))
+    world = cli_world(kbs=[KBConfig(name=KB, path=root, kb_type="generic")])
+
+    text = world.cli("kb", "health", "-k", KB, "--format", "rich")
+    assert text.exit_code == 0, text.output
+    assert "2 entry files the index does not list; `pyrite index health` names them" in text.output
+
+
+def test_cli_kb_health_text_prints_nothing_about_unlisted_files_when_zero(tmp_path, cli_world):
+    root = tmp_path / "clean_kb"
+    (root / "notes").mkdir(parents=True)
+    (root / "notes" / "a.md").write_text(_note("a", "A"))
+    world = cli_world(kbs=[KBConfig(name="clean", path=root, kb_type="generic")])
+
+    text = world.cli("kb", "health", "-k", "clean", "--format", "rich")
+    assert text.exit_code == 0, text.output
+    assert "the index does not list" not in text.output
+    assert "pyrite index health" not in text.output
+
+
 #: Every surface that returns an index-health answer, with what it carries
 #: for `unlisted_entry_files` (maintainer, 2026-11-17, issue #1552): the local
 #: CLI's `pyrite index health` names the files; every answer built by

@@ -37,6 +37,7 @@ from ..exceptions import (
     StorageBusyError,
     StorageError,
     UndeclaredTypeError,
+    UpdateWouldNotLoadError,
     ValidationError,
     kb_origin,
     outside_text,
@@ -2390,6 +2391,8 @@ class KBService:
             new_bytes = new_text.encode("utf-8")
             try:
                 new_entry = repo.load_entry_from_bytes(path, new_bytes)
+            except EntryLoadError as e:
+                raise UpdateWouldNotLoadError(entry_id, e) from e
             except Exception as e:
                 raise ValidationError(
                     f"Cannot update '{entry_id}': the result would not load ({outside_text(e)})"

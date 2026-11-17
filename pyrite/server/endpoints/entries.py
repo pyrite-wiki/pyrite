@@ -606,7 +606,11 @@ async def import_entries(
         None, description="Format: json, markdown, csv (auto-detected from extension if omitted)"
     ),
     allow_undeclared: bool = Query(
-        False, description="Allow entry types the KB's kb.yaml does not declare"
+        False,
+        description="Allow an entry_type the KB does not declare. Only a KB whose "
+        "kb.yaml declares types refuses others (core types included); "
+        "`pyrite index health` then lists the entry. A KB that declares no "
+        "types accepts any type.",
     ),
     stream: bool = Query(
         False,
