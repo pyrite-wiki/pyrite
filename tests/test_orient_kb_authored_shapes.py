@@ -197,6 +197,8 @@ TAGGED_COLLECTION_KINDS = {"local-tag-mapping", "local-tag-list", "str-tag-on-li
 #: What Pyrite's loader reads for a recursive alias: null where the alias
 #: recurses (ruamel does this; entry frontmatter reads the same). PyYAML builds
 #: a real cycle instead, which no JSON carries; #1602 tracks refusing it.
+#: This records what the loader does today. It is not evidence that null is
+#: the right answer for a recursive alias; #1602 owns that question.
 RECURSIVE_AS_PYRITE_READS = {"recursive-map": {"self": None}, "recursive-list": ["x", None]}
 RECURSIVE_POSITIONS = ("top", "mapping-value", "list-item")
 
@@ -381,4 +383,120 @@ def test_an_empty_str_tagged_value_is_omitted_like_an_empty_string(tmp_path):
     )["kb_authored"]
     assert authored["goals"] == "12"
     assert "guidelines" not in authored and "evaluation_rubric" not in authored
+    assert "malformed" not in authored
+
+
+# --- Two things that become one, or less than was written (#1568, round 1) ---
+#
+# Every answer below is written by hand from the property: a value under a
+# kb_authored key comes back whole as written, or is withheld whole with one
+# `malformed` entry whose reason is true of what happened.
+
+COLLISION_REASON = "a mapping with two keys that are the same string"
+
+#: A mapping where two keys are the same string once a `!!str` key is read as
+#: the string it says. The loader does not refuse these as duplicate keys (a
+#: tagged key is not equal to a plain one), so dropping one value would be
+#: silent. Each is the whole value at a position, as flow text.
+COLLISIONS = {
+    "tagged-then-plain": "{!!str tone: first, tone: second}",
+    "plain-then-tagged": "{tone: first, !!str tone: second}",
+    "tagged-number-and-quoted-number": "{!!str 1: x, '1': y}",
+    "tagged-and-tagged": "{!!str a: 1, !!str a: 2}",
+    "tagged-and-tagged-quoted": "{!!str 1: x, !!str '1': y}",
+    "tagged-long-form-and-plain": "{!<tag:yaml.org,2002:str> a: 1, a: 2}",
+    "merged-tagged-key-and-own-key": "{<<: {!!str a: 1}, a: 2}",
+}
+
+#: A merge key (`<<`) whose source carries a tag: the loaded value still holds
+#: its sources, each with its tag, so the tag is not dropped silently.
+TAGGED_MERGES = {
+    "local-tag-source": "{<<: !note {a: 1}, b: 2}",
+    "str-tag-source": "{<<: !!str {a: 1}, b: 2}",
+    "uri-tag-source": "{<<: !<tag:example.com,2026:x> {a: 1}, b: 2}",
+    "tagged-source-in-a-list": "{<<: [!note {a: 1}, {c: 2}], b: 2}",
+    "tag-on-the-sources-own-merge": "{<<: {<<: !note {a: 1}, c: 1}, b: 2}",
+}
+GRID_POSITIONS = ("top", "mapping-value", "list-item", "two-down")
+TWO_FIELDS = [("guidelines",), ("types", "note", "goals")]
+
+
+def _cells_for(cases):
+    for field in TWO_FIELDS:
+        for name in cases:
+            for position in GRID_POSITIONS:
+                yield pytest.param(field, name, position, id=f"{'.'.join(field)}-{name}-{position}")
+
+
+def _withheld_whole(tmp_path, field, text, position, reason):
+    config = _config(tmp_path, _kb_yaml_text(field, POSITIONS[position].format(text)))
+    read_kb_yaml(config.knowledge_bases[0].path)  # the loader reads it: no skip, no excuse
+    authored = _orient_config(config)["kb_authored"]
+    key = ".".join(field)
+    assert _at(authored, field) is _ABSENT
+    assert authored.get("malformed") == [{"key": key, "reason": reason}]
+
+
+@pytest.mark.parametrize(("field", "name", "position"), list(_cells_for(COLLISIONS)))
+def test_two_keys_that_are_the_same_string_withhold_the_whole_value(
+    tmp_path, field, name, position
+):
+    _withheld_whole(tmp_path, field, COLLISIONS[name], position, COLLISION_REASON)
+
+
+@pytest.mark.parametrize(("field", "name", "position"), list(_cells_for(TAGGED_MERGES)))
+def test_a_tagged_merge_source_is_withheld_like_any_tagged_mapping(tmp_path, field, name, position):
+    _withheld_whole(tmp_path, field, TAGGED_MERGES[name], position, TAG_REASON)
+
+
+def test_a_tagged_key_and_an_int_key_stay_the_key_reason(tmp_path):
+    """`!!str 1` and the integer key `1` print alike; the int key is the first
+    thing wrong, so this was and stays the key reason."""
+    _withheld_whole(tmp_path, ("guidelines",), "{!!str 1: x, 1: y}", "top", KEY_REASON)
+
+
+@pytest.mark.control(
+    reason="the own key overriding a merged one is YAML's defined merge, as on dev"
+)
+def test_an_own_key_overriding_a_merged_key_is_the_one_value(tmp_path):
+    authored = _orient(tmp_path, "name: k\nguidelines: {<<: {a: 1, c: 3}, a: 2}\n")["kb_authored"]
+    assert authored["guidelines"] == {"a": 2, "c": 3}
+    assert "malformed" not in authored
+
+
+def test_a_tag_on_a_list_of_merge_sources_is_a_limit_not_a_withhold(tmp_path):
+    """LIMIT, not a property: the loader flattens `<<: !note [{a: 1}]` into
+    plain source mappings and the list's tag is gone from the loaded value, so
+    the value comes back with the tag dropped, as on dev. Fixing it means the
+    loader; a follow-up issue owns it. If this starts failing, the loader keeps
+    the tag now: withhold it and move this case into TAGGED_MERGES."""
+    for n, text in enumerate(("{<<: !note [{a: 1}], b: 2}", "{<<: !!seq [{a: 1}], b: 2}")):
+        sub = tmp_path / str(n)
+        sub.mkdir()
+        authored = _orient(sub, f"name: k\nguidelines: {text}\n")["kb_authored"]
+        assert authored["guidelines"] == {"b": 2, "a": 1}
+        assert "malformed" not in authored
+
+
+#: The core tags the loader resolves before orient sees the value. They are
+#: YAML's own types, read as YAML defines them, and the result is returned: a
+#: tag is withheld only when the loader keeps it. Written by hand (YAML 1.1
+#: tag repository).
+RESOLVED_CORE_TAGS = {
+    "!!int '12'": 12,
+    "!!float 12": 12.0,
+    "!!bool yes": True,
+    "!<tag:yaml.org,2002:str> 12": "12",
+    "!!map {a: b}": {"a": "b"},
+    "!!seq [a, b]": ["a", "b"],
+    "!<tag:yaml.org,2002:map> {a: b}": {"a": "b"},
+    "!<tag:yaml.org,2002:seq> [a, b]": ["a", "b"],
+}
+
+
+@pytest.mark.control(reason="resolved by the loader before orient: the same on dev")
+@pytest.mark.parametrize("text", list(RESOLVED_CORE_TAGS))
+def test_a_core_tag_the_loader_resolves_is_read_as_yaml_defines_it(tmp_path, text):
+    authored = _orient(tmp_path, f"name: k\nguidelines: {text}\n")["kb_authored"]
+    assert _same(authored["guidelines"], RESOLVED_CORE_TAGS[text])
     assert "malformed" not in authored
