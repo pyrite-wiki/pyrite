@@ -182,7 +182,7 @@ def wiki_stats(
 @wiki_app.command("stubs")
 def wiki_stubs(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    limit: int = typer.Option(20, "--limit", "-n", help="Number of results"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="Number of results"),
 ):
     """List stub articles needing expansion."""
     from pyrite.storage.database import PyriteDB
