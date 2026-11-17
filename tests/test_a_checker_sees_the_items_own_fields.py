@@ -137,6 +137,16 @@ due_date: "2026-12-01"
 ---
 ticket body
 """,
+    # The same kb.yaml type with an empty priority: "" in the column AND the bag.
+    "ticket-empty": """\
+---
+id: ticket-empty
+title: A ticket with an empty priority
+type: ticket
+priority: ""
+---
+ticket body
+""",
     # A core type whose `date` is an attribute: in the column only.
     "event": """\
 ---
@@ -397,6 +407,30 @@ def _location_cells():
 def test_has_field_reads_a_field_wherever_the_index_stores_it(answers, location, caller):
     _criterion, item = LOCATIONS[location]
     assert answers[caller][item][f"at-{location}"] is True, (caller, item, location)
+
+
+#: item -> its kind: an empty field (`priority: ""`) is missing whether the
+#: index keeps it in the column only (a plugin class) or in the column and the
+#: bag (a kb.yaml type with protocols), so `priority_present`, which asks for
+#: a key, gives one answer for both.
+EMPTY_PRIORITY = {"bare": "plugin-class", "ticket-empty": "kb-yaml-type"}
+
+
+def _empty_cells():
+    cells = []
+    for item, kind in EMPTY_PRIORITY.items():
+        callers = CALLERS if "backlog_item" in FILES[item] else ("qa-entry", "qa-kb")
+        for caller in callers:
+            marks = []
+            if kind == "plugin-class":
+                marks.append(pytest.mark.control(reason="no bag copy: missing on dev too"))
+            cells.append(pytest.param(item, caller, id=f"{kind}-{caller}", marks=marks))
+    return cells
+
+
+@pytest.mark.parametrize(("item", "caller"), _empty_cells())
+def test_an_empty_field_is_missing_for_every_kind_of_type(answers, item, caller):
+    assert answers[caller][item]["priority_present"] is False, (caller, item)
 
 
 #: The built-in board's checker verdicts for each backlog item, by hand:

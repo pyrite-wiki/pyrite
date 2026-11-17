@@ -181,9 +181,11 @@ class QAService:
         """
         issues: list[dict[str, Any]] = []
 
+        # The whole row: the rubric's checkers see every field column
+        # (`checker_entry`, #1587); the other checks read the columns they
+        # always read (below).
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+            "SELECT * FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
             {"entry_id": entry_id, "kb_name": kb_name},
         )
 
@@ -205,7 +207,23 @@ class QAService:
                 self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
             return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
-        entry = rows[0]
+        row = rows[0]
+        # The columns the field and schema checks have always read: the
+        # schema check validates every key it is handed (`_validation_fields`).
+        entry = {
+            k: row[k]
+            for k in (
+                "id",
+                "kb_name",
+                "entry_type",
+                "title",
+                "date",
+                "importance",
+                "body",
+                "status",
+                "metadata",
+            )
+        }
         self._check_entry_fields(entry, issues)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         # The checks below read the KB's folder (its files, its kb.yaml).
@@ -213,7 +231,7 @@ class QAService:
             self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
             sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
             self._check_schema_validation(entry, issues, sources.get(entry_id))
-            self._check_rubric_evaluation(entry, issues)
+            self._check_rubric_evaluation(row, issues)
 
         return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
@@ -2042,8 +2060,7 @@ class QAService:
             key = (issue.get("entry_id", ""), issue.get("kb_name", ""))
             by_entry.setdefault(key, []).append(issue)
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name ORDER BY id",
+            "SELECT * FROM entry WHERE kb_name = :kb_name ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -2149,7 +2166,9 @@ class QAService:
         return action if isinstance(action, str) and action in ("warn", "fail") else "fail"
 
     def _check_rubric_evaluation(self, entry: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-        """Run rubric checks on a single entry."""
+        """Run rubric checks on a single entry: ``entry`` is its whole index
+        row (``SELECT *``), from which ``checker_entry`` builds what the
+        checkers see, as a gate builds it (#1587)."""
         entry_id = entry["id"]
         kb_name = entry["kb_name"]
         entry_type = entry.get("entry_type", "")
@@ -2158,19 +2177,9 @@ class QAService:
         if not rubric_items:
             return
 
-        # Enrich entry with tag count and outlink count for checkers
-        enriched = dict(entry)
-        tag_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry_tag WHERE entry_id = :eid AND kb_name = :kb",
-            {"eid": entry_id, "kb": kb_name},
-        )
-        enriched["_tag_count"] = tag_rows[0]["cnt"] if tag_rows else 0
+        from .checker_entry import checker_entry
 
-        link_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM link WHERE source_id = :eid AND source_kb = :kb",
-            {"eid": entry_id, "kb": kb_name},
-        )
-        enriched["_outlink_count"] = link_rows[0]["cnt"] if link_rows else 0
+        enriched = checker_entry(self.db, entry)
 
         kb_config = self.config.get_kb(kb_name)
         kb_schema = kb_config.kb_schema if kb_config else None
