@@ -352,10 +352,14 @@ def test_the_walk_finds_the_known_loaders():
 #: The receivers, from the code: every registered MCP tool and every `pyrite
 #: sw` command that reaches `_board_config`. A new one with no arguments in
 #: MCP_CALLS or CLI_CALLS fails here.
-BOARD_TOOLS = sorted(
+DERIVED_TOOLS = {
     t for t, h in _registered_tools().items() if h in _plugin_methods_that_load_a_board()
-)
-BOARD_COMMANDS = sorted(_cli_commands_that_load_a_board())
+}
+DERIVED_COMMANDS = _cli_commands_that_load_a_board()
+#: United with the argument tables so the test ids are the same on any tree
+#: (verify-red compares them); each cell asserts the receiver is derived.
+BOARD_TOOLS = sorted(DERIVED_TOOLS | set(MCP_CALLS))
+BOARD_COMMANDS = sorted(DERIVED_COMMANDS | set(CLI_CALLS))
 
 
 # -- a board that cannot be loaded: one refusal, everywhere ----------------------
@@ -365,6 +369,7 @@ BOARD_COMMANDS = sorted(_cli_commands_that_load_a_board())
 @pytest.mark.parametrize("tool", BOARD_TOOLS)
 def test_a_board_that_cannot_be_loaded_refuses_over_mcp(world, tool, shape, tmp_path, monkeypatch):
     assert tool in MCP_CALLS, f"{tool} loads a board config: give it arguments in MCP_CALLS"
+    assert tool in DERIVED_TOOLS, f"{tool} no longer reaches _board_config"
     _break_the_board(world, shape, tmp_path, monkeypatch)
     before = _snapshot(world)
 
@@ -380,6 +385,7 @@ def test_a_board_that_cannot_be_loaded_refuses_on_the_cli(
     world, command, shape, tmp_path, monkeypatch
 ):
     assert command in CLI_CALLS, f"`pyrite {command}` loads a board config: add it to CLI_CALLS"
+    assert command in DERIVED_COMMANDS, f"`pyrite {command}` no longer reaches _board_config"
     _break_the_board(world, shape, tmp_path, monkeypatch)
     before = _snapshot(world)
 
@@ -466,6 +472,7 @@ def test_refine_naming_no_kb_is_refused_over_mcp(world):
         assert answer["error_code"] == "VALIDATION_FAILED", answer
 
 
+@pytest.mark.control(reason="the built-in board against rules this PR adds: no base to be red on")
 def test_the_built_in_board_passes_the_loaders_own_checks():
     from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG, _validated
 
