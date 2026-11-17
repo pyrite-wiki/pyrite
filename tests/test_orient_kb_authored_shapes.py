@@ -397,14 +397,15 @@ COLLISION_REASON = "a mapping with two keys that are the same string"
 #: A mapping where two keys are the same string once a `!!str` key is read as
 #: the string it says. The loader does not refuse these as duplicate keys (a
 #: tagged key is not equal to a plain one), so dropping one value would be
-#: silent. Each is the whole value at a position, as flow text.
+#: silent. Each is the whole value at a position, as flow text. (The long form
+#: `!<tag:yaml.org,2002:str> a` is resolved to a plain string by the loader,
+#: which then refuses the duplicate itself: not a case here.)
 COLLISIONS = {
     "tagged-then-plain": "{!!str tone: first, tone: second}",
     "plain-then-tagged": "{tone: first, !!str tone: second}",
     "tagged-number-and-quoted-number": "{!!str 1: x, '1': y}",
     "tagged-and-tagged": "{!!str a: 1, !!str a: 2}",
     "tagged-and-tagged-quoted": "{!!str 1: x, !!str '1': y}",
-    "tagged-long-form-and-plain": "{!<tag:yaml.org,2002:str> a: 1, a: 2}",
     "merged-tagged-key-and-own-key": "{<<: {!!str a: 1}, a: 2}",
 }
 

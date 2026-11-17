@@ -223,11 +223,18 @@ class KBSchema:
         named under `malformed` with the reason for its first such node: NaN
         or an infinity; a number too large for JSON (`1.0e+400`, which reads
         as infinite); a date or timestamp; binary; a set; ordered pairs
-        (`!!pairs`, `!!omap`); a mapping key that is not a string; any
-        explicit YAML tag other than `!!str` on a scalar (a local `!note`, a
-        URI tag, `!!python/...`, or any tag on a mapping or list, `!!str`
-        included), one reason for all of them that never prints the tag. A
-        `!!str`-tagged scalar, as a value or a mapping key, is the string.
+        (`!!pairs`, `!!omap`); a mapping key that is not a string; a mapping
+        with two keys that are the same string (`!!str a` beside `a`, which
+        would otherwise lose a value); and an explicit YAML tag the loader
+        keeps: a local `!note`, a URI tag, `!!python/...`, or `!!str` on a
+        mapping or list, and a tagged merge source (`<<: !note {...}`), one
+        reason for all of them that never prints the tag. The core tags the
+        loader resolves before this sees the value are not withheld: `!!int
+        "12"` is `12`, `!!float 12` is `12.0`, `!!bool yes` is `true`, `!!map`
+        and `!!seq` are the plain mapping and list, and a `!!str` scalar, in
+        its short or long form, as a value or a mapping key, is the string.
+        Limit: a tag on a LIST of merge sources (`<<: !note [{a: 1}]`) is gone
+        from the loaded value, so it comes back merged with the tag dropped.
         A recursive alias (`&a {self: *a}`) is not withheld: it comes back
         with null where the alias recurses, because that is how Pyrite's YAML
         loader reads it (#1602 tracks refusing it). A field
@@ -569,6 +576,7 @@ _NOT_PLAIN_JSON = {
     "nan": "a NaN or infinite number, which JSON cannot carry",
     "too_large": "a number too large for JSON (it reads as infinite)",
     "tag": "a value with a YAML tag, which JSON cannot carry as written",
+    "same_key": "a mapping with two keys that are the same string",
     "key": "a mapping with a key that is not a string",
     "date": "a YAML date or timestamp, which JSON cannot carry as written",
     "binary": "a YAML binary value, which JSON cannot carry as written",
@@ -595,10 +603,16 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
     `!!omap` as an ordered mapping: JSON has neither); any explicit tag other
     than `!!str` on a scalar (`tag`: round-trip mode keeps a tagged scalar as
     a `TaggedScalar` and a tagged collection's tag on its `.tag`, and builds
-    nothing from it); and any mapping key that is not a string. A `!!str`
-    scalar is the string, as a value or a key. A null anywhere inside a value
-    is JSON null and comes back as written. A recursive alias is not seen
-    here: the loader has already put null where it recurses.
+    nothing from it, the same for a merge source, whose tag is on the source
+    the loaded value still holds); a mapping with two keys that are the same
+    string (`same_key`: a `!!str` key and a plain one that print alike); and
+    any mapping key that is not a string. The core tags the loader resolves
+    before this sees the value (`!!int`, `!!float`, `!!bool`, `!!null`,
+    `!!map`, `!!seq`, the long form of the string tag) are read as YAML
+    defines them and returned. A `!!str` scalar is the string, as a value or a
+    key. A null anywhere inside a value is JSON null and comes back as
+    written. A recursive alias is not seen here: the loader has already put
+    null where it recurses.
     """
     from ruamel.yaml.comments import CommentedOrderedMap, TaggedScalar
 
@@ -622,12 +636,24 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
     if isinstance(value, float):
         if math.isfinite(value):
             return float(value), None
+        # `ScalarFloat` is the loader's class for a number written as a number
+        # (`1.0e+400`), where a written `.inf` loads as a plain float. It is a
+        # class name, not an API: if ruamel renames it this fails safe, to the
+        # "nan" reason, which still withholds the value.
         return None, ("too_large" if type(value).__name__ == "ScalarFloat" else "nan")
     if isinstance(value, CommentedOrderedMap | tuple):
         return None, "pairs"
     if isinstance(value, dict):
         if has_tag(value):
             return None, "tag"
+        # A merge key (`<<`) is already folded into `items()`, but the loaded
+        # value still holds its sources, each with its own tag: a tagged
+        # source is withheld like any tagged mapping, not merged with the tag
+        # dropped. (A tag on a LIST of sources is gone by then: a limit.)
+        for source in getattr(getattr(value, "merge", None), "value", None) or []:
+            _, problem = _plain_json(source)
+            if problem is not None:
+                return None, problem
         out: dict[str, Any] = {}
         for k, v in value.items():
             if isinstance(k, TaggedScalar):
@@ -639,6 +665,8 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
             plain, problem = _plain_json(v)
             if problem is not None:
                 return None, problem
+            if k in out:  # `!!str a` beside `a`: one value would silently go
+                return None, "same_key"
             out[str(k)] = plain
         return out, None
     if isinstance(value, list):
