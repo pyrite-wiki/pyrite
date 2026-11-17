@@ -54,6 +54,11 @@ _EVENT_CONTROL = pytest.mark.control(
 )
 
 
+_ACCEPTS = pytest.mark.control(
+    reason="over-refusal guard: in-range and absent values were accepted before #1537 and must stay accepted"
+)
+
+
 def _kb(etype: str) -> str:
     """The KB a type is written to: the kb.yaml-only type lives in its own KB."""
     return YAML_KB if etype == "widget" else KB
@@ -194,6 +199,7 @@ def test_a_create_outside_1_to_10_is_refused_and_writes_nothing(world, etype, su
     assert _snapshot(world) == before
 
 
+@_ACCEPTS
 @types
 @surface
 @pytest.mark.parametrize("value", [*IN_RANGE, None], ids=lambda v: f"value-{v}")
@@ -219,6 +225,7 @@ def test_an_update_setting_it_outside_1_to_10_is_refused_and_changes_nothing(
     assert _snapshot(world) == before
 
 
+@_ACCEPTS
 @types
 @surface
 @pytest.mark.parametrize("value", IN_RANGE)
@@ -258,7 +265,12 @@ def _every_class() -> list:
     classes = {f"core-{n}": c for n, c in ENTRY_TYPE_REGISTRY.items()}
     classes.update({f"plugin-{n}": c for n, c in _plugin_types().items()})
     classes["generic"] = GenericEntry
-    return [pytest.param(c, id=i) for i, c in sorted(classes.items())]
+    from pyrite.models.core_types import EventEntry
+
+    return [
+        pytest.param(c, id=i, marks=[_EVENT_CONTROL] if issubclass(c, EventEntry) else [])
+        for i, c in sorted(classes.items())
+    ]
 
 
 @pytest.mark.parametrize("cls", _every_class())
@@ -272,6 +284,7 @@ def test_every_entry_class_carries_the_rule(cls, value):
     assert rows[0]["expected"] == "1-10"
 
 
+@_ACCEPTS
 @pytest.mark.parametrize("cls", _every_class())
 def test_every_entry_class_accepts_the_bounds_and_the_default(cls):
     for value in (1, 10):
