@@ -116,7 +116,8 @@ search vocabulary, not a second copy of the rules.
 - A `fix:` commit touches `tests/` (commit-msg hook, [[adr-0032]]).
 - A bug is tracked in one place; a fixing PR says `Fixes #N` ([[adr-0033]]).
 - The README's install and Quick Start run as written in a clean environment
-  ([[adr-0032]] release layer; [[design]] P9).
+  ([[adr-0032]] release layer; [[design]] P9). pyrite-mcp's install command and
+  its dependency on `pyrite` name the same tag as the README.
 
 ## ADRs in reading order
 
@@ -139,7 +140,8 @@ No component doc covers the process. Paths: `.github/workflows/`,
 `tests/test_release_rehearsal.py` (the verified-commit rule at its three
 surfaces; the lookup's failure modes are one list, `tests/verified_commit_cases.py`),
 `tests/test_task_claim_concurrency.py` (the xdist-safe pattern the pre-push
-suite needs), `tests/test_readme_install_tag.py`, `tests/test_readme.py`.
+suite needs), `tests/test_readme_install_tag.py`, `tests/test_pyrite_mcp_install.py`,
+`tests/test_readme.py`.
 
 ## Known gaps
 

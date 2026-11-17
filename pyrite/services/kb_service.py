@@ -3641,8 +3641,9 @@ class KBService:
             ),
         }
 
-    #: `orient`'s `detail` values. `full` is the default until 0.25.8
-    #: (maintainer, 2026-10-01); `brief` is the read session's answer.
+    #: `orient`'s `detail` values. `full` is the default and stays the default;
+    #: `brief` is opt-in, for a read session. The plan to make `brief` the
+    #: default was withdrawn (maintainer, 2026-11-16, #1540).
     ORIENT_DETAILS = ("brief", "full")
     #: What `detail="brief"` drops from `schema`, at the KB level and per type
     #: (and `guidelines` from the top level too): the blocks a caller needs to
