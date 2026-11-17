@@ -175,8 +175,20 @@ TEXT_FIELD_COLUMNS = (
 #: `decode_metadata` (imported above) is `utils.metadata.parse_metadata`: the
 #: one decoder of the `metadata` column, for the shaper and every consumer.
 
-_INTEGER_TEXT = re.compile(r"[+-]?\d+")
-_FLOAT_TEXT = re.compile(r"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?")
+#: The only text a ``number`` field's column is read as a number from: plain
+#: ASCII digits, no sign, no surrounding whitespace, no leading zero, no
+#: exponent, no digit from another script; a decimal has digits on both sides
+#: of its point. The maintainer's decision on #1628 (2026-11-17), the
+#: strictness of the importance rule (#1588): anything else (``"007"``,
+#: ``"+7"``, ``" 7 "``, ``"1e3"``, ``"٧"``) stays the text the file wrote, so
+#: a value read and written back cannot respell it.
+_WHOLE_TEXT = re.compile(r"0|[1-9][0-9]*", re.ASCII)
+_DECIMAL_TEXT = re.compile(r"(0|[1-9][0-9]*)\.[0-9]+", re.ASCII)
+
+#: How each backend spells a bool in a TEXT column: SQLite binds a bool as an
+#: integer (``"1"``/``"0"``); Postgres casts it on assignment (``"true"``/
+#: ``"false"``). Exactly these four, nothing folded or stripped.
+_CHECKBOX_TEXT = {"1": True, "0": False, "true": True, "false": False}
 
 
 def decode_aliases(raw: Any) -> list[Any]:
@@ -192,41 +204,29 @@ def decode_aliases(raw: Any) -> list[Any]:
     return []
 
 
-def _as_number(text: str) -> Any:
-    """A TEXT column's value as the number a ``number`` field holds: an
-    integer literal an int, a finite decimal literal a float. Any other text
-    is left as it is: the cast never loses a value (a file's ``priority:
-    high`` on a field declared a number reads ``"high"``, and ``qa`` reports
-    it)."""
-    stripped = text.strip()
-    if _INTEGER_TEXT.fullmatch(stripped):
-        return int(stripped)
-    if _FLOAT_TEXT.fullmatch(stripped):
-        value = float(stripped)
-        if math.isfinite(value):
+def read_declared_number(text: str) -> Any:
+    """A TEXT column's value as the number a ``number`` field holds: plain
+    ASCII whole-number text an int, plain decimal text a float, and only when
+    the number's own spelling is that text (``"7.50"`` stays text: the float
+    would write back as ``7.5``). Any other text is returned as it is: the cast
+    never loses or respells a value (a file's ``priority: high`` reads
+    ``"high"``, and ``qa validate`` reports it)."""
+    if _WHOLE_TEXT.fullmatch(text):
+        return int(text)
+    if _DECIMAL_TEXT.fullmatch(text):
+        value = float(text)
+        if math.isfinite(value) and repr(value) == text:
             return value
     return text
 
 
-def _as_checkbox(text: str) -> Any:
-    """A TEXT column's value as a ``checkbox`` field's bool: the index holds a
-    YAML bool as ``"1"``/``"0"`` (sqlite binds it as an integer); ``true`` and
-    ``false`` read the same. Any other text is left as it is."""
-    folded = text.strip().lower()
-    if folded in ("1", "true"):
-        return True
-    if folded in ("0", "false"):
-        return False
-    return text
-
-
 def _castable(value: Any) -> bool:
-    """Whether a column's value is text some declared type would read
-    differently (``_as_number``, ``_as_checkbox``)."""
+    """Whether a column's value is text some declared type reads differently
+    (``read_declared_number``, ``_CHECKBOX_TEXT``): the gate in front of the
+    schema lookup."""
     if not isinstance(value, str):
         return False
-    stripped = value.strip()
-    return bool(_FLOAT_TEXT.fullmatch(stripped)) or stripped.lower() in ("true", "false")
+    return value in _CHECKBOX_TEXT or read_declared_number(value) is not value
 
 
 def cast_declared_columns(row: dict[str, Any], field_types: Mapping[str, str]) -> None:
@@ -238,17 +238,18 @@ def cast_declared_columns(row: dict[str, Any], field_types: Mapping[str, str]) -
 
     Option (i) of the maintainer's decision on #1503 (2026-11-16): the cast
     reads the index's text, which cannot tell the file's ``7`` from its
-    ``"7"``, so a quoted number in a field declared a number reads as a
-    number. Nothing is written: the file keeps its spelling."""
+    ``"7"``, so a quoted ``"7"`` in a field declared a number reads as 7, and
+    a write of the value read stores 7 (the decision on #1628, 2026-11-17;
+    ``qa validate`` reports the text). A read writes nothing."""
     for key in TEXT_FIELD_COLUMNS:
         value = row.get(key)
         if not isinstance(value, str):
             continue
         kind = field_types.get(key)
         if kind == "number":
-            row[key] = _as_number(value)
+            row[key] = read_declared_number(value)
         elif kind == "checkbox":
-            row[key] = _as_checkbox(value)
+            row[key] = _CHECKBOX_TEXT.get(value, value)
 
 
 #: One `KBConfig` per (name, path) the index's `kb` table names, so its

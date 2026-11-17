@@ -117,15 +117,6 @@ EXPECTED: dict[str, dict[str, Any]] = {
     "b-one": {"priority": "high", "importance": 4, "aliases": [], "rank": 3, "metadata": {}},
 }
 
-#: The task's `priority` has no declared type on today's `dev`:
-#: `KBSchema.type_fields("task")` is `{}` (task is not in CORE_TYPES and no
-#: plugin declares field schemas). Declaring it is the open question on the
-#: pull request; until then a task's priority reads as the index's text on
-#: every index reader alike.
-UNDECLARED_TASK_PRIORITY = (
-    "task priority has no declared type in KBSchema.type_fields (#1503 plan, stop item)"
-)
-
 
 def _rows_check(rows: list[dict[str, Any]], *, reader: str, skip: set[str] = frozenset()) -> int:
     """Compare every row of a known entry with EXPECTED; return how many."""
@@ -378,7 +369,7 @@ def test_every_mcp_tool_is_classified():
 
 
 def _skips_for(tool: str) -> set:
-    skip: set = {("register-domain", "priority")}
+    skip: set = set()
     if tool == "kb_search":
         # The keyword row's `rank` is bm25 (a projection the search owns);
         # a declared `rank` is never lifted over a key the row already has.
@@ -404,45 +395,63 @@ def _task_priorities(world, tool: str) -> list[Any]:
     ]
 
 
-@pytest.mark.parametrize("tool", sorted(MCP_ROW_READERS))
-@pytest.mark.control(
-    reason="with no declared type a task's priority was text on every reader before the fix as after; pinned so the cast never reaches some readers and not others"
-)
-def test_a_task_priority_reads_as_kb_get_reads_it_on_every_mcp_row_reader(world, tool):
-    """The issue's case, the part that holds today: a task's `priority` has
-    one JSON type on every index reader, the single read's. With no declared
-    type (UNDECLARED_TASK_PRIORITY) that type is the index's text on all of
-    them; the next cell is the integer the issue asks for."""
-    reference = _mcp(world, "kb_get", {"kb_name": KB, "entry_id": "register-domain"})["entry"]
-    for value in _task_priorities(world, tool):
-        assert value == reference["priority"], (tool, value, reference["priority"])
-        assert type(value) is type(reference["priority"]), (tool, value)
+#: The row readers whose rows select the `priority` column (the keyword
+#: search row does not: its projection is the search's own).
+_PRIORITY_READERS = sorted(t for t in MCP_ROW_READERS if t != "kb_search")
 
 
-@pytest.mark.xfail(strict=True, reason=UNDECLARED_TASK_PRIORITY)
-@pytest.mark.parametrize("tool", sorted(MCP_ROW_READERS))
+@pytest.mark.parametrize("tool", _PRIORITY_READERS)
 def test_a_task_priority_reads_as_the_integer_in_the_file_on_every_mcp_row_reader(world, tool):
-    """`priority: 7` in a task file reads `7` on every index reader, as
-    `task_list` reads it. Strict xfail until `task` declares `priority` a
-    number where `KBSchema.type_fields` reads it (the stop item on #1628):
-    the day the cast arrives every cell XPASSes and fails, and the marker
-    comes off."""
+    """The issue's case: `priority: 7` in a task file reads `7` on every
+    index reader, as `task_list` reads it. `task` declares `priority` a
+    number (`TASK_TYPE_METADATA["fields"]`, decision (a) of 2026-11-17)."""
     values = _task_priorities(world, tool)
-    assert values, tool
+    assert values, f"{tool} returned no task priority to compare"
     assert all(v == 7 and type(v) is int for v in values), (tool, values)
 
 
-@pytest.mark.xfail(strict=True, reason=UNDECLARED_TASK_PRIORITY)
+def test_a_task_declares_its_priority_a_number_where_the_schema_reads_declarations():
+    from pyrite.schema import KBSchema
+
+    assert KBSchema().type_fields("task")["priority"].field_type == "number"
+
+
 @pytest.mark.parametrize("surface", ["mcp", "cli", "rest"])
 def test_a_task_priority_read_and_written_back_leaves_the_file_byte_identical(rt_world, surface):
-    """The issue's round trip on a task: today `kb_get` reads `"7"` and an
-    update with it rewrites `priority: 7` as `priority: "7"`."""
+    """The issue's round trip on a task: `kb_get` used to read `"7"`, and an
+    update with it rewrote `priority: 7` as `priority: "7"`."""
     w, emp = rt_world
     path = emp / "tasks/register-domain.md"
     before = path.read_bytes()
     value = _read_priority(w, surface, "register-domain")
+    assert value == 7 and type(value) is int, value
     _write_priority(w, surface, "register-domain", value)
     assert path.read_bytes() == before
+
+
+@pytest.mark.control(
+    reason="a create never wrote more than the type's own defaults; pinned so declaring "
+    "task.priority (no default) never adds a key to a created task's file"
+)
+def test_declaring_a_task_priority_adds_nothing_to_a_created_tasks_file(tmp_path):
+    emp = tmp_path / KB
+    emp.mkdir()
+    w = build_world(
+        tmp_path / "world", kbs=[KBConfig(name=KB, path=emp, kb_type="generic")], rest=False
+    )
+    try:
+        _mcp(w, "kb_create", {"kb_name": KB, "entry_type": "task", "title": "Plain task"})
+    finally:
+        w.close()
+    text = (emp / "tasks/plain-task.md").read_text()
+    front = text.split("---")[1]
+    keys = [
+        line.split(":")[0]
+        for line in front.strip().splitlines()
+        if not line.startswith(" ") and not line.startswith(("created_at", "updated_at"))
+    ]
+    assert keys == ["id", "title", "type", "importance", "status", "priority"], text
+    assert "\npriority: 5\n" in text
 
 
 def _walk_shapes(value: Any, where: str) -> None:
@@ -711,7 +720,7 @@ def test_the_find_readers_return_each_field_with_its_files_type(world):
         # A note's `status` is its bag's, not the column's: the finds return
         # the two entries whose type has the column.
         assert {"c-sweep", "register-domain"} <= {r["id"] for r in rows}, name
-        _rows_check(rows, reader=name, skip={("register-domain", "priority")})
+        _rows_check(rows, reader=name)
 
 
 # ---------------------------------------------------------------------------
@@ -804,16 +813,83 @@ def test_a_single_read_and_the_list_rows_agree_on_a_declared_number(rt_world):
     assert type(read) is type(listed["c-sweep"]) is int
 
 
-def test_a_quoted_number_in_a_declared_number_field_reads_as_a_number(rt_world):
-    """The stated limit of option (i): the cast reads the index's text, which
-    cannot tell `7` from `"7"`. The file is never rewritten by a read."""
+#: A declared number's file spelling -> what a read returns, by hand from
+#: the maintainer's rule (#1628, 2026-11-17): only plain ASCII whole numbers
+#: and decimals are numbers; every other text stays the file's text.
+SPELLINGS = {
+    "7": 7,
+    "2.5": 2.5,
+    '"7"': 7,
+    '"007"': "007",
+    '"+7"': "+7",
+    '" 7 "': " 7 ",
+    '"7."': "7.",
+    '"1e3"': "1e3",
+    '"٧"': "٧",
+    '"７"': "７",
+    '"7.50"': "7.50",
+    '"-7"': "-7",
+}
+
+
+def _spelling_params() -> list[Any]:
+    """A spelling that stays text read as text on `dev` too: a control, red
+    against a cast looser than the rule (`"007"` read as 7 in a draft of this
+    change), never against `dev`."""
+    reason = (
+        "text the strict rule keeps was text before the change too; pinned so a looser "
+        "cast (which read it as a number and let a write-back respell the file) fails"
+    )
+    return [
+        pytest.param(sp, marks=[pytest.mark.control(reason=reason)])
+        if isinstance(want, str)
+        else sp
+        for sp, want in SPELLINGS.items()
+    ]
+
+
+def _chore(spelling: str) -> str:
+    return (
+        f"---\nid: c-spelt\ntype: chore\ntitle: Spelt\nstatus: open\npriority: {spelling}\n---\nq\n"
+    )
+
+
+@pytest.mark.parametrize("spelling", _spelling_params())
+def test_a_declared_numbers_file_spelling_reads_by_the_strict_rule(rt_world, spelling):
+    """A read never rewrites the file, whatever it returns."""
     w, emp = rt_world
-    path = emp / "chores/c-quoted.md"
-    text = '---\nid: c-quoted\ntype: chore\ntitle: Quoted\nstatus: open\npriority: "7"\n---\nq\n'
-    path.write_text(text)
+    path = emp / "chores/c-spelt.md"
+    path.write_text(_chore(spelling))
     w.index(KB)
-    assert _mcp(w, "kb_get", {"kb_name": KB, "entry_id": "c-quoted"})["entry"]["priority"] == 7
-    assert path.read_text() == text
+    want = SPELLINGS[spelling]
+    for got in (
+        _mcp(w, "kb_get", {"kb_name": KB, "entry_id": "c-spelt"})["entry"]["priority"],
+        {r["id"]: r["priority"] for r in _mcp(w, "kb_list_entries", {"kb_name": KB})["entries"]}[
+            "c-spelt"
+        ],
+    ):
+        # The single read returns the file's own string (a `str` subclass).
+        same_type = isinstance(got, str) if isinstance(want, str) else type(got) is type(want)
+        assert got == want and same_type, (spelling, got)
+    assert path.read_text() == _chore(spelling)
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+@pytest.mark.parametrize("spelling", _spelling_params())
+def test_a_declared_number_read_and_written_back_leaves_what_the_rule_says(
+    rt_world, surface, spelling
+):
+    """What a caller reads, sent back as one field, leaves the file as it was,
+    with one stated exception (the decision on #1628): a quoted `"7"` reads
+    as 7, and the write of that 7 stores it unquoted."""
+    w, emp = rt_world
+    path = emp / "chores/c-spelt.md"
+    path.write_text(_chore(spelling))
+    w.index(KB)
+    value = _read_priority(w, surface, "c-spelt")
+    _write_priority(w, surface, "c-spelt", value)
+    want = _chore("7") if spelling == '"7"' else _chore(spelling)
+    assert path.read_text() == want, (spelling, value)
 
 
 @pytest.mark.control(
