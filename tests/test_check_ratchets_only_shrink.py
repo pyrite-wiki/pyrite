@@ -35,7 +35,12 @@ class Repo:
 
     def git(self, *args: str) -> str:
         return subprocess.run(
-            ["git", *args], cwd=self.path, capture_output=True, text=True, check=True
+            ["git", *args],
+            cwd=self.path,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=60,
         ).stdout.strip()
 
     def write(self, text: str, path: str = FILE) -> None:
@@ -272,7 +277,11 @@ def test_the_trailer_must_name_the_list_exactly(repo):
 
 def run_script(repo, *args):
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args], cwd=repo.path, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), *args],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
 
 
