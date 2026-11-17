@@ -483,3 +483,158 @@ def test_task_create_validation_error_lists_only_declared_types(task_cli_env):
     error = json.loads(result.output)["error"]
     assert "expected ['note']" in error
     assert "'document'" not in error
+
+
+@pytest.mark.cli
+def test_task_create_cli_due_date(task_cli_env):
+    """`task create --due-date YYYY-MM-DD` records due_date in frontmatter and task get."""
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Task with due date",
+            "-k",
+            "test-tasks",
+            "--due-date",
+            "2026-11-20",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["due_date"] == "2026-11-20"
+    fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
+    assert fm["due_date"] == "2026-11-20"
+
+    get_res = runner.invoke(
+        app,
+        ["task", "get", data["entry_id"], "-k", "test-tasks", "--format", "json"],
+    )
+    assert get_res.exit_code == 0
+    get_data = json.loads(get_res.output)
+    assert get_data["due_date"] == "2026-11-20"
+
+
+@pytest.mark.cli
+def test_task_create_cli_invalid_due_date_fails(task_cli_env):
+    """`task create --due-date invalid` raises validation error."""
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Bad due date",
+            "-k",
+            "test-tasks",
+            "--due-date",
+            "2026-02-30",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["error_code"] == "VALIDATION_FAILED"
+    assert "due_date" in data["error"].lower()
+
+
+@pytest.mark.cli
+def test_task_create_cli_link(task_cli_env):
+    """`task create --link target` attaches link to target entry."""
+    # First create target
+    target_res = runner.invoke(
+        app,
+        ["task", "create", "Target entry", "-k", "test-tasks", "--format", "json"],
+    )
+    assert target_res.exit_code == 0
+    target_id = json.loads(target_res.output)["entry_id"]
+
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Source entry",
+            "-k",
+            "test-tasks",
+            "--link",
+            f"{target_id}:blocks",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert "links" not in data
+    assert data["outcome"] == "done"
+    assert data["linked"] == [{"target": target_id, "relation": "blocks"}]
+    assert data["failed_links"] == []
+
+
+@pytest.mark.cli
+def test_task_create_cli_dangling_link_partial_outcome_and_exit_3(task_cli_env):
+    """A link to a nonexistent target keeps the task, populates failed_links with finish_up, and exits 3."""
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Dangling task",
+            "-k",
+            "test-tasks",
+            "--link",
+            "missing-target:blocks",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 3, result.output
+    data = json.loads(result.output)
+    assert data["outcome"] == "partial"
+    assert data["created"] is True
+    assert "links" not in data
+    assert data["linked"] == []
+    assert len(data["failed_links"]) == 1
+    failed = data["failed_links"][0]
+    assert failed["target"] == "missing-target"
+    assert failed["relation"] == "blocks"
+    assert "Entry not found" in failed["error"]
+    assert (
+        failed["finish_up"]
+        == f"pyrite link {data['entry_id']} missing-target -r blocks -k test-tasks"
+    )
+
+    # Task was created and exists on disk
+    fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
+    assert fm["title"] == "Dangling task"
+
+
+@pytest.mark.cli
+def test_task_create_cli_refuses_three_part_link(task_cli_env):
+    """`task create --link a:b:c` refuses before task creation."""
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Three part link task",
+            "-k",
+            "test-tasks",
+            "--link",
+            "a:b:c",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code != 0
+    data = json.loads(result.output)
+    assert data["error_code"] == "VALIDATION_FAILED"
+    assert (
+        "--link takes target or target:relation; got 'a:b:c', which has 3 parts." in data["error"]
+    )
+
+    # Verify task was NOT created
+    tasks_path = task_cli_env["config"].get_kb("test-tasks").path / "tasks"
+    assert not any("three-part-link-task" in f.name for f in tasks_path.iterdir())
