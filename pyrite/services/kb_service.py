@@ -38,6 +38,7 @@ from ..exceptions import (
     StorageBusyError,
     StorageError,
     UndeclaredTypeError,
+    UpdateWouldNotLoadError,
     ValidationError,
     kb_origin,
     outside_text,
@@ -53,6 +54,7 @@ from ..plugins.context import PluginContext
 from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..schema.reserved import RESERVED_FIELD_NAMES
+from ..storage import entry_paths
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
 from ..storage.entry_writer import (
@@ -1648,7 +1650,9 @@ class KBService:
         # itself as its key so a dry-run batch catches an in-batch collision
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
-        resolved_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
+        resolved_path = repo._resolve_file_path(
+            entry, repo._infer_subdir(entry), taken=frozenset(pending_paths or ())
+        )
         # A path that leads out of the KB gets the write's own refusal here,
         # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
         # neither depends on what lies outside.
@@ -1913,7 +1917,9 @@ class KBService:
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
                     would_create_paths.add(
-                        repo._resolve_file_path(entry, repo._infer_subdir(entry))
+                        repo._resolve_file_path(
+                            entry, repo._infer_subdir(entry), taken=frozenset(would_create_paths)
+                        )
                     )
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
@@ -2368,6 +2374,8 @@ class KBService:
             new_bytes = new_text.encode("utf-8")
             try:
                 new_entry = repo.load_entry_from_bytes(path, new_bytes)
+            except EntryLoadError as e:
+                raise UpdateWouldNotLoadError(entry_id, e) from e
             except Exception as e:
                 raise ValidationError(
                     f"Cannot update '{entry_id}': the result would not load ({outside_text(e)})"
@@ -2832,12 +2840,24 @@ class KBService:
         why. Returns ``(path, not_moved)``."""
         if not self._doc_mgr._uses_templated_subdir(repo, entry):
             return path, None
-        subdir = repo._infer_subdir(entry)
-        target = repo._contained(
-            kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
-        )
+        # The update is already published: a refusal from here on is the
+        # move that did not happen, said in ``not_moved``, never a failed
+        # update (#1552). That includes working out the target: a templated
+        # folder that is a link out of the KB is refused by ``_contained``.
+        try:
+            subdir = repo._infer_subdir(entry)
+            target = repo._contained(
+                kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
+            )
+        except PyriteError as e:
+            return path, f"the file keeps its place: {public_text(e, log=logger)}"
         if target.resolve() == path.resolve():
             return path, None
+        # A folder the index walk skips (`.archived`, `_templates`): moving
+        # there would hide the entry from the next sync (#1552).
+        kept = entry_paths.kept_in_place(kb_config.path, target)
+        if kept:
+            return path, kept
         if "id" not in file_values:
             return path, "no id pin: the file keeps its place; add an `id:` line to let it move"
         held = _links_naming(repo, path)
@@ -4328,6 +4348,11 @@ class KBService:
                 expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
                 target_path = repo._contained(expected_dir / current_path.name)
                 if current_path.parent.resolve() != expected_dir.resolve():
+                    # A folder the index walk skips is no place for an entry
+                    # (#1552): the file stays, and ``errors`` says why.
+                    kept = entry_paths.kept_in_place(kb_config.path, target_path)
+                    if kept:
+                        raise ValidationError(kept)
                     # A file an in-KB link names stays: moving it would leave
                     # the user's link pointing at nothing (#1262). The walk
                     # for links runs once, and only when a move is planned.

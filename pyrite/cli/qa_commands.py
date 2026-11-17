@@ -228,11 +228,16 @@ def qa_assess(
         1,
         "--tier",
         "-t",
+        min=1,
+        max=2,
         help="Assessment tier: 1=structural; 2=structural plus the model-judged rubric "
         "(needs a configured model, else refused with AI_NOT_CONFIGURED)",
     ),
     max_age: int = typer.Option(
-        24, "--max-age", help="Skip entries assessed within N hours (0 = reassess all)"
+        24,
+        "--max-age",
+        min=0,
+        help="Skip entries assessed within N hours (0 = reassess all)",
     ),
     create_tasks: bool = typer.Option(
         False, "--create-tasks", help="Create tasks for failed assessments"

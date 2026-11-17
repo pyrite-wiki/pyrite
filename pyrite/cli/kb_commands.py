@@ -616,6 +616,12 @@ def kb_health(
             console.print(
                 f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
             )
+        if result.get("unlisted_entry_files"):
+            count = result["unlisted_entry_files"]
+            noun = "entry file" if count == 1 else "entry files"
+            console.print(
+                f"  [yellow]{count} {noun} the index does not list; `pyrite index health` names them[/yellow]"
+            )
 
 
 @kb_app.command("commit")

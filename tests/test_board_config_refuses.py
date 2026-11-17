@@ -122,6 +122,20 @@ REFUSED_SHAPES: dict[str, bytes] = {
         _GATE + f"      - text: t\n        type: judgment\n        hint: [{MARKER}]\n"
     ).encode(),
     "criterion-type-unknown": (_GATE + f"      - text: t\n        type: {MARKER}\n").encode(),
+    # A criterion carries only the keys its type reads (#1586): `judgment` and
+    # `agent_responsibility` run nothing, so `checker` and `params` are refused
+    # on their presence, whatever the value.
+    **{
+        f"{kind}-with-{extra}": (_GATE + f"      - text: t\n        type: {kind}\n{lines}").encode()
+        for kind in ("judgment", "agent_responsibility")
+        for extra, lines in {
+            "checker": f"        checker: {{x: {MARKER}}}\n",
+            "params": f"        params: {{field: {MARKER}}}\n",
+            "checker-and-params": (
+                f"        checker: has_field\n        params: {{field: {MARKER}}}\n"
+            ),
+        }.items()
+    },
     "checker-unknown": VALID_GATED.replace("checker: has_field", f"checker: {MARKER}").encode(),
     "checker-criterion-without-checker": (_GATE + "      - text: t\n").encode(),
     "checker-params-not-a-mapping": VALID_GATED.replace(
@@ -715,12 +729,33 @@ def test_refine_naming_no_kb_is_refused_on_the_cli(world, a_board_outside_the_kb
 @pytest.mark.parametrize(
     "gate",
     [
-        {"policy": "enforced", "criteria": []},
-        {"criteria": [{"text": "t", "checker": "has_feild"}]},
-        {"criteria": [{"text": "t"}]},
-        {"criteria": [{"text": "t", "type": "judgement"}]},
+        *(
+            pytest.param(
+                g,
+                marks=pytest.mark.control(
+                    reason="refused before #1586 too; only the next guards it"
+                ),
+            )
+            for g in (
+                {"policy": "enforced", "criteria": []},
+                {"criteria": [{"text": "t", "checker": "has_feild"}]},
+                {"criteria": [{"text": "t"}]},
+                {"criteria": [{"text": "t", "type": "judgement"}]},
+            )
+        ),
+        {
+            "criteria": [
+                {"text": "t", "type": "judgment", "checker": "has_field", "params": {"field": "x"}}
+            ]
+        },
     ],
-    ids=["policy-unknown", "checker-unknown", "no-checker", "type-unknown"],
+    ids=[
+        "policy-unknown",
+        "checker-unknown",
+        "no-checker",
+        "type-unknown",
+        "judgment-with-checker",
+    ],
 )
 def test_the_gate_never_records_what_it_could_not_run_as_passed(world, gate):
     """`_evaluate_gate` refuses on its own, even handed a config the loader
@@ -734,6 +769,33 @@ def test_the_gate_never_records_what_it_could_not_run_as_passed(world, gate):
         SoftwareKBPlugin()._evaluate_gate(
             world.db, {"gates": {"in_progress": gate}}, "in_progress", row, {}, readable_kbs=None
         )
+
+
+@pytest.mark.parametrize(
+    "criterion",
+    [
+        "type: judgment",
+        "type: judgment\n        hint: Add a section",
+        "type: agent_responsibility\n        hint: Add a section",
+        "type: checker\n        checker: has_field\n        params: {field: effort}",
+    ],
+    ids=["judgment", "judgment-with-hint", "agent-responsibility-with-hint", "explicit-checker"],
+)
+@pytest.mark.control(reason="a criterion carrying only the keys its type reads loads, as before")
+def test_a_criterion_with_only_the_keys_its_type_reads_still_loads(world, criterion):
+    _write_board(world, _GATE + f"      - text: t\n        {criterion}\n")
+    answer = _mcp(world, "sw_check_ready", MCP_CALLS["sw_check_ready"])
+    assert "error" not in answer, answer
+    assert answer["gate"]["criteria"][0]["type"] == criterion.split()[1]
+
+
+def test_a_criterion_checker_the_type_does_not_read_is_refused_by_gate_and_position(world):
+    """The refusal names the criterion's position, not a value from the file."""
+    _write_board(world, REFUSED_SHAPES["judgment-with-checker-and-params"])
+    answer = _mcp(world, "sw_check_ready", MCP_CALLS["sw_check_ready"])
+    assert "key Pyrite does not read" in answer["error"], answer
+    assert "criterion 1" in answer["error"], answer
+    assert MARKER not in json.dumps(answer)
 
 
 def test_a_checker_criterion_without_a_checker_says_so(world):

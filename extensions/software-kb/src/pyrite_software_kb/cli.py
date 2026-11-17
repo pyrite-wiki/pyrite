@@ -1004,14 +1004,43 @@ def sw_milestones(
 def _refusal_rendered(call, fmt: str):
     """``call()``, with a refusal it raises printed in the CLI's error shape
     (exit 1), as every legacy command renders its own: a board config that
-    cannot be loaded, or a KB that does not resolve (#1538)."""
-    from pyrite.exceptions import PyriteError
-    from pyrite.utils.errors import cli_error_from
+    cannot be loaded, or a KB that does not resolve (#1538).
+
+    An exception Pyrite did not raise (an ``OSError``, a ``TimeoutError``, a
+    ``sqlite3.OperationalError`` from a lookup that reads the index) is
+    answered as the MCP dispatcher answers it: its traceback goes to the log,
+    and the CLI prints ``INTERNAL``, retryable, with the fixed message and none
+    of the exception's text (#1585).
+
+    The CLI's own control-flow exceptions (Click's and Typer's ``Exit``,
+    ``Abort``, ``BadParameter``) and ``MemoryError`` are re-raised rather than
+    swallowed into an ``INTERNAL`` response: unlike the MCP dispatcher which
+    catches all ``Exception`` subclasses, the CLI lets ``MemoryError`` propagate
+    so fatal out-of-memory errors terminate the process immediately (#1630)."""
+    import click
+    import typer
+
+    from pyrite.exceptions import INTERNAL_PUBLIC_MESSAGE, PyriteError
+    from pyrite.utils.errors import cli_error, cli_error_from
 
     try:
         return call()
     except PyriteError as e:
         cli_error_from(e, fmt)
+    except (
+        click.exceptions.ClickException,
+        click.exceptions.Exit,
+        click.exceptions.Abort,
+        typer.Exit,
+        typer.Abort,
+        typer.BadParameter,
+    ):
+        raise  # the CLI's own control flow, not a fault
+    except MemoryError:
+        raise
+    except Exception:
+        logger.exception("pyrite sw command failed")
+        cli_error(INTERNAL_PUBLIC_MESSAGE, fmt, error_code="INTERNAL", retryable=True)
 
 
 @sw_app.command("board")

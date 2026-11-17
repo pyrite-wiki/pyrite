@@ -133,7 +133,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -232,7 +232,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -260,7 +260,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -1216,7 +1216,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -2693,7 +2693,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -2758,7 +2758,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -2786,7 +2786,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -3576,7 +3576,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
