@@ -418,6 +418,11 @@ TAGGED_MERGES = {
     "tagged-source-in-a-list": "{<<: [!note {a: 1}, {c: 2}], b: 2}",
     "tag-on-the-sources-own-merge": "{<<: {<<: !note {a: 1}, c: 1}, b: 2}",
 }
+#: A tag on the LIST of merge sources: not recoverable from the loaded value (#1636).
+LIST_OF_SOURCES_LIMIT = {
+    "local-tag": "{<<: !note [{a: 1}], b: 2}",
+    "seq-tag": "{<<: !!seq [{a: 1}], b: 2}",
+}
 GRID_POSITIONS = ("top", "mapping-value", "list-item", "two-down")
 TWO_FIELDS = [("guidelines",), ("types", "note", "goals")]
 
@@ -450,6 +455,33 @@ def test_a_tagged_merge_source_is_withheld_like_any_tagged_mapping(tmp_path, fie
     _withheld_whole(tmp_path, field, TAGGED_MERGES[name], position, TAG_REASON)
 
 
+#: A merge source holding a value Pyrite would withhold withholds the whole
+#: value, also when another key or an earlier source hides that value in the
+#: merged result (the author wrote it; it is listed, never dropped quietly).
+#: Each is (text, the reason, written by hand). On dev the first and second
+#: rows came back as `{"a": 2}` and the last as `{"b": 2, "a": 1}`.
+SHADOWED_MERGE_SOURCES = {
+    "tag-hidden-by-an-own-key": ("{<<: {a: !note x}, a: 2}", TAG_REASON),
+    "date-hidden-by-an-own-key": (
+        "{<<: {a: 2020-01-01}, a: 2}",
+        "a YAML date or timestamp, which JSON cannot carry as written",
+    ),
+    "overflow-hidden-by-an-own-key": ("{<<: {a: 1e400}, a: 2}", TOO_LARGE_REASON),
+    "tag-in-a-later-source-hidden-by-an-earlier-one": (
+        "{<<: [{a: 1}, {a: !note y}], b: 2}",
+        TAG_REASON,
+    ),
+}
+
+
+@pytest.mark.parametrize(("field", "name", "position"), list(_cells_for(SHADOWED_MERGE_SOURCES)))
+def test_a_merge_source_holding_a_withheld_value_withholds_the_whole_value_even_when_shadowed(
+    tmp_path, field, name, position
+):
+    text, reason = SHADOWED_MERGE_SOURCES[name]
+    _withheld_whole(tmp_path, field, text, position, reason)
+
+
 def test_a_tagged_key_and_an_int_key_stay_the_key_reason(tmp_path):
     """`!!str 1` and the integer key `1` print alike; the int key is the first
     thing wrong, so this was and stays the key reason."""
@@ -465,18 +497,30 @@ def test_an_own_key_overriding_a_merged_key_is_the_one_value(tmp_path):
     assert "malformed" not in authored
 
 
-def test_a_tag_on_a_list_of_merge_sources_is_a_limit_not_a_withhold(tmp_path):
-    """LIMIT, not a property: the loader flattens `<<: !note [{a: 1}]` into
-    plain source mappings and the list's tag is gone from the loaded value, so
-    the value comes back with the tag dropped, as on dev. Fixing it means the
-    loader; a follow-up issue owns it. If this starts failing, the loader keeps
-    the tag now: withhold it and move this case into TAGGED_MERGES."""
-    for n, text in enumerate(("{<<: !note [{a: 1}], b: 2}", "{<<: !!seq [{a: 1}], b: 2}")):
-        sub = tmp_path / str(n)
-        sub.mkdir()
-        authored = _orient(sub, f"name: k\nguidelines: {text}\n")["kb_authored"]
-        assert authored["guidelines"] == {"b": 2, "a": 1}
-        assert "malformed" not in authored
+@pytest.mark.parametrize(("field", "name", "position"), list(_cells_for(LIST_OF_SOURCES_LIMIT)))
+def test_a_tag_on_a_list_of_merge_sources_is_a_limit_not_a_withhold(
+    tmp_path, field, name, position
+):
+    """LIMIT, not a property (#1636): the loader flattens `<<: !note [{a: 1}]`
+    into plain source mappings and the list's tag is gone from the loaded
+    value, so the value comes back with the tag dropped, as on dev, at every
+    position. Fixing it means the loader. If this starts failing, the loader
+    keeps the tag now: withhold it and move the case into TAGGED_MERGES."""
+    merged = {"b": 2, "a": 1}  # what the loader hands over, by hand
+    expected = {
+        "top": merged,
+        "mapping-value": {"k": merged},
+        "list-item": [merged],
+        "two-down": {"a": [{"b": merged}]},
+    }[position]
+    config = _config(
+        tmp_path,
+        _kb_yaml_text(field, POSITIONS[position].format(LIST_OF_SOURCES_LIMIT[name])),
+    )
+    read_kb_yaml(config.knowledge_bases[0].path)
+    authored = _orient_config(config)["kb_authored"]
+    assert _at(authored, field) == expected
+    assert "malformed" not in authored
 
 
 #: The core tags the loader resolves before orient sees the value. They are
