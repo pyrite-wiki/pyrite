@@ -440,7 +440,6 @@ def test_migrate_standards_reports_and_skips_when_move_is_refused(tmp_path: Path
     out = _migrate_standards(config, exit_code=1)
 
     assert readme_path.read_bytes() == before
-    assert (kb_path / "standards" / "README.md").exists()
     assert not (kb_path / "validations" / "README.md").exists()
     assert "Skip" in out
     assert "the index walk does not list that path" in out

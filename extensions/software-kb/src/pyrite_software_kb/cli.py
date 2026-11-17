@@ -907,10 +907,6 @@ def sw_migrate_standards(
                     )
                     skipped += 1
                     continue
-                except ValidationError as e:
-                    console.print(f"  [red]Skip[/red] {row['title']}: {e}", markup=False)
-                    skipped += 1
-                    continue
                 console.print(f"  [green]Migrated[/green] {row['title']} (type updated in place)")
 
             migrated += 1
