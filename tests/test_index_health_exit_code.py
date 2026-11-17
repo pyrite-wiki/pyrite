@@ -110,9 +110,9 @@ class TestEveryHealthKeyIsDocumented:
                 break
 
         assert action is not None, "removed_extensions row not found in index health table"
-        assert "Reinstall" not in action
+        assert "reinstall" not in action.lower()
         assert "kb_type" in action
-        assert "types" in action
+        assert "`types:`" in action
 
 
 class TestExitCodeReflectsStatus:

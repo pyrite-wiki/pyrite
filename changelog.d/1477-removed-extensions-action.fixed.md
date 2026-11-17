@@ -1,1 +1,1 @@
-- The `removed_extensions` table row in `docs/json-contracts.md` no longer advises reinstalling a removed extension, advising instead to change `kb_type` in `kb.yaml` or declare the retained types under `types:` (#1477).
+- The `index health` documentation for `removed_extensions` no longer advises reinstalling an extension that cannot be installed; it says which `kb.yaml` change clears the notice (#1477).
