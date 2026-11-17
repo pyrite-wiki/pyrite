@@ -6,7 +6,7 @@ tags:
 - quality
 importance: 5
 kind: chore
-status: in_progress
+status: done
 priority: medium
 assignee: agent:cloud-worker
 effort: S
