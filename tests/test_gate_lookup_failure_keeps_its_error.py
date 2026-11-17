@@ -21,6 +21,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+import typer
 
 from pyrite.exceptions import KBNotFoundError, StorageError
 from tests.test_board_config_refuses import (
@@ -243,6 +244,8 @@ def test_a_gate_command_renders_the_causes_error(
     assert calls, "the lookup was not reached"
     assert isinstance(result.exception, SystemExit), repr(result.exception)  # not a traceback
     assert result.exit_code != 0, result.output
+    if raised == "StorageError":
+        assert result.exit_code == 1, result.output
     out = result.stdout
     assert "board.yaml" not in out and "VALIDATION_FAILED" not in out, out
     assert MARKER not in out or raised in ("StorageError", "KBNotFoundError"), out
@@ -251,7 +254,7 @@ def test_a_gate_command_renders_the_causes_error(
         assert answer["error_code"] == oracle["error_code"], (answer, oracle)
         assert answer["retryable"] == oracle["retryable"], (answer, oracle)
         assert answer.get("ready") is not True, answer
-        if raised not in ("StorageError", "KBNotFoundError"):
+        if raised != "KBNotFoundError":
             assert answer["error"] == oracle["error"], (answer, oracle)
     else:
         assert f"[{oracle['error_code']}]" in out, out
@@ -259,3 +262,58 @@ def test_a_gate_command_renders_the_causes_error(
         # The cause is in the log, so an `out` free of it is a real result.
         assert MARKER in caplog.text, "the cause was not logged"
     assert _snapshot(world) == before
+
+
+@pytest.mark.parametrize(
+    "command_args",
+    [
+        ["sw", "check-ready", "item-ready", "-k", KB, "-f", "rich"],
+        ["sw", "refine", "-k", KB, "-f", "rich"],
+    ],
+)
+def test_a_gate_command_rich_output_renders_internal_error(
+    world,  # noqa: F811
+    command_args,
+    monkeypatch,
+):
+    """sw check-ready and sw refine without --format json render ERROR [INTERNAL]
+    and do not leak internal exception details (#1630)."""
+    make = RAISED["OSError"]
+    _write_board(world, _NAMING_BLOCKERS)
+    _the_lookup_raises(monkeypatch, make)
+    result = _cli(world, command_args)
+    assert result.exit_code != 0, result.output
+    assert "ERROR [INTERNAL]" in result.stdout, result.stdout
+    assert MARKER not in result.stdout, result.stdout
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected_type", "expected_exit_code"),
+    [
+        (typer.Exit(0), typer.Exit, 0),
+        (typer.Abort(), typer.Abort, None),
+        (typer.BadParameter("x"), typer.BadParameter, 2),
+    ],
+)
+def test_refusal_rendered_propagates_typer_control_flow(exc, expected_type, expected_exit_code):
+    """#1630: Typer's own control-flow exceptions (typer.Exit, typer.Abort,
+    typer.BadParameter) must propagate unchanged from _refusal_rendered rather
+    than being caught and converted to an INTERNAL response."""
+    from pyrite_software_kb.cli import _refusal_rendered
+
+    with pytest.raises(expected_type) as exc_info:
+        _refusal_rendered(lambda: (_ for _ in ()).throw(exc), "json")
+
+    assert exc_info.value is exc
+    if expected_exit_code is not None:
+        assert getattr(exc_info.value, "exit_code", None) == expected_exit_code
+
+
+def test_refusal_rendered_propagates_memory_error():
+    """#1630: unlike the MCP dispatcher which catches all Exception subclasses,
+    the CLI lets MemoryError propagate so fatal out-of-memory errors terminate
+    the process rather than returning an INTERNAL response."""
+    from pyrite_software_kb.cli import _refusal_rendered
+
+    with pytest.raises(MemoryError):
+        _refusal_rendered(lambda: (_ for _ in ()).throw(MemoryError()), "json")
