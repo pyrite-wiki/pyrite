@@ -729,10 +729,20 @@ def test_refine_naming_no_kb_is_refused_on_the_cli(world, a_board_outside_the_kb
 @pytest.mark.parametrize(
     "gate",
     [
-        {"policy": "enforced", "criteria": []},
-        {"criteria": [{"text": "t", "checker": "has_feild"}]},
-        {"criteria": [{"text": "t"}]},
-        {"criteria": [{"text": "t", "type": "judgement"}]},
+        *(
+            pytest.param(
+                g,
+                marks=pytest.mark.control(
+                    reason="refused before #1586 too; only the next guards it"
+                ),
+            )
+            for g in (
+                {"policy": "enforced", "criteria": []},
+                {"criteria": [{"text": "t", "checker": "has_feild"}]},
+                {"criteria": [{"text": "t"}]},
+                {"criteria": [{"text": "t", "type": "judgement"}]},
+            )
+        ),
         {
             "criteria": [
                 {"text": "t", "type": "judgment", "checker": "has_field", "params": {"field": "x"}}

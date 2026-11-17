@@ -83,6 +83,7 @@ def _the_gate_names_the_lookup(regime: str, status: str) -> bool:
     return True
 
 
+@pytest.mark.control(reason="guards a future sixth caller; the five callers exist on the base")
 def test_every_caller_of_the_gate_has_a_cell():
     """A sixth caller of ``_evaluate_gate`` cannot be added without a cell."""
     tree = ast.parse(_PLUGIN.read_text())
@@ -134,8 +135,25 @@ def _oracle(world, make, monkeypatch) -> dict:  # noqa: F811
     return answer
 
 
-@pytest.mark.parametrize("regime", sorted(_regimes()))
-@pytest.mark.parametrize("tool", sorted(GATE_OF_TOOL))
+def _tool_cells():
+    """(tool, regime) cells; those the base already answers rightly are controls:
+    `sw_claim` looks dependencies up before its gate, and the built-in board's
+    `done` gate does not read the index, so `sw_review` never reaches it."""
+    cells = []
+    for tool in sorted(GATE_OF_TOOL):
+        for regime in sorted(_regimes()):
+            if tool == "sw_claim":
+                why = "sw_claim answers the lookup's own error before its gate (the oracle)"
+            elif tool == "sw_review" and not _the_gate_names_the_lookup(regime, "done"):
+                why = "the built-in board's done gate never reads the index: nothing fails"
+            else:
+                cells.append(pytest.param(tool, regime))
+                continue
+            cells.append(pytest.param(tool, regime, marks=pytest.mark.control(reason=why)))
+    return cells
+
+
+@pytest.mark.parametrize(("tool", "regime"), _tool_cells())
 @pytest.mark.parametrize("raised", sorted(RAISED))
 def test_a_failed_blockers_lookup_keeps_its_own_error(world, raised, tool, regime, monkeypatch):  # noqa: F811
     make = RAISED[raised]
