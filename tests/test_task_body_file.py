@@ -28,7 +28,7 @@ def test_body_file_dash_means_stdin(monkeypatch):
     assert _resolve_task_body(None, Path("-"), False) == TEXT
 
 @pytest.mark.parametrize(
-    "body,body_file,stdin_flag",
+    ("body", "body_file", "stdin_flag"),
     [
         ("x", Path("f.txt"), False),
         ("x", None, True),
@@ -44,11 +44,11 @@ def test_frontmatter_refused_names_pyrite_create():
         _resolve_task_body("---\ntitle: x\n---\nbody\n", None, False)
 
 def test_missing_file_refused(tmp_path: Path):
-    with pytest.raises(Exception):
+    with pytest.raises((OSError, ValidationError)):
         _resolve_task_body(None, tmp_path / "nope.txt", False)
 
 def test_directory_refused(tmp_path: Path):
-    with pytest.raises(Exception):
+    with pytest.raises((OSError, ValidationError)):
         _resolve_task_body(None, tmp_path, False)
 
 def test_empty_file(tmp_path: Path):
