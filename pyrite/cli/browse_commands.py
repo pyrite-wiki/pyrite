@@ -33,15 +33,19 @@ def _cli_error(message: str, output_format: str = "rich", error_code: str | None
     cli_error(message, output_format, error_code=error_code or "ERROR")
 
 
+# Allowed sort columns for list-entries (#1387). Kept in sync with
+# storage SQLiteBackend._SORT_COLUMNS via tests/test_cli_sort_values.py.
+SORT_COLUMNS = ("created_at", "entry_type", "title", "updated_at")
+
+
 def validate_sort_by(value: str) -> str:
     """Validate list-entries --sort-by column (#1387)."""
-    from ..storage.backends.base_backend import BaseBackend
-
-    allowed = sorted(BaseBackend._SORT_COLUMNS)
     val = value.lower() if value else ""
-    if val in BaseBackend._SORT_COLUMNS:
+    if val in SORT_COLUMNS:
         return val
-    raise typer.BadParameter(f"unknown sort column '{value}'; choose one of: {', '.join(allowed)}")
+    raise typer.BadParameter(
+        f"unknown sort column '{value}'; choose one of: {', '.join(SORT_COLUMNS)}"
+    )
 
 
 def validate_sort_order(value: str) -> str:

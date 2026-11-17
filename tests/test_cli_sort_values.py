@@ -72,7 +72,10 @@ def _parse_last_json(output: str) -> dict:
 
 def test_sort_by_columns_match_storage_backend():
     """CLI allowed sort columns match BaseBackend and SQLiteBackend _SORT_COLUMNS."""
+    from pyrite.cli.browse_commands import SORT_COLUMNS
+
     expected = {"title", "updated_at", "created_at", "entry_type"}
+    assert set(SORT_COLUMNS) == expected
     assert BaseBackend._SORT_COLUMNS == expected
     assert SQLiteBackend._SORT_COLUMNS == expected
 
