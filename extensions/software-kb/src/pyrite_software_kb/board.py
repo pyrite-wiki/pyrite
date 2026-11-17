@@ -265,6 +265,8 @@ def _check_gate(n: int, gate: object) -> None:
 #: may also take ``rubric_text`` (text), which a gate does not show. A checker
 #: not listed reads no parameter; ``test_every_checker_that_takes_params_is_declared``
 #: fails when a checker that needs one is added without an entry here.
+#: It does not catch a new optional parameter or a changed kind: a checker that
+#: answered "holds" for a value of the wrong kind would load unchecked.
 CHECKER_PARAMS: dict[str, dict[str, str]] = {
     "has_field": {"field": "text"},
     "has_any_field": {"fields": "names"},
