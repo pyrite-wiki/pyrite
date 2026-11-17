@@ -1235,3 +1235,39 @@ def test_rest_carries_a_cast_value_in_its_typed_fields(rt_world):
         for r in _rest(w, "get", "/api/search", params={"q": "zebra", "kb": KB})["results"]
     }
     assert hits["r-year"]["date"] == 2020
+
+
+@pytest.mark.parametrize(
+    ("spelling", "rule"),
+    [
+        pytest.param(
+            spelling,
+            "task_priority",
+            marks=[
+                pytest.mark.control(
+                    reason="the task-priority check reported a word before; pinned so the "
+                    "docs' sentence that qa reports it stays true"
+                )
+            ],
+        )
+        for spelling in ("high", "P1")
+    ]
+    + [('"007"', "number_as_text")],
+)
+def test_qa_reports_a_task_priority_written_back_as_the_models_integer(rt_world, spelling, rule):
+    """docs/json-contracts.md says a task priority spelled otherwise than as a
+    whole number is written back as the model's integer, and that `qa
+    validate` reports the file's value: this is the second half."""
+    w, emp = rt_world
+    (emp / "tasks/q-task.md").write_text(
+        f"---\nid: q-task\ntype: task\ntitle: Q\nstatus: open\npriority: {spelling}\n---\nq\n"
+    )
+    w.index(KB)
+    # An error-severity finding (`task_priority`) makes `qa validate` exit 1.
+    result = w.cli("qa", "validate", KB, "--format", "json")
+    rules = {
+        i["rule"]
+        for i in json.loads(result.output)["issues"]
+        if i["entry_id"] == "q-task" and i.get("field") == "priority"
+    }
+    assert rule in rules, (spelling, rules)
