@@ -1641,7 +1641,9 @@ class KBService:
         # itself as its key so a dry-run batch catches an in-batch collision
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
-        resolved_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
+        resolved_path = repo._resolve_file_path(
+            entry, repo._infer_subdir(entry), taken=frozenset(pending_paths or ())
+        )
         # A path that leads out of the KB gets the write's own refusal here,
         # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
         # neither depends on what lies outside.
@@ -1906,7 +1908,9 @@ class KBService:
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
                     would_create_paths.add(
-                        repo._resolve_file_path(entry, repo._infer_subdir(entry))
+                        repo._resolve_file_path(
+                            entry, repo._infer_subdir(entry), taken=frozenset(would_create_paths)
+                        )
                     )
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:

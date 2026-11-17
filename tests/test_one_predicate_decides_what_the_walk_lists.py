@@ -55,14 +55,17 @@ def test_the_walk_and_the_lookups_apply_the_one_predicate(plain, monkeypatch):
     assert plain.repo.find_file("aa") is not None
 
 
-def _record_asked(monkeypatch) -> list[Path]:
+def _record_asked(monkeypatch) -> list[tuple[Path, bool]]:
+    """Every path the predicate is asked about, with whether anything was at
+    that path at the moment of asking: a writer that asks after it wrote is
+    seen asking about a path that already exists (round 1, F4)."""
     from pyrite.storage import entry_paths
 
-    asked: list[Path] = []
+    asked: list[tuple[Path, bool]] = []
     real = entry_paths.unlisted_reason
 
     def recording(root, path):
-        asked.append(Path(os.path.abspath(path)))
+        asked.append((Path(os.path.abspath(path)), os.path.lexists(path)))
         return real(root, path)
 
     monkeypatch.setattr(entry_paths, "unlisted_reason", recording)
@@ -128,4 +131,67 @@ def test_every_writer_asks_the_predicate_about_the_name_it_places(plain, monkeyp
     placed = _placed(before, plain.root)
     assert placed, "the writer placed nothing; the case does not exercise it"
     for path in placed:
-        assert Path(os.path.abspath(path)) in asked, (path, asked)
+        here = Path(os.path.abspath(path))
+        # Asked about this name while nothing was there yet: before the write.
+        assert (here, False) in asked, (path, [a for a in asked if a[0] == here])
+
+
+#: Every call in the code that can place a new entry-file name, by the
+#: function it is in, mapped to the PLACING_WRITERS case that runs it. Found
+#: by the scan below, not kept by hand: a new call to `create_entry_text`,
+#: `move_entry_text` or a `.move(` anywhere in `pyrite/` or an extension
+#: fails `test_the_placing_writers_are_the_ones_in_the_code` until it is
+#: mapped here (and so run above) or listed as not placing a new name.
+PLACING_CALLS = {
+    ("pyrite/storage/repository.py", "KBRepository.save"): "create",
+    ("pyrite/services/kb_service.py", "KBService._templated_move"): "templated move",
+    (
+        "pyrite/services/kb_service.py",
+        "KBService.reconcile_templated_subdirectories",
+    ): "reconcile",
+    (
+        "extensions/software-kb/src/pyrite_software_kb/cli.py",
+        "sw_migrate_standards",
+    ): "move_entry_text",
+}
+_PLACING_NAMES = {"create_entry_text", "move_entry_text"}
+
+
+def _placing_calls() -> set[tuple[str, str]]:
+    import ast
+
+    repo = Path(__file__).resolve().parent.parent
+    roots = [repo / "pyrite", *sorted((repo / "extensions").glob("*/src"))]
+    found: set[tuple[str, str]] = set()
+    for root in roots:
+        for path in sorted(root.rglob("*.py")):
+            rel = path.relative_to(repo).as_posix()
+            if rel == "pyrite/storage/entry_writer.py":
+                continue  # the two functions themselves
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+
+            def visit(node, scope, rel=rel):
+                for child in ast.iter_child_nodes(node):
+                    if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+                        visit(child, [*scope, child.name], rel)
+                        continue
+                    if isinstance(child, ast.Call):
+                        f = child.func
+                        name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
+                        if name in _PLACING_NAMES or (
+                            name == "move" and isinstance(f, ast.Attribute)
+                        ):
+                            found.add((rel, ".".join(scope)))
+                    visit(child, scope, rel)
+
+            visit(tree, [])
+    return found
+
+
+def test_the_placing_writers_are_the_ones_in_the_code():
+    found = _placing_calls()
+    assert found == set(PLACING_CALLS), {
+        "unmapped (add a case and map it)": sorted(found - set(PLACING_CALLS)),
+        "stale": sorted(set(PLACING_CALLS) - found),
+    }
+    assert set(PLACING_CALLS.values()) == set(PLACING_WRITERS)

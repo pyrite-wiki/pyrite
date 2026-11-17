@@ -653,8 +653,16 @@ class KBRepository:
             return self._contained(self.path / subdir / f"{entry_id}.md")
         return self._contained(self.path / f"{entry_id}.md")
 
-    def _resolve_file_path(self, entry: Entry, subdir: str | None) -> Path:
-        """Resolve the file path for an entry, respecting file_pattern if set."""
+    def _resolve_file_path(
+        self, entry: Entry, subdir: str | None, *, taken: Set[Path] = frozenset()
+    ) -> Path:
+        """Resolve the file path for an entry, respecting file_pattern if set.
+
+        ``taken``: paths an earlier item of the same dry-run batch would have
+        written (``KBService.bulk_create_entries(validate_only=True)``). The
+        default name treats each as held by another id, as the real batch
+        finds the file there, so a dry run picks the ``-N`` the real write
+        picks (#1552 round 1)."""
         schema = self.config.kb_schema
         type_schema = schema.get_type_schema(entry.entry_type)
         if type_schema:
@@ -667,7 +675,7 @@ class KBRepository:
                     path = self._contained(self.path / custom_name)
                 self._require_listed(path, entry, subdir, from_pattern=True)
                 return path
-        path = self._free_default_path(entry.id, subdir)
+        path = self._free_default_path(entry.id, subdir, taken=taken)
         self._require_listed(path, entry, subdir, from_pattern=False)
         return path
 
@@ -695,6 +703,7 @@ class KBRepository:
         declared = getattr(type_schema, "subdirectory", None) or ""
         folder_reason = entry_paths.reason_for_folders(parts[:-1]) is not None
         source: str | None = None
+        remedy: str | None = None
         rows: list[dict] | None = None
         if folder_reason and declared and "{" in declared:
             for name in _TEMPLATE_FIELD_RE.findall(declared):
@@ -704,19 +713,38 @@ class KBRepository:
                     if got is None:
                         got = (getattr(entry, "metadata", None) or {}).get(name)
                     source = f"field `{name}` is {got!r}, used by the subdirectory `{declared}` of type '{etype}'"
-                    message = entry_paths.unlisted_message(rel, reason, source)
+                    remedy = f"Give `{name}` another value."
+                    message = entry_paths.unlisted_message(rel, reason, source, remedy)
                     rows = [{"field": name, "rule": "entry_path", "got": got, "message": message}]
                     break
         if source is None:
             if folder_reason and declared:
                 source = f"kb.yaml `subdirectory: {declared}` of type '{etype}'"
+                remedy = "Change the type's `subdirectory` in kb.yaml."
             elif folder_reason and subdir:
                 source = f"the folder `{subdir}` of type '{etype}'"
             elif from_pattern and type_schema is not None:
-                source = f"kb.yaml `file_pattern: {type_schema.file_pattern}` of type '{etype}'"
-        entry_paths.require_listed(self.path, path, source=source, errors=rows)
+                pattern = type_schema.file_pattern
+                source = f"kb.yaml `file_pattern: {pattern}` of type '{etype}'"
+                # The caller chose neither the folder nor the name: say what
+                # they can change. A pattern whose own text the walk skips
+                # (`.{id}.md`, `{id}.txt`) places no entry at all.
+                literal = _TEMPLATE_FIELD_RE.sub("x", re.sub(r"\{(\w+):[^}]*\}", "x", pattern))
+                if entry_paths.reason_for_parts((literal,)) is not None:
+                    remedy = (
+                        "The type's `file_pattern` cannot place any entry; change it in kb.yaml."
+                    )
+                else:
+                    remedy = (
+                        "The type's `file_pattern` cannot place this entry: change the "
+                        "field values it uses (such as the title), or the `file_pattern` "
+                        "in kb.yaml."
+                    )
+        entry_paths.require_listed(self.path, path, source=source, remedy=remedy, errors=rows)
 
-    def _free_default_path(self, entry_id: str, subdir: str | None) -> Path:
+    def _free_default_path(
+        self, entry_id: str, subdir: str | None, *, taken: Set[Path] = frozenset()
+    ) -> Path:
         """``<id>.md`` for a new entry, or the first ``<id>-N.md`` when that
         path is held by a *different* id.
 
@@ -731,9 +759,11 @@ class KBRepository:
         # A name the index walk skips (``readme.md`` in any case, #1552) is
         # taken as if another id held it: Pyrite chose this name, so it
         # chooses a listed one, and the id stays what the caller named. The
-        # test is on the lowercased name, never a probe of the disk, so a
-        # case-insensitive filesystem answers the same.
-        if entry_paths.is_listed(self.path, path):
+        # test is on the folded name (``entry_paths.fold``), never a probe of
+        # the disk, so a case-insensitive filesystem answers the same.
+        # A path in ``taken`` is held by an earlier item of the same dry-run
+        # batch, never by this id (the batch refuses a repeated id first).
+        if entry_paths.is_listed(self.path, path) and path not in taken:
             holder = self.read_id(path)[0] if self.present(path) else None
             if holder is None or holder == entry_id:
                 return path
@@ -741,6 +771,8 @@ class KBRepository:
             candidate = path.with_name(f"{entry_id}-{n}.md")
             if not entry_paths.is_listed(self.path, candidate):
                 break  # the folder itself is skipped: no name in it helps
+            if candidate in taken:
+                continue
             # A candidate that already holds this id is the entry's own file:
             # a caller that recomputes the path after the create (a plugin
             # printing it) gets the file written, not the next ``-N``.

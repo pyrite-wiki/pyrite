@@ -11,18 +11,30 @@ The rule is lexical, on the path's parts below the root, with no I/O. A path
 is skipped when:
 
 - ``hidden``: a part starts with ``.`` (a dot-folder or a dot-file);
-- ``templates``: a part is ``_templates`` (the template service's scaffolds);
-- ``readme``: the file name is ``readme.md`` in any case (a README is the
-  user's, assumed to carry no entry);
+- ``templates``: a part folds to ``_templates`` (the template service's
+  scaffolds);
+- ``readme``: the file name folds to ``readme.md`` (a README is the user's,
+  assumed to carry no entry);
 - ``not_markdown``: the file name does not end in ``.md``, case-sensitively,
   so ``x.MD`` is skipped on every OS, not only where ``rglob`` is
   case-sensitive.
 
-The reserved-name test is built on the lowercased name, never on a probe of
-the disk, so the answer is the same on a case-insensitive filesystem (macOS)
-and a case-sensitive one. These are the files ``docs/pinning-entry-ids.md``
-promises Pyrite does not index; a hand-kept ``README.md``, dot-folder or
+"Folds" is ``fold``: the spelling a filesystem may treat as the same name.
+Case (APFS and NTFS are case-insensitive by default), Unicode case folding
+(U+017F folds to ``s``, CaseFolding.txt), canonical normalisation (APFS treats
+NFC and NFD as one name), and the trailing dots and spaces NTFS drops through
+the Win32 API. The two reserved names are tested on the folded name, never on
+a probe of the disk, so a writer's spelling and the disk's spelling of the
+same folder get the same answer whatever the filesystem's rules (#1552 round
+1: ``subdirectory: memos/_TeMpLaTeS`` was written into ``memos/_templates/``
+on APFS). On a case-sensitive disk the walk therefore also skips a folder
+spelled ``_Templates``; ``index health`` names an entry file in one that
+states an ``id:``. These are the files ``docs/pinning-entry-ids.md`` promises
+Pyrite does not index; a hand-kept ``README.md``, dot-folder or
 ``_templates/`` file stays the user's.
+
+Not folded: an NTFS 8.3 short name (``_TEMPL~1``), which no lexical rule can
+see; a writer would have to name one.
 
 Leaf module: imports nothing from ``pyrite.storage``, so ``repository.py``,
 ``entry_writer.py`` and the services can all ask it.
@@ -31,6 +43,7 @@ Leaf module: imports nothing from ``pyrite.storage``, so ``repository.py``,
 from __future__ import annotations
 
 import os
+import unicodedata
 
 from ..exceptions import ValidationError
 
@@ -52,7 +65,7 @@ HEALTH_REASONS = (README, HIDDEN, TEMPLATES)
 _WHY = {
     README: "a file named README.md (in any case) is the user's, not an entry",
     HIDDEN: "a part starting with '.' is hidden",
-    TEMPLATES: "`_templates/` holds the template scaffolds",
+    TEMPLATES: "`_templates/`, in any case, holds the template scaffolds",
     NOT_MARKDOWN: "an entry file's name ends in `.md` (lower case)",
 }
 
@@ -83,13 +96,24 @@ def parts_below(
     return tuple(os.path.relpath(name_n, top_n).split(os.sep))
 
 
+def fold(part: str) -> str:
+    """The name a filesystem may take ``part`` to be: case-folded,
+    canonically normalised, and without the trailing dots and spaces NTFS
+    drops. Two spellings that fold alike may be one name on disk, so a rule
+    about a reserved name is tested on this."""
+    if part.isascii():
+        return part.lower().rstrip(". ")
+    folded = unicodedata.normalize("NFD", part).casefold()
+    return unicodedata.normalize("NFC", folded).rstrip(". ")
+
+
 def reason_for_folders(parts: tuple[str, ...]) -> str | None:
     """The folder half of the rule: ``hidden`` or ``templates`` for the first
     of ``parts`` the walk would not enter (a file name is a part too: ``.x.md``
     is hidden), else None."""
     if any(part.startswith(".") for part in parts):
         return HIDDEN
-    if "_templates" in parts:
+    if any(fold(part) == "_templates" for part in parts):
         return TEMPLATES
     return None
 
@@ -100,7 +124,7 @@ def reason_for_parts(parts: tuple[str, ...]) -> str | None:
     if folder is not None:
         return folder
     name = parts[-1]
-    if name.lower() == "readme.md":
+    if fold(name) == "readme.md":
         return README
     if not name.endswith(".md"):
         return NOT_MARKDOWN
@@ -129,14 +153,17 @@ def why(reason: str) -> str:
     return _WHY.get(reason, reason)
 
 
-def unlisted_message(rel: str, reason: str, source: str | None = None) -> str:
+def unlisted_message(
+    rel: str, reason: str, source: str | None = None, remedy: str | None = None
+) -> str:
     """One sentence for a write refused because ``rel`` would not be listed:
-    the KB-relative path, why, and what chose it."""
+    the KB-relative path, why, what chose it, and what the caller can change
+    (``remedy``; by default, the folder and file name)."""
     chose = f" ({source})" if source else ""
     return (
         f"Refusing to write the entry at '{rel}'{chose}: the index walk does not list "
         f"that path ({why(reason)}), so the next `pyrite index sync` would drop the "
-        "entry. Choose a folder and file name the walk lists."
+        f"entry. {remedy or 'Choose a folder and file name the walk lists.'}"
     )
 
 
@@ -160,6 +187,7 @@ def require_listed(
     path: str | os.PathLike[str],
     *,
     source: str | None = None,
+    remedy: str | None = None,
     errors: list[dict] | None = None,
 ) -> None:
     """Raise ``ValidationError`` (``VALIDATION_FAILED``) when the walk would
@@ -169,4 +197,4 @@ def require_listed(
     if reason is None or reason == OUTSIDE:
         return
     rel = "/".join(parts_below(root, path) or ())
-    raise ValidationError(unlisted_message(rel, reason, source), errors=errors)
+    raise ValidationError(unlisted_message(rel, reason, source, remedy), errors=errors)

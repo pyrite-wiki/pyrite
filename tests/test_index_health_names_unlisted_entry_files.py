@@ -84,6 +84,8 @@ REPORTED = {
     ".hidden/x.md": "hidden",
     "notes/.x.md": "hidden",
     "_templates/t.md": "templates",
+    # Round 1 (F1): a folder that folds to `_templates` is skipped and named.
+    "notes/_Templates/t.md": "templates",
 }
 
 #: Skipped shapes that state no id: the user's, never reported.
