@@ -312,14 +312,11 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite investigation dedup", "threshold"),
     # extensions/encyclopedia/src/pyrite_encyclopedia/cli.py
     ("pyrite wiki stubs", "limit"),
-    # extensions/social/src/pyrite_social/cli.py
-    ("pyrite social newest", "limit"),
-    ("pyrite social top", "limit"),
 }
 
 #: May shrink, never grow (#1541). Lower it in the same commit that deletes rows
 #: from NOT_YET; raising it is the thing this test exists to refuse.
-NOT_YET_PINNED_SIZE = 40
+NOT_YET_PINNED_SIZE = 38
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"
 
