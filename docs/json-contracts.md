@@ -1609,10 +1609,10 @@ this type:
 | a column field (`priority`, `status`, `assignee`, `due_date` ...) | by the type's declaration (`KBSchema.type_fields`: kb.yaml, plugins, and a task's own `priority`, a number); see below |
 
 How a column field reads. A field declared a `number` reads as a number when
-the stored text is a plain ASCII whole number or decimal (`7`, `2.5`): no
-sign, no surrounding space, no leading zero, no exponent, no digits from
-other scripts. Any other text (`"007"`, `"+7"`, `"1e3"`, `high`) reads as
-that text. A task's `priority` is declared a number, and its column holds
+the stored text is a plain ASCII whole number or decimal, with an optional
+leading minus (`7`, `2.5`, `-7`, `-1.5`): no plus sign, no surrounding space,
+no leading zero, no exponent, no digits from other scripts. Any other text
+(`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
 the task model's integer (`coerce_task_priority`: a word on the 1 to 10
 scale, any other non-integer the default 5), so every spelling of it reads
 as that integer and `task_list` and `kb_get` agree. A field declared a
@@ -1627,8 +1627,8 @@ these cases. REST PUT takes no column field, so it has none. A read never
 writes anything.
 
 - A quoted plain number in a field declared a number: `priority: "7"`
-  reads 7, and writing that 7 back stores `priority: 7` without the
-  quotes. `qa validate` reports the text (`number_as_text`), saying what
+  reads 7 (and `"-7"` reads -7), and writing that number back stores it
+  without the quotes (`priority: 7`). `qa validate` reports the text (`number_as_text`), saying what
   Pyrite reads it as.
 - A task's `priority` spelled as anything but a plain whole number
   (`high`, `P1`, `"007"`, `"+7"`, `"1e1"`): it reads as the model's integer
@@ -1638,10 +1638,10 @@ writes anything.
 - A quoted `"true"`, `"false"`, `"1"` or `"0"` in a field declared a
   checkbox: it reads as a boolean, and writing that back stores `true` or
   `false`.
-- A value the strict rule keeps as text that YAML reads as a number when it
-  is not quoted: `priority: -7` reads `"-7"`, and `priority: 0.00001` reads
-  `"1e-05"` (the index's text for it); writing either back stores it
-  quoted (`"-7"`, `"1e-05"`).
+- A number the index spells with an exponent, in a field declared a number:
+  `priority: 0.00001` reads `"1e-05"` (the index's text for it, which the
+  strict rule keeps as text), and writing that back stores it quoted
+  (`priority: "1e-05"`).
 
 `kb_timeline` returns `date` and `location` as stored text: its rows carry
 no `entry_type`, so no declaration applies. The type-specific tools

@@ -176,14 +176,15 @@ TEXT_FIELD_COLUMNS = (
 #: one decoder of the `metadata` column, for the shaper and every consumer.
 
 #: The only text a ``number`` field's column is read as a number from: plain
-#: ASCII digits, no sign, no surrounding whitespace, no leading zero, no
-#: exponent, no digit from another script; a decimal has digits on both sides
-#: of its point. The maintainer's decision on #1628 (2026-11-17), the
-#: strictness of the importance rule (#1588): anything else (``"007"``,
-#: ``"+7"``, ``" 7 "``, ``"1e3"``, ``"٧"``) stays the text the file wrote, so
-#: a value read and written back cannot respell it.
-_WHOLE_TEXT = re.compile(r"0|[1-9][0-9]*", re.ASCII)
-_DECIMAL_TEXT = re.compile(r"(0|[1-9][0-9]*)\.[0-9]+", re.ASCII)
+#: ASCII digits with an optional leading minus, no plus, no surrounding
+#: whitespace, no leading zero, no exponent, no digit from another script; a
+#: decimal has digits on both sides of its point. The maintainer's decisions
+#: on #1628 (2026-11-17: the strictness of the importance rule, #1588; a
+#: leading minus allowed in fix round 2): anything else (``"007"``, ``"+7"``,
+#: ``" 7 "``, ``"1e3"``, ``"٧"``, ``"-0"``) stays the text the file wrote,
+#: so a value read and written back cannot respell it.
+_WHOLE_TEXT = re.compile(r"-?(0|[1-9][0-9]*)", re.ASCII)
+_DECIMAL_TEXT = re.compile(r"-?(0|[1-9][0-9]*)\.[0-9]+", re.ASCII)
 
 #: How each backend spells a bool in a TEXT column: SQLite binds a bool as an
 #: integer (``"1"``/``"0"``); Postgres casts it on assignment (``"true"``/
@@ -206,12 +207,13 @@ def decode_aliases(raw: Any) -> list[Any]:
 
 def read_declared_number(text: str) -> Any:
     """A TEXT column's value as the number a ``number`` field holds: plain
-    ASCII whole-number text an int, plain decimal text a float, and only when
-    the number's own spelling is that text (``"7.50"`` stays text: the float
-    would write back as ``7.5``). Any other text is returned as it is: the cast
+    ASCII whole-number text an int, plain decimal text a float (either with a
+    leading minus), and only when the number's own spelling is that text
+    (``"7.50"`` and ``"-0"`` stay text: they would write back as ``7.5`` and
+    ``0``). Any other text is returned as it is: the cast
     never loses or respells a value (a file's ``priority: high`` reads
     ``"high"``, and ``qa validate`` reports it)."""
-    if _WHOLE_TEXT.fullmatch(text):
+    if _WHOLE_TEXT.fullmatch(text) and text != "-0":
         return int(text)
     if _DECIMAL_TEXT.fullmatch(text):
         value = float(text)

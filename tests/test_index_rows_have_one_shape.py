@@ -835,8 +835,18 @@ SPELLINGS = {
     '"٧"': "٧",
     '"７"': "７",
     '"7.50"': "7.50",
-    '"-7"': "-7",
+    # A leading minus is part of a number (the maintainer, 2026-11-17, fix
+    # round 2); a leading plus, and "-0" (which would write back as 0), are not.
+    "-7": -7,
+    "-1.5": -1.5,
+    '"-7"': -7,
+    '"-1.5"': -1.5,
+    '"-0"': "-0",
 }
+
+#: The quoted spellings the stated exception covers: each reads as its
+#: number, and writing that number back stores it without the quotes.
+UNQUOTED_ON_WRITE_BACK = {'"7"': "7", '"-7"': "-7", '"-1.5"': "-1.5"}
 
 
 def _spelling_params() -> list[Any]:
@@ -887,15 +897,16 @@ def test_a_declared_number_read_and_written_back_leaves_what_the_rule_says(
     rt_world, surface, spelling
 ):
     """What a caller reads, sent back as one field, leaves the file as it was,
-    with one stated exception (the decision on #1628): a quoted `"7"` reads
-    as 7, and the write of that 7 stores it unquoted."""
+    with one stated exception (the decisions on #1628): a quoted plain number
+    (`"7"`, `"-7"`, `"-1.5"`) reads as that number, and the write of it stores
+    it unquoted."""
     w, emp = rt_world
     path = emp / "chores/c-spelt.md"
     path.write_text(_chore(spelling))
     w.index(KB)
     value = _read_priority(w, surface, "c-spelt")
     _write_priority(w, surface, "c-spelt", value)
-    want = _chore("7") if spelling == '"7"' else _chore(spelling)
+    want = _chore(UNQUOTED_ON_WRITE_BACK.get(spelling, spelling))
     assert path.read_text() == want, (spelling, value)
 
 
@@ -1201,10 +1212,10 @@ STATED_WRITE_BACKS = [
     ("task", "priority", "P1", "priority: 5"),
     ("task", "priority", '"007"', "priority: 7"),
     # Text the strict rule keeps comes back quoted, as on `dev`.
-    ("chore", "priority", "-7", 'priority: "-7"'),
     ("chore", "priority", "0.00001", 'priority: "1e-05"'),
     # A declared checkbox reads its quoted text as a bool and stores the bool.
     ("flag", "status", '"true"', "status: true"),
+    ("flag", "status", '"false"', "status: false"),
     ("flag", "status", '"1"', "status: true"),
     ("flag", "status", '"0"', "status: false"),
 ]
