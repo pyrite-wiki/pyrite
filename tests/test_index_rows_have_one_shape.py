@@ -64,6 +64,9 @@ types:
     fields:
       priority: {type: number}
       status: {type: checkbox}
+  dated:
+    fields:
+      date: {type: number}
 """
 
 FILES = {
@@ -1158,3 +1161,77 @@ def test_qa_says_what_the_reader_returns_for_text_in_a_declared_number(
     else:
         assert f"reads it as the number {reads}," in message, message
         assert f"writes {reads} " in message, message
+
+
+#: The write-back cases docs/json-contracts.md states beside the quoted "7"
+#: (delta cold read, round 2): (type, field, file spelling, what the field's
+#: line holds after a read written back). Measured on this branch; the
+#: priority ones are no worse than `dev` (which wrote "7" for each).
+STATED_WRITE_BACKS = [
+    # A task's priority is the model's integer (`coerce_task_priority`).
+    ("task", "priority", "high", "priority: 7"),
+    ("task", "priority", "P1", "priority: 5"),
+    ("task", "priority", '"007"', "priority: 7"),
+    # Text the strict rule keeps comes back quoted, as on `dev`.
+    ("chore", "priority", "-7", 'priority: "-7"'),
+    ("chore", "priority", "0.00001", 'priority: "1e-05"'),
+    # A declared checkbox reads its quoted text as a bool and stores the bool.
+    ("flag", "status", '"true"', "status: true"),
+    ("flag", "status", '"1"', "status: true"),
+    ("flag", "status", '"0"', "status: false"),
+]
+
+
+@pytest.mark.control(
+    reason="each case is a stated limit, no worse than dev or a decision pending with "
+    "the maintainer; pinned so the docs' sentence about it stays true"
+)
+@pytest.mark.parametrize("surface", SURFACES)
+@pytest.mark.parametrize(("entry_type", "field", "spelling", "after"), STATED_WRITE_BACKS)
+def test_each_stated_write_back_exception_is_what_the_file_holds(
+    rt_world, surface, entry_type, field, spelling, after
+):
+    w, emp = rt_world
+    folder = {"task": "tasks", "chore": "chores", "flag": "flags"}[entry_type]
+    path = emp / f"{folder}/s-one.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"---\nid: s-one\ntype: {entry_type}\ntitle: S\n{field}: {spelling}\n---\nq\n")
+    w.index(KB)
+    if surface == "mcp":
+        value = _mcp(w, "kb_get", {"kb_name": KB, "entry_id": "s-one"})["entry"][field]
+        _mcp(w, "kb_update", {"kb_name": KB, "entry_id": "s-one", field: value})
+    elif surface == "cli":
+        value = _cli_json(w, "get", "s-one", "-k", KB)[field]
+        result = w.cli("update", "s-one", "-k", KB, "-f", f"{field}={json.dumps(value)}")
+        assert result.exit_code == 0, result.output
+    else:
+        value = _rest(w, "get", "/api/entries/s-one", params={"kb": KB})[field]
+        _rest(w, "patch", "/api/entries/s-one", json={"kb": KB, "field": field, "value": value})
+    lines = [line for line in path.read_text().splitlines() if line.startswith(f"{field}:")]
+    assert lines == [after], (surface, spelling, value, lines)
+
+
+def test_rest_carries_a_cast_value_in_its_typed_fields(rt_world):
+    """REST's response models type `status` and `date` (`EntryResponse`,
+    `SearchResult`): a field a kb.yaml declares a checkbox or a number reaches
+    them cast, and the route answers with the declared type instead of failing
+    its own validation (found by the round-2 write-back cells)."""
+    w, emp = rt_world
+    (emp / "flags/r-flag.md").parent.mkdir(parents=True, exist_ok=True)
+    (emp / "flags/r-flag.md").write_text(
+        "---\nid: r-flag\ntype: flag\ntitle: R zebra flag\nstatus: true\n---\nzebra\n"
+    )
+    (emp / "dated/r-year.md").parent.mkdir(parents=True, exist_ok=True)
+    (emp / "dated/r-year.md").write_text(
+        "---\nid: r-year\ntype: dated\ntitle: R zebra year\ndate: 2020\n---\nzebra\n"
+    )
+    w.index(KB)
+    assert _rest(w, "get", "/api/entries/r-flag", params={"kb": KB})["status"] is True
+    listed = {r["id"]: r for r in _rest(w, "get", "/api/entries", params={"kb": KB})["entries"]}
+    assert listed["r-flag"]["status"] is True
+    assert listed["r-year"]["date"] == 2020
+    hits = {
+        r["id"]: r
+        for r in _rest(w, "get", "/api/search", params={"q": "zebra", "kb": KB})["results"]
+    }
+    assert hits["r-year"]["date"] == 2020
