@@ -1483,10 +1483,9 @@ class TestMilestonePluginRegistration:
     def test_preset_has_milestones_dir(self):
         assert "milestones" in SOFTWARE_KB_PRESET["directories"]
 
-    def test_preset_has_default_board(self):
-        assert "default_board" in SOFTWARE_KB_PRESET
-        assert "lanes" in SOFTWARE_KB_PRESET["default_board"]
-        assert "wip_policy" in SOFTWARE_KB_PRESET["default_board"]
+    def test_preset_holds_no_board(self):
+        """The built-in board is board.DEFAULT_BOARD_CONFIG alone (#1538)."""
+        assert "default_board" not in SOFTWARE_KB_PRESET
 
 
 # =========================================================================

@@ -62,38 +62,132 @@ gates:
         params: {{field: effort}}
 """
 
-#: Every shape the loader refuses, as the bytes of ``board.yaml``.
+_GATE = "gates:\n  in_progress:\n    policy: enforce\n    criteria:\n"
+_BOMB = "a: &a [x, x, x, x, x, x, x, x, x, x]\n" + "".join(
+    f"{chr(98 + i)}: &{chr(98 + i)} [" + ", ".join([f"*{chr(97 + i)}"] * 8) + "]\n"
+    for i in range(9)
+)
+
+#: Every board.yaml the loader refuses, as its bytes. Each is refused with
+#: VALIDATION_FAILED unless EXPECTED_CODE says otherwise.
 REFUSED_SHAPES: dict[str, bytes] = {
     "does-not-parse": (VALID_GATED + "lanes: [unclosed\n").encode(),
     "not-utf8": b"lanes: []\nname: \xff\xfe " + MARKER.encode() + b"\n",
+    "nested-too-deeply": ("lanes: " + "[" * 400 + MARKER + "]" * 400 + "\n").encode(),
+    "over-the-yaml-limits": (_BOMB + f"# {MARKER}\n").encode(),
     "a-list": f"- {MARKER}\n- b\n".encode(),
     "a-string": f"{MARKER}\n".encode(),
+    "unknown-top-level-key": f"lanes: []\ngate: {{in_progress: {MARKER}}}\n".encode(),
     "lanes-not-a-list": f"lanes: {{{MARKER}: 1}}\n".encode(),
     "lanes-a-number": f"lanes: 5  # {MARKER}\n".encode(),
     "gates-not-a-mapping": f"gates: [{MARKER}]\n".encode(),
     "lane-not-a-mapping": f"lanes:\n  - {MARKER}\n".encode(),
+    "lane-without-a-name": b"lanes:\n  - statuses: [accepted]\n",
     "lane-without-statuses": f"lanes:\n  - name: {MARKER}\n".encode(),
     "lane-statuses-not-a-list": f"lanes:\n  - name: Ready\n    statuses: {MARKER}\n".encode(),
+    "lane-unknown-key": (
+        f"lanes:\n  - name: Ready\n    statuses: [in_progress]\n    wip-limit: 1  # {MARKER}\n"
+    ).encode(),
+    "lanes-with-the-same-name": (
+        f"lanes:\n  - name: {MARKER}\n    statuses: [accepted]\n"
+        f"  - name: {MARKER}\n    statuses: [in_progress]\n    wip_limit: 1\n"
+    ).encode(),
+    "a-status-in-two-lanes": (
+        f"lanes:\n  - name: {MARKER}\n    statuses: [in_progress]\n    wip_limit: 9\n"
+        "  - name: Two\n    statuses: [in_progress]\n    wip_limit: 1\n"
+    ).encode(),
     "wip-limit-not-an-integer": (
         f"lanes:\n  - name: Ready\n    statuses: [in_progress]\n    wip_limit: {MARKER}\n"
     ).encode(),
+    "wip-limit-negative": (
+        f"lanes:\n  - name: {MARKER}\n    statuses: [in_progress]\n    wip_limit: -1\n"
+    ).encode(),
     "wip-policy-unknown": f"lanes: []\nwip_policy: {MARKER}\n".encode(),
+    "gate-keyed-by-a-number": f"gates:\n  5:\n    name: {MARKER}\n".encode(),
+    "gate-keyed-by-an-unknown-status": f"gates:\n  {MARKER}:\n    criteria: []\n".encode(),
     "gate-not-a-mapping": f"gates:\n  in_progress: {MARKER}\n".encode(),
+    "gate-unknown-key": f"gates:\n  in_progress:\n    criterias: [{MARKER}]\n".encode(),
+    "gate-name-not-text": f"gates:\n  in_progress:\n    name: [{MARKER}]\n".encode(),
     "gate-policy-unknown": VALID_GATED.replace(
         "    policy: enforce", f"    policy: {MARKER}"
     ).encode(),
     "criteria-not-a-list": f"gates:\n  in_progress:\n    criteria: {MARKER}\n".encode(),
-    "criterion-type-unknown": (
-        f"gates:\n  in_progress:\n    criteria:\n      - text: t\n        type: {MARKER}\n"
+    "criterion-unknown-key": (
+        _GATE + f"      - text: t\n        type: judgment\n        hints: {MARKER}\n"
     ).encode(),
+    "criterion-text-not-text": (
+        _GATE + f"      - text: [{MARKER}]\n        type: judgment\n"
+    ).encode(),
+    "criterion-hint-not-text": (
+        _GATE + f"      - text: t\n        type: judgment\n        hint: [{MARKER}]\n"
+    ).encode(),
+    "criterion-type-unknown": (_GATE + f"      - text: t\n        type: {MARKER}\n").encode(),
     "checker-unknown": VALID_GATED.replace("checker: has_field", f"checker: {MARKER}").encode(),
-    "checker-criterion-without-checker": (
-        b"gates:\n  in_progress:\n    policy: enforce\n    criteria:\n      - text: t\n"
-    ),
+    "checker-criterion-without-checker": (_GATE + "      - text: t\n").encode(),
     "checker-params-not-a-mapping": VALID_GATED.replace(
         "params: {field: effort}", f"params: [{MARKER}]"
     ).encode(),
+    "checker-params-missing": VALID_GATED.replace("        params: {field: effort}\n", "").encode(),
+    "checker-params-it-cannot-use": VALID_GATED.replace(
+        "params: {field: effort}", f"params: {{nope: {MARKER}}}"
+    ).encode(),
+    "checker-pattern-that-does-not-compile": (
+        _GATE + f"      - text: t\n        checker: body_has_pattern\n"
+        f"        params: {{pattern: '({MARKER}'}}\n"
+    ).encode(),
 }
+
+#: Shapes whose read the KB file reader refused: its code is kept.
+EXPECTED_CODE = {
+    "over-the-yaml-limits": "INVALID_FRONTMATTER",
+    "a-link-out-of-the-kb": "OUTSIDE_KB_ROOT",
+    "the-os-refuses-the-read": "KB_UNREADABLE",
+}
+
+
+def _link_out(world, tmp_path, monkeypatch):
+    outside = tmp_path / "outside.yaml"
+    outside.write_text(VALID_GATED)
+    (world.kb_path(KB) / "board.yaml").symlink_to(outside)
+
+
+def _a_directory(world, tmp_path, monkeypatch):
+    (world.kb_path(KB) / "board.yaml").mkdir()
+    (world.kb_path(KB) / "board.yaml" / MARKER).write_text(MARKER)
+
+
+def _os_refuses(world, tmp_path, monkeypatch):
+    """The container runs as root, so a mode cannot refuse the read: the KB
+    file reader's own read is made to fail as the OS would."""
+    from pyrite.utils.kb_files import KBFiles
+
+    _write_board(world, VALID_GATED)
+    real = KBFiles.read_bytes
+
+    def read_bytes(self, path, *a, **k):
+        if Path(path).name == "board.yaml":
+            raise PermissionError(13, "Permission denied", str(path))
+        return real(self, path, *a, **k)
+
+    monkeypatch.setattr(KBFiles, "read_bytes", read_bytes)
+
+
+#: Boards that are not plain bytes to write.
+SET_UP: dict = {
+    "a-link-out-of-the-kb": _link_out,
+    "a-directory-named-board-yaml": _a_directory,
+    "the-os-refuses-the-read": _os_refuses,
+}
+
+BROKEN = sorted([*REFUSED_SHAPES, *SET_UP])
+
+
+def _break_the_board(world, shape, tmp_path, monkeypatch) -> None:
+    if shape in REFUSED_SHAPES:
+        _write_board(world, REFUSED_SHAPES[shape])
+    else:
+        SET_UP[shape](world, tmp_path, monkeypatch)
+
 
 # -- the world ----------------------------------------------------------------
 
@@ -188,78 +282,188 @@ def _cli_json(result) -> dict:
     return json.loads(text[start:])
 
 
-def _assert_board_refusal(answer: dict) -> None:
-    assert answer.get("error_code") == "VALIDATION_FAILED", answer
+def _assert_board_refusal(answer: dict, shape: str) -> None:
+    assert answer.get("error_code") == EXPECTED_CODE.get(shape, "VALIDATION_FAILED"), answer
     assert answer.get("retryable") is False, answer
     assert "board.yaml" in answer["error"], answer
     assert MARKER not in json.dumps(answer), answer
 
 
-# -- refused shapes ---------------------------------------------------------------
+# -- every tool and command that loads a board config is covered here ------------
+
+_SW = Path(__file__).resolve().parent.parent / "extensions/software-kb/src/pyrite_software_kb"
 
 
-@pytest.mark.parametrize("shape", sorted(REFUSED_SHAPES))
-@pytest.mark.parametrize("tool", sorted(MCP_CALLS))
-def test_a_board_that_cannot_be_loaded_refuses_over_mcp(world, tool, shape):
-    _write_board(world, REFUSED_SHAPES[shape])
+def _plugin_methods_that_load_a_board() -> set[str]:
+    """Methods of SoftwareKBPlugin that reach `_board_config`, directly or
+    through another method (the plugin's source, walked)."""
+    import ast
+
+    tree = ast.parse((_SW / "plugin.py").read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SoftwareKBPlugin")
+    calls: dict[str, set[str]] = {}
+    for fn in cls.body:
+        if isinstance(fn, ast.FunctionDef):
+            calls[fn.name] = {
+                n.func.attr
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            }
+    reach = {"_board_config"}
+    while True:
+        more = {name for name, called in calls.items() if called & reach} - reach
+        if not more:
+            return reach - {"_board_config"}
+        reach |= more
+
+
+def _cli_commands_that_load_a_board() -> set[str]:
+    """`pyrite sw` commands whose function calls a plugin method that loads one."""
+    import ast
+
+    from pyrite_software_kb.cli import sw_app
+
+    loaders = _plugin_methods_that_load_a_board() | {"_board_config"}
+    tree = ast.parse((_SW / "cli.py").read_text(encoding="utf-8"))
+    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    out = set()
+    for command in sw_app.registered_commands:
+        fn = functions.get(command.callback.__name__)
+        called = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)} if fn else set()
+        if called & loaders:
+            out.add(f"sw {command.name or command.callback.__name__.replace('_', '-')}")
+    return out
+
+
+def _registered_tools() -> dict[str, str]:
+    from pyrite_software_kb.plugin import SoftwareKBPlugin
+
+    tools = SoftwareKBPlugin().get_mcp_tools("admin")
+    return {name: spec["handler"].__name__ for name, spec in tools.items()}
+
+
+def test_the_walk_finds_the_known_loaders():
+    """Not vacuous: the walk sees the handlers and commands this file tests."""
+    methods = _plugin_methods_that_load_a_board()
+    assert {"_mcp_claim", "get_orient_supplement", "_mcp_board"} <= methods, methods
+    assert set(CLI_CALLS) <= _cli_commands_that_load_a_board()
+
+
+#: The receivers, from the code: every registered MCP tool and every `pyrite
+#: sw` command that reaches `_board_config`. A new one with no arguments in
+#: MCP_CALLS or CLI_CALLS fails here.
+BOARD_TOOLS = sorted(
+    t for t, h in _registered_tools().items() if h in _plugin_methods_that_load_a_board()
+)
+BOARD_COMMANDS = sorted(_cli_commands_that_load_a_board())
+
+
+# -- a board that cannot be loaded: one refusal, everywhere ----------------------
+
+
+@pytest.mark.parametrize("shape", BROKEN)
+@pytest.mark.parametrize("tool", BOARD_TOOLS)
+def test_a_board_that_cannot_be_loaded_refuses_over_mcp(world, tool, shape, tmp_path, monkeypatch):
+    assert tool in MCP_CALLS, f"{tool} loads a board config: give it arguments in MCP_CALLS"
+    _break_the_board(world, shape, tmp_path, monkeypatch)
     before = _snapshot(world)
 
     answer = _mcp(world, tool, MCP_CALLS[tool])
 
-    _assert_board_refusal(answer)
+    _assert_board_refusal(answer, shape)
     assert _snapshot(world) == before
 
 
-@pytest.mark.parametrize("shape", sorted(REFUSED_SHAPES))
-@pytest.mark.parametrize("command", sorted(CLI_CALLS))
-def test_a_board_that_cannot_be_loaded_refuses_on_the_cli(world, command, shape):
-    _write_board(world, REFUSED_SHAPES[shape])
+@pytest.mark.parametrize("shape", BROKEN)
+@pytest.mark.parametrize("command", BOARD_COMMANDS)
+def test_a_board_that_cannot_be_loaded_refuses_on_the_cli(
+    world, command, shape, tmp_path, monkeypatch
+):
+    assert command in CLI_CALLS, f"`pyrite {command}` loads a board config: add it to CLI_CALLS"
+    _break_the_board(world, shape, tmp_path, monkeypatch)
     before = _snapshot(world)
 
     result = _cli(world, CLI_CALLS[command])
 
     assert result.exit_code == 1, result.output
     assert MARKER not in result.output, result.output
+    assert "Traceback" not in result.output
     if command == "sw review":  # a rich-only command: the message, in the CLI's error line
         assert "board.yaml" in result.output, result.output
     else:
-        _assert_board_refusal(_cli_json(result))
+        _assert_board_refusal(_cli_json(result), shape)
     assert _snapshot(world) == before
 
 
-def test_orient_says_what_is_wrong_with_the_board(world):
-    _write_board(world, REFUSED_SHAPES["does-not-parse"])
+@pytest.mark.parametrize("shape", BROKEN)
+def test_orient_answers_and_says_what_is_wrong_with_the_board(world, shape, tmp_path, monkeypatch):
+    _break_the_board(world, shape, tmp_path, monkeypatch)
     answer = _mcp(world, "kb_orient", {"kb_name": KB})
-    block = json.dumps(answer)
-    assert "board_error" in block, answer
-    assert MARKER not in block
+    software = answer.get("software")
+    assert software is not None, answer
+    assert "board.yaml" in software["board_error"], software
+    assert software["recommended_next"] is None and software["board_summary"] == []
+    assert MARKER not in json.dumps(answer)
 
 
-# -- the reader's own refusals keep their codes ----------------------------------
+@pytest.mark.parametrize("fmt", ["json", "rich"])
+@pytest.mark.parametrize("shape", ["does-not-parse", "a-link-out-of-the-kb", "nested-too-deeply"])
+def test_the_cli_orient_shows_the_board_error(world, shape, fmt, tmp_path, monkeypatch):
+    from pyrite.plugins.registry import get_registry
+
+    # The CLI is a fresh process: no plugin holds a server's context. In a
+    # shared test worker an earlier server's (closed) one may still be set.
+    for plugin in get_registry()._plugins.values():
+        if hasattr(plugin, "ctx"):
+            monkeypatch.setattr(plugin, "ctx", None)
+    _break_the_board(world, shape, tmp_path, monkeypatch)
+    result = _cli(world, ["orient", "-k", KB, "--format", fmt])
+    assert result.exit_code == 0, result.output
+    assert "board.yaml" in result.output, result.output
+    assert MARKER not in result.output
 
 
-@pytest.mark.parametrize("tool", ["sw_claim", "sw_check_ready", "sw_pull_next"])
-def test_a_board_over_the_yaml_limits_keeps_the_readers_code(world, tool):
-    bomb = "a: &a [x, x, x, x, x, x, x, x, x, x]\n" + "".join(
-        f"{chr(98 + i)}: &{chr(98 + i)} [*{chr(97 + i)}, *{chr(97 + i)}, *{chr(97 + i)}, "
-        f"*{chr(97 + i)}, *{chr(97 + i)}, *{chr(97 + i)}, *{chr(97 + i)}, *{chr(97 + i)}]\n"
-        for i in range(9)
-    )
-    _write_board(world, bomb)
+def test_a_checker_that_cannot_run_on_an_entry_refuses(world, monkeypatch):
+    """A checker that fails on one entry (a pattern that takes too long on its
+    body) is the board's refusal, without its text."""
+    from pyrite.services import rubric_checkers
+
+    real = rubric_checkers.NAMED_CHECKERS["has_field"]
+
+    def has_field(entry, schema, params):
+        if entry.get("id"):  # not the load-time dry run
+            raise rubric_checkers.CheckerConfigError(f"took too long on {MARKER}")
+        return real(entry, schema, params)
+
+    monkeypatch.setitem(rubric_checkers.NAMED_CHECKERS, "has_field", has_field)
+    _write_board(world, VALID_GATED)
     before = _snapshot(world)
-    answer = _mcp(world, tool, MCP_CALLS[tool])
-    assert answer.get("error_code") == "INVALID_FRONTMATTER", answer
+    for tool in ("sw_claim", "sw_check_ready"):
+        answer = _mcp(world, tool, MCP_CALLS[tool])
+        _assert_board_refusal(answer, "runtime")
+        assert "criterion 1" in answer["error"], answer
     assert _snapshot(world) == before
 
 
-@pytest.mark.parametrize("tool", ["sw_claim", "sw_check_ready", "sw_pull_next"])
-def test_a_board_that_links_out_of_the_kb_keeps_the_readers_code(world, tool, tmp_path):
-    outside = tmp_path / "outside.yaml"
-    outside.write_text(VALID_GATED)
-    (world.kb_path(KB) / "board.yaml").symlink_to(outside)
-    answer = _mcp(world, tool, MCP_CALLS[tool])
-    assert answer.get("error_code") == "OUTSIDE_KB_ROOT", answer
-    assert MARKER not in json.dumps(answer)
+@pytest.mark.parametrize("tool", BOARD_TOOLS)
+def test_a_call_with_no_kb_is_never_an_internal_error(world, tool):
+    """No `kb_name` key at all: a refusal, or the built-in board's answer for
+    the cross-KB views; never INTERNAL."""
+    args = {k: v for k, v in MCP_CALLS[tool].items() if k != "kb_name"}
+    answer = _mcp(world, tool, args)
+    assert answer.get("error_code") != "INTERNAL", answer
+
+
+def test_refine_naming_no_kb_is_refused_over_mcp(world):
+    for args in ({}, {"kb_name": ""}):
+        answer = _mcp(world, "sw_refine", args)
+        assert answer["error_code"] == "VALIDATION_FAILED", answer
+
+
+def test_the_built_in_board_passes_the_loaders_own_checks():
+    from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG, _validated
+
+    assert _validated(DEFAULT_BOARD_CONFIG)["lanes"] == DEFAULT_BOARD_CONFIG["lanes"]
 
 
 # -- controls: what does not change ------------------------------------------------
@@ -310,14 +514,6 @@ def test_a_valid_warn_gate_runs_and_passes_the_claim(world):
     answer = _mcp(world, "sw_claim", MCP_CALLS["sw_claim"])
     assert answer["claimed"] is True, answer
     assert answer["gate"]["passed"] is False and answer["gate"]["policy"] == "warn"
-
-
-@pytest.mark.control(reason="a checker missing its parameter keeps CheckerConfigError's answer")
-def test_a_checker_missing_its_parameter_keeps_its_answer(world):
-    _write_board(world, VALID_GATED.replace("        params: {field: effort}\n", ""))
-    answer = _mcp(world, "sw_claim", MCP_CALLS["sw_claim"])
-    assert answer["error_code"] == "VALIDATION_FAILED", answer
-    assert "has_field requires" in answer["error"], answer
 
 
 # -- where the board config is read from --------------------------------------------
@@ -459,88 +655,6 @@ def test_a_valid_enforced_gate_blocks_review_and_transition(world):
     move = _mcp(world, "sw_transition", MCP_CALLS["sw_transition"])
     assert move["transitioned"] is False and move["error"] == "Gate check failed", move
     assert _snapshot(world) == before
-
-
-# -- every tool and command that loads a board config is covered here ------------
-
-_SW = Path(__file__).resolve().parent.parent / "extensions/software-kb/src/pyrite_software_kb"
-
-
-def _plugin_methods_that_load_a_board() -> set[str]:
-    """Methods of SoftwareKBPlugin that reach `_board_config`, directly or
-    through another method (the plugin's source, walked)."""
-    import ast
-
-    tree = ast.parse((_SW / "plugin.py").read_text(encoding="utf-8"))
-    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "SoftwareKBPlugin")
-    calls: dict[str, set[str]] = {}
-    for fn in cls.body:
-        if isinstance(fn, ast.FunctionDef):
-            calls[fn.name] = {
-                n.func.attr
-                for n in ast.walk(fn)
-                if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-            }
-    reach = {"_board_config"}
-    while True:
-        more = {name for name, called in calls.items() if called & reach} - reach
-        if not more:
-            return reach - {"_board_config"}
-        reach |= more
-
-
-def _cli_commands_that_load_a_board() -> set[str]:
-    """`pyrite sw` commands whose function calls a plugin method that loads one."""
-    import ast
-
-    from pyrite_software_kb.cli import sw_app
-
-    loaders = _plugin_methods_that_load_a_board() | {"_board_config"}
-    tree = ast.parse((_SW / "cli.py").read_text(encoding="utf-8"))
-    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
-    out = set()
-    for command in sw_app.registered_commands:
-        fn = functions.get(command.callback.__name__)
-        called = {n.attr for n in ast.walk(fn) if isinstance(n, ast.Attribute)} if fn else set()
-        if called & loaders:
-            out.add(f"sw {command.name or command.callback.__name__.replace('_', '-')}")
-    return out
-
-
-def _registered_tools() -> dict[str, str]:
-    from pyrite_software_kb.plugin import SoftwareKBPlugin
-
-    tools = SoftwareKBPlugin().get_mcp_tools("admin")
-    return {name: spec["handler"].__name__ for name, spec in tools.items()}
-
-
-@pytest.mark.control(reason="a ratchet: it guards the next tool that loads a board config")
-@pytest.mark.parametrize("tool", sorted(_registered_tools()))
-def test_every_tool_that_loads_a_board_is_tested_here(tool):
-    if _registered_tools()[tool] in _plugin_methods_that_load_a_board():
-        assert tool in MCP_CALLS, f"{tool} loads a board config: add it to MCP_CALLS"
-
-
-def _sw_commands() -> list[str]:
-    from pyrite_software_kb.cli import sw_app
-
-    return sorted(
-        f"sw {c.name or c.callback.__name__.replace('_', '-')}" for c in sw_app.registered_commands
-    )
-
-
-@pytest.mark.control(reason="a ratchet: it guards the next command that loads a board config")
-@pytest.mark.parametrize("command", _sw_commands())
-def test_every_command_that_loads_a_board_is_tested_here(command):
-    if command in _cli_commands_that_load_a_board():
-        assert command in CLI_CALLS, f"`pyrite {command}` loads a board config: add it to CLI_CALLS"
-
-
-def test_the_walk_finds_the_known_loaders():
-    """Not vacuous: the walk sees the handlers and commands this file tests."""
-    methods = _plugin_methods_that_load_a_board()
-    assert {"_mcp_claim", "get_orient_supplement", "_mcp_board"} <= methods, methods
-    assert set(CLI_CALLS) <= _cli_commands_that_load_a_board()
 
 
 def test_refine_naming_no_kb_is_refused_on_the_cli(world, board_in_the_working_directory):

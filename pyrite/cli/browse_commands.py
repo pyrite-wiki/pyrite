@@ -321,6 +321,12 @@ def register_browse_commands(app: typer.Typer) -> None:
                     board_parts.append(part)
                 if board_parts:
                     console.print(f"\n[bold]Board:[/bold] {' | '.join(board_parts)}")
+                if sw.get("board_error"):
+                    # A plugin's board that could not be loaded: its refusal text,
+                    # in place of the lanes and the recommendation (#1538).
+                    from rich.markup import escape
+
+                    console.print(f"\n[bold]Board:[/bold] [red]{escape(sw['board_error'])}[/red]")
 
                 # In-progress table
                 ip_items = sw.get("in_progress", [])

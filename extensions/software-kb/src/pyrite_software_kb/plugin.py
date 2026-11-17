@@ -1539,9 +1539,9 @@ class SoftwareKBPlugin:
             # first call of a session says what is wrong with the board instead.
             board_error = None
             try:
-                board_config = self._board_config(db, kb_name, readable_kbs={kb_name})
+                lanes = self._board_config(db, kb_name, readable_kbs={kb_name})["lanes"]
             except BoardConfigError as e:
-                board_config = {"lanes": []}
+                lanes = []
                 board_error = public_text(e)
 
             # Query all backlog items for this KB
@@ -1550,14 +1550,12 @@ class SoftwareKBPlugin:
 
             # Build status→lane mapping
             status_to_lane: dict[str, int] = {}
-            for i, lane in enumerate(board_config.get("lanes", [])):
+            for i, lane in enumerate(lanes):
                 for s in lane["statuses"]:
                     status_to_lane[s] = i
 
             # Group items into lanes and collect in_progress/review
-            lane_counts: dict[int, int] = dict.fromkeys(
-                range(len(board_config.get("lanes", []))), 0
-            )
+            lane_counts: dict[int, int] = dict.fromkeys(range(len(lanes)), 0)
             in_progress_items: list[dict] = []
             review_items: list[dict] = []
 
@@ -1588,7 +1586,7 @@ class SoftwareKBPlugin:
 
             # Board summary (lane name → count + WIP status)
             board_summary = []
-            for i, lane_def in enumerate(board_config.get("lanes", [])):
+            for i, lane_def in enumerate(lanes):
                 count = lane_counts.get(i, 0)
                 entry = {"name": lane_def["name"], "count": count}
                 wip_limit = lane_def.get("wip_limit")
@@ -2151,7 +2149,7 @@ class SoftwareKBPlugin:
 
         from pyrite.services.rubric_checkers import NAMED_CHECKERS
 
-        from .board import BoardConfigError, check_criterion
+        from .board import BoardConfigError, check_criterion, run_checker
 
         # `board.load_board_config` has validated the config; these checks are
         # the gate's own, so it never records a criterion it could not run as
@@ -2214,7 +2212,9 @@ class SoftwareKBPlugin:
                 ]
 
             params = criterion.get("params")
-            failure = checker_fn(entry_dict, None, params)
+            failure = run_checker(
+                f"criterion {n} of the gate for this status", checker_fn, entry_dict, params
+            )
             passed = failure is None
             result = {"text": text, "passed": passed, "type": "checker"}
             if not passed:
@@ -2274,7 +2274,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
 
         try:
             query = (
@@ -2319,7 +2319,7 @@ class SoftwareKBPlugin:
         import json
 
         db, should_close = self._get_db()
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         status_filter = args.get("status")
 
         try:
@@ -2690,7 +2690,7 @@ class SoftwareKBPlugin:
         assignee = args["assignee"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
 
         try:
             # Get current entry
@@ -2851,7 +2851,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         to_status = args["to_status"]
         reason = args.get("reason")
 
@@ -2953,7 +2953,7 @@ class SoftwareKBPlugin:
         reviewer = args["reviewer"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         outcome = args["outcome"]
         feedback = args.get("feedback")
 
