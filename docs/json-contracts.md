@@ -305,8 +305,8 @@ software-kb's `migrate-standards`, `index reconcile --apply`) ask this rule
 before they write. One test fails when any of them stops asking, asks only
 after it writes, or asks about another path; a scan of the code fails when a
 new call of a placing shape it knows appears (`create_entry_text`,
-`move_entry_text`, a `move`, `move_bytes` or `rename`), and lists the shapes
-it cannot see (`tests/test_one_predicate_decides_what_the_walk_lists.py`). So an entry a
+`move_entry_text`, a `move`, `move_bytes` or `rename`), and names shapes
+it is known to miss; that list is not complete (`tests/test_one_predicate_decides_what_the_walk_lists.py`). So an entry a
 write placed is one the next sync lists, and a delete, update or read by id
 finds it before and after that sync. One spelling no rule on the name can see
 is an NTFS 8.3 short name (`_TEMPL~1`). Where Pyrite chose the file name it
