@@ -220,6 +220,24 @@ class TestAssessEntry:
         assert {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()} == before
         assert qa_env["qa"].get_assessments("test-kb") == []
 
+    def test_assess_entry_in_unreadable_kb_writes_nothing(self, qa_env):
+        """An entry in a KB outside the caller's readable set is answered
+        exactly like a missing entry (#1499 acceptance 2): the same
+        EntryNotFoundError, no file written, no assessment recorded."""
+        kb_path = qa_env["kb_config"].path
+        before = {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()}
+
+        with pytest.raises(EntryNotFoundError, match="Entry 'good-note' not found") as exc:
+            qa_env["qa"].assess_entry(
+                "good-note",
+                "test-kb",
+                readable_kbs=set(),
+            )
+
+        assert exc.value.error_code == "ENTRY_NOT_FOUND"
+        assert {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()} == before
+        assert qa_env["qa"].get_assessments("test-kb") == []
+
     def test_assess_valid_entry_returns_pass(self, qa_env):
         """Assessing a valid entry produces qa_status='pass'."""
         result = qa_env["qa"].assess_entry("good-note", "test-kb", readable_kbs=UNSCOPED)
