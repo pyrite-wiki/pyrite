@@ -14,3 +14,5 @@ rank: 0
 ---
 
 qa duplicates --threshold is declared with a parser function instead of click_type=, a keyword Typer 0.29 removed, so pyrite, pyrite-read and pyrite-admin import on every Typer version pyproject.toml allows. The refusals (out of range, non-finite, not a number) stay usage errors. A structural test refuses the keyword anywhere under pyrite/ and extensions/.
+
+The same fix was submitted independently in #1603 by HarshRajSinghania, who is credited as co-author of this change.
