@@ -49,7 +49,7 @@ def _seed(w, kb_name: str, text: str) -> None:
     w.index(kb_name)
 
 
-def _link_world(tmp_path: Path):
+def _link_world(tmp_path: Path, *, with_widget: bool = True):
     """Two general KBs; `t` is the reader's own KB, `u` the other one."""
     w = build_world(
         tmp_path / "w",
@@ -59,9 +59,12 @@ def _link_world(tmp_path: Path):
         ],
     )
     _seed(w, KB, "---\nid: src\ntype: note\ntitle: Source\n---\n\nThe source entry.\n")
-    _seed(
-        w, OTHER, "---\nid: widget\ntype: note\ntitle: Widget\n---\n\nLives only in the other KB.\n"
-    )
+    if with_widget:
+        _seed(
+            w,
+            OTHER,
+            "---\nid: widget\ntype: note\ntitle: Widget\n---\n\nLives only in the other KB.\n",
+        )
     yield w
     w.close()
 
@@ -69,6 +72,12 @@ def _link_world(tmp_path: Path):
 @pytest.fixture
 def link_world(tmp_path: Path):
     yield from _link_world(tmp_path)
+
+
+@pytest.fixture
+def bare_world(tmp_path: Path):
+    """The same two KBs, but no entry `widget` anywhere."""
+    yield from _link_world(tmp_path / "bare", with_widget=False)
 
 
 def _outlinks(w, entry_id, kb_name, readable_kbs=None):
@@ -201,6 +210,74 @@ def test_rich_link_line_marks_an_unresolved_target(link_world):
     clean = plain(result.output)
     assert "Already linked:" in clean, clean
     assert "unresolved" in clean, clean
+
+
+def test_rich_link_line_keeps_a_bracketed_relation_and_marks_an_unresolved_target(link_world):
+    """The #396 escaping holds with the suffix: `[implements]` is not read as markup."""
+    result = link_world.cli(
+        "link",
+        "src",
+        "nowhere-entry",
+        "-k",
+        KB,
+        "--relation",
+        "implements",
+        "--allow-dangling",
+        "--format",
+        "rich",
+    )
+    assert result.exit_code == 0, result.output
+    assert plain(result.output).strip() == (
+        "Linked: src --[implements]--> nowhere-entry (in test-kb)"
+        " \u2014 unresolved: the target does not exist yet"
+    )
+
+
+@pytest.mark.control(
+    reason=(
+        "the two lines are identical with and without the #1374 change; this guards "
+        "concealment (a future suffix that names the unreadable KB), not the suffix"
+    )
+)
+def test_a_target_the_caller_cannot_read_prints_the_line_a_missing_target_prints(
+    link_world, bare_world
+):
+    """Concealment (ADR-0037 section 4) at the rich line.
+
+    The CLI has no such caller: `pyrite link` runs as the local, unscoped
+    process (`cli_context` resolves every KB with `UNSCOPED`; `link` has no
+    caller or scope option, and `add_link` takes no `readable_kbs`). The nearest
+    place the regime exists is the outlink row the service returns for a caller
+    whose readable set is `{KB}`, so the row is passed through `_report_link`
+    here. `widget` lives only in OTHER; in the second world it lives nowhere.
+    """
+    from io import StringIO
+
+    from rich.console import Console
+
+    from pyrite.cli.entry_commands import _report_link
+
+    def printed_line(w) -> str:
+        KBService(w.config, w.db).add_link("src", KB, "widget", target_kb=KB, allow_dangling=True)
+        row = next(r for r in _outlinks(w, "src", KB, readable_kbs={KB}) if r["id"] == "widget")
+        buf = StringIO()
+        _report_link(
+            Console(file=buf, force_terminal=False, width=200),
+            {
+                "created": True,
+                "source": "src",
+                "relation": row["relation"],
+                "target": row["id"],
+                "target_kb": KB,
+                "resolved": row["resolved"],
+            },
+        )
+        return buf.getvalue()
+
+    exists_only_in_the_unreadable_kb = printed_line(link_world)
+    exists_nowhere = printed_line(bare_world)
+    assert exists_only_in_the_unreadable_kb.startswith("Linked: src --[related_to]--> widget")
+    assert exists_only_in_the_unreadable_kb == exists_nowhere
 
 
 def test_rest_entry_read_carries_the_same_fields(link_world, tmp_path):
