@@ -320,10 +320,6 @@ NOT_YET: set[tuple[str, str]] = {
     # pyrite/cli/task_commands.py
     ("pyrite task list", "priority"),
     #
-    # pyrite/read_cli.py
-    ("pyrite-read timeline", "min_importance"),
-    ("pyrite-read timeline", "limit"),
-    #
     #
     # extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py
     ("pyrite investigation timeline", "min_importance"),
