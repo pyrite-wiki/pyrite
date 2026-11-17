@@ -147,6 +147,47 @@ priority: ""
 ---
 ticket body
 """,
+    # The cold read's probe on #1660: declared fields written empty, and a
+    # non-empty `metadata:` spelling of each. `pyrite get` shows `priority: ''`
+    # and `status: ''` at their own names, so the checker sees them missing.
+    "nested": """\
+---
+id: nested
+title: A nested spelling
+type: backlog_item
+kind: bug
+status: ""
+priority: ""
+metadata:
+  priority: high
+  status: open
+---
+body
+""",
+    # A task writes `date`, a field TaskEntry declares (Temporal) but never
+    # reads from its file: the column is '' and the value rides in the bag.
+    # `pyrite get` shows `date: ''` at its own name, so the checker sees it
+    # missing.
+    "task-date": """\
+---
+id: task-date
+title: A task with a date line
+type: task
+date: "2026-01-02"
+---
+body
+""",
+    # A note does not declare `status`: the file's value is the bag's, shown
+    # by `pyrite get` under `metadata`, and the checker sees it.
+    "note-status": """\
+---
+id: note-status
+title: A note with a status line
+type: note
+status: accepted
+---
+body
+""",
     # A core type whose `date` is an attribute: in the column only.
     "event": """\
 ---
@@ -240,6 +281,45 @@ LOCATIONS: dict[str, tuple[dict, str]] = {
     ),
 }
 
+#: name -> (criterion, item, holds, why): where the bag and the column can
+#: disagree, the checker sees the value ``pyrite get`` shows: a field the
+#: type declares at its own name (the column, even when empty), a field it
+#: does not declare under ``metadata`` (the bag). Round 2 of #1660.
+AS_GET_SHOWS: dict[str, tuple[dict, str, bool, str]] = {
+    "declared-empty-beats-nested-priority-present": (
+        {"checker": "priority_present"},
+        "nested",
+        False,
+        "get shows priority: '' at its own name",
+    ),
+    "declared-empty-beats-nested-has_field-priority": (
+        {"checker": "has_field", "params": {"field": "priority"}},
+        "nested",
+        False,
+        "get shows priority: '' at its own name",
+    ),
+    "declared-empty-beats-nested-has_field-status": (
+        {"checker": "has_field", "params": {"field": "status"}},
+        "nested",
+        False,
+        "get shows status: '' at its own name",
+    ),
+    "declared-but-unread-task-date": (
+        {"checker": "has_field", "params": {"field": "date"}},
+        "task-date",
+        False,
+        "get shows date: '' at its own name: TaskEntry declares date and never reads it",
+    ),
+    "undeclared-note-status": (
+        {"checker": "has_field", "params": {"field": "status"}},
+        "note-status",
+        True,
+        "a note does not declare status: get shows it under metadata",
+    ),
+}
+#: The cells that `dev` and the round-1 head already answer as `get` shows.
+AS_GET_SHOWS_CONTROLS = {"undeclared-note-status"}
+
 CALLERS = ("gate", "qa-entry", "qa-kb")
 
 #: The cells `dev` (0d04f491) answers wrongly, read off the reproduction in the
@@ -289,6 +369,7 @@ def _all_criteria() -> list[dict]:
     return _criteria(
         {case: c for case, (c, _h, _f) in CASES.items()}
         | {f"at-{loc}": c for loc, (c, _i) in LOCATIONS.items()}
+        | {f"seen-{name}": c for name, (c, _i, _h, _w) in AS_GET_SHOWS.items()}
     )
 
 
@@ -424,6 +505,30 @@ def test_has_field_reads_a_field_wherever_the_index_stores_it(answers, location,
     """
     _criterion, item = LOCATIONS[location]
     assert answers[caller][item][f"at-{location}"] is True, (caller, item, location)
+
+
+def _as_get_shows_cells():
+    cells = []
+    for name, (_c, item, _holds, why) in AS_GET_SHOWS.items():
+        callers = CALLERS if "backlog_item" in FILES[item] else ("qa-entry", "qa-kb")
+        for caller in callers:
+            marks = []
+            if name in AS_GET_SHOWS_CONTROLS:
+                marks.append(pytest.mark.control(reason=why))
+            cells.append(pytest.param(name, caller, id=f"{name}-{caller}", marks=marks))
+    return cells
+
+
+@pytest.mark.parametrize(("name", "caller"), _as_get_shows_cells())
+def test_a_checker_sees_the_value_pyrite_get_shows(answers, name, caller):
+    """Where the bag and the column disagree, the checker sees what ``pyrite
+    get`` shows: a declared field's column, even when empty, over a ``metadata:``
+    spelling of it; an undeclared field's bag value. A task's ``date`` is a
+    declared field TaskEntry never reads from its file, so ``get`` shows it
+    empty at its own name and so does the checker (the file's value stays
+    under ``metadata``)."""
+    _criterion, item, holds, why = AS_GET_SHOWS[name]
+    assert answers[caller][item][f"seen-{name}"] is holds, (caller, item, why)
 
 
 #: item -> its kind: an empty field (`priority: ""`) is missing whether the

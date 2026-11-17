@@ -10,21 +10,25 @@ column of their own (``FIELD_COLUMNS``), the tag table, and the link table.
 The checkers read ``metadata`` and three derived keys. So the entry is:
 
 - the row's columns as they are (``title``, ``body``, ``status``, ...);
-- ``metadata``: a new dict, never the stored bag. It holds the bag, with each
-  field column filled in where the bag has no non-empty value, and ``tags``
-  (the tag names) when the item has any. A field whose bag value and column
-  are both empty (``None`` or ``""``) is absent, so a kb.yaml type (which keeps
-  a protocol field in both places) and a plugin class (column only) give one
-  answer;
+- ``metadata``: a new dict, never the stored bag. Each field column is
+  given the value ``pyrite get`` shows for it (``_field_value``): for a field
+  the item's type declares, its column, Pyrite's reading at its own name, even
+  when empty (a ``metadata:`` spelling of it does not count); for a field the
+  type does not declare, the bag's value, which ``get`` shows under
+  ``metadata`` (the column is a promoted copy of it, or empty). A field whose
+  value is empty (``None`` or ``""``) is absent, so a kb.yaml type (which
+  keeps a protocol field in its column and its bag) and a plugin class
+  (column only) give one answer. ``tags`` (the tag names) is added when the
+  item has any;
 - ``_tag_count``, ``_links`` (``[{"target", "relation"}]``, every ``link``
   row the item is the source of: frontmatter links and body wikilinks alike)
   and ``_outlink_count`` (``len(_links)``).
 
-The bag is read first because, for a kb.yaml type, it holds the value as the
-file wrote it, while the column holds a copy (a ``location`` list is joined
-into one string). A column can hold Pyrite's reading rather than a line of
-the file: a ``backlog_item`` that writes no ``priority`` reads ``medium``, as
-``pyrite get`` shows it, and the checker sees the same reading.
+Which fields a type declares is ``schema.field_aliases.declared_fields``,
+the rule the single-entry read uses. A column can hold Pyrite's reading rather
+than a line of the file: a ``backlog_item`` that writes no ``priority`` reads
+``medium`` (#1695), and a task's ``date``, which TaskEntry declares but never
+reads from its file, reads ``''``. The checker sees the same reading.
 
 The two lookups read the index, so in a gate they run outside
 ``board.evaluating``: a failure keeps its own error and is never reported as
@@ -66,14 +70,33 @@ def _empty(value: Any) -> bool:
     return value is None or value == ""
 
 
+def _declared(entry_type: Any) -> frozenset[str]:
+    """The fields ``entry_type`` declares, as the single-entry read decides."""
+    if not entry_type:
+        return frozenset()
+    from ..models.core_types import get_entry_class
+    from ..schema.field_aliases import declared_fields
+
+    return declared_fields(get_entry_class(str(entry_type)), str(entry_type))
+
+
+def _field_value(row: Mapping[str, Any], bag: Mapping[str, Any], key: str, declared) -> Any:
+    """The value ``pyrite get`` shows for field column ``key``."""
+    if key in declared:
+        return row.get(key)
+    value = bag.get(key)
+    return row.get(key) if _empty(value) else value
+
+
 def _entry(row: Mapping[str, Any], tags: list[str], links: list[dict[str, Any]]) -> dict:
     entry = dict(row)
     bag = dict(parse_metadata(entry.get("metadata")))
+    declared = _declared(entry.get("entry_type"))
     for key in FIELD_COLUMNS:
-        if _empty(bag.get(key)):
-            bag.pop(key, None)
-            if not _empty(entry.get(key)):
-                bag[key] = entry[key]
+        value = _field_value(entry, bag, key, declared)
+        bag.pop(key, None)
+        if not _empty(value):
+            bag[key] = value
     if tags:
         bag["tags"] = list(tags)
     entry["metadata"] = bag
