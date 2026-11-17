@@ -396,10 +396,11 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
         return shape_entry_rows(
-            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), self.session
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
         )
 
     def find_overdue(
@@ -441,10 +442,11 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
         return shape_entry_rows(
-            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), self.session
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
         )
 
     def find_by_status(
@@ -481,10 +483,11 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
         return shape_entry_rows(
-            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), self.session
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
         )
 
     def find_by_location(
@@ -514,8 +517,9 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
         return shape_entry_rows(
-            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), self.session
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
         )

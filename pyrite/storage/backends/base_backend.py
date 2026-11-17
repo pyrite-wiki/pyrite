@@ -19,6 +19,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -286,7 +287,7 @@ class DeclaredFieldTypes:
             from ...config import KBConfig
 
             try:
-                config = KBConfig(name=kb_name, path=path)
+                config = KBConfig(name=kb_name, path=Path(path))
             except Exception:
                 return KBSchema()
             _KB_CONFIGS[key] = config
@@ -612,7 +613,7 @@ class BaseBackend(ABC):
     def _entry_to_dict(
         self, entry: Entry, declared: DeclaredFieldTypes | None = None
     ) -> dict[str, Any]:
-        result = {
+        result: dict[str, Any] = {
             "id": entry.id,
             "kb_name": entry.kb_name,
             "entry_type": entry.entry_type,
@@ -659,7 +660,8 @@ class BaseBackend(ABC):
             result, declared if declared is not None else DeclaredFieldTypes(self._session)
         )
         entry_type = str(entry.entry_type)
-        lift_declared_fields(result, result["metadata"], get_entry_class(entry_type), entry_type)
+        metadata: dict[str, Any] = result["metadata"]
+        lift_declared_fields(result, metadata, get_entry_class(entry_type), entry_type)
         return result
 
     def _get_entry_tags(self, entry_id: str, kb_name: str) -> list[str]:
