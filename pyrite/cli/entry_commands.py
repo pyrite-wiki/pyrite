@@ -350,24 +350,39 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         # Template mode: the skeleton is the result
         if template:
-            fm: dict = {
-                "id": "",
-                "type": entry_type,
-                "title": title or "Your Title Here",
-                "tags": [],
-            }
-            # Add type-specific fields as empty values
-            type_info = CORE_TYPES.get(entry_type, {})
-            for field_name, field_type in type_info.get("fields", {}).items():
-                if field_name in ("tags", "links"):
-                    continue
-                if "list" in field_type:
-                    fm[field_name] = []
-                elif field_type == "int":
-                    fm[field_name] = 0
-                else:
-                    fm[field_name] = ""
-            skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
+            if kb_name:
+                with cli_context(kbs=(kb_name,), output_format=output_format) as (config, _db, svc):
+                    kb_config = config.get_kb(kb_name)
+                    try:
+                        resolved_type, fm = svc.template_frontmatter(
+                            entry_type,
+                            kb_config,
+                            title=title,
+                            allow_undeclared=allow_undeclared,
+                        )
+                    except ValidationError as e:
+                        raise _with_cli_hint(e) from None
+                    skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
+                    entry_type = resolved_type
+            else:
+                fm = {
+                    "id": "",
+                    "type": entry_type,
+                    "title": title or "Your Title Here",
+                    "tags": [],
+                }
+                # Add type-specific fields as empty values
+                type_info = CORE_TYPES.get(entry_type, {})
+                for field_name, field_type in type_info.get("fields", {}).items():
+                    if field_name in ("tags", "links"):
+                        continue
+                    if "list" in field_type:
+                        fm[field_name] = []
+                    elif field_type == "int":
+                        fm[field_name] = 0
+                    else:
+                        fm[field_name] = ""
+                skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
 
             def raw(console: Console, data: dict) -> None:
                 # The skeleton is a file's text: no markup, no wrapping.

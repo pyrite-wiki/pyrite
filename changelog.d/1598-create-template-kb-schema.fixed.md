@@ -1,0 +1,1 @@
+- `pyrite create --template -k <kb>` now builds the entry skeleton with declared fields and defaults for the KB's schema and refuses undeclared types (#1598).

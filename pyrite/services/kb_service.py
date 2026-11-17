@@ -1731,6 +1731,46 @@ class KBService:
                 attributes[field] = None
         return {**fields, **added}, attributes
 
+    def template_frontmatter(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        *,
+        title: str | None = None,
+        allow_undeclared: bool = False,
+    ) -> tuple[str, dict[str, Any]]:
+        """Compute the frontmatter for an entry template in the given KB (#1598).
+
+        Refuses undeclared types unless allow_undeclared is True.
+        Returns (resolved_type, frontmatter_dict).
+        """
+        from ..models.factory import build_entry
+
+        named = entry_type
+        resolved_type = self._resolve_entry_type(named, kb_config)
+        if not allow_undeclared:
+            if resolved_type != named:
+                self._refuse_undeclared_mapping_target(
+                    named, resolved_type, kb_config.name, kb_config
+                )
+            else:
+                self._refuse_undeclared_type(named, kb_config.name, kb_config)
+        fields, attributes = self._with_declared_fields(resolved_type, kb_config, {})
+        entry = build_entry(
+            resolved_type,
+            entry_id="",
+            title=title or "Your Title Here",
+            body="",
+            **fields,
+        )
+        entry._create_fields = attributes
+        fm = {
+            **entry._frontmatter_for_file(),
+            "id": "",
+            "title": title or "Your Title Here",
+        }
+        return resolved_type, fm
+
     def _prepare_and_save(
         self,
         kb_name: str,
