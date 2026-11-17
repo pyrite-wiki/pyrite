@@ -135,6 +135,8 @@ pyrite search "mathematician" -k my-kb --type person
 
 Repeat `--type` to include several types and use `--exclude-type` to remove one: `pyrite search "mathematician" -k my-kb --type person --type event --exclude-type event`.
 
+To run many searches at once (for example, checking twenty candidates for duplicates before filing), put them in a JSON list and use `--batch`; it runs in one process and loads the embedding model once: `pyrite search --batch queries.json -k my-kb`, with `[{"query": "algorithm"}, {"query": "turing", "type": ["person"]}]` in the file. Each slot of the answer is what the single search prints, in input order; a query that is refused fills its own slot, and the exit code is 3 if some were refused. See [the batch contract](json-contracts.md#search---batch-many-searches-in-one-process-cli-only).
+
 **Semantic search** finds conceptually related content, not just keyword matches. It needs the `semantic` extra (in `[all]`; a [release-tag install](../README.md#install) adds it by name) and uses a local embedding model (`all-MiniLM-L6-v2`, ~90 MB) that is downloaded the first time it is needed — expect that one download to take a minute, once.
 
 **Writes never wait on it.** `auto_embed` (on by default) promises that an entry *will be* embedded, not that it is embedded by the time the write returns (ADR-0035): a `pyrite create` or a `POST /api/entries` records the entry, makes it keyword-searchable immediately, and notes the embedding as owed. So on a brand-new KB, a semantic search issued straight after a write may not find that entry yet. Settle the debt — and trigger the download — whenever you like:

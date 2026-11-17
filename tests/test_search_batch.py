@@ -347,7 +347,7 @@ def test_no_query_and_no_batch_is_still_a_usage_error(b):
     result = b.world.cli("search")
 
     assert result.exit_code == 2
-    assert "QUERY" in plain(result.output)
+    assert "missing argument" in plain(result.output).lower()
 
 
 @pytest.mark.parametrize("flag", [["--expand"], ["--files"]])
