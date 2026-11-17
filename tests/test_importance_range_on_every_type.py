@@ -351,3 +351,213 @@ def test_a_journalism_kb_refuses_importance_99_with_the_models_answer(cli_world,
     _assert_refused(code, body)
     assert any(r.get("rule") == "range" for r in body["errors"]), body
     assert {p: p.read_bytes() for p in world.kb_path("ji").rglob("*") if p.is_file()} == before
+
+
+# -- every kind of value a file, JSON or `-f` text can put in `importance` ---------------
+#
+# The property, for any value: the check answers with a row or with nothing and
+# never raises; a value this write did not set never stops the write; a write
+# that is accepted never leaves an importance outside 1-10 in the file. One row
+# per kind, each with the verdict the property gives it by hand (not read off the
+# code), so a new kind of value cannot be added without saying what it must do.
+#
+#   file:       "good" (a number in 1-10, or numeric text), "absent" (blank or null:
+#               a guest in a person's file does not call a blank key a violation),
+#               "bad" (everything else: kept and reported when already on disk,
+#               refused by `pyrite add`)
+#   cli_set:    the verdict of the `-f importance=<text>` text as text ("null" and
+#               "" are strings on the command line)
+#   mcp_set:    the verdict of the JSON value
+#   create_*:   "refused" for a number out of range, "safe" for anything else: a
+#               create turns a non-number into the default or into 1 or 0 in the
+#               model before the check (a known limit, not part of this fix), so
+#               the property is "refused, or what is stored is in 1-10"
+_I = 123456789012345678901234567890
+KINDS = {
+    # kind: (yaml, cli text, json value, file, cli_set, mcp_set, create_cli, create_mcp)
+    "in_range_7": ("7", "7", 7, "good", "good", "good", "safe", "safe"),
+    "out_99": ("99", "99", 99, "bad", "bad", "bad", "refused", "refused"),
+    "zero": ("0", "0", 0, "bad", "bad", "bad", "refused", "refused"),
+    "big_30_digits": (str(_I), str(_I), _I, "bad", "bad", "bad", "refused", "refused"),
+    "float_5.0": ("5.0", "5.0", 5.0, "good", "good", "good", "safe", "safe"),
+    "float_10.0": ("10.0", "10.0", 10.0, "good", "good", "good", "safe", "safe"),
+    "float_5.5": ("5.5", "5.5", 5.5, "good", "good", "good", "safe", "safe"),
+    "inf": (".inf", ".inf", float("inf"), "bad", "bad", "bad", "safe", "safe"),
+    "-inf": ("-.inf", "-.inf", float("-inf"), "bad", "bad", "bad", "safe", "safe"),
+    "nan": (".nan", ".nan", float("nan"), "bad", "bad", "bad", "safe", "safe"),
+    "true": ("true", "true", True, "bad", "bad", "bad", "safe", "safe"),
+    "false": ("false", "false", False, "bad", "bad", "bad", "refused", "refused"),
+    "null": ("null", "null", None, "absent", "bad", "absent", "safe", "safe"),
+    "blank": ("", "", None, "absent", "bad", "absent", "safe", "safe"),
+    "empty_string": ('""', "", "", "bad", "bad", "bad", "safe", "safe"),
+    "str_5": ('"5"', "5", "5", "good", "good", "good", "safe", "safe"),
+    "str_spaces_5": ('" 5 "', " 5 ", " 5 ", "good", "good", "good", "safe", "safe"),
+    "str_05": ('"05"', "05", "05", "good", "good", "good", "safe", "safe"),
+    "high": ("high", "high", "high", "bad", "bad", "bad", "safe", "safe"),
+    "abc": ('"abc"', "abc", "abc", "bad", "bad", "bad", "safe", "safe"),
+    "list": ("[5]", "[5]", [5], "bad", "bad", "bad", "safe", "safe"),
+    "mapping": ("{a: 1}", "{a: 1}", {"a": 1}, "bad", "bad", "bad", "safe", "safe"),
+    "date": ("2026-01-02", "2026-01-02", "2026-01-02", "bad", "bad", "bad", "safe", "safe"),
+}
+ETYPES = ["note", "event"]
+kinds = pytest.mark.parametrize("kind", sorted(KINDS))
+etypes = pytest.mark.parametrize("etype", ETYPES)
+# An update that leaves a 30-digit importance on disk writes the file, then the index
+# upsert raises OverflowError (pyrite/storage/crud.py -> SQLite INTEGER), so the command
+# answers NO_OUTCOME / INTERNAL. Same on dev; outside this change (the check is a row).
+_INDEX_OVERFLOW = pytest.mark.xfail(
+    strict=True, reason="index upsert overflows SQLite INTEGER on a 30-digit value on disk"
+)
+
+
+def _raw_file(etype: str, entry_id: str, raw: str | None) -> str:
+    lines = ["---", f"id: {entry_id}", f"type: {etype}", f"title: {entry_id}"]
+    if etype == "event":
+        lines.append("date: 2026-01-02")
+    if raw is not None:
+        lines.append("importance:" + (f" {raw}" if raw else ""))
+    return "\n".join([*lines, "---", "", "Body.", ""])
+
+
+def _stored_is_in_range(path: Path) -> bool:
+    """What the file now holds is a number (or numeric text) in 1-10."""
+    from pyrite.utils.yaml import load_yaml
+
+    value = load_yaml(path.read_text().split("---", 2)[1]).get("importance")
+    if isinstance(value, bool) or value is None:
+        return False
+    try:
+        return 1 <= float(str(value).strip()) <= 10
+    except ValueError:
+        return False
+
+
+def _md_files(world) -> list[Path]:
+    return sorted(world.kb_path(KB).rglob("*.md"))
+
+
+def _kept(res: dict) -> bool:
+    return any(
+        KEPT_MESSAGE in json.dumps(w) and "importance" in json.dumps(w)
+        for w in res.get("warnings") or []
+    )
+
+
+def _surface_call(world, surf, op, etype, **kw):
+    """(exit, body) of one operation on one surface; never lets an exception escape."""
+    if surf == "cli":
+        if op == "update":
+            args = ["update", "seed", "-k", KB]
+            args += ["-b", "changed"] if "body" in kw else ["-f", f"importance={kw['value']}"]
+        else:
+            args = ["create", "-k", KB, "-t", etype, "--title", "T1", "-b", "x"]
+            args += ["-f", "date=2026-01-02"] if etype == "event" else []
+            args += ["-f", f"importance={kw['value']}"]
+        res = world.cli(*args, "--format", "json")
+        return res.exit_code, _json(res.output)
+    server = world.mcp()
+    if op == "update":
+        payload = {"kb_name": KB, "entry_id": "seed"}
+        payload.update({"body": "changed"} if "body" in kw else {"importance": kw["value"]})
+        res = server._dispatch_tool("kb_update", payload)
+    else:
+        payload = {"kb_name": KB, "entry_type": etype, "title": "T1", "body": "x"}
+        payload.update({"date": "2026-01-02"} if etype == "event" else {})
+        payload["importance"] = kw["value"]
+        res = server._dispatch_tool("kb_create", payload)
+    return (0 if res.get("created") or res.get("updated") else 1), res
+
+
+def _no_crash(code, res):
+    assert res.get("error_code") not in ("NO_OUTCOME", "INTERNAL"), res
+
+
+@etypes
+@surface
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param(k, marks=[_INDEX_OVERFLOW] if k == "big_30_digits" else [])
+        for k in sorted(KINDS)
+    ],
+)
+def test_a_value_already_on_disk_never_stops_an_update_of_another_field(world, etype, surf, kind):
+    yaml_text, _cli, _mcp, file, *_ = KINDS[kind]
+    path = world.add_entry(KB, _raw_file(etype, "seed", yaml_text))
+    before_text = path.read_text()
+    code, res = _surface_call(world, surf, "update", etype, body="changed")
+    _no_crash(code, res)
+    assert code == 0, res
+    assert (file == "bad") == _kept(res), res  # kept and reported only when it is a violation
+    text = path.read_text()
+    assert "changed" in text
+    # the importance line itself is not touched by a write that did not set it
+    assert [ln for ln in text.splitlines() if ln.startswith("importance:")] == [
+        ln for ln in before_text.splitlines() if ln.startswith("importance:")
+    ]
+
+
+@etypes
+@surface
+@kinds
+def test_a_set_importance_is_refused_or_in_1_to_10(world, etype, surf, kind):
+    _y, cli, mcp, _f, cli_set, mcp_set, *_ = KINDS[kind]
+    path = world.add_entry(KB, _raw_file(etype, "seed", "5"))
+    before = path.read_bytes()
+    verdict = cli_set if surf == "cli" else mcp_set
+    code, res = _surface_call(world, surf, "update", etype, value=cli if surf == "cli" else mcp)
+    _no_crash(code, res)
+    if verdict == "bad":
+        _assert_refused(code, res)
+        assert path.read_bytes() == before
+    else:
+        assert code == 0, res
+        if verdict == "good":
+            assert _stored_is_in_range(path)
+
+
+@etypes
+@surface
+@kinds
+def test_a_created_importance_is_refused_or_stored_in_1_to_10(world, etype, surf, kind):
+    _y, cli, mcp, _f, _cs, _ms, create_cli, create_mcp = KINDS[kind]
+    verdict = create_cli if surf == "cli" else create_mcp
+    before = _snapshot(world)
+    code, res = _surface_call(world, surf, "create", etype, value=cli if surf == "cli" else mcp)
+    _no_crash(code, res)
+    if verdict == "refused":
+        _assert_refused(code, res)
+        assert _snapshot(world) == before
+    elif code == 0:
+        (path,) = _md_files(world)
+        assert _stored_is_in_range(path), path.read_text()
+
+
+@etypes
+@kinds
+def test_add_refuses_a_file_holding_a_bad_value_and_accepts_the_rest(world, tmp_path, etype, kind):
+    yaml_text, _cli, _mcp, file, *_ = KINDS[kind]
+    src = tmp_path / "src.md"
+    src.write_text(_raw_file(etype, "seed", yaml_text))
+    before = _snapshot(world)
+    res = world.cli("add", str(src), "-k", KB, "--format", "json")
+    body = _json(res.output)
+    _no_crash(res.exit_code, body)
+    if file == "bad":
+        _assert_refused(res.exit_code, body)
+        assert _snapshot(world) == before
+    else:
+        assert res.exit_code == 0, body
+
+
+@etypes
+@kinds
+def test_the_check_never_raises_and_says_row_or_nothing(etype, kind):
+    from pyrite.models.core_types import get_entry_class
+    from pyrite.schema import validate_importance
+
+    yaml_text, _cli, mcp, file, *_ = KINDS[kind]
+    entry = get_entry_class(etype).from_markdown(_raw_file(etype, "seed", yaml_text))
+    rows = [r for r in entry.validation_errors() if r.get("field") == "importance"]
+    assert bool(rows) == (file == "bad"), rows
+    assert validate_importance(mcp) is (file == "good")

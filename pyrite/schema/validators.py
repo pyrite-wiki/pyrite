@@ -101,12 +101,22 @@ def _updated_at_instant(value: Any) -> datetime | None:
 
 
 def validate_importance(importance: Any) -> bool:
-    """Validate importance is 1-10."""
+    """True when ``importance`` is a number in 1-10; never raises (#1537).
+
+    The one place a value becomes "in range or not", and it is asked about
+    whatever a file, JSON or ``-f`` text puts there. A value ``int()`` cannot
+    read (``.inf`` is an OverflowError, ``.nan`` and ``high`` a ValueError, a
+    list or date a TypeError) is out of range, never an exception. A bool is
+    not a number: ``true`` would otherwise pass as 1. A blank or null value is
+    absent, which the caller decides (``None`` is False here).
+    """
+    if isinstance(importance, bool):
+        return False
     try:
         val = int(importance)
-        return 1 <= val <= 10
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return False
+    return 1 <= val <= 10
 
 
 def validate_event_id(event_id: str) -> bool:
