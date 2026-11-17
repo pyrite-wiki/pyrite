@@ -2459,7 +2459,10 @@ class SoftwareKBPlugin:
                 continue
             entry_type = link.get("entry_type", "")
             bucket = type_to_bucket.get(entry_type, "related")
-            body = link.get("body", "") or ""
+            entry = SoftwareKBPlugin._readable_entry(
+                db, link["id"], link["kb_name"], readable_kbs=readable_kbs
+            )
+            body = (entry.get("body", "") or "") if entry else ""
             buckets[bucket].append(
                 {
                     "id": link.get("id", ""),
@@ -2615,6 +2618,7 @@ class SoftwareKBPlugin:
                 candidates.append(
                     {
                         "id": row["id"],
+                        "kb_name": row["kb_name"],
                         "title": row["title"],
                         "kind": meta.get("kind", ""),
                         "priority": priority,
@@ -2647,7 +2651,7 @@ class SoftwareKBPlugin:
             top = None
             for candidate in candidates:
                 dep = self._get_dependency_status(
-                    db, candidate["id"], kb_name or "", readable_kbs=readable_kbs
+                    db, candidate["id"], candidate["kb_name"], readable_kbs=readable_kbs
                 )
                 if dep["is_blocked"]:
                     blocked_items.append(
@@ -2670,12 +2674,13 @@ class SoftwareKBPlugin:
                 }
 
             buckets = self._context_buckets(
-                db, top["id"], kb_name or "", top_dependencies, readable_kbs=readable_kbs
+                db, top["id"], top["kb_name"], top_dependencies, readable_kbs=readable_kbs
             )
 
             result = {
                 "recommendation": {
                     "id": top["id"],
+                    "kb_name": top["kb_name"],
                     "title": top["title"],
                     "kind": top["kind"],
                     "priority": top["priority"],
