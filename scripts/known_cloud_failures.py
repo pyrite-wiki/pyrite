@@ -40,7 +40,10 @@ def _entries(path: Path) -> list[dict[str, str]] | None:
     whose printed fields are all strings."""
     try:
         failures = json.loads(path.read_bytes().decode("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError, RecursionError):
+    except OSError:
+        # The file is missing or unreadable, not malformed.
+        raise
+    except (UnicodeDecodeError, ValueError, RecursionError):
         # RecursionError: a registry nested deeper than json can parse.
         return None
     if not isinstance(failures, list):
@@ -58,9 +61,17 @@ MALFORMED = (
     f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
 )
 
+MISSING = (
+    "Known cloud-only failures: the registry is missing and was not read "
+    f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
+)
+
 
 def render(path) -> str:
-    failures = _entries(Path(path))
+    try:
+        failures = _entries(Path(path))
+    except OSError:
+        return MISSING
     if failures is None:
         return MALFORMED
     if not failures:

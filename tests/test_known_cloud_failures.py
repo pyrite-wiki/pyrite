@@ -140,7 +140,12 @@ def test_a_malformed_or_missing_registry_is_a_notice_and_the_trailer_with_no_tra
     # (test_dev_process_config: test_a_broken_optional_brief_does_not_prevent_session_setup).
     assert result.returncode == 2, result.stderr
     assert "Traceback" not in result.stderr
-    assert "registry is malformed" in result.stdout
+    if content is None:
+        # A missing file is not a malformed one: say what is true.
+        assert "registry is missing" in result.stdout
+        assert "registry is malformed" not in result.stdout
+    else:
+        assert "registry is malformed" in result.stdout
     assert "CI remains required" in result.stdout
     assert len(result.stdout.splitlines()) == 2  # the notice, then the trailer
     assert "just a string" not in result.stdout
