@@ -970,3 +970,25 @@ def test_a_raw_readers_row_gains_no_key_its_sql_did_not_select(world):
     assert "kind" not in search[0], sorted(search[0])
     assert "kind" not in found[0], sorted(found[0])
     assert db.backend.get_entry("b-one", SW)["kind"] == "bug"
+
+
+def test_qa_validate_reports_text_in_a_field_declared_a_number(rt_world):
+    """The decision on #1628: a quoted `"7"` reads as 7 and a write-back may
+    store 7, so `qa validate` names every text value in a declared number
+    field (a kb.yaml number, a task's priority), and none that is a number."""
+    w, emp = rt_world
+    (emp / "chores/c-quoted.md").write_text(_chore('"7"').replace("c-spelt", "c-quoted"))
+    (emp / "chores/c-zeros.md").write_text(_chore('"007"').replace("c-spelt", "c-zeros"))
+    (emp / "tasks/t-quoted.md").write_text(
+        '---\nid: t-quoted\ntype: task\ntitle: Quoted task\nstatus: open\npriority: "7"\n---\nq\n'
+    )
+    w.index(KB)
+    result = _cli_json(w, "qa", "validate", KB)
+    found = {
+        (i["entry_id"], i["field"]) for i in result["issues"] if i.get("rule") == "number_as_text"
+    }
+    assert found == {
+        ("c-quoted", "priority"),
+        ("c-zeros", "priority"),
+        ("t-quoted", "priority"),
+    }, result["issues"]

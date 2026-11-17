@@ -1678,6 +1678,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_number_as_text(issues, kb_name, kb_config, entry, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
                 issues.append(
@@ -1789,6 +1790,60 @@ class QAService:
                 ),
             }
         )
+
+    @staticmethod
+    def _check_number_as_text(
+        issues: list[dict[str, Any]], kb_name: str, kb_config: Any, entry: Any, shown: Any
+    ) -> None:
+        """Report a field the type declares a number whose file value is text.
+
+        Every reader of the index reads a declared number's plain ASCII text
+        (``"7"``) as the number, since the index cannot tell ``7`` from
+        ``"7"``, and a write of the value read stores the number: the file's
+        quotes go (the maintainer's decision on #1628, 2026-11-17). Other text
+        (``"007"``) reads as text. Either way the file holds text where its
+        schema declares a number, and this names it. Text that is no number
+        at all (``high``) is the schema pass's ``field_number`` and the
+        task-priority check's, not reported twice here.
+        """
+        from ..exceptions import KBConfigInvalidError
+        from ..storage.backends.base_backend import read_declared_number
+
+        source = entry._source_frontmatter or {}
+        try:
+            declared = kb_config.kb_schema.type_fields(entry.entry_type)
+        except KBConfigInvalidError:
+            return
+        for name, field_schema in declared.items():
+            if field_schema.field_type != "number":
+                continue
+            value = source.get(name)
+            if not isinstance(value, str):
+                continue
+            try:
+                float(value)
+            except ValueError:
+                continue
+            read = read_declared_number(value)
+            reading = (
+                f"Pyrite reads it as the number {read}, and an update of it writes {read} "
+                f"without the quotes"
+                if read is not value
+                else "Pyrite reads it as that text"
+            )
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "number_as_text",
+                    "severity": "warning",
+                    "field": name,
+                    "message": (
+                        f"{shown}: {name} is the text {value!r} in a field declared a "
+                        f"number; {reading}. Write it as a plain number to keep one form."
+                    ),
+                }
+            )
 
     @staticmethod
     def _check_non_string_titles(
