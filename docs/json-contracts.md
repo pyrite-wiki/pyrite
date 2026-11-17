@@ -1538,6 +1538,37 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
 
+## Entry row shape
+
+Every reader that returns entry rows from the index returns them in one
+shape, whatever the surface (MCP, `--format json`, REST) and the backend
+(SQLite, Postgres): the list and find tools (`kb_list_entries`, `kb_recent`,
+`kb_batch_read`, `kb_find_by_status`, `kb_find_by_assignee`,
+`kb_find_overdue`, `kb_find_by_location`), search (`kb_search`, keyword and
+semantic legs), folder collections, and the single read (`kb_get`). Each
+reader keeps its own set of keys. Where a row carries one of these, it has
+this type:
+
+| Key | JSON type |
+|---|---|
+| `metadata` | an object; `{}` when the entry has none |
+| `aliases` | a list; `[]` when the entry has none |
+| `importance` | an integer (or `null`) |
+| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | the bag's value, also at the field's own name; it never replaces a key the row already has, so the keyword search row's `rank` stays its score |
+| a column field (`priority`, `status`, `assignee`, `due_date` ...) | its declared type (`KBSchema.type_fields`): a `number` reads as an integer or a decimal, a `checkbox` as a boolean, anything else as text; a field the type does not declare reads as text |
+
+So a value read from any of these readers and written back through an
+update leaves the file as it was. The index cannot tell `7` from `"7"`, so a
+quoted number in a field declared a number reads as a number; the file
+keeps its quotes, and nothing is rewritten because of the read. A value a
+declared number cannot read (`priority: high`) stays text. A built-in type's
+column field is cast only where `KBSchema.type_fields` declares it: a task's
+`priority` is not declared there today, so it reads as text (`"7"`) on every
+index reader and on `kb_get` alike, while the `task_*` tools return their own
+integer. The type-specific
+tools (`task_*`, `sw_*` and the other plugin tools) return their own dicts,
+not index rows. (#1503)
+
 ## Body truncation
 
 Entries with large bodies may come back chunked. When truncated, the
