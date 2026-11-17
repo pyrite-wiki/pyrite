@@ -1391,6 +1391,9 @@ class IndexManager:
         results: dict[str, Any],
     ) -> None:
         """Write one winning file's row if the reconcile rule says so."""
+        # Only a claim read now is written, and a read claim always has its
+        # stat; an unreached claim (stat None) is never passed here (#1546).
+        assert claim.stat is not None
         content_hash = _hash_file(claim.path, self._root_of(kb_name, claim.path))
         if row is None:
             counter = "added"
@@ -1915,6 +1918,8 @@ class IndexManager:
                     # Its row kept as it is; the path is reported below (the
                     # row check) or with its folder (#1546).
                     continue
+                # Every claim but an unreached one carries its stat.
+                assert claim.stat is not None
                 file_path = claim.path
                 entry = claim.entry
                 source = getattr(entry, "_source_frontmatter", None) or {}
