@@ -581,8 +581,8 @@ group. Read-only: nothing is renamed. Any group makes the status
 `kb.yaml` failed to load (invalid YAML, `types: null`, `types` a list).
 Health still answers for that KB: it counts as declaring no types, so its
 non-core types appear in `undeclared_types` and no spelling is `declared`.
-A row whose cause is typed also carries `error_code`. `KB_CONFIG_INVALID`
-(the file is not UTF-8, not valid YAML, over the YAML limits, or not a
+A row for a `kb.yaml` that does not load as a mapping carries
+`error_code: KB_CONFIG_INVALID` (the file is not UTF-8, not valid YAML, over the YAML limits, or not a
 mapping, #1547) makes the status `unhealthy`; its `error` is the parser's
 words on the local CLI and stdio MCP and `the server log has the details` for
 a network caller, and that KB's files are not compared with the index (each
@@ -1857,8 +1857,8 @@ named rather than dropped:
   the fixed `KB_UNREADABLE` message, and `error_code`; a readable KB's row
   has neither key.
   REST `GET /api/kbs` and MCP `kb_list` do not carry it.
-- `pyrite index health` lists it in `unreadable_kbs` (`{kb, error,
-  error_code}`), and the status is `unhealthy`.
+- `pyrite index health` lists it in `unreadable_kbs` (`{kb, error}`), and the
+  status is `unhealthy`.
 - `pyrite index sync` (every KB) does not sync it and keeps its index rows;
   it prints `Not synced: <kb>: <message>` and exits 3 when other KBs synced
   (1 when none did). A sync that runs in the foreground (REST

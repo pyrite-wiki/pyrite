@@ -1695,9 +1695,8 @@ class IndexManager:
             try:
                 kb.check_readable()  # asked now: a server's config is loaded once
             except KBFilesUnreadableError as e:
-                health["unreadable_kbs"].append(
-                    {"kb": kb.name, "error": public_text(e), "error_code": e.error_code}
-                )
+                # #1551's row, as it shipped: {kb, error}.
+                health["unreadable_kbs"].append({"kb": kb.name, "error": public_text(e)})
             except KBConfigInvalidError:
                 # A kb.yaml that does not load (#1547): named once, in
                 # `schema_errors` (``_load_schemas``), with its code and the
@@ -2032,9 +2031,8 @@ class IndexManager:
         """Each KB's schema, loaded once: ``{kb: (schema or None, error or None)}``.
 
         ``error`` is the ``schema_errors`` row's fields: ``error`` (text) and,
-        for a typed cause, ``error_code`` (``KB_CONFIG_INVALID`` for a kb.yaml
-        that does not load, #1547; ``KB_UNREADABLE`` for one that cannot be
-        read).
+        for a kb.yaml that does not load, ``error_code: KB_CONFIG_INVALID``
+        (#1547), which makes health unhealthy.
 
         Health diagnoses broken KBs, so a kb.yaml that fails to load (invalid
         YAML, `types: null`, `types: [a, b]`) gives ``(None, error)`` -- the KB
@@ -2049,10 +2047,7 @@ class IndexManager:
             except KBFilesUnreadableError as exc:
                 # A root this process cannot search (#1542): reported here,
                 # and in ``unreadable_kbs``; never the end of the report.
-                loaded[kb.name] = (
-                    None,
-                    {"error": public_text(exc), "error_code": exc.error_code},
-                )
+                loaded[kb.name] = (None, {"error": public_text(exc)})
                 continue
             if not present:
                 loaded[kb.name] = (None, None)

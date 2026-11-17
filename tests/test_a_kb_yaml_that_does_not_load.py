@@ -558,15 +558,45 @@ def test_kb_yaml_is_turned_into_a_mapping_in_one_place():
 # -- 6. KB_UNREADABLE keeps its meaning --------------------------------------------
 
 
+def test_health_names_a_kb_unreadable_kb_in_the_shape_1551_shipped(tmp_path, monkeypatch):
+    """``unreadable_kbs`` in index health stays ``{kb, error}``: #1547 adds
+    ``error_code`` to the sync result's rows, not to this report's. The OS
+    refusal is stood in for by the gate itself, so the test runs as root too
+    (the permission tests of #1551 skip there)."""
+    from pyrite.storage.index import IndexManager
+    from pyrite.utils.kb_files import KBFilesUnreadableError
+
+    (tmp_path / "locked").mkdir()
+    world = build_world(
+        tmp_path / "w",
+        kbs=[KBConfig(name="locked", path=tmp_path / "locked", kb_type="generic")],
+        rest=False,
+    )
+    try:
+
+        def refuse(self):
+            raise KBFilesUnreadableError()
+
+        monkeypatch.setattr(KBConfig, "check_readable", refuse)
+        health = IndexManager(world.db, world.config).check_health()
+        assert health["unreadable_kbs"] == [{"kb": "locked", "error": KB_UNREADABLE_MESSAGE}]
+    finally:
+        world.close()
+
+
+#: #1551's message, written here by hand.
+KB_UNREADABLE_MESSAGE = (
+    "Pyrite could not read this knowledge base's files: the operating "
+    "system refused (for example, a folder or file Pyrite may not open)."
+)
+
+
 def test_kb_unreadable_is_unchanged_and_distinct():
     from pyrite.exceptions import KBConfigInvalidError, KBUnreadableError
     from pyrite.utils.kb_files import KBFilesUnreadableError
 
     assert KBFilesUnreadableError.error_code == "KB_UNREADABLE"
-    assert KBFilesUnreadableError.MESSAGE == (
-        "Pyrite could not read this knowledge base's files: the operating "
-        "system refused (for example, a folder or file Pyrite may not open)."
-    )
+    assert KBFilesUnreadableError.MESSAGE == KB_UNREADABLE_MESSAGE
     assert KBFilesUnreadableError.public_message is None
     assert not issubclass(KBFilesUnreadableError, KBConfigInvalidError)
     assert not issubclass(KBConfigInvalidError, KBFilesUnreadableError)
