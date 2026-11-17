@@ -19,9 +19,10 @@ a new entry-file name asks it before anything is written.
 - ``create_entry_text`` and ``move_entry_text`` refuse an excluded path when
   called directly: the backstop.
 
-The reserved-name decision is built on the lowercased name, never on a probe
-of the disk, so these tests pass on a case-insensitive filesystem (macOS) and
-a case-sensitive one (CI) alike.
+The reserved-name decision is built on the folded name (``entry_paths.fold``:
+case, Unicode case folding and normalisation, NTFS's trailing dots and
+spaces), never on a probe of the disk, so these tests pass on a
+case-insensitive filesystem (macOS) and a case-sensitive one (CI) alike.
 
 Before this, ``pyrite create --title README`` wrote ``notes/readme.md``, the
 next ``index sync`` retired its row, and the entry was gone while its file
@@ -345,7 +346,7 @@ def test_the_path_a_plugin_recomputes_after_a_create_is_the_file_written(plain):
     )
 
 
-def test_the_reserved_name_is_decided_on_the_lowercased_name_not_the_disk(tmp_path):
+def test_the_reserved_name_is_decided_on_the_folded_name_not_the_disk(tmp_path):
     """No filesystem probe: the same answer for a root that does not exist,
     on any filesystem's case rules."""
     from pyrite.storage.entry_paths import unlisted_reason
@@ -690,12 +691,13 @@ def test_the_reconcile_toward_an_excluded_folder_moves_nothing_and_says_why(env,
     _assert_found_by_id(env, "r1")
 
 
-@pytest.mark.control(
-    reason="expand_subdirectory_template lowercases a field value, so `_TEMPLATES` was "
-    "already `_templates` before round 1; run as the brief asks"
-)
 @pytest.mark.parametrize("value", ["_TEMPLATES", "_Templates"])
 def test_a_case_variant_field_value_is_refused_by_the_move_and_the_reconcile(env, value):
+    """A case-variant field value is refused by the templated move and by the
+    reconcile. Red on dev, which had no rule for a move into `_templates`
+    (`not_moved` was None). It does not separate round 1 from round 0:
+    `expand_subdirectory_template` lowercases a field value, so `_TEMPLATES`
+    already reached the predicate as `_templates`."""
     env.svc.create(
         KB, {"entry_type": "st", "title": "R1", "id": "r1", "body": "b", "phase": "open"}
     )
@@ -769,14 +771,20 @@ def _spec_of(item: dict) -> dict:
 
 
 def _verdict(result: dict, *, dry: bool) -> tuple:
+    """An item's verdict: created/valid, or refused with its code. Only the
+    verdict is compared, never a path: no dry run reports one today (a bulk
+    item carries `entry_id`, `add --validate-only` answers `valid`), so the
+    parity these tests pin is the answer, not the file name the write will
+    use (round 2, T6)."""
     if dry:
         return ("ok",) if result.get("valid") else ("refused", result.get("error_code"))
     return ("ok",) if result.get("created") else ("refused", result.get("error_code"))
 
 
 @pytest.mark.control(
-    reason="parity already held on dev, which had no -N name; this PR's round 0 broke it "
-    "(red on 03225dd: readme then readme-2, readme-2 then readme, a chain of -N)"
+    reason="these batches agree on dev too: dev wrote id readme as readme.md (its -N rule "
+    "steps only for a file held by another id), so no item took the name a later one "
+    "wanted; red on this PR's round-0 head 03225dd (E2), where readme took readme-2.md"
 )
 @pytest.mark.parametrize("batch", list(PARITY_BATCHES))
 def test_bulk_validate_answers_each_item_as_the_real_batch_does(tmp_path, batch):
@@ -798,8 +806,9 @@ def test_bulk_validate_answers_each_item_as_the_real_batch_does(tmp_path, batch)
 
 
 @pytest.mark.control(
-    reason="parity already held on dev, which had no -N name; this PR's round 0 broke it "
-    "(red on 03225dd: readme then readme-2, readme-2 then readme, a chain of -N)"
+    reason="these batches agree on dev too: dev wrote id readme as readme.md (its -N rule "
+    "steps only for a file held by another id), so no item took the name a later one "
+    "wanted; red on this PR's round-0 head 03225dd (E2), where readme took readme-2.md"
 )
 @pytest.mark.parametrize("batch", list(PARITY_BATCHES))
 def test_cli_import_dry_run_answers_as_the_import(tmp_path, cli_world, batch):

@@ -56,19 +56,42 @@ def test_the_walk_and_the_lookups_apply_the_one_predicate(plain, monkeypatch):
 
 
 def _record_asked(monkeypatch) -> list[tuple[Path, bool]]:
-    """Every path the predicate is asked about, with whether anything was at
-    that path at the moment of asking: a writer that asks after it wrote is
-    seen asking about a path that already exists (round 1, F4)."""
+    """The predicate asks a writer's GATE makes, with whether anything was at
+    that path at the moment of asking (round 1, F4; round 2, E1).
+
+    A gate is a call to ``entry_paths.require_listed`` or
+    ``entry_paths.kept_in_place``: the two functions every placing writer
+    calls before it writes (``KBRepository._require_listed`` ends in the
+    first). Only a ``unlisted_reason`` call made while a gate is running is
+    recorded, so a look at the same path from elsewhere (the ``-N`` rule's
+    ``is_listed`` in ``_free_default_path``, the walk) does not satisfy the
+    test. A gate made a no-op, by replacing it or by removing the writer's
+    call, records nothing; a gate asked after the write records the path as
+    already there; a gate asked about another path records that path."""
     from pyrite.storage import entry_paths
 
     asked: list[tuple[Path, bool]] = []
-    real = entry_paths.unlisted_reason
+    depth = {"n": 0}
+    real_reason = entry_paths.unlisted_reason
 
     def recording(root, path):
-        asked.append((Path(os.path.abspath(path)), os.path.lexists(path)))
-        return real(root, path)
+        if depth["n"]:
+            asked.append((Path(os.path.abspath(path)), os.path.lexists(path)))
+        return real_reason(root, path)
+
+    def gate(fn):
+        def inside(*args, **kwargs):
+            depth["n"] += 1
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                depth["n"] -= 1
+
+        return inside
 
     monkeypatch.setattr(entry_paths, "unlisted_reason", recording)
+    for name in ("require_listed", "kept_in_place"):
+        monkeypatch.setattr(entry_paths, name, gate(getattr(entry_paths, name)))
     return asked
 
 
@@ -137,64 +160,122 @@ def test_every_writer_asks_the_predicate_about_the_name_it_places(plain, monkeyp
 
 
 #: Every call in the code that can place a new entry-file name, by the
-#: function it is in, mapped to the PLACING_WRITERS case that runs it. Found
-#: by the scan below, not kept by hand: a new call to `create_entry_text`,
-#: `move_entry_text` or a `.move(` anywhere in `pyrite/` or an extension
-#: fails `test_the_placing_writers_are_the_ones_in_the_code` until it is
-#: mapped here (and so run above) or listed as not placing a new name.
-PLACING_CALLS = {
-    ("pyrite/storage/repository.py", "KBRepository.save"): "create",
-    ("pyrite/services/kb_service.py", "KBService._templated_move"): "templated move",
+#: function it is in and how many such calls that function makes, mapped to
+#: the PLACING_WRITERS case that runs it. Found by the scan below, not kept
+#: by hand. The scan sees, in `pyrite/` and every extension's `src`:
+#:
+#: - a call of `create_entry_text` or `move_entry_text`, by name, as an
+#:   attribute (`entry_writer.create_entry_text(...)`), or under an alias
+#:   (`from ... import create_entry_text as w`);
+#: - a call of an attribute named `move`, `move_bytes` or `rename`
+#:   (`KBFiles.move`, `KBFiles.move_bytes`, `Path.rename`, `os.rename`,
+#:   whatever the receiver);
+#: - `pyrite/storage/entry_writer.py` too, outside the bodies of the two
+#:   primitives themselves.
+#:
+#: A new such call, or a second one inside a function already listed, fails
+#: `test_the_placing_writers_are_the_ones_in_the_code` until it is mapped here
+#: (and so run above).
+#:
+#: What it does not see (round 2, table (b)):
+#:
+#: - `KBFiles.write_bytes(..., expect=ABSENT)` (create_entry_text's own
+#:   primitive) and `os.replace`: caught instead by
+#:   `tests/test_entry_file_writers_are_one_function.py`, which makes every
+#:   writer of bytes be classified by hand;
+#: - `Path.replace` (an attribute `replace` on anything but `os`): caught by
+#:   neither. `replace` is too common a name to scan for (`str.replace`);
+#:   a stated limit;
+#: - a writer classified in that ratchet as "not an entry file" that does
+#:   place a `*.md` under a KB: caught by neither; the classification is the
+#:   judgement.
+PLACING_CALLS: dict[tuple[str, str], tuple[str, int]] = {
+    ("pyrite/storage/repository.py", "KBRepository.save"): ("create", 1),
+    ("pyrite/services/kb_service.py", "KBService._templated_move"): ("templated move", 1),
+    # The move, and its rollback to the file's own (listed) place.
     (
         "pyrite/services/kb_service.py",
         "KBService.reconcile_templated_subdirectories",
-    ): "reconcile",
+    ): ("reconcile", 2),
     (
         "extensions/software-kb/src/pyrite_software_kb/cli.py",
         "sw_migrate_standards",
-    ): "move_entry_text",
+    ): ("move_entry_text", 1),
+}
+#: Calls the scan finds that place no new entry-file name, with the reason.
+NOT_PLACING: dict[tuple[str, str], tuple[str, int]] = {
+    (
+        "pyrite/utils/kb_files.py",
+        "Folder.rename",
+    ): ("the primitive: a temp name renamed onto the path the caller's gate asked about", 1),
+    (
+        "pyrite/utils/kb_files.py",
+        "Folder.link_exclusive",
+    ): ("the primitive: a temp name renamed onto the path the caller's gate asked about", 1),
+    (
+        "pyrite/utils/kb_files.py",
+        "KBFiles.write_bytes.step",
+    ): ("the primitive: a temp name renamed onto the path the caller's gate asked about", 1),
+    (
+        "pyrite/services/kb_service.py",
+        "KBService.rename_entry",
+    ): ("an id rename in place: the file keeps its name (ADR-0038 I6)", 1),
 }
 _PLACING_NAMES = {"create_entry_text", "move_entry_text"}
+_PLACING_ATTRIBUTES = {"move", "move_bytes", "rename"}
+_PRIMITIVES = ("pyrite/storage/entry_writer.py", {"create_entry_text", "move_entry_text"})
 
 
-def _placing_calls() -> set[tuple[str, str]]:
+def _placing_calls() -> dict[tuple[str, str], int]:
     import ast
+    from collections import Counter
 
     repo = Path(__file__).resolve().parent.parent
     roots = [repo / "pyrite", *sorted((repo / "extensions").glob("*/src"))]
-    found: set[tuple[str, str]] = set()
+    found: Counter = Counter()
     for root in roots:
         for path in sorted(root.rglob("*.py")):
             rel = path.relative_to(repo).as_posix()
-            if rel == "pyrite/storage/entry_writer.py":
-                continue  # the two functions themselves
             tree = ast.parse(path.read_text(encoding="utf-8"))
+            names = set(_PLACING_NAMES)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    names |= {a.asname for a in node.names if a.name in _PLACING_NAMES and a.asname}
 
-            def visit(node, scope, rel=rel):
+            def visit(node, scope, rel=rel, names=names):
                 for child in ast.iter_child_nodes(node):
                     if isinstance(child, ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
-                        visit(child, [*scope, child.name], rel)
+                        if rel == _PRIMITIVES[0] and not scope and child.name in _PRIMITIVES[1]:
+                            continue  # the primitive's own body
+                        visit(child, [*scope, child.name], rel, names)
                         continue
                     if isinstance(child, ast.Call):
                         f = child.func
-                        name = f.id if isinstance(f, ast.Name) else getattr(f, "attr", None)
-                        if name in _PLACING_NAMES or (
-                            name == "move" and isinstance(f, ast.Attribute)
-                        ):
-                            found.add((rel, ".".join(scope)))
-                    visit(child, scope, rel)
+                        if isinstance(f, ast.Name):
+                            placing = f.id in names
+                        elif isinstance(f, ast.Attribute):
+                            placing = f.attr in _PLACING_NAMES | _PLACING_ATTRIBUTES
+                        else:
+                            placing = False
+                        if placing:
+                            found[(rel, ".".join(scope))] += 1
+                    visit(child, scope, rel, names)
 
             visit(tree, [])
-    return found
+    return dict(found)
 
 
 @pytest.mark.control(
-    reason="a structural ratchet: it holds on dev and goes red when a new placing call appears"
+    reason="a structural ratchet: dev makes the same calls, so it holds there; it goes red "
+    "when a call of a shape the scan sees is added (see PLACING_CALLS' comment)"
 )
 def test_the_placing_writers_are_the_ones_in_the_code():
     found = _placing_calls()
-    assert found == set(PLACING_CALLS), {
-        "unmapped (add a case and map it)": sorted(found - set(PLACING_CALLS)),
-        "stale": sorted(set(PLACING_CALLS) - found),
+    expected = {key: count for key, (_why, count) in {**PLACING_CALLS, **NOT_PLACING}.items()}
+    assert found == expected, {
+        "unmapped or a new call (add a case and map it)": sorted(
+            (k, n) for k, n in found.items() if expected.get(k) != n
+        ),
+        "stale": sorted(k for k in expected if k not in found),
     }
-    assert set(PLACING_CALLS.values()) == set(PLACING_WRITERS)
+    assert {case for case, _count in PLACING_CALLS.values()} == set(PLACING_WRITERS)
