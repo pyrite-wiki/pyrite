@@ -5,6 +5,7 @@ Handles reading and writing entries to/from markdown files.
 Each KB is a directory of markdown files with YAML frontmatter.
 """
 
+import fnmatch
 import io
 import logging
 import os
@@ -996,7 +997,22 @@ class KBRepository:
                 self._refuse_if_derived(entry_id, held)
                 return list(held)
         candidates: list[Path] = []
-        if indexed_path is not None and self._lexically_inside(indexed_path):
+        # The index row's path is a candidate only where the walk would list
+        # it: the whole of ``_listed``, the rule ``_filename_candidates``
+        # applies. That excludes an in-KB link to another walked file (an
+        # alias; dev's sync wrote such a row when the link sorted first, and
+        # any row can be stale: read through, it would count as an explicit
+        # holder, and the delete would remove the user's link and keep the
+        # entry, #1262). It also excludes a path the walk skips: a README, a
+        # path with a dot-prefixed part, one under ``_templates``. Such a file
+        # can hold an entry (a create titled "README" writes one, #1552); a
+        # delete before the next sync then answers not found for it, its row
+        # is dropped, and the file stays.
+        if (
+            indexed_path is not None
+            and self._lexically_inside(indexed_path)
+            and self._listed(indexed_path)
+        ):
             candidates.append(indexed_path)
         try:
             self._validate_entry_id(entry_id)
@@ -1485,14 +1501,109 @@ class KBRepository:
         )
 
     def list_files(self) -> Iterator[Path]:
-        """Iterate over all markdown files in the KB."""
-        for md_file in self.path.rglob("*.md"):
-            if self._listed(md_file):
+        """Iterate over all markdown entry files in the KB: not an alias
+        (``alias_target``), so each real file is listed once."""
+        for md_file, target in self.walk_files():
+            if target is None:
                 yield md_file
 
+    def walk_files(self) -> Iterator[tuple[Path, Path | None]]:
+        """Every markdown path the walk's lexical rules keep, with the walked
+        file it is an alias of (``alias_target``), or None for an entry file.
+        ``list_files`` keeps the Nones; the reconcile's plan reports the rest
+        as aliases from the same pass, so there is one walk and one rule."""
+        for md_file in self.path.rglob("*.md"):
+            if self._lexically_listed(md_file):
+                yield md_file, self.alias_target(md_file)
+
+    def alias_target(self, md_file: Path) -> Path | None:
+        """The walked entry file ``md_file`` is another name for, or None.
+
+        An alias (#1262) is a path that is itself a symbolic link whose fully
+        resolved target is a regular ``*.md`` file inside the KB's real root
+        that the walk keeps by its own rules: one entry per real file, so the
+        target is the entry and this path is not. The target is returned as a
+        path under ``self.path`` (the spelling the walk lists it by). A chain
+        of links ends at its last target.
+
+        Not an alias, and walked as before: a path that is not a link; a link
+        that leaves the KB (the reader refuses it); a dangling link
+        (``dangling_target``) or a looping one (malformed); a link to a file
+        the walk skips (a hidden folder, ``_templates``, a README), which is
+        then the only walked name. A hard link is not a symbolic link: no name
+        is the real one, and the reconcile skips both (nlink > 1).
+
+        Where the link leads, and whether that is out of the KB, is
+        ``KBFiles``'s answer (``_in_kb_link``). Nothing is read; the target's
+        kind is a ``stat``. The entry's bytes are read later, at the target,
+        through ``KBFiles.read_bytes``. Nothing is written: the link is the
+        user's file.
+        """
+        target = self._in_kb_link(md_file)
+        if target is None or (
+            not fnmatch.fnmatch(target.name, "*.md")
+            or not self._lexically_listed(target)
+            or not _is_regular_file(target)
+        ):
+            return None
+        return target
+
+    def dangling_target(self, md_file: Path) -> Path | None:
+        """The KB path ``md_file`` names, when it is a link inside the KB with
+        nothing there (#1262): a hand-made link to a missing file, or one a
+        delete left, which keeps the user's link. It holds no entry, so the
+        reconcile reports it as a dangling link, not as an unreadable file.
+        None for anything else: a link out of the KB, a loop (its target is
+        there, and unreadable), a path that is not a link. ``lexists`` is a
+        probe of a name ``KBFiles`` placed inside the root; nothing is read."""
+        target = self._in_kb_link(md_file)
+        if target is None or os.path.lexists(target):
+            return None
+        return target
+
+    def _in_kb_link(self, md_file: Path) -> Path | None:
+        """Where ``md_file`` leads, spelled under ``self.path``, when it is a
+        symbolic link under the root that does not lead out of the KB; None
+        otherwise. Where it leads is ``KBFiles.resolved`` (the rule behind
+        ``KBFiles.contains`` and every read and write), never a second rule.
+
+        The name is decided first, before any probe: ``_filename_candidates``
+        asks about names built from a caller's id, and a name not under the
+        root is no walked name, so it is never ``lstat``-ed. That check is
+        lexical and covers the name, not its folders: a folder on the way
+        that is a link is followed by the probe. No caller passes one: the
+        walk (``rglob``) does not enter a linked folder, and a lookup's name
+        is the root plus a plain stem."""
+        top = os.path.normpath(os.path.abspath(self.path))
+        name = os.path.normpath(os.path.abspath(md_file))
+        if not name.startswith(top + os.sep):
+            return None
+        # One lstat of the name itself, never followed.
+        if not os.path.islink(name):
+            return None
+        return KBFiles(self.path).resolved(name)
+
+    def aliases_by_target(self) -> dict[Path, list[Path]]:
+        """Every alias in the KB, by the walked file it names (one walk):
+        what a write that would move or remove a file asks first, so it does
+        not leave the user's link pointing at nothing without saying so."""
+        found: dict[Path, list[Path]] = {}
+        for md_file, target in self.walk_files():
+            if target is not None:
+                found.setdefault(target, []).append(md_file)
+        return found
+
     def _listed(self, md_file: Path) -> bool:
-        """Whether ``list_files`` walks ``md_file``; ``find_file`` uses the
-        same rule, so what sync indexes is what lookup finds."""
+        """Whether ``list_files`` walks ``md_file``. ``find_file`` and
+        ``files_to_delete`` use the same rule, so they find only what sync
+        would index; a read by id (``KBService._entry_file``) tries the index
+        row's path first whatever this says. An alias of another walked file
+        is not listed (``alias_target``)."""
+        return self._lexically_listed(md_file) and self.alias_target(md_file) is None
+
+    def _lexically_listed(self, md_file: Path) -> bool:
+        """The walk's skip rules on the path's spelling alone: hidden parts,
+        ``_templates``, a README. No I/O."""
         # The parts below the KB root. A string prefix first: ``relative_to``
         # walks the path's parents, and on a lookup's walk of a 2,000-file KB
         # that was a third of the cost (#135). Both are lexical; a path the
@@ -1520,6 +1631,10 @@ class KBRepository:
     def list_all_files(self) -> Iterator[Path]:
         """Iterate over all entry file paths (md + collection yaml) without parsing."""
         yield from self.list_files()
+        yield from self.list_collection_files()
+
+    def list_collection_files(self) -> Iterator[Path]:
+        """Every ``__collection.yaml`` the walk keeps (not under a hidden part)."""
         for yaml_file in self._named("__collection.yaml"):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue

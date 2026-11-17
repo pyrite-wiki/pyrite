@@ -201,6 +201,17 @@ class DocumentManager:
         Returns:
             True if the file was deleted, False if not found.
         """
+        return self.delete_entry_leaving(entry_id, kb_name, kb_config)[0]
+
+    def delete_entry_leaving(
+        self, entry_id: str, kb_name: str, kb_config: KBConfig
+    ) -> tuple[bool, list[dict[str, str]]]:
+        """``delete_entry``, and the in-KB links it left pointing at nothing
+        (#1262): ``[{"path", "target"}]``, KB-relative. A link is the user's
+        file (guest standard), so the delete removes the entry's real file
+        only and keeps every link to it; the caller reports them. They come
+        from the plan the delete already makes (its ``aliases``): each alias
+        whose target is no longer there once the delete is done."""
         repo = KBRepository(kb_config)
         # The index row's file is a candidate the repository verifies before
         # it walks the KB (ADR-0038 step 1). Every file holding the id comes
@@ -213,7 +224,18 @@ class DocumentManager:
         holders = [claim.path for claim in plan.holders.get(entry_id, [])]
         file_deleted = repo.delete(entry_id, indexed_path=indexed, holders=holders)
         self._db.delete_entry(entry_id, kb_name)
-        return file_deleted
+        # What is on disk once the delete is done, never the plan alone: each
+        # alias the plan saw that is still a link inside the KB and now
+        # points at nothing (``dangling_target``). A link gone by now, or
+        # whose target is still there, is not listed.
+        left: list[dict[str, str]] = []
+        if file_deleted:
+            left = [
+                {"path": alias["path"], "target": alias["target"]}
+                for alias in plan.aliases
+                if repo.dangling_target(kb_config.path / alias["path"]) is not None
+            ]
+        return file_deleted, left
 
     def index_entry(self, entry: Entry, kb_name: str, file_path: Path) -> None:
         """Index an entry without writing to disk (re-index from existing file).

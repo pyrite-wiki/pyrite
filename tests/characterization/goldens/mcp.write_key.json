@@ -943,6 +943,7 @@
     "entry_id": "characterization-disposable-mutation-target",
     "inbound_link_count": 0,
     "inbound_links": [],
+    "links_left": [],
     "warnings": []
   },
   "kb_delete | write_key | private-kb": {
@@ -950,6 +951,7 @@
     "entry_id": "characterization-disposable-mutation-target",
     "inbound_link_count": 0,
     "inbound_links": [],
+    "links_left": [],
     "warnings": []
   },
   "kb_delete | write_key | readable-kb": {
@@ -957,6 +959,7 @@
     "entry_id": "characterization-disposable-mutation-target",
     "inbound_link_count": 0,
     "inbound_links": [],
+    "links_left": [],
     "warnings": []
   },
   "kb_discover_neighbors | write_key | missing-kb": {
