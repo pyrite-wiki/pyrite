@@ -5387,3 +5387,77 @@ class TestBacklogKindToolSchemas:
         registry.register(SoftwareKBPlugin())
         schema = registry.get_all_mcp_tools("write")[tool_name]["inputSchema"]
         assert schema["properties"]["kind"]["enum"] == list(BACKLOG_KINDS)
+
+
+class TestAdrCreationTagsAndId:
+    """Both ADR writers preserve tags and expose the entry's usable ID (#1518)."""
+
+    @pytest.fixture
+    def world(self, tmp_path):
+        from pyrite.config import KBConfig
+        from tests._world import build_world
+
+        world = build_world(
+            tmp_path,
+            kbs=[KBConfig(name="proj", path=tmp_path / "proj", kb_type="software")],
+            rest=False,
+        )
+        try:
+            yield world
+        finally:
+            world.close()
+
+    @staticmethod
+    def _frontmatter(world):
+        import yaml
+
+        paths = list(world.kb_path("proj").rglob("*.md"))
+        assert len(paths) == 1
+        return yaml.safe_load(paths[0].read_text(encoding="utf-8").split("---", 2)[1])
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    @pytest.mark.parametrize(
+        "tags",
+        [
+            pytest.param(
+                None,
+                marks=pytest.mark.control(reason="omitting tags keeps the existing empty default"),
+            ),
+            ["architecture", "storage"],
+            ["équipe", "résilience"],
+        ],
+    )
+    def test_tags_are_written_to_the_adr(self, world, surface, tags):
+        if surface == "cli":
+            options = ("--tags", ", ".join(tags)) if tags is not None else ()
+            result = world.cli("sw", "new-adr", "Use SQLite", "-k", "proj", *options)
+            assert result.exit_code == 0, result.output
+        else:
+            server = world.mcp("write")
+            server._dispatch_tool("kb_orient", {"kb_name": "proj"})
+            args = {"kb_name": "proj", "title": "Use SQLite"}
+            if tags is not None:
+                args["tags"] = tags
+            result = server._dispatch_tool("sw_create_adr", args)
+            assert result.get("created") is True, result
+            assert result["id"] == "adr-0001"
+
+        front = self._frontmatter(world)
+        assert front["id"] == "adr-0001"
+        assert front.get("tags", []) == (tags or [])
+        assert world.db.get_entry("adr-0001", "proj")["tags"] == (tags or [])
+
+    def test_cli_prints_the_entry_id(self, world):
+        result = world.cli("sw", "new-adr", "Use SQLite", "-k", "proj")
+        assert result.exit_code == 0, result.output
+        entry_id = self._frontmatter(world)["id"]
+        assert f"Created {entry_id} (ADR-0001):" in result.stdout
+        fetched = world.cli("get", entry_id, "-k", "proj")
+        assert fetched.exit_code == 0, fetched.output
+        assert json.loads(fetched.stdout)["id"] == entry_id
+
+    def test_mcp_schema_declares_optional_string_tags(self):
+        schema = SoftwareKBPlugin().get_mcp_tools("write")["sw_create_adr"]["inputSchema"]
+        assert schema["properties"]["tags"]["type"] == "array"
+        assert schema["properties"]["tags"]["items"] == {"type": "string"}
+        assert "tags" not in schema["required"]
