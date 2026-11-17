@@ -405,17 +405,7 @@ def _run(world, bad, root, path, args):
 #: The kinds whose ``read_kb_yaml`` answer is a typed refusal: the walks run
 #: over each. (A kb.yaml that loads as a mapping but is not a schema, such as
 #: ``types: 3.5``, raises an untyped error and is not here: #1591.)
-#: ``deep-flow`` is left out of the walks only: each read of it costs about
-#: 1.7 s (the parser recurses to the limit) and a failed load is not cached,
-#: so a walk of over a hundred commands passed CI's per-test timeout.
-#: ``deep-block`` takes the same path (RecursionError -> KB_CONFIG_INVALID)
-#: in a tenth of a second, and ``deep-flow`` keeps its own row in the kinds
-#: test.
-REFUSED_KINDS = [
-    kind
-    for kind, answer in KINDS.items()
-    if answer not in ("empty", "mapping") and kind != "deep-flow"
-]
+REFUSED_KINDS = [kind for kind, answer in KINDS.items() if answer not in ("empty", "mapping")]
 
 
 def _outcome_cli(result) -> tuple[str | None, bool]:
@@ -439,12 +429,21 @@ def _cli_spanning():
         yield root, path, cmd
 
 
-def _walk_cli(world, bad, restore) -> dict[str, tuple[str | None, bool]]:
+#: The CLI walk runs in this many fixed slices of the command list, one test
+#: case per (kind, slice): every command runs for every kind, and no case is
+#: as long as the whole walk. A kb.yaml that costs about 1.4 s to refuse on
+#: every load (``deep-flow``: the parser recurses to the limit) made one case
+#: of the whole walk take 170 s here and pass CI's 600 s per-test timeout.
+CLI_SLICES = 4
+
+
+def _walk_cli(world, bad, restore, part: int = 0) -> dict[str, tuple[str | None, bool]]:
     from tests.outcome_walk import root_app
 
     config_file = world.config_dir / "config.yaml"
     answers = {}
-    for root, path, cmd in _cli_spanning():
+    commands = sorted(_cli_spanning(), key=lambda c: (c[0], c[1]))
+    for root, path, cmd in commands[part::CLI_SLICES]:
         saved = config_file.read_bytes()
         try:
             result = world.cli(*path, *_args(cmd, kb=None), input="", app=root_app(root))
@@ -517,16 +516,17 @@ def two_worlds(tmp_path, monkeypatch):
         broken.close()
 
 
+@pytest.mark.parametrize("part", range(CLI_SLICES))
 @pytest.mark.parametrize("kind", REFUSED_KINDS)
-def test_no_cli_command_that_spans_kbs_is_stopped_by_one_kb_yaml(kind, two_worlds):
+def test_no_cli_command_that_spans_kbs_is_stopped_by_one_kb_yaml(kind, part, two_worlds):
     """Every CLI command that spans the KBs answers with one KB's kb.yaml
     refused as it answers with that kb.yaml good: the control run is the
-    expected side."""
+    expected side. One slice of the command list per case (``CLI_SLICES``)."""
     control_world, broken_world, bad = two_worlds
     _make(kind, bad)
-    control = _walk_cli(control_world, None, restore=lambda: None)
-    broken = _walk_cli(broken_world, bad, restore=lambda: None)
-    assert len(control) > 50, sorted(control)  # the walk found the commands
+    control = _walk_cli(control_world, None, restore=lambda: None, part=part)
+    broken = _walk_cli(broken_world, bad, restore=lambda: None, part=part)
+    assert len(control) > 20, sorted(control)  # the slice found its commands
     assert _differences(control, broken) == []
     assert _rows(broken_world, "bad") == ["only-in-bad"]
 
