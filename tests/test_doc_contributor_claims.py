@@ -47,7 +47,7 @@ def test_gotchas_walk_tests_list_matches_disk_and_grep():
         f"{gotchas_path.name} must contain section '{section_header}'"
     )
 
-    section = gotchas_text.split(section_header)[1].split("## ")[0]
+    section = gotchas_text.split(section_header)[1].split("\n## ")[0]
     listed_tests = set(re.findall(r"`(tests/test_[^`]+\.py)`", section))
     assert listed_tests, f"No test files found under '{section_header}' in {gotchas_path.name}"
 
@@ -73,7 +73,8 @@ def test_gotchas_walk_tests_list_matches_disk_and_grep():
     assert actual_walk_tests == listed_tests, (
         f"CLI walk tests in gotchas.md do not match walk tests in tests/.\n"
         f"Missing from gotchas.md: {sorted(missing)}\n"
-        f"Extra in gotchas.md: {sorted(extra)}"
+        f"Extra in gotchas.md: {sorted(extra)}\n"
+        f"To fix: edit the list under '{section_header}' in .claude/skills/pyrite-dev/gotchas.md"
     )
 
 

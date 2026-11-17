@@ -205,7 +205,7 @@ When defining relationship types in `get_relationship_types()`, always define bo
 
 ## A create stores the type named; only get_type_mappings() maps one
 
-A create stores the type named by the caller; nothing is mapped by subclassing. A type is mapped only when a plugin explicitly declares it via `get_type_mappings()` (e.g. `journalism-investigation` maps `event → investigation_event` and `document → document_source`), and when the KB's `kb.yaml` declares types, only if it declares both the source and target types. For tests: `build_entry()` of a core type returns the core class unless the KB applies an explicit mapping. See [Pyrite Plugin Protocol](../../../kb/components/pyrite-plugin-protocol.md) for the contract.
+A create stores the type named by the caller; nothing is mapped by subclassing. A type is mapped only when a plugin explicitly declares it via `get_type_mappings()` (e.g. `journalism-investigation` maps `event → investigation_event` and `document → document_source`), and, when the KB's `kb.yaml` declares types, only if it declares the target type (the core type need not be declared). For tests: `build_entry()` of a core type returns the core class unless the KB applies an explicit mapping. See [Pyrite Plugin Protocol](../../../kb/components/pyrite-plugin-protocol.md) for the contract.
 
 ## A new CLI option: the tests that walk every command
 
@@ -230,7 +230,7 @@ In particular, `tests/test_cli_numeric_options_declare_a_range.py` enforces the 
 - Importance and priority: `min=1, max=10`
 - Ports: `min=1, max=65535`
 
-If an option legitimately cannot be bounded, it must be listed in `UNBOUNDED` with a documented reason. `NOT_YET` holds legacy options pending ranges (pinned at a fixed size that may shrink but never grow). `UNCLASSIFIED` is for options where a custom `click_type=` or `parser=` hides the numeric type from static reflection (such as `qa duplicates --threshold`).
+If an option legitimately cannot be bounded, it must be listed in `UNBOUNDED` with a documented reason. `NOT_YET` holds legacy options pending ranges; it may shrink but never grow (the test's docstring says how that is enforced). `UNCLASSIFIED` is for options where a custom `click_type=` or `parser=` hides the numeric type from static reflection (such as `qa duplicates --threshold`).
 
 ## build_entry: Unknown kwargs Go to metadata, Not Top-Level Frontmatter
 

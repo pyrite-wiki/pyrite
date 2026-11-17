@@ -84,7 +84,7 @@ spelling of field `k`, not a separate field:
 
 ## Type Resolution Details
 
-`_resolve_entry_type()` in `kb_service.py` calls `resolve_entry_type()`, which maps a type only if an active plugin explicitly declares the mapping in `get_type_mappings()`. When the KB's `kb.yaml` declares types, both the source and target types must be declared for the mapping to apply; otherwise, the type named by the caller is stored directly without any subclass-based inference. See [Pyrite Plugin Protocol](../../../kb/components/pyrite-plugin-protocol.md) for the contract.
+`_resolve_entry_type()` in `kb_service.py` calls `resolve_entry_type()`, which maps a type only if an active plugin explicitly declares the mapping in `get_type_mappings()`, and, when the KB's `kb.yaml` declares types, only if it declares the target type (the core type need not be declared); otherwise, the type named by the caller is stored directly without any subclass-based inference. See [Pyrite Plugin Protocol](../../../kb/components/pyrite-plugin-protocol.md) for the contract.
 
 ## build_entry Factory
 
