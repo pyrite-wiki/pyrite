@@ -398,7 +398,13 @@ contributes a row without `rule`. A row from the entry model also carries
 `message` — the sentence that reaches `error`, so a caller never has to parse
 it — and `expected` when the fix is mechanical; a row from the KB schema or a
 plugin validator carries `expected` and, where the rule knows it, `got`: the
-allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried. A row from
+allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried.
+`importance` has one rule on every type, write and surface (#1588): a whole
+number from 1 to 10, as a number or as plain ASCII digits (`"05"`), stored as
+sent; anything else (`5.5`, `true`, `" 5 "`, `"+5"`, `"１０"`, `high`) is refused
+with the model row `{"field": "importance", "rule": "range", ...}`, and the same
+value already in a file, at the top level or under `metadata:`, is kept with a
+warning carrying that `rule`. A row from
 the KB schema's enum pass also names `origin` (`field` for a field's own
 `options:`/`values:` list, `rule` for a `validation.rules` entry), `severity`
 (`error`, or `warning` when the field has `allow_other: true`), and
