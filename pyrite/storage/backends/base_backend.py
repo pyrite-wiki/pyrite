@@ -319,37 +319,26 @@ class DeclaredFieldTypes:
         return cached
 
 
-def shape_entry_row(
-    row: dict[str, Any], declared: DeclaredFieldTypes, *, cls: type | None = None
-) -> dict[str, Any]:
+def shape_entry_row(row: dict[str, Any], declared: DeclaredFieldTypes) -> dict[str, Any]:
     """An index entry row in its one shape, in place; returns ``row``.
 
     Only the keys the row already has are read: ``metadata`` decoded to an
-    object (NULL reads ``{}``), ``aliases`` to a list, a declared field the
-    bag holds lifted to its own name (``lift_declared_fields``, #1025; never
-    over a key the row has), and each TEXT column's value cast by its field's
-    declared type (``cast_declared_columns``). No other key is added or
-    removed: a reader's projection is its own. ``cls`` is the entry's class
-    where the caller has it (the single read); otherwise the type's class is
-    looked up here, the one lookup the ORM row made before (#1503)."""
+    object (NULL reads ``{}``), ``aliases`` to a list, and each TEXT column's
+    value cast by its field's declared type (``cast_declared_columns``). No
+    key is added or removed: a reader's projection is its own, so a search
+    hit gains no ``priority`` and a ``*`` row no ``actors`` (#1503). The
+    lift of declared bag fields to their own names stays with the two
+    projections that have always carried them, the ORM row
+    (``_entry_to_dict``) and the single read (``read_fields``)."""
     if "metadata" in row:
         row["metadata"] = decode_metadata(row["metadata"])
     if "aliases" in row:
         row["aliases"] = decode_aliases(row["aliases"])
-    entry_type = row.get("entry_type")
-    if entry_type and row.get("metadata"):
-        from ...schema.field_aliases import lift_declared_fields
-
-        if cls is None:
-            from ...models.core_types import get_entry_class
-
-            cls = get_entry_class(str(entry_type))
-        lift_declared_fields(row, row["metadata"], cls, str(entry_type))
     # The declared types are looked up (once per KB and type, for a batch)
     # only when a column holds text a cast could change: a row of words and
     # NULLs needs no schema, and a listing stays one statement for the rows.
     if any(_castable(row.get(key)) for key in TEXT_FIELD_COLUMNS):
-        cast_declared_columns(row, declared(row.get("kb_name"), entry_type))
+        cast_declared_columns(row, declared(row.get("kb_name"), row.get("entry_type")))
     return row
 
 
@@ -656,14 +645,22 @@ class BaseBackend(ABC):
         # item's `rank`/`effort`/`kind`, a task's `status_reason`) lives in the
         # `metadata` bag; a read spells it at its own name too, so `pyrite
         # get`, REST `/entries/{id}` and MCP `kb_get` see the file's shape
-        # (Tier A 1200, r1175). The bag itself is kept whole here: this is the
-        # storage dict the plugins read declared fields from; only the
-        # single-entry read drops them from its `metadata`. The lift, the
-        # decoding and the declared-type cast are the one row shape every
-        # reader returns (`shape_entry_row`, #1503).
-        return shape_entry_row(
+        # (Tier A 1200, r1175). The rule is `lift_declared_fields` (#1025),
+        # shared with `IndexManager.read_fields`; a key the type does not
+        # declare stays the bag's. The bag itself is kept whole here: this
+        # is the storage dict the plugins read declared fields from; only
+        # the single-entry read drops them from its `metadata`.
+        from ...models.core_types import get_entry_class
+        from ...schema.field_aliases import lift_declared_fields
+
+        # The row's one shape (#1503): `metadata` an object, `aliases` a
+        # list, a column read by its declared type, as every reader returns it.
+        shape_entry_row(
             result, declared if declared is not None else DeclaredFieldTypes(self._session)
         )
+        entry_type = str(entry.entry_type)
+        lift_declared_fields(result, result["metadata"], get_entry_class(entry_type), entry_type)
+        return result
 
     def _get_entry_tags(self, entry_id: str, kb_name: str) -> list[str]:
         results = (

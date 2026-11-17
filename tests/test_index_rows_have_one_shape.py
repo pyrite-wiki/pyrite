@@ -859,3 +859,17 @@ def test_every_storage_reader_of_entry_rows_returns_through_the_shaper():
             offenders.append(f"{rel}::{name}")
     assert offenders == [], "entry rows built without shape_entry_row(s)"
     assert set(STRUCTURAL_ALLOWLIST) <= found, "stale allowlist entries"
+
+
+def test_a_raw_readers_row_gains_no_key_its_sql_did_not_select(world):
+    """The shaper reads the keys a row has and adds none (#1503): a backlog
+    item's `kind` lives in the bag (it has no column), so a keyword search
+    hit and a find row, which select columns, carry no `kind` key; the ORM
+    row, whose projection has always lifted declared fields, does."""
+    db = world.db
+    search = [r for r in db.backend.search("zebra", kb_name=SW) if r["id"] == "b-one"]
+    found = [r for r in db.find_by_status("open", kb_name=SW) if r["id"] == "b-one"]
+    assert search and found
+    assert "kind" not in search[0], sorted(search[0])
+    assert "kind" not in found[0], sorted(found[0])
+    assert db.backend.get_entry("b-one", SW)["kind"] == "bug"

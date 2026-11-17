@@ -1546,7 +1546,7 @@ shape, whatever the surface (MCP, `--format json`, REST) and the backend
 `kb_batch_read`, `kb_find_by_status`, `kb_find_by_assignee`,
 `kb_find_overdue`, `kb_find_by_location`), search (`kb_search`, keyword and
 semantic legs), folder collections, and the single read (`kb_get`). Each
-reader keeps its own set of keys. Where a row carries one of these, it has
+reader keeps its own set of keys: shaping adds none. Where a row carries one of these, it has
 this type:
 
 | Key | JSON type |
@@ -1554,7 +1554,7 @@ this type:
 | `metadata` | an object; `{}` when the entry has none |
 | `aliases` | a list; `[]` when the entry has none |
 | `importance` | an integer (or `null`) |
-| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | the bag's value, also at the field's own name; it never replaces a key the row already has, so the keyword search row's `rank` stays its score |
+| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | at its own name too on the list readers (`kb_list_entries`, `kb_recent`, `kb_batch_read`) and the single read; search and the finds return only the columns they select, so there it is in `metadata` alone (the keyword search row's `rank` is its score) |
 | a column field (`priority`, `status`, `assignee`, `due_date` ...) | its declared type (`KBSchema.type_fields`): a `number` reads as an integer or a decimal, a `checkbox` as a boolean, anything else as text; a field the type does not declare reads as text |
 
 So a value read from any of these readers and written back through an
