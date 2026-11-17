@@ -189,6 +189,25 @@ class TestRangeMode:
         assert "fix:" in result.stderr
         assert "tests/" in result.stderr
 
+    def test_range_error_names_the_remedy(self, tmp_path):
+        """#1583: error explains how to repair the commit when a fix: commit
+        lacks tests (e.g. in a test-first two-commit branch)."""
+        repo = self._repo(tmp_path)
+        base = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+        self._commit(repo, "pyrite/thing.py", "fix: correct the thing without a test")
+        head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--range", base, head],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode != 0
+        assert "same commit as the fix" in result.stderr
+        assert "combine the two commits" in result.stderr
+
     def test_range_ignores_non_fix_commits_without_tests(self, tmp_path):
         repo = self._repo(tmp_path)
         base = self._git(repo, "rev-parse", "HEAD").stdout.strip()

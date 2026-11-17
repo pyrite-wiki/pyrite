@@ -110,7 +110,11 @@ _NO_TEST_MESSAGE = (
     "  If this fix genuinely has no testable behavior change (e.g. a\n"
     "  pure docs/config fix), reword the subject to drop the 'fix:' (or\n"
     "  'fix(scope):', 'fix!:') prefix, or add the regression test the fix should have shipped\n"
-    "  with."
+    "  with.\n"
+    "  Put the test in the same commit as the fix. If the test is already in an\n"
+    "  earlier commit of the branch, either combine the two commits, or give the code\n"
+    "  commit another prefix (refactor:, feat:), since a later commit cannot repair an\n"
+    "  earlier one."
 )
 
 
