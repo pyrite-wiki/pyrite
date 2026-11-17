@@ -1117,3 +1117,44 @@ def test_a_rest_get_put_back_whole_leaves_the_file_byte_identical(rt_world, entr
     body = {k: read[k] for k in ("title", "body", "importance", "tags", "metadata")}
     _rest(w, "put", f"/api/entries/{entry_id}", json={"kb": KB, **body})
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("entry_type", "spelling", "reads"),
+    [
+        # A task's priority column holds the model's integer
+        # (`coerce_task_priority`), so the reader returns a number for
+        # spellings the strict rule alone would leave as text.
+        ("task", '"007"', 7),
+        ("task", '"+7"', 7),
+        ("task", '"1e1"', 10),
+        ("task", '"7"', 7),
+        ("chore", '"007"', "007"),
+        ("chore", '"7"', 7),
+    ],
+)
+def test_qa_says_what_the_reader_returns_for_text_in_a_declared_number(
+    rt_world, entry_type, spelling, reads
+):
+    """Round 2 of the cold read: `qa validate`'s message is what `kb_get`
+    returns for that type and field, not a parallel description of the rule."""
+    w, emp = rt_world
+    folder = "tasks" if entry_type == "task" else "chores"
+    (emp / f"{folder}/q-one.md").write_text(
+        f"---\nid: q-one\ntype: {entry_type}\ntitle: Q\nstatus: open\npriority: {spelling}\n---\nq\n"
+    )
+    w.index(KB)
+    read = _mcp(w, "kb_get", {"kb_name": KB, "entry_id": "q-one"})["entry"]["priority"]
+    assert read == reads, (entry_type, spelling, read)
+    issues = [
+        i
+        for i in _cli_json(w, "qa", "validate", KB)["issues"]
+        if i.get("rule") == "number_as_text" and i["entry_id"] == "q-one"
+    ]
+    assert len(issues) == 1, issues
+    message = issues[0]["message"]
+    if isinstance(reads, str):
+        assert "reads it as that text" in message, message
+    else:
+        assert f"reads it as the number {reads}," in message, message
+        assert f"writes {reads} " in message, message

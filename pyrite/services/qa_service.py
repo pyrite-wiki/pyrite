@@ -1678,7 +1678,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
-            self._check_number_as_text(issues, kb_name, kb_config, entry, shown)
+            self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
                 issues.append(
@@ -1791,44 +1791,58 @@ class QAService:
             }
         )
 
-    @staticmethod
     def _check_number_as_text(
-        issues: list[dict[str, Any]], kb_name: str, kb_config: Any, entry: Any, shown: Any
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str,
+        kb_config: Any,
+        entry: Any,
+        file_path: Path,
+        shown: Any,
     ) -> None:
         """Report a field the type declares a number whose file value is text.
 
-        Every reader of the index reads a declared number's plain ASCII text
-        (``"7"``) as the number, since the index cannot tell ``7`` from
-        ``"7"``, and a write of the value read stores the number: the file's
-        quotes go (the maintainer's decision on #1628, 2026-11-17). Other text
-        (``"007"``) reads as text. Either way the file holds text where its
-        schema declares a number, and this names it. Text that is no number
-        at all (``high``) is the schema pass's ``field_number`` and the
-        task-priority check's, not reported twice here.
+        The message says what a read returns for it, taken from the reader
+        itself (`IndexManager.read_fields`, the single read every surface
+        uses), never from a description of the rule: a kb.yaml number's
+        ``"7"`` reads 7 and ``"007"`` reads as text, but a task's ``"007"``
+        reads 7, because a task's priority is the model's integer
+        (`coerce_task_priority`). A write of a number read stores that number:
+        the file's text goes (the maintainer's decisions on #1628,
+        2026-11-17). Text that is no number at all (``high``) is the schema
+        pass's ``field_number`` and the task-priority check's, not reported
+        twice here.
         """
         from ..exceptions import KBConfigInvalidError
-        from ..storage.backends.base_backend import read_declared_number
 
         source = entry._source_frontmatter or {}
         try:
             declared = kb_config.kb_schema.type_fields(entry.entry_type)
         except KBConfigInvalidError:
             return
+        texts = {}
         for name, field_schema in declared.items():
-            if field_schema.field_type != "number":
-                continue
             value = source.get(name)
-            if not isinstance(value, str):
+            if field_schema.field_type != "number" or not isinstance(value, str):
                 continue
             try:
                 float(value)
             except ValueError:
                 continue
-            read = read_declared_number(value)
+            texts[name] = value
+        if not texts:
+            return
+        from ..storage.index import IndexManager
+
+        read = IndexManager(self.db, self.config).read_fields(
+            entry, kb_name, file_path, content_hash="", row=None
+        )
+        for name, value in texts.items():
+            got = read.get(name)
             reading = (
-                f"Pyrite reads it as the number {read}, and an update of it writes {read} "
-                f"without the quotes"
-                if read is not value
+                f"Pyrite reads it as the number {got}, and an update of the value read "
+                f"writes {got} without the quotes"
+                if isinstance(got, int | float) and not isinstance(got, bool)
                 else "Pyrite reads it as that text"
             )
             issues.append(
