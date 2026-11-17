@@ -1405,9 +1405,9 @@ class KBService:
         The type the caller named, unless a plugin active for the KB's
         ``kb_type`` declares that core type maps to one of its own -- e.g.
         journalism-investigation's ``event -> investigation_event`` -- and the
-        KB's kb.yaml declares both the core type and the target, or declares no
-        types at all (a pair either end of which the vocabulary leaves out is
-        not applied, even under ``allow_undeclared``). Nothing
+        KB's kb.yaml declares the target, or declares no types at all (#1526:
+        the core type need not be declared; a pair whose target the vocabulary
+        leaves out is not applied, with or without ``allow_undeclared``). Nothing
         is inferred from subclassing: that rule (the most-derived subclass,
         tie-broken by name) wrote every ``note`` in a software KB as an ADR.
         The one resolver is ``pyrite.schema.type_mapping``, which orient and
@@ -1471,10 +1471,11 @@ class KBService:
         Core types are NOT exempt (#197): a KB that declares a schema declares
         the vocabulary for that KB (exempting core names once let `-t note`
         into a software KB, where the subclass inference #468 removed wrote it
-        as an ADR). Checked on the type as the caller named it, before a
-        declared mapping applies; the stored type is checked by
-        :meth:`_refuse_undeclared_mapping_target`, and the resolver never
-        offers a pair whose key or target the vocabulary leaves out.
+        as an ADR). Checked on the type as the caller named it, only when no
+        declared mapping applies to it (#1526, option (a)). When one applies,
+        the stored type is the only type checked
+        (:meth:`_refuse_undeclared_mapping_target`), and the resolver offers a
+        pair only when the vocabulary declares its target.
         """
         schema = kb_config.kb_schema
         declared = schema.declared_types() if schema else []
@@ -1492,14 +1493,15 @@ class KBService:
         named: str, target: str, kb_name: str, kb_config: KBConfig
     ) -> None:
         """Refuse a declared mapping whose target the KB's kb.yaml does not
-        declare, when it declares any (#468). The named type passed
-        :meth:`_refuse_undeclared_type` already; the type that would be
-        stored must be in the vocabulary too.
+        declare, when it declares any (#468). When a mapping applies this is
+        the only type check on the create: the named type need not be
+        declared (#1526, option (a)), and :meth:`_refuse_undeclared_type` is
+        not run on it.
 
-        No caller reaches this today: the resolver never offers a pair whose
-        target the vocabulary leaves out. It is a guard for a later source of
-        mappings (a kb.yaml ``type_map:`` override) that might, and is tested
-        by patching the resolver."""
+        No create is refused here today: the resolver never offers a pair
+        whose target the vocabulary leaves out. It is a guard for a later
+        source of mappings (a kb.yaml ``type_map:`` override) that might, and
+        is tested by patching the resolver."""
         schema = kb_config.kb_schema
         declared = schema.declared_types() if schema else []
         if declared and target not in declared:
@@ -1528,7 +1530,9 @@ class KBService:
 
         In order: the ADR-0034 truncated-body refusal (on the spec as the
         caller sent it, marker included) and marker stripping; the title; the
-        undeclared-type refusal; the plugin type resolution; the model's own
+        plugin type resolution, then the undeclared-type refusal on the type
+        that will be stored (#1526: the mapped target when a mapping applies,
+        else the named type); the model's own
         ``validate()``; the KB schema and plugin validators; and the exists
         check -- create never replaces. Raises a ValidationError subclass
         carrying a stable ``error_code``; returns the entry and its warnings.
@@ -1538,8 +1542,9 @@ class KBService:
         own so a file's frontmatter round-trips exactly as the loader reads it.
 
         The stored type is the named one unless a plugin declares the core
-        type maps to its own and the KB's vocabulary admits both types (or the
-        KB declares none) (:meth:`_resolve_entry_type`, #468) -- the same on
+        type maps to its own and the KB's vocabulary declares that target (or
+        the KB declares no types) (:meth:`_resolve_entry_type`, #468, #1526)
+        -- the same on
         every surface, a file given to ``add`` included. ``pending_ids``
         are ids an earlier item of the same dry run would have created;
         ``pending_paths`` are resolved file paths an earlier item of the same
@@ -1583,17 +1588,20 @@ class KBService:
             raise ValidationError(
                 "title is required", errors=rows, suggestion=_validation_suggestion(rows)
             )
+        # A declared mapping, if any (#468); otherwise the named type. Only the
+        # type that will be stored is checked (#1526, option (a)): a mapping
+        # applies where the KB declares its target, even if the named type is
+        # not declared. The resolver alone decides whether a pair applies.
+        named = entry_type
+        entry_type = self._resolve_entry_type(named, kb_config)
         if not allow_undeclared:
-            self._refuse_undeclared_type(entry_type, kb_name, kb_config)
+            if entry_type != named:
+                self._refuse_undeclared_mapping_target(named, entry_type, kb_name, kb_config)
+            else:
+                self._refuse_undeclared_type(named, kb_name, kb_config)
 
         entry_id = fields.pop("id", None) or generate_entry_id(title)
         body = fields.pop("body", "")
-
-        # A declared mapping, if any (#468); otherwise the named type.
-        named = entry_type
-        entry_type = self._resolve_entry_type(named, kb_config)
-        if entry_type != named and not allow_undeclared:
-            self._refuse_undeclared_mapping_target(named, entry_type, kb_name, kb_config)
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
             fields, attributes = self._with_declared_fields(entry_type, kb_config, fields)

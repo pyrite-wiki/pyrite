@@ -191,6 +191,7 @@ CLI and MCP report the code without an HTTP status.
 | `CLIP_TOO_LARGE` | Clipper, central REST mapping 413 | The page is larger than the clipper's 5 MiB cap, counted after decompression; clip a smaller page. |
 | `BRANDING_INVALID` | Branding configuration, REST 500 | Ask the operator to repair `branding.yaml`; repeating the request will not fix configuration. |
 | `INTERNAL_ERROR` | Unclassified domain failure, REST 500 | Consult the server log; do not assume retrying is safe. |
+| `KB_CONFIG_INVALID` | A KB whose `kb.yaml` Pyrite can read but cannot load as a mapping: bytes that are not UTF-8, a YAML syntax error, a duplicate key, a document over the YAML limits, or a top level that is neither a mapping nor null (a list, a string, a number, a boolean) (#1547). A null document (empty, `~`, `null`, only comments) is a KB with no schema, not this code. Every operation that needs that KB's schema, on every verb (get, create, update, delete, schema show/add/remove/set, sync, rebuild or reindex of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message; it names no KB, no path and nothing the parser said. The KB's index rows are kept, `kb.yaml` is never rewritten, and every other KB still works. `pyrite kb list` and `pyrite index health` on the local CLI show the parser's words; a network caller does not get them. | Correct `kb.yaml` by hand (`pyrite kb list` or `pyrite index health` says what is wrong), then `pyrite index sync`. |
 | `KB_UNREADABLE` | A KB whose files Pyrite cannot read (its folder cannot be listed or searched, its `kb.yaml` cannot be opened): every operation that needs that KB's files, on every verb (get, create, update, delete, schema, sync of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message, whatever the operating system refused; it names no path. The KB's index rows are kept, and every other KB still works. | Fix the folder's or `kb.yaml`'s permissions, then `pyrite index sync`. |
 
 ## MCP operation codes
@@ -354,7 +355,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `KB_NOT_FOUND` | the KB name is not registered, or, for a scoped caller, not readable (the same answer, byte for byte), or it is a KB's **shortname**: a shortname is link syntax only (`[[short:id]]`), and `-k`, REST `kb` and MCP `kb_name` take the full name (#952). One resolver answers every surface; the refusal carries `did_you_mean` (near matches drawn only from the KBs you can read; for a readable KB's shortname, its full name) and a `suggestion`/`hint`. A blank name names no KB and is never this code: a command that needs one answers `VALIDATION_FAILED`. The one exception is a blank REST path segment (`/api/kbs/%20/permissions`): a path that must name a KB and names none is `KB_NOT_FOUND`. Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | Use a name from `did_you_mean`, or `pyrite orient` (`kb_orient`) with no KB to list the KBs you can read. |
 | `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; an empty path or a non-regular file (directory, FIFO or device) is `VALIDATION_FAILED` before command work (#923, #1165). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. For MCP spellings and legacy codes, see [MCP code transitions](#mcp-code-transitions); `ENTRY_NOT_FOUND` is also the REST class code. | `pyrite search <term> -k <kb>` to find the id. |
 | `AMBIGUOUS` | the id was given without a KB (or with a blank `-k`) and more than one KB you can read holds it (see "`AMBIGUOUS`" above). The error lists them in `candidate_kbs`; REST answers `409`. | Repeat the command with `-k <kb>` (`kb` on REST, `kb_name` on MCP), one of `candidate_kbs`. |
-| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. A declared mapping (`type_mappings` in `kb_schema`/`orient`, e.g. `event` → `investigation_event`) is applied only when the KB declares both of its types, so without the override the type a create stores is one the KB declares; with `allow_undeclared` an undeclared named type is stored as named, unmapped. The write path also has a check that refuses, naming it, a mapped type the KB does not declare; no caller reaches it today (the resolver never offers such a pair), and it guards a later `kb.yaml` `type_map:` override (#468). Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>` prints the KB's `kb.yaml`; the types and the `type_mappings` a create applies are in `pyrite orient -k <kb> --format json` under `schema`), or pass the override. |
+| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Only the type a create would store is checked (#1526). A declared mapping (`type_mappings` in `kb_schema`/`orient`, e.g. `event` → `investigation_event`) applies when the KB declares its target, or declares no types; the named type need not be declared. So in a KB made from the journalism-investigation preset, which declares `investigation_event` but not `event`, `create -t event` stores `investigation_event`. When no mapping applies, the named type is checked: a KB that declares neither `event` nor its target refuses `create -t event`. `allow_undeclared` never changes which mapping applies; it only lets an undeclared named type with no applicable mapping be stored as named. The write path also has a check that refuses, naming it, a mapped type the KB does not declare; no create reaches it today (the resolver never offers such a pair), and it guards a later `kb.yaml` `type_map:` override (#468). Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>` prints the KB's `kb.yaml`; the types and the `type_mappings` a create applies are in `pyrite orient -k <kb> --format json` under `schema`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
 | `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
@@ -526,7 +527,7 @@ a row here (a test compares this table with the command's output).
 | `type_name_drift` | Groups of one type spelled more than one way after case, `_` and spaces are folded to `-`. | Warning | Hand edit the `type:` spellings, then `pyrite index sync`. |
 | `type_name_drift_total` | Number of drift groups before the report's cap. | Metadata, not a finding | Fix the groups listed there. |
 | `type_name_drift_has_more` | Whether more drift groups exist beyond the 100-group cap. | Metadata, not a finding | Narrow with `-k <kb>`; fix the groups listed. |
-| `schema_errors` | KBs whose `kb.yaml` failed to load. | Warning | Hand edit `kb.yaml`, then `pyrite index sync`. |
+| `schema_errors` | KBs whose `kb.yaml` failed to load. A row with `error_code: KB_CONFIG_INVALID` (the file does not load as a mapping, #1547) is Unhealthy; a row with no `error_code` (a key with the wrong shape, such as `types: null`) is a Warning. | Unhealthy / Warning | Hand edit `kb.yaml`, then `pyrite index sync`. |
 | `unmodellable_frontmatter` | Files whose frontmatter Pyrite cannot model (a non-string key, a set, a duplicate key). | Warning | Hand edit the unsupported frontmatter, then `pyrite index sync`. |
 | `double_spellings` | Fields one file spells twice (`k:` and `metadata.k`, or a field and its alias). | Warning | `pyrite qa fix <kb>` when both values are identical; otherwise hand edit both spellings. |
 | `checks` | The detailed arrays behind the counts above, under the same key names. | Not a finding | Fix the rows above; this key repeats them for callers that want paths and ids. |
@@ -580,8 +581,14 @@ group. Read-only: nothing is renamed. Any group makes the status
 `kb.yaml` failed to load (invalid YAML, `types: null`, `types` a list).
 Health still answers for that KB: it counts as declaring no types, so its
 non-core types appear in `undeclared_types` and no spelling is `declared`.
-Any row makes the status `warning`. The same field is on `kb health`, REST
-and MCP `kb_registry_health`.
+A row for a `kb.yaml` that does not load as a mapping carries
+`error_code: KB_CONFIG_INVALID` (the file is not UTF-8, not valid YAML, over the YAML limits, or not a
+mapping, #1547) makes the status `unhealthy`; its `error` is the parser's
+words on the local CLI and stdio MCP and `the server log has the details` for
+a network caller, and that KB's files are not compared with the index (each
+would read as malformed against no schema). Any other row makes the status
+`warning`. The same field is on `kb health`, REST and MCP
+`kb_registry_health`.
 
 **`index health` → `double_spellings`; `qa validate` →
 `field_spelled_twice`.** `metadata` is not a field: `metadata.k` is a
@@ -714,17 +721,19 @@ environment that had it. The removed extensions are listed in
 `schema`), `pyrite orient --format json` (under `schema`) and
 `pyrite-admin schema`. `pyrite kb schema show` does not: it prints the KB's
 `kb.yaml` as written. It is exactly what a create in
-that KB applies: a create that names a key, and that the KB accepts, stores
-its value; any other accepted name is stored as named (with `allow_undeclared`,
-an undeclared name is stored as named and never mapped). The pairs are the
-plugins' declared mappings for the KB's registered `kb_type`
+that KB applies: a create that names a key stores its value, with or without
+`allow_undeclared`; any other accepted name is stored as named. The pairs are
+the plugins' declared mappings for the KB's registered `kb_type`
 (journalism-investigation: `{"event": "investigation_event", "document":
-"document_source"}`), less any pair whose key or value the KB's `kb.yaml`
-leaves out when it declares types, through the one resolver the write path
-reads. So a KB made from the journalism preset, which declares
-`investigation_event` but not `event`, shows no `event` pair, and
-`create -t event` there is refused `UNDECLARED_TYPE`. Subclassing a core
-class maps nothing.
+"document_source"}`), less any pair whose value (the target) the KB's
+`kb.yaml` leaves out when it declares types, through the one resolver the
+write path reads (#1526). The key need not be declared. So a KB made from the
+journalism-investigation preset, which declares `investigation_event` and
+`document_source` but not `event` or `document`, shows both pairs, and
+`create -t event` there stores `investigation_event`. A KB that declares
+`event` but not `investigation_event` shows no `event` pair and stores
+`event` as named. A KB made from the known-entities preset declares neither
+and shows `{}`. Subclassing a core class maps nothing.
 
 **`orient` -> `kb_authored`, `pyrite_guidance`.** A KB's `kb.yaml` carries
 free text an agent reads (`guidelines`, `goals`, `evaluation_rubric`, a type's
@@ -1855,7 +1864,8 @@ cannot be opened, every command on every other KB still works, and that KB is
 named rather than dropped:
 
 - `pyrite kb list --format json` gives its row an `unreadable` key holding
-  the fixed `KB_UNREADABLE` message; a readable KB's row has no such key.
+  the fixed `KB_UNREADABLE` message, and `error_code`; a readable KB's row
+  has neither key.
   REST `GET /api/kbs` and MCP `kb_list` do not carry it.
 - `pyrite index health` lists it in `unreadable_kbs` (`{kb, error}`), and the
   status is `unhealthy`.
@@ -1869,6 +1879,73 @@ named rather than dropped:
   one KB answers `KB_UNREADABLE` and changes nothing. `pyrite index build`
   skips it, names it, and exits 3 or 1 the same way.
 - Every operation that needs its files answers `KB_UNREADABLE`.
+
+A registered KB whose `kb.yaml` can be read but cannot be loaded as a mapping
+(not UTF-8, a YAML syntax error, a duplicate key, over the YAML limits, a top
+level that is neither a mapping nor null; #1547) is handled the same way, whether it is in
+`config.yaml` or was added with `pyrite kb add`, with its own code,
+`KB_CONFIG_INVALID`, and three differences: the fix is to correct the file, not
+its permissions; `pyrite kb list` gives its row `error_code` and `error_detail`
+(the parser's words: `kb list` is the local CLI only) beside `unreadable`; and
+`pyrite index health` names it in `schema_errors` with `error_code`, not in
+`unreadable_kbs`, and is `unhealthy`. Each `unreadable_kbs` row of a sync
+result, and each `kb list` row with `unreadable`, carries `error_code`
+(`KB_UNREADABLE` or `KB_CONFIG_INVALID`). Pyrite never rewrites the file:
+`pyrite kb schema add-type`, `remove-type` and `set` answer
+`KB_CONFIG_INVALID` before they write.
+
+What `kb.yaml` is decides, at the moment of the read, in every process:
+
+- **A running server.** A process that loaded its config while `kb.yaml` was
+  good answers `KB_CONFIG_INVALID` as soon as the file breaks, and answers
+  normally as soon as it is repaired: the schema is cached only while
+  `kb.yaml` is the file it was read from (its inode, size and times). Index
+  health, `unreadable`, sync and every operation on the KB read the file as
+  it is then. An atomic replace (a new inode) is always seen. Two in-place
+  writes of the same size within one step of the filesystem's timestamp
+  clock (on Linux that step can be a few milliseconds) leave the same
+  identity, so the second is not seen until the next change.
+- **Kinds of path.** A directory, a FIFO, nesting deeper than the
+  interpreter's recursion limit (flow or block style), or anything else the
+  parser raises on, answers `KB_CONFIG_INVALID`. A socket answers
+  `KB_UNREADABLE` (the operating system refuses to open it). A link out of
+  the KB (to another KB's `kb.yaml` or anywhere else) or a `kb.yaml` with a
+  second hard link answers `OUTSIDE_KB_ROOT`, and is handled like the other
+  two codes: index sync, build and reindex keep its rows, `kb list` marks it,
+  index health names it in `schema_errors` and is unhealthy. A dangling link
+  or a link loop is no `kb.yaml` (a KB with no schema), and so is a null
+  document. Every other KB still works in each case.
+- **Commands that span KBs.** For any of the three codes, `pyrite qa
+  duplicates` (with or without `--status`) leaves the KB out, names it in
+  `unreadable_kbs` (`{kb, error, error_code}`, present only when a KB was
+  left out) and exits 3. MCP `list_edge_types` without `kb_name` names it the
+  same way; with `kb_name` naming it, it answers that KB's refusal. Index
+  sync and build, index health, `kb list`, `qa validate` and MCP
+  `kb_qa_validate` name it and go on; MCP `kb_qa_status` counts it under
+  `kb_unreadable`.
+- **One message.** `KB_CONFIG_INVALID`'s message is fixed wherever it is
+  printed, `pyrite-read` and `pyrite-admin` included. The parser's words are
+  in that process's own log. For a KB registered in `config.yaml`, `pyrite`,
+  `pyrite-read`, `pyrite-admin` and `pyrite-server` each write one record at
+  config load, at their default log level, holding the fixed text and the
+  parser's words (one record; the parser's message runs over several
+  lines). A KB added with `pyrite kb add` is not logged at config load: the
+  record is written when a command reads that KB's schema, so a command that
+  does not read it logs nothing about it, and `pyrite kb list` logs the fixed
+  text alone. A process whose
+  `kb.yaml` breaks after it loaded logs the same record once, at the first
+  read that finds it broken. On the local CLI the parser's words are also in
+  `pyrite kb list`'s `error_detail` and in `pyrite index health`. No REST or
+  MCP response carries them.
+- **Limit: a `kb.yaml` that loads but is not a schema** (`types: 3.5`,
+  `types: [memo, 2]`): its own KB answers an untyped error, and `qa
+  duplicates` and MCP `list_edge_types` stop for every KB. Since #1547 that
+  includes `qa duplicates --status`, which did not read schemas before and so
+  still answered beside such a file. Filed as #1591.
+- **Limit: a very large `kb.yaml`.** There is no size bound: every command
+  loads every `kb.yaml`, so a file of tens of megabytes slows every command
+  (measured: 64 MB of one scalar takes about 24 seconds to load; two million
+  short keys, more than a minute).
 
 ## Operational contracts
 

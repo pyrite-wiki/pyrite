@@ -619,14 +619,21 @@ def test_create_allows_undeclared_with_override(cli_env):
 
 
 @pytest.mark.cli
-def test_create_allows_core_types_even_without_declaration(cli_env):
-    """Core types (note, event, person, ...) stay accepted regardless of the
-    KB's declared schema — they're the universal fallback. This pins the
-    contract that the refusal only fires for genuinely-unknown types."""
-    (cli_env["tmpdir"] / "events" / "kb.yaml").write_text(
+def test_create_refuses_a_core_type_a_kb_yaml_with_other_types_does_not_declare(cli_env):
+    """A core type (``note``) is refused in a KB whose kb.yaml declares other
+    types: UNDECLARED_TYPE naming the declared types, nothing written (#197:
+    core types are not exempt).
+
+    Before #1547's round 1 this test asserted the opposite and passed only
+    through a schema cached before kb.yaml existed (the fixture's index_all
+    read the KB with no kb.yaml; ``create`` then used that empty schema).
+    """
+    events = cli_env["tmpdir"] / "events"
+    (events / "kb.yaml").write_text(
         "name: test-events\nkb_type: events\ntypes:\n  backlog_item:\n"
         "    description: A backlog work item\n"
     )
+    before = sorted(p.relative_to(events) for p in events.rglob("*.md"))
 
     with _patch_config("pyrite.cli.entry_commands.load_config", cli_env):
         result = runner.invoke(
@@ -636,7 +643,38 @@ def test_create_allows_core_types_even_without_declaration(cli_env):
                 "-k",
                 "test-events",
                 "-t",
-                "note",  # core type, not in this KB's kb.yaml — must succeed
+                "note",
+                "--title",
+                "Core type is refused",
+                "--body",
+                "Notes are not exempt",
+                "--format",
+                "json",
+            ],
+        )
+
+    assert result.exit_code == 1, result.output
+    body = json.loads(result.output.strip().splitlines()[-1])
+    assert body["error_code"] == "UNDECLARED_TYPE", body
+    assert "Declared types: backlog_item" in body["error"], body
+    assert sorted(p.relative_to(events) for p in events.rglob("*.md")) == before
+
+
+@pytest.mark.control(reason="the old intent, kept: a KB that declares no types accepts a core type")
+def test_create_accepts_a_core_type_in_a_kb_whose_kb_yaml_declares_no_types(cli_env):
+    """A kb.yaml that declares no types restricts nothing: ``-t note`` is
+    created (the intent the test above used to carry, #197)."""
+    (cli_env["tmpdir"] / "events" / "kb.yaml").write_text("name: test-events\nkb_type: events\n")
+
+    with _patch_config("pyrite.cli.entry_commands.load_config", cli_env):
+        result = runner.invoke(
+            app,
+            [
+                "create",
+                "-k",
+                "test-events",
+                "-t",
+                "note",
                 "--title",
                 "Core type is fine",
                 "--body",
@@ -644,10 +682,7 @@ def test_create_allows_core_types_even_without_declaration(cli_env):
             ],
         )
 
-    assert result.exit_code == 0, (
-        f"core type 'note' must succeed even when not in kb.yaml; got exit "
-        f"{result.exit_code} with output:\n{result.output}"
-    )
+    assert result.exit_code == 0, result.output
 
 
 @pytest.mark.cli

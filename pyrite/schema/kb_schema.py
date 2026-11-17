@@ -8,8 +8,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from pyrite.utils.yaml import load_yaml_file
-
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
 from .enum_check import enum_findings, is_empty
 from .field_schema import EndpointSpec, FieldSchema, TypeSchema, _validate_field_value
@@ -54,17 +52,15 @@ class KBSchema:
     def from_yaml(cls, path: Path) -> "KBSchema":
         """Load schema from kb.yaml file, read only inside the KB's folder (the
         file's own): a link out of it, or a file with more than one hard
-        link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``)."""
-        from ..utils.kb_files import KBFiles
+        link, raises ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``).
+        Through the one kb.yaml loader, ``read_kb_yaml``: a file that cannot
+        be loaded as a mapping raises ``KBConfigInvalidError`` (#1547), and no
+        kb.yaml is an empty schema."""
+        from ..utils.yaml import read_kb_yaml
 
-        # The KB's own probe: a link out is there, and refused by the read,
-        # whatever it points at.
-        if not KBFiles(path.parent).present(path):
-            return cls()
-
-        data = load_yaml_file(path, kb_root=path.parent)
-
-        return cls.from_dict(data)
+        if path.name != "kb.yaml":
+            raise ValueError(f"KBSchema.from_yaml reads a KB's kb.yaml, not {path.name}")
+        return cls.from_dict(read_kb_yaml(path.parent))
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "KBSchema":
@@ -201,7 +197,7 @@ class KBSchema:
         Read by the write path's refusals (`KBService._refuse_undeclared_type`
         and `_refuse_undeclared_mapping_target`), by the type-mapping resolver
         (`schema.type_mapping.resolve_type_mappings`, which offers a pair only
-        when both its types are declared here), by `to_agent_schema` -- whose
+        when its target is declared here, #1526), by `to_agent_schema` -- whose
         output is MCP `kb_schema` and `kb_orient`, REST `GET /kbs/{kb}/schema`
         and `GET /kbs/{kb}/orient`, CLI `pyrite orient --format json`, and
         `pyrite-admin schema` -- and by the web type picker's route. They used
