@@ -405,7 +405,17 @@ def _run(world, bad, root, path, args):
 #: The kinds whose ``read_kb_yaml`` answer is a typed refusal: the walks run
 #: over each. (A kb.yaml that loads as a mapping but is not a schema, such as
 #: ``types: 3.5``, raises an untyped error and is not here: #1591.)
-REFUSED_KINDS = [kind for kind, answer in KINDS.items() if answer not in ("empty", "mapping")]
+#: ``deep-flow`` is left out of the walks only: each read of it costs about
+#: 1.7 s (the parser recurses to the limit) and a failed load is not cached,
+#: so a walk of over a hundred commands passed CI's per-test timeout.
+#: ``deep-block`` takes the same path (RecursionError -> KB_CONFIG_INVALID)
+#: in a tenth of a second, and ``deep-flow`` keeps its own row in the kinds
+#: test.
+REFUSED_KINDS = [
+    kind
+    for kind, answer in KINDS.items()
+    if answer not in ("empty", "mapping") and kind != "deep-flow"
+]
 
 
 def _outcome_cli(result) -> tuple[str | None, bool]:
