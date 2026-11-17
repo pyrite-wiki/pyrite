@@ -59,10 +59,11 @@ def _record_asked(monkeypatch) -> list[tuple[Path, bool]]:
     """The predicate asks a writer's GATE makes, with whether anything was at
     that path at the moment of asking (round 1, F4; round 2, E1).
 
-    A gate is a call to ``entry_paths.require_listed`` or
-    ``entry_paths.kept_in_place``: the two functions every placing writer
-    calls before it writes (``KBRepository._require_listed`` ends in the
-    first). Only a ``unlisted_reason`` call made while a gate is running is
+    A gate is a call to ``entry_paths.require_listed``,
+    ``entry_paths.kept_in_place`` or ``KBRepository._require_listed`` (which
+    asks the predicate itself and returns early for a listed path, so it
+    reaches ``require_listed`` only to refuse): the functions every placing
+    writer calls before it writes. Only a ``unlisted_reason`` call made while a gate is running is
     recorded, so a look at the same path from elsewhere (the ``-N`` rule's
     ``is_listed`` in ``_free_default_path``, the walk) does not satisfy the
     test. A gate made a no-op, by replacing it or by removing the writer's
@@ -89,9 +90,12 @@ def _record_asked(monkeypatch) -> list[tuple[Path, bool]]:
 
         return inside
 
+    from pyrite.storage.repository import KBRepository
+
     monkeypatch.setattr(entry_paths, "unlisted_reason", recording)
     for name in ("require_listed", "kept_in_place"):
         monkeypatch.setattr(entry_paths, name, gate(getattr(entry_paths, name)))
+    monkeypatch.setattr(KBRepository, "_require_listed", gate(KBRepository._require_listed))
     return asked
 
 
