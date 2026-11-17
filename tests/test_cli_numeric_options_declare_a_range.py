@@ -280,8 +280,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite serve", "port"),
     # pyrite/cli/kb_commands.py
     ("pyrite kb create", "ttl"),
-    # pyrite/cli/collection_commands.py
-    ("pyrite collections query", "limit"),
     # pyrite/cli/qa_commands.py
     ("pyrite qa assess", "tier"),
     ("pyrite qa assess", "max_age"),
@@ -316,7 +314,7 @@ NOT_YET: set[tuple[str, str]] = {
 
 #: May shrink, never grow (#1541). Lower it in the same commit that deletes rows
 #: from NOT_YET; raising it is the thing this test exists to refuse.
-NOT_YET_PINNED_SIZE = 32
+NOT_YET_PINNED_SIZE = 31
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"
 
