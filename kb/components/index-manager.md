@@ -32,11 +32,14 @@ files git changed and adds history through its `enrich` hook.
   A path the plan could not reach keeps its row (#1546): the row of every
   known path under a folder the walk could not list (`unreadable_folders`),
   of a file it could not stat, read or hash (an `OSError`, listed in
-  `unreadable_files` and `malformed`), and of a path the walk did not meet
-  whose presence `KBFiles.present` cannot tell, becomes a claim built from
-  the row (`plan.kept`, `_Claim.unreached`). It wins its id only when no file
-  read now holds it; otherwise both paths are a duplicate. A file that reads
-  and does not parse holds no id and its row is retired.
+  `unreadable_files` and `malformed`), unless `KBFiles.present` answers
+  absent (a loop, a file removed meanwhile: retired, as before), becomes a
+  claim built from the row (`plan.kept`, `_Claim.unreached`), so every kept
+  row is named in the result. It stands only for an id no file read now
+  holds; otherwise the file read now takes the row and the kept path is no
+  duplicate. A known path the walk did not meet under a folder whose listing
+  worked is gone: its row is retired. A file that reads and does not parse
+  holds no id and its row is retired.
 - **Apply**: write a winner whose row is missing, moved or has another content
   hash (`added`/`updated`); rewrite silently when only the stat moved (a touch);
   retire every row no parseable file claims (`removed`); a kept claim is

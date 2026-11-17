@@ -2020,10 +2020,21 @@ not parse still loses its row, as before.
   `index build --with-attribution`, `kb reindex`, `pyrite init`, the
   background jobs, REST and MCP sync and reindex) keeps the row of every
   path under such a folder and of every such file, neither rewritten nor
-  removed. A row kept this way never wins its id over a file read now: the
-  file read now is indexed, and both paths are reported under `duplicates`.
-  When the folder or file can be read again, the next sync reports
+  removed. Every row kept this way is named in that reconcile's own
+  result (its folder under `unreadable_folders`, or the file under
+  `unreadable_files`) and counts for its exit code. A row kept this way
+  never wins its id over a file read now: the file read now takes the id's
+  row, and the kept path is not a duplicate (its folder or file is still
+  named). When the folder or file can be read again, the next sync reports
   `added`, `updated` and `removed` as `0` for them.
+- **The rows are retired exactly when the files say so.** A file missing
+  from a folder whose listing worked (a mode-`600` folder can be listed) is
+  gone, and its row is retired, as before. So is a path that
+  `KBFiles.present` answers absent: a link loop, or a file removed while the
+  walk ran; a loop stays reported under `malformed` and in health's
+  `unreadable_files`, as before, and does not count for the exit code. A
+  name in a folder whose type the operating system will not give is treated
+  as a folder it could not list.
 - **What a reconcile reports.** Its result carries `unreadable_folders`,
   `{kb, path, error}` (`path` KB-relative, `error` the fixed `KB_UNREADABLE`
   message), and `unreadable_files`, `{kb, path, error}` (the absolute path
