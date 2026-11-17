@@ -911,6 +911,39 @@ def test_taken_names_comparison_folds_case_and_normalises(tmp_path):
     p3 = repo._free_default_path("ABC", None, taken={root / "abc.md", root / "abc-2.md"})
     assert p3 == root / "ABC-3.md"
 
+    # Unicode normalisation: NFD café in taken causes NFC café to step to -2
+    import unicodedata
+
+    cafe_nfc = unicodedata.normalize("NFC", "café")
+    cafe_nfd = unicodedata.normalize("NFD", "café")
+    p_norm = repo._free_default_path(cafe_nfc, None, taken={root / f"{cafe_nfd}.md"})
+    assert p_norm == root / f"{cafe_nfc}-2.md"
+
+
+def test_batch_refuses_colliding_file_pattern_under_case_difference(tmp_path):
+    """#1623: a batch with a file_pattern type refuses a second item whose
+    resolved path differs only in case from an earlier item in the same batch,
+    in both dry-run and real writes."""
+    env = Env(tmp_path / "env")
+    try:
+        batch = [
+            {"entry_type": "pat_title", "id": "p1", "title": "Abc"},
+            {"entry_type": "pat_title", "id": "p2", "title": "abc"},
+        ]
+        # Dry run
+        dry = env.svc.bulk_create_entries(KB, batch, validate_only=True)
+        assert dry[0]["valid"] is True
+        assert dry[1]["valid"] is False
+        assert dry[1]["error_code"] == "ENTRY_EXISTS"
+
+        # Real write
+        real = env.svc.bulk_create_entries(KB, batch)
+        assert real[0]["created"] is True
+        assert real[1]["created"] is False
+        assert real[1]["error_code"] == "ENTRY_EXISTS"
+    finally:
+        env.close()
+
 
 @pytest.mark.control(
     reason="under maintainer decision (a) on #1623, a case-sensitive disk steps "

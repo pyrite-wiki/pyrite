@@ -8,6 +8,7 @@ into a single class, completing the ODM abstraction layer.
 from __future__ import annotations
 
 import logging
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 from ..config import KBConfig
@@ -39,7 +40,8 @@ class DocumentManager:
         kb_config: KBConfig,
         *,
         is_create: bool = False,
-        taken: set[Path] = frozenset(),
+        taken: AbstractSet[Path] = frozenset(),
+        taken_keys: AbstractSet[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """Save an entry to disk, register the KB, and index it.
 
@@ -105,6 +107,7 @@ class DocumentManager:
             keep_filename=not is_create,
             exclusive=is_create,
             taken=taken,
+            taken_keys=taken_keys,
         )
 
         # Clean up old file if path changed (template-driven move)

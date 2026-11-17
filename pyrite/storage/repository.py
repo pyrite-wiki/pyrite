@@ -654,7 +654,12 @@ class KBRepository:
         return self._contained(self.path / f"{entry_id}.md")
 
     def _resolve_file_path(
-        self, entry: Entry, subdir: str | None, *, taken: Set[Path] = frozenset()
+        self,
+        entry: Entry,
+        subdir: str | None,
+        *,
+        taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """Resolve the file path for an entry, respecting file_pattern if set.
 
@@ -680,7 +685,7 @@ class KBRepository:
                     path = self._contained(self.path / custom_name)
                 self._require_listed(path, entry, subdir, from_pattern=True)
                 return path
-        path = self._free_default_path(entry.id, subdir, taken=taken)
+        path = self._free_default_path(entry.id, subdir, taken=taken, taken_keys=taken_keys)
         self._require_listed(path, entry, subdir, from_pattern=False)
         return path
 
@@ -748,7 +753,12 @@ class KBRepository:
         entry_paths.require_listed(self.path, path, source=source, remedy=remedy, errors=rows)
 
     def _free_default_path(
-        self, entry_id: str, subdir: str | None, *, taken: Set[Path] = frozenset()
+        self,
+        entry_id: str,
+        subdir: str | None,
+        *,
+        taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """``<id>.md`` for a new entry, or the first ``<id>-N.md`` when that
         path is held by a *different* id.
@@ -769,7 +779,8 @@ class KBRepository:
         # A path in ``taken`` is held by an earlier item of the same
         # batch, never by this id (the batch refuses a repeated id first).
         # Compared by ``entry_paths.fold`` on every disk (#1623).
-        taken_keys = {entry_paths.folded_path_key(self.path, p) for p in taken}
+        if not taken_keys and taken:
+            taken_keys = {entry_paths.folded_path_key(self.path, p) for p in taken}
         if (
             entry_paths.is_listed(self.path, path)
             and entry_paths.folded_path_key(self.path, path) not in taken_keys
@@ -1228,6 +1239,7 @@ class KBRepository:
         keep_filename: bool = False,
         exclusive: bool = False,
         taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """
         Save an entry to file.
@@ -1263,7 +1275,9 @@ class KBRepository:
         # No mkdir here: the create below makes the file's folders beneath
         # the root (KBFiles), so a folder that is a link out is the write's
         # refusal, never an OSError that depends on what lies outside.
-        file_path = self._target_path(entry, subdir, keep_filename, taken=taken)
+        file_path = self._target_path(
+            entry, subdir, keep_filename, taken=taken, taken_keys=taken_keys
+        )
 
         # Stamp current schema version on save
         if getattr(self.config, "kb_yaml_present", False):
@@ -1301,6 +1315,7 @@ class KBRepository:
         keep_filename: bool,
         *,
         taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """Where ``entry`` lives: ``subdir`` (inferred from the type when
         None) and either its existing filename (``keep_filename``, an update
@@ -1317,7 +1332,7 @@ class KBRepository:
             self._require_listed(path, entry, subdir, from_pattern=False)
             return path
         # Check for custom file_pattern in the type schema
-        return self._resolve_file_path(entry, subdir, taken=taken)
+        return self._resolve_file_path(entry, subdir, taken=taken, taken_keys=taken_keys)
 
     def delete(
         self,

@@ -13,6 +13,7 @@ import re
 import shlex
 from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -1525,7 +1526,8 @@ class KBService:
         allow_undeclared: bool,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         pending_ids: set[str] | None = None,
-        pending_paths: set[Path] | None = None,
+        pending_paths: AbstractSet[Path] | None = None,
+        pending_keys: AbstractSet[tuple[str, ...]] | None = None,
         owns: frozenset[str] = frozenset(),
     ) -> tuple[Entry, list[dict[str, Any]]]:
         """Decide whether ``spec`` is a valid new entry; build it if so.
@@ -1549,10 +1551,11 @@ class KBService:
         -- the same on
         every surface, a file given to ``add`` included. ``pending_ids``
         are ids an earlier item of the same dry run would have created;
-        ``pending_paths`` are resolved file paths an earlier item of the same
-        dry run would have created -- needed because a `file_pattern` type's
+        ``pending_paths`` / ``pending_keys`` are resolved file paths (or
+        folded keys) an earlier item of the same batch has created (or would
+        create in a dry run) -- needed because a `file_pattern` type's
         filename comes from FIELDS, not the id, so two different ids can
-        collide on the same path (#391 cold read).
+        collide on the same path (#391 cold read; #1623).
 
         A caller's spec never sets a field Pyrite or the type manages, at any
         spelling (#1010). ``owns`` names the managed fields an in-process
@@ -1662,11 +1665,17 @@ class KBService:
         # ``repo.present``, not ``Path.exists``: never "absent" because a
         # file outside is missing.
         taken = repo.present(resolved_path)
-        pending_keys = {
-            entry_paths.folded_path_key(kb_config.path, p) for p in (pending_paths or ())
-        }
         resolved_key = entry_paths.folded_path_key(kb_config.path, resolved_path)
-        if taken or resolved_key in pending_keys:
+        if pending_keys is not None:
+            is_pending = resolved_key in pending_keys
+        elif pending_paths:
+            is_pending = any(
+                entry_paths.folded_path_key(kb_config.path, p) == resolved_key
+                for p in pending_paths
+            )
+        else:
+            is_pending = False
+        if taken or is_pending:
             holder = repo.holder_of_path(resolved_path) if taken else None
             held = f", which holds '{holder}'" if holder and holder != entry.id else ""
             raise EntryExistsError(
@@ -1747,8 +1756,10 @@ class KBService:
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         owns: frozenset[str] = frozenset(),
-        pending_paths: set[Path] | None = None,
-        taken: set[Path] = frozenset(),
+        pending_paths: AbstractSet[Path] | None = None,
+        pending_keys: AbstractSet[tuple[str, ...]] | None = None,
+        taken: AbstractSet[Path] = frozenset(),
+        taken_keys: AbstractSet[tuple[str, ...]] = frozenset(),
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1759,6 +1770,7 @@ class KBService:
             builder=builder,
             owns=owns,
             pending_paths=pending_paths,
+            pending_keys=pending_keys,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         prepared_id = entry.id
@@ -1776,7 +1788,14 @@ class KBService:
         # changes before the file is written.
         warnings = self._validate_write(entry, kb_name, kb_config)
         try:
-            self._doc_mgr.save_entry(entry, kb_name, kb_config, is_create=True, taken=taken)
+            self._doc_mgr.save_entry(
+                entry,
+                kb_name,
+                kb_config,
+                is_create=True,
+                taken=taken or (pending_paths or frozenset()),
+                taken_keys=taken_keys or (pending_keys or frozenset()),
+            )
         except FileExistsError as e:
             # #391 cold read round 2: the exists() check in _prepare and this
             # write are two different moments -- two truly concurrent creates
@@ -1906,6 +1925,7 @@ class KBService:
         # of the same batch would have created.
         would_create: set[str] = set()
         would_create_paths: set[Path] = set()
+        would_create_keys: set[tuple[str, ...]] = set()
 
         for spec in entries:
             ignored: list[str] = []
@@ -1920,14 +1940,18 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         pending_ids=would_create,
                         pending_paths=would_create_paths,
+                        pending_keys=would_create_keys,
                     )
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
-                    would_create_paths.add(
-                        repo._resolve_file_path(
-                            entry, repo._infer_subdir(entry), taken=frozenset(would_create_paths)
-                        )
+                    resolved = repo._resolve_file_path(
+                        entry,
+                        repo._infer_subdir(entry),
+                        taken=frozenset(would_create_paths),
+                        taken_keys=frozenset(would_create_keys),
                     )
+                    would_create_paths.add(resolved)
+                    would_create_keys.add(entry_paths.folded_path_key(kb_config.path, resolved))
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
                     written = self._prepare_and_save(
@@ -1938,11 +1962,14 @@ class KBService:
                         hook_ctx=hook_ctx,
                         embed=False,
                         pending_paths=would_create_paths,
-                        taken=frozenset(would_create_paths),
+                        pending_keys=would_create_keys,
                     )
                     entry, warnings = written.entry, written.warnings
                     if entry.file_path is not None:
                         would_create_paths.add(entry.file_path)
+                        would_create_keys.add(
+                            entry_paths.folded_path_key(kb_config.path, entry.file_path)
+                        )
                     created_ids.append((entry.id, kb_name))
                     item = {"created": True, "entry_id": entry.id}
                 if warnings:
