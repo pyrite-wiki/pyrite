@@ -28,10 +28,6 @@ def list_collections(
     with cli_context(kbs=(kb,), output_format=output_format) as (config, db, svc):
         results = svc.list_collections(kb_name=kb)
 
-        if not results:
-            console.print("[yellow]No collections found.[/yellow]")
-            return
-
         if output_format != "rich":
             from ..formats import format_response
 
@@ -39,6 +35,10 @@ def list_collections(
                 {"collections": results, "total": len(results)}, output_format
             )
             typer.echo(content)
+            return
+
+        if not results:
+            console.print("[yellow]No collections found.[/yellow]")
             return
 
         table = Table(title="Collections")
