@@ -193,3 +193,79 @@ class TestCLIQACommand:
         result = runner.invoke(investigation_app, ["qa", "-k", "test"])
         assert result.exit_code == 0
         assert "Quality Score" in result.output
+
+
+class TestStaleUnverifiedClaims:
+    """--stale-days / stale_days count unverified claims by updated_at (#1566)."""
+
+    def test_two_values_give_different_counts(self, setup):
+        svc = setup["svc"]
+        svc.create_entry("test", "c-1", "C1", "claim", assertion="X")
+        svc.create_entry("test", "c-2", "C2", "claim", assertion="Y", claim_status="corroborated")
+
+        fresh = compute_qa_metrics(setup["db"], "test", stale_days=30)
+        now = compute_qa_metrics(setup["db"], "test", stale_days=0)
+
+        assert fresh["claims"]["stale_unverified"] == 0
+        assert not any("Stale" in w for w in fresh["warnings"])
+        # Only the unverified claim counts; the corroborated one never does.
+        assert now["claims"]["stale_unverified"] == 1
+        assert "Stale unverified claims: 1 not updated in 0 days" in now["warnings"]
+
+    def test_no_claims(self, setup):
+        assert (
+            compute_qa_metrics(setup["db"], "test", stale_days=0)["claims"]["stale_unverified"] == 0
+        )
+
+    @pytest.mark.parametrize(
+        ("updated_at", "stale"),
+        [
+            ("2020-01-01T00:00:00+00:00", 1),
+            ("2020-01-01T00:00:00", 1),  # naive: read as UTC
+            (None, 1),  # missing: stale, as in `pyrite qa stale`
+            ("not a date", 1),  # unparseable: stale, as in `pyrite qa stale`
+            ("2999-01-01T00:00:00+00:00", 0),
+        ],
+    )
+    def test_updated_at_shapes(self, updated_at, stale):
+        class StubDB:
+            def list_entries(self, kb_name, entry_type, limit):
+                if entry_type != "claim":
+                    return []
+                return [{"metadata": {"assertion": "X"}, "updated_at": updated_at}]
+
+        metrics = compute_qa_metrics(StubDB(), "test", stale_days=30)
+        assert metrics["claims"]["stale_unverified"] == stale
+
+    def test_mcp_argument_changes_the_answer(self, setup):
+        setup["svc"].create_entry("test", "c-1", "C1", "claim", assertion="X")
+
+        @dataclass
+        class Ctx:
+            db: PyriteDB
+            config: object = None
+
+        plugin = JournalismInvestigationPlugin()
+        plugin.set_context(Ctx(db=setup["db"]))
+        handler = plugin.get_mcp_tools("read")["investigation_qa_report"]["handler"]
+
+        assert handler({"kb_name": "test"})["claims"]["stale_unverified"] == 0
+        assert handler({"kb_name": "test", "stale_days": 0})["claims"]["stale_unverified"] == 1
+
+    def test_cli_option_changes_the_answer(self, setup, monkeypatch):
+        setup["svc"].create_entry("test", "c-1", "C1", "claim", assertion="X")
+        monkeypatch.setattr(
+            "pyrite_journalism_investigation.cli.load_config", lambda: setup["svc"].config
+        )
+
+        def stale(*extra):
+            result = runner.invoke(investigation_app, ["qa", "-k", "test", "--json", *extra])
+            assert result.exit_code == 0, result.output
+            return json.loads(result.output)["claims"]["stale_unverified"]
+
+        assert stale() == 0
+        assert stale("--stale-days", "0") == 1
+
+        table = runner.invoke(investigation_app, ["qa", "-k", "test", "--stale-days", "0"])
+        assert table.exit_code == 0
+        assert "Unverified, not updated in 0 days: 1" in table.output
