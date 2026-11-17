@@ -10,6 +10,7 @@ from rich.table import Table
 
 from ..exceptions import ValidationError
 from ..services.access_policy import UNSCOPED, named_kb
+from ..services.qa_service import QA_TIERS
 from .context import cli_context, require_entry_kb
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT, cli_console, output_format_choice, validate_output_format
@@ -228,11 +229,16 @@ def qa_assess(
         1,
         "--tier",
         "-t",
+        min=min(QA_TIERS),
+        max=max(QA_TIERS),
         help="Assessment tier: 1=structural; 2=structural plus the model-judged rubric "
         "(needs a configured model, else refused with AI_NOT_CONFIGURED)",
     ),
     max_age: int = typer.Option(
-        24, "--max-age", help="Skip entries assessed within N hours (0 = reassess all)"
+        24,
+        "--max-age",
+        min=0,
+        help="Skip entries assessed within N hours (0 = reassess all)",
     ),
     create_tasks: bool = typer.Option(
         False, "--create-tasks", help="Create tasks for failed assessments"

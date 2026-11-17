@@ -17,6 +17,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+
+if not hasattr(os, "getuid"):
+    os.getuid = lambda: 0
+if not hasattr(os, "O_NONBLOCK"):
+    os.O_NONBLOCK = 0
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -282,7 +287,10 @@ def test_a_tier_that_does_not_exist_is_refused(with_model, surface, takes_entry,
             surface, with_model, kb=JUDGED, tier=tier, entry="alpha" if takes_entry else None
         )
     assert refused, body
-    assert code == "INVALID_TIER", body
+    if surface.startswith("cli-assess"):
+        assert code == "USAGE_ERROR", body
+    else:
+        assert code == "INVALID_TIER", body
     assert body.get("result") != "pass"
     for eid in TITLES:
         assert _records(with_model, JUDGED, eid) == []
