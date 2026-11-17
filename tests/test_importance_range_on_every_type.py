@@ -1053,3 +1053,91 @@ def test_a_caller_cannot_name_the_rules_input_itself(world):
          "_importance_given": 7},
     )  # fmt: skip
     _assert_refused(1 if not res.get("created") else 0, res)
+
+
+# -- an update is "kept" only when it sends the value the file holds --------------------------
+#
+# Fix round 1 of #1588: the update gate paired the new entry's model rows with the loaded
+# entry's by their message, and the message prints 5.5 and "5.5" alike, so a different value
+# (another type) passed as "violation already on disk; kept" and was written. An echo's
+# "unchanged" compared with `==`, so `true` over a reading of 1 passed unjudged. A value is the
+# file's only when it is the same YAML value, type included; any other value is judged by the
+# one rule. Every update surface goes through the same gate: the list below is that set.
+UPDATE_SURFACES = ["mcp", "rest-put", "rest-patch", "cli", "python-update", "python-update_entry"]
+
+# (file's yaml, value sent): the file's value spelled in another type -- refused, file unchanged
+OTHER_TYPE = [
+    ("5.5", "5.5"),
+    ("10.7", "10.7"),
+    ("true", "True"),
+    ("99", "99"),
+    ("1", True),
+    ("high", ["high"]),
+]
+# the same value, same type -- the file's own violation: kept, file unchanged
+SAME_VALUE = [("5.5", 5.5), ("10.7", 10.7), ("99", 99), ("high", "high"), ("true", True)]
+
+
+def _update_on(w, surf: str, value) -> tuple[bool, list[dict]]:
+    """(accepted, importance rows of the refusal) of one update of `seed` on one surface."""
+    from pyrite.exceptions import ValidationError
+    from pyrite.services.kb_service import KBService
+
+    if surf == "mcp":
+        res = w.mcp()._dispatch_tool(
+            "kb_update", {"kb_name": KB, "entry_id": "seed", "importance": value}
+        )
+        return bool(res.get("updated")), _importance_rows(res)
+    if surf.startswith("rest-"):
+        body = (
+            {"kb": KB, "importance": value}
+            if surf == "rest-put"
+            else {"kb": KB, "field": "importance", "value": value}
+        )
+        response = w.client.request(surf[5:].upper(), "/api/entries/seed", json=body)
+        if response.status_code == 200:
+            return True, []
+        detail = response.json()["detail"]
+        assert detail["code"] == "VALIDATION_FAILED", response.text
+        return False, [r for r in detail.get("errors") or [] if r.get("field") == "importance"]
+    if surf == "cli":
+        res = w.cli("update", "seed", "-k", KB, "-f", f"importance={json.dumps(value)}",
+                    "--format", "json")  # fmt: skip
+        return res.exit_code == 0, _importance_rows(_json(res.output))
+    svc = KBService(w.config, w.db)
+    try:
+        if surf == "python-update":
+            svc.update("seed", KB, {"importance": value})
+        else:
+            svc.update_entry("seed", KB, importance=value)
+    except ValidationError as e:
+        return False, [r for r in e.errors or [] if r.get("field") == "importance"]
+    return True, []
+
+
+@pytest.mark.parametrize("surf", UPDATE_SURFACES)
+@spellings
+@pytest.mark.parametrize(("on_disk", "sent"), OTHER_TYPE, ids=repr)
+def test_an_update_sending_the_files_value_in_another_type_is_judged_not_kept(
+    rest, surf, spelling, on_disk, sent
+):
+    path = rest.add_entry(KB, _raw_file("note", "seed", on_disk, spelling))
+    before = path.read_bytes()
+    with rest.pointed():
+        accepted, rows = _update_on(rest, surf, sent)
+    assert not accepted, f"{sent!r} over {on_disk} was let through"
+    assert [r["rule"] for r in rows] == ["range"], rows
+    assert path.read_bytes() == before
+
+
+@pytest.mark.control(reason="over-refusal guard: the file's own value, sent back, stays kept")
+@pytest.mark.parametrize("surf", UPDATE_SURFACES)
+@spellings
+@pytest.mark.parametrize(("on_disk", "sent"), SAME_VALUE, ids=repr)
+def test_an_update_sending_the_files_own_value_is_kept(rest, surf, spelling, on_disk, sent):
+    path = rest.add_entry(KB, _raw_file("note", "seed", on_disk, spelling))
+    before = path.read_bytes()
+    with rest.pointed():
+        accepted, rows = _update_on(rest, surf, sent)
+    assert accepted, rows
+    assert path.read_bytes() == before

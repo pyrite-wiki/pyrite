@@ -783,9 +783,7 @@ class Entry(ABC):
         # spelling in a file get one answer. A blank or null `importance:` is
         # absent, not a violation: the file is a person's, and a blank key is
         # common in a hand-made template.
-        importance = self._importance_given
-        if importance is _ABSENT:
-            importance = self.importance
+        importance = self.rule_input("importance")
         if importance is not None and not validate_importance(importance):
             errors.append(
                 {
@@ -796,6 +794,20 @@ class Entry(ABC):
                 }
             )
         return errors
+
+    def rule_input(self, field_name: str) -> Any:
+        """The value :meth:`validation_errors` judges for ``field_name``.
+
+        For ``importance`` that is the value as given (``_importance_given``),
+        not the model's int of it (#1588); for every other field, the
+        attribute. The write gate (``KBService._validate_write``) asks this
+        too, to tell a violation the file already had ("kept") from a write
+        that sends a different value whose row reads the same: ``5.5`` and
+        ``"5.5"`` print alike in a message but are not the same value.
+        """
+        if field_name == "importance" and self._importance_given is not _ABSENT:
+            return self._importance_given
+        return getattr(self, field_name, None)
 
     def validate(self) -> list[str]:
         """Validate entry. Returns list of error messages."""
