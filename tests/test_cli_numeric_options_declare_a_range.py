@@ -297,9 +297,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite ci", "tier"),
     ("pyrite serve", "port"),
     #
-    # pyrite/cli/kb_commands.py
-    ("pyrite kb create", "ttl"),
-    #
     # pyrite/cli/collection_commands.py
     ("pyrite collections query", "limit"),
     #
