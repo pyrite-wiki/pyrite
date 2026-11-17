@@ -992,6 +992,29 @@ WRITE_TOOLS = {
                     "items": {"type": "string"},
                     "description": "Tags for the new task",
                 },
+                "due_date": {
+                    "type": "string",
+                    "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "description": "Target entry ID",
+                            },
+                            "relation": {
+                                "type": "string",
+                                "description": "Relationship type (default: related_to)",
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                    "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+                },
             },
             "required": ["kb_name", "title"],
         },
