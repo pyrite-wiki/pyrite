@@ -70,6 +70,10 @@ class KBHealthResponse(BaseModel):
     type_name_drift_total: int = 0
     type_name_drift_has_more: bool = False
     schema_errors: list[dict[str, Any]] = Field(default_factory=list)
+    # How many entry files an earlier version wrote where the index walk does
+    # not list them (#1552): a count, never the paths, over the network; a
+    # warning, `healthy` unchanged. `pyrite index health` names them locally.
+    unlisted_entry_files: int = 0
 
 
 class KBReindexResponse(BaseModel):
