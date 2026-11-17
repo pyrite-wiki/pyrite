@@ -75,8 +75,10 @@ def _fold(value: str) -> str:
     of letters (Latin, Cyrillic, Greek, CJK ideographs, Hangul). Not supported:
     scripts that write vowels or voicing as combining marks (Devanagari, Thai,
     the kana voicing marks). Removed: marks with a non-zero combining class
-    (accents, kana voicing: ``が`` folds to ``か``). Kept: marks of class 0
-    (Devanagari and Thai vowel signs), which then split the word at the tokeniser.
+    (accents, kana voicing: ``が`` folds to ``か``). Kept: marks of class 0, which then
+    split the word at the tokeniser. Some Devanagari and Thai marks are kept
+    (DEVANAGARI VOWEL SIGN AA, THAI SARA I) and some are removed (DEVANAGARI
+    VIRAMA and NUKTA, THAI SARA U, the Thai tone marks).
     Either way two different words can fold alike or break apart. A proper tokeniser for them is a follow-up.
     """
     decomposed = unicodedata.normalize("NFKD", (value or "").casefold())
