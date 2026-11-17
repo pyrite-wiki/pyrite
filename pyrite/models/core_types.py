@@ -19,7 +19,6 @@ from ..schema import (
     generate_entry_id,
     generate_event_id,
     validate_date,
-    validate_importance,
 )
 from ..utils.frontmatter import load_frontmatter, yaml_start
 from ..utils.parse import safe_int
@@ -215,18 +214,6 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
                     "rule": "format",
                     "message": f"Invalid date format: {self.date} (expected YYYY-MM-DD)",
                     "expected": "YYYY-MM-DD",
-                }
-            )
-
-        # Validate the file's value when loading fell back to a default.
-        importance = self.unrepresented_frontmatter().get("importance", self.importance)
-        if not validate_importance(importance):
-            errors.append(
-                {
-                    "field": "importance",
-                    "rule": "range",
-                    "message": f"Importance must be 1-10, got: {importance}",
-                    "expected": "1-10",
                 }
             )
 
