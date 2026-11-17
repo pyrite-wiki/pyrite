@@ -27,9 +27,15 @@ the Win32 API. The two reserved names are tested on the folded name, never on
 a probe of the disk, so a writer's spelling and the disk's spelling of the
 same folder get the same answer whatever the filesystem's rules (#1552 round
 1: ``subdirectory: memos/_TeMpLaTeS`` was written into ``memos/_templates/``
-on APFS). On a case-sensitive disk the walk therefore also skips a folder
-spelled ``_Templates``; ``index health`` names an entry file in one that
-states an ``id:``. These are the files ``docs/pinning-entry-ids.md`` promises
+on APFS). So the walk also skips, on every disk, a folder whose name folds
+to ``_templates`` but is spelled another way: another case (``_Templates``),
+a trailing dot or space (``_templates.``), or a case-fold variant
+(``_templateſ``). A disk keeps the spelling a folder was made with, so this
+is as true on APFS and NTFS as on a case-sensitive disk. At the next sync the
+rows of the entries in such a folder are retired, and ``index health`` names
+each of its files that states an ``id:`` under ``unlisted_entry_files``, with
+reason ``templates``; to keep them, rename the folder or move the entries out.
+These are the files ``docs/pinning-entry-ids.md`` promises
 Pyrite does not index; a hand-kept ``README.md``, dot-folder or
 ``_templates/`` file stays the user's.
 

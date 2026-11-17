@@ -662,7 +662,12 @@ class KBRepository:
         written (``KBService.bulk_create_entries(validate_only=True)``). The
         default name treats each as held by another id, as the real batch
         finds the file there, so a dry run picks the ``-N`` the real write
-        picks (#1552 round 1)."""
+        picks (#1552 round 1). One exception: the paths are compared as
+        spelled, so on a case-insensitive disk two items whose paths differ
+        only in case (``Abc``, ``abc``) are two names here and one on disk;
+        the real write then steps the second to ``-2`` (or refuses a
+        ``file_pattern`` name) where the dry run answered valid. It fails
+        safe (#1552, a stated limit)."""
         schema = self.config.kb_schema
         type_schema = schema.get_type_schema(entry.entry_type)
         if type_schema:
