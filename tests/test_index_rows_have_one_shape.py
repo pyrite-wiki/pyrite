@@ -358,6 +358,9 @@ def _all_tools() -> set[str]:
     return names
 
 
+@pytest.mark.control(
+    reason="a ratchet over the tool table: it holds before the fix too, and fails when a tool is added without a cell"
+)
 def test_every_mcp_tool_is_classified():
     """A new tool cannot be added without a cell: it is a row reader
     (compared with the file below), an own-dict tool (walked), a tool with no
@@ -402,6 +405,9 @@ def _task_priorities(world, tool: str) -> list[Any]:
 
 
 @pytest.mark.parametrize("tool", sorted(MCP_ROW_READERS))
+@pytest.mark.control(
+    reason="with no declared type a task's priority was text on every reader before the fix as after; pinned so the cast never reaches some readers and not others"
+)
 def test_a_task_priority_reads_as_kb_get_reads_it_on_every_mcp_row_reader(world, tool):
     """The issue's case, the part that holds today: a task's `priority` has
     one JSON type on every index reader, the single read's. With no declared
@@ -453,6 +459,9 @@ def _walk_shapes(value: Any, where: str) -> None:
 
 
 @pytest.mark.parametrize("tool", sorted(t for t, a in MCP_OWN_DICTS.items() if a is not None))
+@pytest.mark.control(
+    reason="own-dict tools build their own dicts and were never string-shaped; pinned so one that starts returning an index row must return it shaped"
+)
 def test_an_own_dict_tool_returns_no_metadata_or_aliases_as_text(world, tool):
     _walk_shapes(_mcp(world, tool, MCP_OWN_DICTS[tool]), tool)
 
@@ -595,6 +604,9 @@ def _protocol_methods() -> set[str]:
     return {n for n, v in vars(SearchBackend).items() if callable(v) and not n.startswith("_")}
 
 
+@pytest.mark.control(
+    reason="a ratchet over SearchBackend's methods: it holds before the fix too, and fails when a method is added without a cell"
+)
 def test_every_backend_method_is_classified():
     methods = _protocol_methods()
     classified = set(BACKEND_ROW_READERS) | set(BACKEND_NOT_ROWS)
@@ -758,6 +770,9 @@ def test_a_declared_number_read_and_written_back_leaves_the_file_byte_identical(
 
 
 @pytest.mark.parametrize("surface", SURFACES)
+@pytest.mark.control(
+    reason="an update of another field never touched `priority`'s bytes; pinned so the cast on read never leaks into a write"
+)
 def test_an_update_of_another_field_leaves_a_typed_values_bytes_alone(rt_world, surface):
     w, emp = rt_world
     path = emp / "chores/c-sweep.md"
@@ -801,6 +816,9 @@ def test_a_quoted_number_in_a_declared_number_field_reads_as_a_number(rt_world):
     assert path.read_text() == text
 
 
+@pytest.mark.control(
+    reason="text that is no number was text before the fix; pinned so the cast never loses a value"
+)
 def test_a_value_a_declared_number_cannot_read_stays_text(rt_world):
     """No lossy cast: text that is no number stays the file's text."""
     w, emp = rt_world
@@ -861,6 +879,9 @@ def test_every_storage_reader_of_entry_rows_returns_through_the_shaper():
     assert set(STRUCTURAL_ALLOWLIST) <= found, "stale allowlist entries"
 
 
+@pytest.mark.control(
+    reason="raw rows never had lifted keys; pinned because lifting them in the shaper broke 66 search and reader cells during this change"
+)
 def test_a_raw_readers_row_gains_no_key_its_sql_did_not_select(world):
     """The shaper reads the keys a row has and adds none (#1503): a backlog
     item's `kind` lives in the bag (it has no column), so a keyword search
