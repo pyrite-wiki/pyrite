@@ -36,7 +36,6 @@ from ..exceptions import (
     ValidationError,
 )
 from ..logging import configure_entry_point_logging
-from ..services.qa_service import QA_TIERS
 from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
@@ -292,8 +291,8 @@ def ci_command(
     tier: int = typer.Option(
         1,
         "--tier",
-        min=min(QA_TIERS),
-        max=max(QA_TIERS),
+        min=1,
+        max=2,
         help="Assessment tier: 1=structural, 2=structural plus the model-judged rubric "
         "(one model call per entry with judgment items; needs a configured model)",
     ),

@@ -1987,15 +1987,19 @@ that write returned (#795). This applies to `pyrite qa assess`, `pyrite ci`,
 
 **Tiers.** QA runs tier 1 (structural and deterministic rubric checks) and
 tier 2 (tier 1 plus the judgment-only rubric items, judged by the configured
-model). Any other tier is refused with `INVALID_TIER`. Tier 2 with no model
+model). Any other tier is refused with `INVALID_TIER` (on the CLI's `ci` and
+`qa assess`, an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2)
+before this check runs). Tier 2 with no model
 configured is refused with `AI_NOT_CONFIGURED`. Both refusals come before
 anything is checked or written, on every surface. `ci` refuses them even when
 no KB is configured.
 
 The codes:
 
-- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2. `pyrite mcp --tier` uses
-  the same code for an unknown server tier. Use 1 or 2.
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `ci` and `qa assess`
+  an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2) before this
+  check runs). `pyrite mcp --tier` uses the same code for an unknown server tier.
+  Use 1 or 2.
 - `AI_NOT_CONFIGURED`: tier 2 was asked for and no model is configured. REST's
   AI routes use the same code. Configure `ai_provider`, `ai_api_key` and
   `ai_model`, or use tier 1.
