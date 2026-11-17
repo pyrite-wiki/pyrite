@@ -87,8 +87,10 @@ def _json_output(items: list[dict]) -> None:
 @sw_app.command("adrs")
 def sw_adrs(
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
-    limit: int | None = typer.Option(None, "--limit", help="Max ADRs to return (default 50)"),
-    offset: int = typer.Option(0, "--offset", help="Skip this many ADRs before returning"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max ADRs to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(0, "--offset", min=0, help="Skip this many ADRs before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -284,9 +286,10 @@ def sw_backlog(
         None,
         "--limit",
         "-l",
-        help="Max items to return (default 50; pass 0 or a negative number for no limit)",
+        min=0,
+        help="Max items to return (default 50; pass 0 for no limit)",
     ),
-    offset: int = typer.Option(0, "--offset", help="Skip this many items before returning"),
+    offset: int = typer.Option(0, "--offset", min=0, help="Skip this many items before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -535,8 +538,12 @@ def sw_prioritize(
 @sw_app.command("standards")
 def sw_standards(
     category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
-    limit: int | None = typer.Option(None, "--limit", help="Max standards to return (default 50)"),
-    offset: int = typer.Option(0, "--offset", help="Skip this many standards before returning"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max standards to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(
+        0, "--offset", min=0, help="Skip this many standards before returning"
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -1469,8 +1476,12 @@ def sw_log_cmd(
 @sw_app.command("components")
 def sw_components(
     kind: str | None = typer.Option(None, "--kind", "-t", help="Filter by kind"),
-    limit: int | None = typer.Option(None, "--limit", help="Max components to return (default 50)"),
-    offset: int = typer.Option(0, "--offset", help="Skip this many components before returning"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max components to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(
+        0, "--offset", min=0, help="Skip this many components before returning"
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
