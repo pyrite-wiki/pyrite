@@ -701,6 +701,12 @@ class KBRegistryService:
                 "schema_errors",
             )
         }
+        # The one place a network answer about index health is shaped: REST
+        # and MCP `kb health` reach the report only through here. Files an
+        # earlier version left where the walk does not list them are a count,
+        # never their paths (maintainer, 2026-11-17, #1552); the local CLI's
+        # `pyrite index health` names them.
+        drift["unlisted_entry_files"] = len(health["unlisted_entry_files"])
 
         return {
             "name": name,
