@@ -1,11 +1,14 @@
 """Board configuration for kanban-style views."""
 
 import copy
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 
 from pyrite.config import KBConfig
 from pyrite.exceptions import ValidationError
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_BOARD_CONFIG = {
     "lanes": [
@@ -105,18 +108,16 @@ class BoardConfigError(ValidationError):
 
 
 @contextmanager
-def _board_refusal(where: str = ""):
+def _board_refusal():
     """The one place where "could not load or evaluate the board" becomes the
-    one refusal, ``BoardConfigError`` (kb/design.md principle 8). Used around
-    the file's read and validation, a criterion's dry run, and a checker's run
-    in ``_evaluate_gate``. Nothing it raises carries the cause's text."""
+    one refusal, ``BoardConfigError`` (kb/design.md principle 8), for the
+    file: its read and validation. A criterion that cannot be evaluated is
+    ``_criterion_refusal``'s. Nothing it raises carries the cause's text."""
     from ruamel.yaml.error import YAMLError
 
     from pyrite.exceptions import KBUnreadableError, YamlLimitError
-    from pyrite.services.rubric_checkers import CheckerConfigError
     from pyrite.utils.kb_files import KBFileOutsideRootError
 
-    at = f"{where}: " if where else ""
     try:
         yield
     except BoardConfigError:
@@ -135,9 +136,6 @@ def _board_refusal(where: str = ""):
             "is over Pyrite's YAML limits (too many aliases, or too large once expanded)",
             error_code=e.error_code,
         ) from None
-    except CheckerConfigError:
-        # Its text can quote the file (a pattern): the position only.
-        raise BoardConfigError(f"{at}'params' cannot be used by its checker") from None
     except UnicodeDecodeError:
         raise BoardConfigError("is not UTF-8 text") from None
     except YAMLError:
@@ -261,10 +259,98 @@ def _check_gate(n: int, gate: object) -> None:
         check_criterion(f"gate {n}, criterion {m}", criterion)
 
 
+#: What each named checker reads from ``params``: the parameter, and its kind
+#: ("text": a non-empty string; "names": a non-empty list of non-empty
+#: strings). Each is required, as the checker raises without it. Every checker
+#: may also take ``rubric_text`` (text), which a gate does not show. A checker
+#: not listed reads no parameter; ``test_every_checker_that_takes_params_is_declared``
+#: fails when a checker that needs one is added without an entry here.
+CHECKER_PARAMS: dict[str, dict[str, str]] = {
+    "has_field": {"field": "text"},
+    "has_any_field": {"fields": "names"},
+    "body_has_section": {"heading": "text"},
+    "body_has_pattern": {"pattern": "text"},
+}
+OPTIONAL_PARAMS = {"rubric_text": "text"}
+
+_KIND_TEXT = {"text": "must be text", "names": "must be a list of names"}
+
 #: The entry a criterion is dry-run against at load: a parameterised checker
-#: checks its params before it reads the entry, so a file whose params a
-#: checker cannot use is refused by every tool, not only by those that run it.
+#: checks its params before it reads the entry (a pattern compiles), so a file
+#: whose params a checker cannot use is refused by every tool, not only by
+#: those that run the gate.
 _DRY_RUN_ENTRY = {"id": "", "kb_name": "", "title": "", "body": "", "metadata": {}, "_links": []}
+
+
+def _check_params(where: str, checker: str, params: dict | None) -> None:
+    """``params`` against what ``checker`` declares it reads (CHECKER_PARAMS)."""
+    params = params or {}
+    declared = {**CHECKER_PARAMS.get(checker, {}), **OPTIONAL_PARAMS}
+    for key in CHECKER_PARAMS.get(checker, {}):
+        if key not in params:
+            raise BoardConfigError(f"{where}: checker '{checker}' needs '{key}' in 'params'")
+    for key, kind in declared.items():
+        if key not in params:
+            continue
+        value = params[key]
+        ok = (
+            isinstance(value, str) and value.strip() != ""
+            if kind == "text"
+            else isinstance(value, list)
+            and value != []
+            and all(isinstance(v, str) and v.strip() != "" for v in value)
+        )
+        if not ok:
+            raise BoardConfigError(f"{where}: '{key}' {_KIND_TEXT[kind]}")
+
+
+@contextmanager
+def _criterion_refusal(where: str, *, on_an_item: bool):
+    """A criterion that could not be evaluated, at load (its dry run) or on one
+    item: the board's one refusal, never recorded as passed (#1538).
+
+    A checker's own refusal (``CheckerConfigError``: a pattern that does not
+    compile, or that takes too long on this item's body) is named for what it
+    is. Anything else is unexpected, so it may be Pyrite's fault rather than
+    the file's: its traceback goes to the server log and the refusal says the
+    criterion could not be evaluated, not that ``params`` is wrong. Neither
+    shows the cause's text, which can quote the file."""
+    from pyrite.services.rubric_checkers import CheckerConfigError
+
+    try:
+        yield
+    except BoardConfigError:
+        raise
+    except MemoryError:
+        raise
+    except CheckerConfigError:
+        if on_an_item:
+            raise BoardConfigError(f"{where} could not be evaluated on this item") from None
+        raise BoardConfigError(f"{where}: 'params' cannot be used by its checker") from None
+    except Exception:
+        logger.exception("%s %s could not be evaluated", BOARD_FILE, where)
+        place = " on this item" if on_an_item else ""
+        raise BoardConfigError(f"{where} could not be evaluated{place}") from None
+
+
+def gate_checker(name: str):
+    """The function a gate runs for checker ``name``. ``body_has_pattern``
+    without QA's skip: after a timeout QA skips that pattern for a while and
+    answers "no finding", which a gate would read as a pass; the gate matches
+    every time, within the same time limit."""
+    from pyrite.services.rubric_checkers import (
+        NAMED_CHECKERS,
+        check_body_has_pattern_every_time,
+    )
+
+    if name == "body_has_pattern":
+        return check_body_has_pattern_every_time
+    return NAMED_CHECKERS[name]
+
+
+def evaluating(where: str):
+    """Around a criterion's run on one item in ``_evaluate_gate``."""
+    return _criterion_refusal(where, on_an_item=True)
 
 
 def check_criterion(where: str, criterion: object) -> None:
@@ -299,13 +385,7 @@ def check_criterion(where: str, criterion: object) -> None:
     params = criterion.get("params")
     if params is not None and not isinstance(params, dict):
         raise BoardConfigError(f"{where}: 'params' must be a mapping")
+    _check_params(where, checker, params)
     if checker in NAMED_CHECKERS:
-        with _board_refusal(where):
-            NAMED_CHECKERS[checker](dict(_DRY_RUN_ENTRY), None, params)
-
-
-def run_checker(where: str, checker, entry: dict, params) -> dict | None:
-    """Run a gate's checker on one entry; a checker that cannot run on it (a
-    pattern that takes too long on this body) is the board's refusal."""
-    with _board_refusal(where):
-        return checker(entry, None, params)
+        with _criterion_refusal(where, on_an_item=False):
+            gate_checker(checker)(dict(_DRY_RUN_ENTRY), None, params)

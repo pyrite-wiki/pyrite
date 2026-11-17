@@ -270,6 +270,25 @@ def check_body_has_pattern(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that body matches a regex pattern. Params: {pattern: "Sources?:"}."""
+    return _body_has_pattern(entry, params, skip_timed_out=True)
+
+
+def check_body_has_pattern_every_time(
+    entry: dict[str, Any],
+    schema: KBSchema | None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """``check_body_has_pattern`` for a quality gate (#1538): a pattern that
+    timed out before is matched again, within the same limit, rather than
+    skipped. A QA run skips it and answers no finding, which is right for a
+    sweep of a KB; a gate would read that answer as a pass. A timeout here
+    still raises and still marks the pattern for QA's skip."""
+    return _body_has_pattern(entry, params, skip_timed_out=False)
+
+
+def _body_has_pattern(
+    entry: dict[str, Any], params: dict[str, Any] | None, *, skip_timed_out: bool
+) -> dict[str, Any] | None:
     if not params or not params.get("pattern"):
         raise CheckerConfigError("body_has_pattern requires a non-empty 'pattern' parameter")
     body = entry.get("body", "") or ""
@@ -284,7 +303,7 @@ def check_body_has_pattern(
     # completion on a pattern with catastrophic backtracking. A pattern that
     # timed out is reported once and then skipped for the rest of the run.
     pattern = params["pattern"]
-    quarantined_at = _timed_out_patterns.get(pattern)
+    quarantined_at = _timed_out_patterns.get(pattern) if skip_timed_out else None
     if quarantined_at is not None:
         if time.monotonic() - quarantined_at < PATTERN_QUARANTINE_SECONDS:
             return None

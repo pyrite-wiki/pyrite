@@ -131,6 +131,29 @@ REFUSED_SHAPES: dict[str, bytes] = {
     "checker-params-it-cannot-use": VALID_GATED.replace(
         "params: {field: effort}", f"params: {{nope: {MARKER}}}"
     ).encode(),
+    **{
+        f"param-{name}": (
+            _GATE
+            + f"      - text: {MARKER}\n        checker: {checker}\n        params: {params}\n"
+        ).encode()
+        for name, (checker, params) in {
+            "field-a-list": ("has_field", "{field: [x]}"),
+            "field-a-number": ("has_field", "{field: 7}"),
+            "field-a-bool": ("has_field", "{field: true}"),
+            "field-a-mapping": ("has_field", "{field: {a: 1}}"),
+            "field-null": ("has_field", "{field: null}"),
+            "fields-a-number": ("has_any_field", "{fields: 7}"),
+            "fields-a-string": ("has_any_field", "{fields: abc}"),
+            "fields-a-nested-list": ("has_any_field", "{fields: [[x]]}"),
+            "fields-empty": ("has_any_field", "{fields: []}"),
+            "fields-a-mapping": ("has_any_field", "{fields: {a: 1}}"),
+            "heading-a-list": ("body_has_section", "{heading: [a]}"),
+            "heading-a-number": ("body_has_section", "{heading: 5}"),
+            "pattern-a-number": ("body_has_pattern", "{pattern: 5}"),
+            "pattern-a-list": ("body_has_pattern", "{pattern: [x]}"),
+            "rubric-text-a-list": ("has_field", "{field: effort, rubric_text: [x]}"),
+        }.items()
+    },
     "checker-pattern-that-does-not-compile": (
         _GATE + f"      - text: t\n        checker: body_has_pattern\n"
         f"        params: {{pattern: '({MARKER}'}}\n"
@@ -721,3 +744,83 @@ def test_a_checker_criterion_without_a_checker_says_so(world):
     _write_board(world, REFUSED_SHAPES["checker-criterion-without-checker"])
     answer = _mcp(world, "sw_check_ready", MCP_CALLS["sw_check_ready"])
     assert "names no checker" in answer["error"], answer
+
+
+# -- a criterion that could not be evaluated, on one item -------------------------
+
+
+@pytest.mark.timeout(60)
+def test_a_pattern_that_times_out_on_an_item_is_refused_every_time(world, monkeypatch):
+    """The real checker, through its time limit, twice on one item: each call
+    is refused and nothing is claimed. QA's skip after a timeout (no finding)
+    must not reach a gate as a pass."""
+    from pyrite.services import rubric_checkers
+
+    monkeypatch.setattr(rubric_checkers, "PATTERN_TIMEOUT_SECONDS", 0.5, raising=False)
+    # A pattern no other test has timed out (a comment group makes it unique),
+    # so QA's skip list starts without it.
+    import uuid
+
+    pattern = f"^(a|aa)+(?#{uuid.uuid4().hex})$"
+    world.add_entry(
+        KB,
+        _entry_text("item-slow", "accepted").replace("body\n", "a" * 60 + "!\n"),
+        filename="backlog/item-slow.md",
+    )
+    _write_board(
+        world,
+        _GATE + "      - text: t\n        checker: body_has_pattern\n"
+        f"        params: {{pattern: '{pattern}'}}\n",
+    )
+    before = _snapshot(world)
+    args = {"item_id": "item-slow", "kb_name": KB}
+    for _ in range(2):
+        answer = _mcp(world, "sw_check_ready", args)
+        _assert_board_refusal(answer, "runtime")
+        assert "could not be evaluated on this item" in answer["error"], answer
+    claim = _mcp(world, "sw_claim", {**args, "assignee": "probe"})
+    _assert_board_refusal(claim, "runtime")
+    assert _snapshot(world) == before
+
+
+def test_an_unexpected_failure_says_could_not_be_evaluated_and_logs(world, monkeypatch, caplog):
+    """An exception Pyrite did not expect may be Pyrite's fault: the refusal
+    does not blame the file's params, and the log keeps the traceback."""
+    from pyrite.services import rubric_checkers
+
+    def broken(entry, schema, params):
+        raise RuntimeError(f"a bug, {MARKER}")
+
+    monkeypatch.setitem(rubric_checkers.NAMED_CHECKERS, "status_present", broken)
+    _write_board(world, _GATE + "      - text: t\n        checker: status_present\n")
+    with caplog.at_level("ERROR"):
+        answer = _mcp(world, "sw_board", MCP_CALLS["sw_board"])
+    _assert_board_refusal(answer, "runtime")
+    assert "could not be evaluated" in answer["error"] and "params" not in answer["error"]
+    assert any(r.exc_info and "a bug" in str(r.exc_info[1]) for r in caplog.records)
+
+
+def test_every_checker_that_takes_params_is_declared():
+    """A checker that refuses to run with no params reads some: the loader
+    must know what (CHECKER_PARAMS), or it cannot check them."""
+    from pyrite_software_kb.board import _DRY_RUN_ENTRY, CHECKER_PARAMS
+
+    from pyrite.services.rubric_checkers import NAMED_CHECKERS, CheckerConfigError
+
+    needs = set()
+    for name, checker in NAMED_CHECKERS.items():
+        try:
+            checker(dict(_DRY_RUN_ENTRY), None, None)
+        except CheckerConfigError:
+            needs.add(name)
+    assert needs == set(CHECKER_PARAMS), needs
+
+
+@pytest.mark.parametrize("shape", sorted(s for s in REFUSED_SHAPES if s.startswith("param-")))
+def test_a_wrongly_typed_parameter_is_named_not_blamed_on_pyrite(world, shape):
+    """Checked against what the checker reads: the refusal says which
+    parameter and what it must be, not that the criterion could not run."""
+    _write_board(world, REFUSED_SHAPES[shape])
+    answer = _mcp(world, "sw_check_ready", MCP_CALLS["sw_check_ready"])
+    _assert_board_refusal(answer, shape)
+    assert "must be" in answer["error"] and "could not be evaluated" not in answer["error"]

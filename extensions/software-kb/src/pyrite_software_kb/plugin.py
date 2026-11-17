@@ -2163,9 +2163,7 @@ class SoftwareKBPlugin:
         if not gate_config:
             return None
 
-        from pyrite.services.rubric_checkers import NAMED_CHECKERS
-
-        from .board import BoardConfigError, check_criterion, run_checker
+        from .board import BoardConfigError, check_criterion, evaluating, gate_checker
 
         # `board.load_board_config` has validated the config; these checks are
         # the gate's own, so it never records a criterion it could not run as
@@ -2178,7 +2176,8 @@ class SoftwareKBPlugin:
         all_checkers_passed = True
 
         for n, criterion in enumerate(gate_config.get("criteria", []), 1):
-            check_criterion(f"criterion {n} of the gate for this status", criterion)
+            where = f"criterion {n} of the gate for this status"
+            check_criterion(where, criterion)
             crit_type = criterion.get("type", "checker")
             text = criterion.get("text", "")
             hint = criterion.get("hint")
@@ -2197,9 +2196,10 @@ class SoftwareKBPlugin:
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                failure = self._check_no_open_blockers(
-                    db, item_id, kb_name, readable_kbs=readable_kbs
-                )
+                with evaluating(where):
+                    failure = self._check_no_open_blockers(
+                        db, item_id, kb_name, readable_kbs=readable_kbs
+                    )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
@@ -2209,7 +2209,7 @@ class SoftwareKBPlugin:
                 continue
 
             # Standard named checker (check_criterion refused an unknown one)
-            checker_fn = NAMED_CHECKERS[checker_name]
+            checker_fn = gate_checker(checker_name)
 
             # Build entry dict for the checker
             entry_dict = dict(row) if not isinstance(row, dict) else row
@@ -2228,9 +2228,10 @@ class SoftwareKBPlugin:
                 ]
 
             params = criterion.get("params")
-            failure = run_checker(
-                f"criterion {n} of the gate for this status", checker_fn, entry_dict, params
-            )
+            # Three outcomes: a failure row, None because it holds, or a
+            # refusal because it could not be evaluated on this item.
+            with evaluating(where):
+                failure = checker_fn(entry_dict, None, params)
             passed = failure is None
             result = {"text": text, "passed": passed, "type": "checker"}
             if not passed:
