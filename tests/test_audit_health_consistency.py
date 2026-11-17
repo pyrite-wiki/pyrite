@@ -196,7 +196,19 @@ def test_regular_file_symlink_remains_readable(cli_world):
     assert json.loads(cli.stdout)["unreadable_files"] == []
 
 
-@pytest.mark.parametrize("surface", ["cli", "admin", "qa"])
+@pytest.mark.parametrize(
+    "surface",
+    [
+        "cli",
+        "admin",
+        pytest.param(
+            "qa",
+            marks=pytest.mark.control(
+                reason="QA reports only index errors; it must not turn this warning into one"
+            ),
+        ),
+    ],
+)
 def test_an_unlisted_entry_file_is_a_warning_everywhere_never_unhealthy(cli_world, surface):
     """#1552: an entry file an earlier version wrote where the walk does not
     list it (a create titled README wrote `readme.md`) is named under
@@ -215,6 +227,8 @@ def test_an_unlisted_entry_file_is_a_warning_everywhere_never_unhealthy(cli_worl
         return
     result = CliRunner().invoke(admin_app if surface == "admin" else app, ["index", "health"])
     assert result.exit_code == 0, (result.output, result.exception)
+    if surface == "admin":
+        assert "Index has warnings" in result.output, result.output
     if surface == "cli":
         report = json.loads(result.stdout)
         assert report["status"] == "warning"
