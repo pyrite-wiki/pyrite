@@ -13,15 +13,18 @@ Concrete subclasses must implement:
 from __future__ import annotations
 
 import json
+import math
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from ...utils.json_utils import SafeEncoder as _SafeEncoder
+from ...utils.metadata import parse_metadata as decode_metadata
 from ..models import Block, EdgeEndpoint, Entry, EntryRef, EntryTag, Link, Source, Tag
 from .protocol import DEFAULT_MIN_SIMILARITY
 
@@ -135,6 +138,226 @@ def _with_resolved(
     for row in unresolved:
         row["resolved_in_kbs"] = sorted(hits.get(str(row["id"]), []))
     return out
+
+
+# =========================================================================
+# The one shape of an entry row (#1503)
+# =========================================================================
+#
+# Every reader of entry rows -- the ORM readers (`_entry_to_dict`), the raw
+# SQL readers (search, the finds, folders), on SQLite and Postgres -- returns
+# its rows through `shape_entry_row`, so a field has one JSON type whichever
+# reader a caller used: `metadata` an object, `aliases` a list, a declared
+# field lifted from the bag, and a TEXT column's value read by the field's
+# declared type. The single-entry read (`IndexManager.read_fields`) casts with
+# `cast_declared_columns` too, so it and the rows agree, and a value read and
+# written back leaves the file as it was.
+# `tests/test_index_rows_have_one_shape.py` fails on a reader that goes round.
+
+#: The entry columns the index keeps as TEXT (`storage/models.py`) whose
+#: value a type may declare typed. `importance` is an INTEGER column, already
+#: an int on every reader.
+TEXT_FIELD_COLUMNS = (
+    "date",
+    "status",
+    "location",
+    "lifecycle",
+    "assignee",
+    "assigned_at",
+    "priority",
+    "due_date",
+    "start_date",
+    "end_date",
+    "coordinates",
+)
+
+#: `decode_metadata` (imported above) is `utils.metadata.parse_metadata`: the
+#: one decoder of the `metadata` column, for the shaper and every consumer.
+
+_INTEGER_TEXT = re.compile(r"[+-]?\d+")
+_FLOAT_TEXT = re.compile(r"[+-]?(\d+\.\d*|\.\d+|\d+)([eE][+-]?\d+)?")
+
+
+def decode_aliases(raw: Any) -> list[Any]:
+    """The ``aliases`` column (a JSON list) as a list; empty when unset."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _as_number(text: str) -> Any:
+    """A TEXT column's value as the number a ``number`` field holds: an
+    integer literal an int, a finite decimal literal a float. Any other text
+    is left as it is: the cast never loses a value (a file's ``priority:
+    high`` on a field declared a number reads ``"high"``, and ``qa`` reports
+    it)."""
+    stripped = text.strip()
+    if _INTEGER_TEXT.fullmatch(stripped):
+        return int(stripped)
+    if _FLOAT_TEXT.fullmatch(stripped):
+        value = float(stripped)
+        if math.isfinite(value):
+            return value
+    return text
+
+
+def _as_checkbox(text: str) -> Any:
+    """A TEXT column's value as a ``checkbox`` field's bool: the index holds a
+    YAML bool as ``"1"``/``"0"`` (sqlite binds it as an integer); ``true`` and
+    ``false`` read the same. Any other text is left as it is."""
+    folded = text.strip().lower()
+    if folded in ("1", "true"):
+        return True
+    if folded in ("0", "false"):
+        return False
+    return text
+
+
+def _castable(value: Any) -> bool:
+    """Whether a column's value is text some declared type would read
+    differently (``_as_number``, ``_as_checkbox``)."""
+    if not isinstance(value, str):
+        return False
+    stripped = value.strip()
+    return bool(_FLOAT_TEXT.fullmatch(stripped)) or stripped.lower() in ("true", "false")
+
+
+def cast_declared_columns(row: dict[str, Any], field_types: Mapping[str, str]) -> None:
+    """Read each TEXT column's value in ``row`` by its field's declared type
+    (``field_types``: ``{field: FieldSchema.field_type}``, from
+    ``KBSchema.type_fields``), in place. A ``number`` reads as an int or a
+    float, a ``checkbox`` as a bool; every other type, and a field the type
+    does not declare, keeps the column's text.
+
+    Option (i) of the maintainer's decision on #1503 (2026-11-16): the cast
+    reads the index's text, which cannot tell the file's ``7`` from its
+    ``"7"``, so a quoted number in a field declared a number reads as a
+    number. Nothing is written: the file keeps its spelling."""
+    for key in TEXT_FIELD_COLUMNS:
+        value = row.get(key)
+        if not isinstance(value, str):
+            continue
+        kind = field_types.get(key)
+        if kind == "number":
+            row[key] = _as_number(value)
+        elif kind == "checkbox":
+            row[key] = _as_checkbox(value)
+
+
+#: One `KBConfig` per (name, path) the index's `kb` table names, so its
+#: `kb_schema` cache (stamp-checked against kb.yaml, #1547) outlives a call.
+_KB_CONFIGS: dict[tuple[str, str], Any] = {}
+
+
+class DeclaredFieldTypes:
+    """The declared type of each field, by (KB, entry type), for one batch of
+    rows: ``KBSchema.type_fields`` of the KB's own schema, and nothing else.
+
+    The KB's folder comes from the index's own ``kb`` table, so storage needs
+    no service (the layer rule, `tests/test_layer_boundaries.py`) and both
+    backends answer alike; its schema is the config loader's
+    (``KBConfig.kb_schema``). A kb.yaml that does not load is read as
+    declaring nothing beyond the core and plugin layers: a listing does not
+    fail on one KB's broken kb.yaml (a single read of that KB refuses it,
+    #1547)."""
+
+    def __init__(self, session: Any):
+        self._session = session
+        self._paths: dict[str, str | None] = {}
+        self._types: dict[tuple[str, str], dict[str, str]] = {}
+
+    def _schema(self, kb_name: str) -> Any:
+        from ...schema import KBSchema
+
+        if kb_name not in self._paths:
+            self._paths[kb_name] = self._kb_path(kb_name)
+        path = self._paths[kb_name]
+        if not path:
+            return KBSchema()
+        key = (kb_name, path)
+        config = _KB_CONFIGS.get(key)
+        if config is None:
+            from ...config import KBConfig
+
+            try:
+                config = KBConfig(name=kb_name, path=path)
+            except Exception:
+                return KBSchema()
+            _KB_CONFIGS[key] = config
+        try:
+            return config.kb_schema
+        except Exception:
+            return KBSchema()
+
+    def _kb_path(self, kb_name: str) -> str | None:
+        if self._session is None:
+            return None
+        from sqlalchemy import text
+
+        try:
+            row = self._session.execute(
+                text("SELECT path FROM kb WHERE name = :name"), {"name": kb_name}
+            ).fetchone()
+        except Exception:
+            return None
+        return str(row[0]) if row and row[0] else None
+
+    def __call__(self, kb_name: Any, entry_type: Any) -> dict[str, str]:
+        if not kb_name or not entry_type:
+            return {}
+        key = (str(kb_name), str(entry_type))
+        cached = self._types.get(key)
+        if cached is None:
+            fields = self._schema(key[0]).type_fields(key[1])
+            cached = self._types[key] = {name: f.field_type for name, f in fields.items()}
+        return cached
+
+
+def shape_entry_row(
+    row: dict[str, Any], declared: DeclaredFieldTypes, *, cls: type | None = None
+) -> dict[str, Any]:
+    """An index entry row in its one shape, in place; returns ``row``.
+
+    Only the keys the row already has are read: ``metadata`` decoded to an
+    object (NULL reads ``{}``), ``aliases`` to a list, a declared field the
+    bag holds lifted to its own name (``lift_declared_fields``, #1025; never
+    over a key the row has), and each TEXT column's value cast by its field's
+    declared type (``cast_declared_columns``). No other key is added or
+    removed: a reader's projection is its own. ``cls`` is the entry's class
+    where the caller has it (the single read); otherwise the type's class is
+    looked up here, the one lookup the ORM row made before (#1503)."""
+    if "metadata" in row:
+        row["metadata"] = decode_metadata(row["metadata"])
+    if "aliases" in row:
+        row["aliases"] = decode_aliases(row["aliases"])
+    entry_type = row.get("entry_type")
+    if entry_type and row.get("metadata"):
+        from ...schema.field_aliases import lift_declared_fields
+
+        if cls is None:
+            from ...models.core_types import get_entry_class
+
+            cls = get_entry_class(str(entry_type))
+        lift_declared_fields(row, row["metadata"], cls, str(entry_type))
+    # The declared types are looked up (once per KB and type, for a batch)
+    # only when a column holds text a cast could change: a row of words and
+    # NULLs needs no schema, and a listing stays one statement for the rows.
+    if any(_castable(row.get(key)) for key in TEXT_FIELD_COLUMNS):
+        cast_declared_columns(row, declared(row.get("kb_name"), entry_type))
+    return row
+
+
+def shape_entry_rows(rows: Iterable[Any], session: Any) -> list[dict[str, Any]]:
+    """``rows`` (mappings: a SQL row's ``dict``) in their one shape, as dicts;
+    the declared types are looked up once per (KB, type) for the batch."""
+    declared = DeclaredFieldTypes(session)
+    return [shape_entry_row(dict(row), declared) for row in rows]
 
 
 class BaseBackend(ABC):
@@ -383,47 +606,23 @@ class BaseBackend(ABC):
 
         entries = self._session.query(Entry).filter(tuple_(Entry.id, Entry.kb_name).in_(ids)).all()
         tag_map = self._get_tags_for_entries(ids)
+        declared = DeclaredFieldTypes(self._session)
         results = []
         for entry in entries:
-            d = self._entry_to_dict(entry)
+            d = self._entry_to_dict(entry, declared)
             d["tags"] = tag_map.get((entry.id, entry.kb_name), [])
             d["sources"] = self._get_entry_sources(entry.id, entry.kb_name)
             d["links"] = self._get_entry_links(entry.id, entry.kb_name)
             results.append(d)
         return results
 
-    @staticmethod
-    def _parse_aliases(raw: Any) -> list:
-        """The `aliases` column (a JSON list) as a list; empty when unset."""
-        if not raw:
-            return []
-        if isinstance(raw, list):
-            return raw
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-            except (TypeError, ValueError):
-                return []
-            return parsed if isinstance(parsed, list) else []
-        return []
+    #: The column decoders, kept under their old names: the shaper's own.
+    _parse_aliases = staticmethod(decode_aliases)
+    _parse_metadata = staticmethod(decode_metadata)
 
-    @staticmethod
-    def _parse_metadata(raw: Any) -> dict:
-        """Parse extra_data into a dict, handling JSON strings and edge cases."""
-        if not raw:
-            return {}
-        if isinstance(raw, dict):
-            return raw
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-                return parsed if isinstance(parsed, dict) else {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return {}
-
-    def _entry_to_dict(self, entry: Entry) -> dict[str, Any]:
-        metadata = self._parse_metadata(entry.extra_data)
+    def _entry_to_dict(
+        self, entry: Entry, declared: DeclaredFieldTypes | None = None
+    ) -> dict[str, Any]:
         result = {
             "id": entry.id,
             "kb_name": entry.kb_name,
@@ -445,8 +644,8 @@ class BaseBackend(ABC):
             "start_date": entry.start_date,
             "end_date": entry.end_date,
             "coordinates": entry.coordinates,
-            "metadata": metadata,
-            "aliases": self._parse_aliases(entry.aliases),
+            "metadata": entry.extra_data,
+            "aliases": entry.aliases,
             "created_at": entry.created_at,
             "updated_at": entry.updated_at,
             "indexed_at": entry.indexed_at,
@@ -457,17 +656,14 @@ class BaseBackend(ABC):
         # item's `rank`/`effort`/`kind`, a task's `status_reason`) lives in the
         # `metadata` bag; a read spells it at its own name too, so `pyrite
         # get`, REST `/entries/{id}` and MCP `kb_get` see the file's shape
-        # (Tier A 1200, r1175). The rule is `lift_declared_fields` (#1025),
-        # shared with `IndexManager.read_fields`; a key the type does not
-        # declare stays the bag's. The bag itself is kept whole here: this
-        # is the storage dict the plugins read declared fields from; only
-        # the single-entry read drops them from its `metadata`.
-        from ...models.core_types import get_entry_class
-        from ...schema.field_aliases import lift_declared_fields
-
-        entry_type = str(entry.entry_type)
-        lift_declared_fields(result, metadata, get_entry_class(entry_type), entry_type)
-        return result
+        # (Tier A 1200, r1175). The bag itself is kept whole here: this is the
+        # storage dict the plugins read declared fields from; only the
+        # single-entry read drops them from its `metadata`. The lift, the
+        # decoding and the declared-type cast are the one row shape every
+        # reader returns (`shape_entry_row`, #1503).
+        return shape_entry_row(
+            result, declared if declared is not None else DeclaredFieldTypes(self._session)
+        )
 
     def _get_entry_tags(self, entry_id: str, kb_name: str) -> list[str]:
         results = (
@@ -582,9 +778,10 @@ class BaseBackend(ABC):
         rows = query.all()
         entry_keys = [(entry.id, entry.kb_name) for entry in rows]
         tags_by_entry = self._get_tags_for_entries(entry_keys)
+        declared = DeclaredFieldTypes(self._session)
         entries = []
         for entry in rows:
-            e = self._entry_to_dict(entry)
+            e = self._entry_to_dict(entry, declared)
             e["tags"] = tags_by_entry.get((entry.id, entry.kb_name), [])
             entries.append(e)
         return entries
@@ -1325,7 +1522,7 @@ class BaseBackend(ABC):
             ORDER BY {sort_by} {sort_order}
             LIMIT :limit OFFSET :offset
         """
-        return self._exec(
+        rows = self._exec(
             sql,
             {
                 "kb_name": kb_name,
@@ -1334,6 +1531,7 @@ class BaseBackend(ABC):
                 "offset": offset,
             },
         )
+        return shape_entry_rows(rows, self._session)
 
     def count_entries_in_folder(self, kb_name: str, folder_path: str) -> int:
         folder_prefix = folder_path.rstrip("/") + "/"

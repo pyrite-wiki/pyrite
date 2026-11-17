@@ -193,10 +193,10 @@ def world() -> Iterator[Any]:
 
 
 def _mcp(world, name: str, args: dict[str, Any]) -> dict[str, Any]:
-    server = getattr(world, "_shape_mcp", None)
-    if server is None:
-        server = world._shape_mcp = world.mcp("admin")
-    result = server._dispatch_tool(name, args)
+    # A server per call: a plugin's tool context is process-wide and names
+    # the database of the last server built, so a server kept across another
+    # world's (closed with it) would answer from a closed database.
+    result = world.mcp("admin")._dispatch_tool(name, args)
     assert "error" not in result, (name, result)
     return result
 
