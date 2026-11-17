@@ -2196,10 +2196,13 @@ class SoftwareKBPlugin:
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                with evaluating(where):
-                    failure = self._check_no_open_blockers(
-                        db, item_id, kb_name, readable_kbs=readable_kbs
-                    )
+                # Not inside `evaluating`: the lookup reads the KB's index, not
+                # board.yaml, so a failure of it keeps its own error and
+                # `retryable` (as `sw_claim`'s earlier lookup does) and is never
+                # reported as a problem in the file (#1585).
+                failure = self._check_no_open_blockers(
+                    db, item_id, kb_name, readable_kbs=readable_kbs
+                )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
