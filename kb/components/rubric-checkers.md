@@ -36,7 +36,11 @@ Every caller builds it with one function, `checker_entry(db, row)` in `pyrite/se
 From the item's whole index row (`SELECT * FROM entry`), the entry holds:
 
 - **the row's columns as they are**: `id`, `kb_name`, `entry_type`, `title`, `body`, `status`, and the rest. `descriptive_title`, `status_present` and the body checkers read these.
-- **`metadata`**: a new dict, never the stored bag. It is the bag, with each field column (`FIELD_COLUMNS`: `title summary date importance status location assignee assigned_at priority due_date start_date end_date coordinates fips state lifecycle`) filled in where the bag has no non-empty value, plus `tags` (the tag names) when the item has any. A field whose bag value and column are both empty (`None` or `""`) is absent, so a kb.yaml type that keeps a protocol field in its column and its bag, and a plugin class that keeps it in the column only, give one answer. `has_field`, `has_any_field` and `priority_present` read this, so they see a field wherever the index keeps it.
+- **`metadata`**: a new dict, never the stored bag. It is the bag, with each field column (`FIELD_COLUMNS`: `title summary date importance status location assignee assigned_at priority due_date start_date end_date coordinates fips state lifecycle`) given the value `pyrite get` shows for it, plus `tags` (the tag names) when the item has any:
+  - a field the item's type declares (`schema.field_aliases.declared_fields`, the single-entry read's rule) takes its column, Pyrite's reading at its own name, even when the column is empty. A `metadata:` spelling of the field does not count: a backlog item with `priority: ""` and `metadata: {priority: high}` has no priority, as `get` shows;
+  - a field the type does not declare takes the bag's value, which `get` shows under `metadata` (a `note`'s `status`, any field of a kb.yaml type, `fips` and `state`); the column, a promoted copy of it, is the fallback.
+
+  A field whose value is empty (`None` or `""`) is absent, so a kb.yaml type that keeps a protocol field in its column and its bag, and a plugin class that keeps it in the column only, give one answer. `has_field`, `has_any_field` and `priority_present` read this, so they see a field wherever the index keeps it.
 - **`_tag_count`**: the number of tags.
 - **`_links`**: `[{"target", "relation"}]`, every `link` row the item is the source of (frontmatter links and body wikilinks alike), read by `not_oversized` and `orphan_backlog_item`. **`_outlink_count`** is `len(_links)`, read by `has_outlinks`.
 
@@ -45,7 +49,7 @@ What that means for `has_field`:
 - It sees `tags`, `title` and `summary`, as well as the bag and the field columns.
 - It does not see `aliases`, `sources` or `links`. The link checkers read `_links`.
 - It tests truthiness, so `priority: 0` and `status: ""` are missing. `priority_present` asks only for a key, so `priority: 0` holds and `priority: ""` does not.
-- For a type whose model gives a field a default, `has_field` and `priority_present` hold when the file leaves that field out, because the item has that value as Pyrite reads it, the value `pyrite get` shows. A `backlog_item` with no `priority` line reads `medium`, and a `task` reads `5`. A checker cannot tell a defaulted field from a written one: that would need the index to record which fields the file wrote.
+- For a type whose model gives a field a default, `has_field` and `priority_present` hold when the file leaves that field out, because the item has that value as Pyrite reads it, the value `pyrite get` shows. A `backlog_item` with no `priority` line reads `medium`, and a `task` reads `5`. A checker cannot tell a defaulted field from a written one: that would need the index to record which fields the file wrote (#1695). The reverse holds for a field a type declares but never reads from its file: a `task`'s `date`, `start_date`, `end_date` and `assigned_at` read `''`, as `get` shows them at their own names, so `has_field date` fails for a task whose file writes a date (the value stays under `metadata`).
 
 The entry is read from the index, so a hand edit that has not been synced gives the indexed verdict, as every index read does. In a gate, the builder runs outside `board.evaluating`, so a failed read keeps its own error and never names `board.yaml` (#1585).
 
