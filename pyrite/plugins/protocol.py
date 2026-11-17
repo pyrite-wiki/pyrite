@@ -316,6 +316,9 @@ class PyritePlugin(Protocol):
                     file may spell another way, e.g. {"participants": "actors"}.
                     The type's class reads the target; the platform resolves the
                     alias through pyrite.schema.field_aliases.field_aliases().
+                settled_statuses: list[str] - the statuses after which an entry of the
+                    type is no longer live work (e.g. ["done", "retired"]); `qa
+                    duplicates` skips them by default. Omit it and every entry is live.
                 protocols, guidelines, goals, evaluation_rubric - as in kb.yaml
         """
         ...

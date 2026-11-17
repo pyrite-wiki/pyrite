@@ -304,9 +304,15 @@ class ReadingListPlugin:
                     "status": "Reading progress: to-read, reading, or read",
                     "rating": "Rating from 1 (poor) to 5 (excellent), 0 if unrated",
                 },
+                # Statuses after which an item is no longer live work;
+                # `pyrite qa duplicates` leaves them out of its default scan.
+                "settled_statuses": ["read"],
             },
         }
 ```
+
+The other keys a type's metadata may carry are `display`, `field_aliases`,
+`protocols`, `guidelines`, `goals`, `evaluation_rubric` and `settled_statuses`.
 
 The registry only calls a method whose capability the plugin declares: an
 undeclared capability makes the registry ignore the method. Without the

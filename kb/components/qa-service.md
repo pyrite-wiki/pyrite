@@ -42,7 +42,7 @@ Structural validation and assessment service for knowledge bases. Validates KB i
 | `schema_violation` | error/warning | Field violates kb.yaml type schema |
 | `frontmatter_line_in_body` | warning | First body line repeats a scalar frontmatter field; may be a migration leak |
 | `rubric_violation` | warning | Entry fails a named rubric checker |
-| `config_error` | warning | Unknown checker name in rubric config |
+| `config_error` | warning / error | Unknown checker name in rubric config (warning). A kb.yaml `types.<name>.settled_statuses` that is not a list of status names (error): the value is ignored and the lower layer's set stands. A list that names a status outside the type's own `status` options (warning): the list is still used, so it replaces the lower layer's set (#934) |
 | `checker_failed` | warning | A named rubric checker raised, so its item was not checked (#795) |
 | `file_unloadable` | error | `validate_entry`: the entry's file would not load, so the checks that read it did not run (#795) |
 | `llm_rubric_violation` | warning | Tier 2: the model judged a rubric item failed (was `info` until #795, which no status counted) |

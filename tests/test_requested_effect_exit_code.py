@@ -1092,6 +1092,7 @@ READ_ONLY = [
     "pyrite orient",
     "pyrite protocol list",
     "pyrite qa assess",
+    "pyrite qa duplicates",
     "pyrite qa check-urls",
     "pyrite qa checkers",
     "pyrite qa coverage",
