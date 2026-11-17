@@ -818,7 +818,16 @@ BOTH_PAIRS = {"event": "investigation_event", "document": "document_source"}
 
 @pytest.mark.parametrize(
     ("kb_type", "expected"),
-    [("journalism-investigation", BOTH_PAIRS), ("known-entities", {})],
+    [
+        ("journalism-investigation", BOTH_PAIRS),
+        pytest.param(
+            "known-entities",
+            {},
+            marks=pytest.mark.control(
+                reason="#1526 changes nothing in this regime; pins that it stays so"
+            ),
+        ),
+    ],
 )
 def test_a_preset_kb_shows_exactly_the_mappings_a_create_applies(tmp_path, kb_type, expected):
     """Round 1's property, under option (a) (#1526). The journalism presets
@@ -845,10 +854,19 @@ def test_a_preset_kb_shows_exactly_the_mappings_a_create_applies(tmp_path, kb_ty
 @pytest.mark.parametrize(
     ("kb_yaml", "expected"),
     [
-        (JOURNALISM_KB_YAML, {"event": "investigation_event", "document": "document_source"}),
-        (
+        pytest.param(
+            JOURNALISM_KB_YAML,
+            {"event": "investigation_event", "document": "document_source"},
+            marks=pytest.mark.control(
+                reason="#1526 changes nothing in this regime; pins that it stays so"
+            ),
+        ),
+        pytest.param(
             "name: inv\ntypes:\n  event: {}\n  investigation_event: {}\n  document: {}\n",
             {"event": "investigation_event"},
+            marks=pytest.mark.control(
+                reason="#1526 changes nothing in this regime; pins that it stays so"
+            ),
         ),
         (
             "name: inv\ntypes:\n  investigation_event: {}\n  document_source: {}\n",
@@ -907,7 +925,20 @@ OUTCOMES = {
 
 @pytest.mark.parametrize("surface", sorted(NAMED_SURFACES))
 @pytest.mark.parametrize("allow_undeclared", [True, False], ids=["override", "no-override"])
-@pytest.mark.parametrize("regime", sorted(REGIMES))
+@pytest.mark.parametrize(
+    "regime",
+    [
+        r
+        if r == "target-only"
+        else pytest.param(
+            r,
+            marks=pytest.mark.control(
+                reason="#1526 changes nothing in this regime; pins that it stays so"
+            ),
+        )
+        for r in sorted(REGIMES)
+    ],
+)
 def test_shown_equals_applied_in_every_vocabulary_regime(
     tmp_path, regime, allow_undeclared, surface
 ):
