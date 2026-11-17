@@ -1527,6 +1527,7 @@ class KBService:
         pending_ids: set[str] | None = None,
         pending_paths: set[Path] | None = None,
         owns: frozenset[str] = frozenset(),
+        ingest: bool = False,
     ) -> tuple[Entry, list[dict[str, Any]]]:
         """Decide whether ``spec`` is a valid new entry; build it if so.
 
@@ -1606,6 +1607,8 @@ class KBService:
         body = fields.pop("body", "")
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
+            if not ingest:
+                self._refuse_non_initial_status_on_create(entry_type, kb_config, fields)
             fields, attributes = self._with_declared_fields(entry_type, kb_config, fields)
             entry = build_entry(entry_type, entry_id=entry_id, title=title, body=body, **fields)
             entry._create_fields = attributes
@@ -1743,6 +1746,7 @@ class KBService:
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         owns: frozenset[str] = frozenset(),
+        ingest: bool = False,
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1752,6 +1756,7 @@ class KBService:
             allow_undeclared=allow_undeclared,
             builder=builder,
             owns=owns,
+            ingest=ingest,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         prepared_id = entry.id
@@ -1913,6 +1918,7 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         pending_ids=would_create,
                         pending_paths=would_create_paths,
+                        ingest=drop_managed,
                     )
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
@@ -1930,6 +1936,7 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         hook_ctx=hook_ctx,
                         embed=False,
+                        ingest=drop_managed,
                     )
                     entry, warnings = written.entry, written.warnings
                     created_ids.append((entry.id, kb_name))
@@ -2566,6 +2573,60 @@ class KBService:
                 errors=[{"field": name, "rule": "managed", "message": message}],
                 suggestion=f"name it something else, for example `{entry_type}_{name}`",
             )
+
+    def _refuse_non_initial_status_on_create(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        fields: dict[str, Any],
+    ) -> None:
+        """A create refuses a status other than the initial state on types
+        with a state machine (#1684). Ingest (add, import, sync) is exempt."""
+        from ..models.task import TASK_WORKFLOW, resolve_workflow_for_type
+
+        kb_schema = getattr(kb_config, "kb_schema", None)
+        workflow = resolve_workflow_for_type(entry_type, kb_schema)
+        is_task_or_opted_in = entry_type == "task" or (workflow is not TASK_WORKFLOW)
+        if not is_task_or_opted_in:
+            return
+
+        status_field = workflow.get("field", "status")
+        initial = workflow.get("initial", "open")
+
+        sent_status = None
+        has_status = False
+
+        if status_field in fields:
+            sent_status = fields[status_field]
+            has_status = True
+        elif f"metadata.{status_field}" in fields:
+            sent_status = fields[f"metadata.{status_field}"]
+            has_status = True
+        elif isinstance(fields.get("metadata"), Mapping) and status_field in fields["metadata"]:
+            sent_status = fields["metadata"][status_field]
+            has_status = True
+        elif isinstance(fields.get("fields"), Mapping) and status_field in fields["fields"]:
+            sent_status = fields["fields"][status_field]
+            has_status = True
+
+        if not has_status or sent_status is None:
+            return
+
+        if sent_status == initial:
+            return
+
+        if entry_type == "task":
+            message = "a new task is always created open; use `task claim` or `task update --status` to change it."
+            suggestion = "use `task claim` or `task update --status` to change it."
+        else:
+            message = f"a new {entry_type} is always created {initial}; change it after creation."
+            suggestion = "change it after creation."
+
+        raise ValidationError(
+            message,
+            errors=[{"field": status_field, "rule": "managed", "message": message}],
+            suggestion=suggestion,
+        )
 
     def _drop_managed_for_import(
         self, kb_config: KBConfig, spec: dict[str, Any]

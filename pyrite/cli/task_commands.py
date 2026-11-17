@@ -143,13 +143,14 @@ def _parse_task_create_fields(
                 message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
         if k == "status":
-            message = (
-                "--field status=... is refused: a new task is always created open; "
-                "use `task update --status` to change it."
-            )
-            raise ValidationError(
-                message, errors=[{"field": k, "rule": "managed", "message": message}]
-            )
+            if v != "open":
+                message = (
+                    "--field status=... is refused: a new task is always created open; "
+                    "use `task claim` or `task update --status` to change it."
+                )
+                raise ValidationError(
+                    message, errors=[{"field": k, "rule": "managed", "message": message}]
+                )
         if k in _FIELD_CREATE_OWNED:
             message = f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k]
             raise ValidationError(
