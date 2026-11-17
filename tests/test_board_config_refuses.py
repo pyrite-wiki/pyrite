@@ -543,3 +543,11 @@ def test_the_walk_finds_the_known_loaders():
     methods = _plugin_methods_that_load_a_board()
     assert {"_mcp_claim", "get_orient_supplement", "_mcp_board"} <= methods, methods
     assert set(CLI_CALLS) <= _cli_commands_that_load_a_board()
+
+
+def test_refine_naming_no_kb_is_refused_on_the_cli(world, board_in_the_working_directory):
+    result = _cli(world, ["sw", "refine"])
+    assert result.exit_code == 1, result.output
+    answer = _cli_json(result)
+    assert answer["error_code"] == "VALIDATION_FAILED", answer
+    assert MARKER not in result.output

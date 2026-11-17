@@ -29,6 +29,32 @@ Structured knowledge management for software teams -- ADRs, design docs, coding 
 
 **Use case:** Engineering teams that want to keep architecture decisions, coding standards, component docs, and backlogs in version-controlled markdown alongside their code.
 
+#### `board.yaml`: lanes, WIP limits and gates
+
+A software KB's board (its lanes, WIP limits and the Definition of Ready and Done gates of ADR-0021) is read from `board.yaml` in the KB's own root. `pyrite init -t software` writes none; with no file, the built-in board applies (five lanes, both gates at `warn`). A file replaces the built-in board whole; nothing is merged.
+
+```yaml
+lanes:                      # optional; absent means no lanes
+  - name: Ready             # required, text
+    statuses: [accepted]    # required, a list of statuses
+  - name: In Progress
+    statuses: [in_progress]
+    wip_limit: 3            # optional, a whole number, 0 or more
+wip_policy: enforce         # optional: warn (default) or enforce
+gates:                      # optional; absent means no gates
+  in_progress:              # the status the gate guards
+    name: Definition of Ready
+    policy: enforce         # optional: warn (default) or enforce
+    criteria:
+      - text: Effort estimated
+        checker: has_field  # a checker Pyrite has (pyrite/services/rubric_checkers.py, or no_open_blockers)
+        params: {field: effort}
+      - text: Problem statement is clear
+        type: judgment      # checker (default), judgment or agent_responsibility
+```
+
+An empty file declares no lanes and no gates. A file that cannot be loaded (it does not parse, is not a mapping, has a field of the wrong type, a lane with no `statuses`, a policy other than `warn` or `enforce`, or a criterion naming a checker Pyrite does not have) is refused: every tool that reads the board (`sw_claim`, `sw_transition`, `sw_review`, `sw_pull_next`, `sw_check_ready`, `sw_refine`, `sw_board`, `sw_review_queue`, and the `pyrite sw` commands that call them) answers `VALIDATION_FAILED`, not retryable, with a message naming `board.yaml` and the problem, and changes nothing. `kb_orient` still answers, with `board_error` in its software block. A tool called for a KB that does not resolve is refused (`KB_NOT_FOUND`); `sw_board`, `sw_review_queue` and `sw_pull_next` called with no KB span every KB and use the built-in board.
+
 [Full docs](https://github.com/pyrite-wiki/pyrite/blob/main/kb/components/software-kb-extension.md)
 
 ---
@@ -139,4 +165,3 @@ instantiate, and expose a `name` attribute. Exit code **3** means installation
 succeeded but verification failed, including when the distribution declares no
 `pyrite.plugins` entry points. JSON output reports `verified: false` and
 `verify_errors`; diagnostic warnings go to stderr.
-
