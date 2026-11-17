@@ -17,11 +17,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-
-if not hasattr(os, "getuid"):
-    os.getuid = lambda: 0
-if not hasattr(os, "O_NONBLOCK"):
-    os.O_NONBLOCK = 0
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch

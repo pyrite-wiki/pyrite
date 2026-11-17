@@ -1995,8 +1995,10 @@ no KB is configured.
 
 The codes:
 
-- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2. `pyrite mcp --tier` uses
-  the same code for an unknown server tier. Use 1 or 2.
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `qa assess`
+  an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2) before this
+  check runs). `pyrite mcp --tier` uses the same code for an unknown server tier.
+  Use 1 or 2.
 - `AI_NOT_CONFIGURED`: tier 2 was asked for and no model is configured. REST's
   AI routes use the same code. Configure `ai_provider`, `ai_api_key` and
   `ai_model`, or use tier 1.

@@ -1,20 +1,25 @@
 """Tests for QA assess numeric option ranges (#1564, #1541)."""
 
 import json
-import os
-
-if not hasattr(os, "getuid"):
-    os.getuid = lambda: 0
-if not hasattr(os, "O_NONBLOCK"):
-    os.O_NONBLOCK = 0
 
 import pytest
+import typer
+
+from pyrite.cli.qa_commands import qa_app
 from pyrite.config import KBConfig
+from pyrite.services.qa_service import QA_TIERS
 
 
 @pytest.fixture
 def qa_world(cli_world, tmp_path):
     return cli_world(kbs=[KBConfig(name="qa_kb", path=tmp_path / "qa_kb", kb_type="plain")])
+
+
+def test_qa_assess_tier_declared_range_matches_qa_tiers():
+    cmd = typer.main.get_command(qa_app)
+    assess = cmd.get_command(None, "assess")
+    param = next(p for p in assess.params if p.name == "tier")
+    assert (param.type.min, param.type.max) == (min(QA_TIERS), max(QA_TIERS))
 
 
 @pytest.mark.cli
