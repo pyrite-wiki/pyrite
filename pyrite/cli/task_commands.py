@@ -302,21 +302,21 @@ def _status_cell(item: dict) -> str:
 
 def _render_list(console, data: dict) -> None:
     table = Table(title="Tasks")
-    table.add_column("ID", style="cyan", max_width=12)
+    table.add_column("ID", style="cyan", overflow="fold")
     table.add_column("Title")
     table.add_column("Status", style="green")
     table.add_column("Pri", justify="right")
     table.add_column("Assignee", style="yellow")
-    table.add_column("Parent", style="dim", max_width=12)
+    table.add_column("Parent", style="dim", overflow="fold")
 
     for item in data["tasks"]:
         table.add_row(
-            item["id"][:12],
+            item["id"],
             item["title"],
             _status_cell(item),
             str(item["priority"]),
             item["assignee"],
-            item["parent"][:12] if item["parent"] else "",
+            item["parent"] or "",
         )
     console.print(table)
 
@@ -395,7 +395,7 @@ def _render_task(console, result: dict) -> None:
     if children:
         console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
         for c in children:
-            console.print(f"    {c['id'][:12]}  {c['status']:12}  {c['title']}")
+            console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
