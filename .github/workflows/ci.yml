@@ -77,6 +77,18 @@ jobs:
       infra: ${{ steps.all.outputs.infra || steps.filter.outputs.infra }}
       queue_passed: ${{ steps.all.outputs.queue_passed || steps.queue.outputs.passed }}
     steps:
+      # A Dependabot bump is tested where it merges: this repository. A copy
+      # of the repository (a mirror, a private working copy) inherits
+      # .github/dependabot.yml and would otherwise spend a full run, about an
+      # hour of runner time, on every weekly bump it will never merge. Stop
+      # red, not green: every job below needs `changes`, so they skip, and
+      # `gate` fails rather than calling an untested bump verified.
+      - name: Dependabot pull requests are tested only in pyrite-wiki/pyrite
+        if: github.actor == 'dependabot[bot]' && github.repository != 'pyrite-wiki/pyrite'
+        run: |
+          echo "::error::Dependabot bumps are tested in pyrite-wiki/pyrite; this copy does not run CI on them."
+          exit 1
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ---------------------------------------------------------------------
