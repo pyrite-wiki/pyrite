@@ -84,7 +84,8 @@ Marks: **decided** = accepted ADR; **proposed** = ADR-0044 only (all of ADR-0038
   and the hand edit survives (ADR-0041 acceptance, ADR-0042 acceptance).
 - No `body_truncated` input is accepted by a write ([[adr-0034]] decision 2).
 - A file a write places as an entry is a file the index walk lists: one
-  predicate (`pyrite/storage/entry_paths.py`) decides, the walk applies it,
+  predicate (`pyrite/storage/entry_paths.py`) decides, on the name as the
+  filesystem may fold it (case, Unicode, NTFS trailing dots), the walk applies it,
   and every writer of a new entry-file name (create, the templated move,
   `move_entry_text`, the reconcile) asks it first; an id whose default name
   the walk skips gets the next `-N` name, a path `kb.yaml` or a field chose
