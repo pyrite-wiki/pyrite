@@ -948,18 +948,37 @@ STRUCTURAL_ALLOWLIST = {
 }
 
 
-def _calls(node: ast.AST) -> set[str]:
-    return {
-        getattr(c.func, "id", None) or getattr(c.func, "attr", None)
-        for c in ast.walk(node)
-        if isinstance(c, ast.Call)
+_SHAPERS = {"shape_entry_row", "shape_entry_rows"}
+_SHAPER_HOME = "pyrite/storage/backends/base_backend.py"
+
+
+def _shapers_in_scope(rel: str, tree: ast.Module) -> set[str]:
+    """The shaper names that mean `base_backend`'s functions in this module:
+    defined there, or imported from it; a module that defines its own
+    function by that name (a decoy) has none."""
+    defined = {
+        n.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name in _SHAPERS
     }
+    if rel == _SHAPER_HOME:
+        return defined
+    imported = {
+        alias.asname or alias.name
+        for n in ast.walk(tree)
+        if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("base_backend")
+        for alias in n.names
+        if alias.name in _SHAPERS
+    }
+    return imported - defined
 
 
-def _functions_with_entry_sql() -> Iterator[tuple[str, str, ast.AST]]:
+def _functions_with_entry_sql() -> Iterator[tuple[str, str, ast.AST, set[str]]]:
     for path in sorted((REPO / "pyrite" / "storage").rglob("*.py")):
         rel = path.relative_to(REPO).as_posix()
-        for node in ast.walk(ast.parse(path.read_text())):
+        tree = ast.parse(path.read_text())
+        shapers = _shapers_in_scope(rel, tree)
+        for node in ast.walk(tree):
             if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                 continue
             for c in ast.walk(node):
@@ -970,21 +989,30 @@ def _functions_with_entry_sql() -> Iterator[tuple[str, str, ast.AST]]:
                     and not _AGGREGATE.match(m.group("sel"))
                     for m in _ENTRY_SELECT.finditer(c.value)
                 ):
-                    yield rel, node.name, node
+                    yield rel, node.name, node, shapers
                     break
 
 
 def test_every_storage_reader_of_entry_rows_returns_through_the_shaper():
     """Any function in `pyrite/storage` whose SQL selects `*` or a shaped
     column from `entry` calls `shape_entry_row(s)` (a call in its AST, not the
-    name in its text), or is allowlisted with a reason."""
+    name in its text), and that name is `base_backend`'s function (imported
+    from it, not a module's own decoy), or is allowlisted with a reason. What
+    it does not check: that the shaped value is what the function returns."""
     offenders = []
     found = set()
-    for rel, name, node in _functions_with_entry_sql():
+    for rel, name, node, shapers in _functions_with_entry_sql():
         found.add((rel, name))
         if (rel, name) in STRUCTURAL_ALLOWLIST:
             continue
-        if not _calls(node) & {"shape_entry_row", "shape_entry_rows"}:
+        # A bare call to the name imported from (or defined in) base_backend:
+        # an attribute call or a module's own function by that name is not it.
+        bare = {
+            c.func.id
+            for c in ast.walk(node)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+        }
+        if not bare & shapers:
             offenders.append(f"{rel}::{name}")
     assert offenders == [], "entry rows built without shape_entry_row(s)"
     assert set(STRUCTURAL_ALLOWLIST) <= found, "stale allowlist entries"
