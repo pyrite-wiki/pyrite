@@ -5,10 +5,10 @@ Handles reading and writing entries to/from markdown files.
 Each KB is a directory of markdown files with YAML frontmatter.
 """
 
-import fnmatch
 import io
 import logging
 import os
+import re
 import stat
 from collections.abc import Callable, Iterator, Mapping, Set
 from dataclasses import dataclass
@@ -34,11 +34,12 @@ from ..models.core_types import (
     explicit_entry_id,
     read_entry_id,
 )
-from ..schema import CORE_TYPES
+from ..schema import CORE_TYPES, expand_subdirectory_template
 from ..utils.atomic_write import HardLinked
 from ..utils.frontmatter import Frontmatter, describe, split_frontmatter
 from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles
 from ..utils.yaml import load_yaml
+from . import entry_paths
 from .entry_writer import (
     FileChanged,
     create_entry_text,
@@ -49,6 +50,10 @@ from .entry_writer import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: A ``{field}`` placeholder of a templated subdirectory (``st/{phase}``),
+#: as ``expand_subdirectory_template`` reads it.
+_TEMPLATE_FIELD_RE = re.compile(r"\{(\w+)\}")
 
 #: How many times a rename re-reads a linking file whose bytes changed under
 #: it before giving up (the same bound as an update's, ADR-0042 decision 10).
@@ -657,9 +662,59 @@ class KBRepository:
             if custom_name:
                 # file_pattern provides the full filename (with .md)
                 if subdir:
-                    return self._contained(self.path / subdir / custom_name)
-                return self._contained(self.path / custom_name)
-        return self._free_default_path(entry.id, subdir)
+                    path = self._contained(self.path / subdir / custom_name)
+                else:
+                    path = self._contained(self.path / custom_name)
+                self._require_listed(path, entry, subdir, from_pattern=True)
+                return path
+        path = self._free_default_path(entry.id, subdir)
+        self._require_listed(path, entry, subdir, from_pattern=False)
+        return path
+
+    def _require_listed(
+        self, path: Path, entry: Entry, subdir: str | None, *, from_pattern: bool
+    ) -> None:
+        """Refuse a new entry path the index walk would not list (#1552), with
+        ``VALIDATION_FAILED`` and before anything is written: the operator's
+        ``kb.yaml`` (a static ``subdirectory``, a ``file_pattern``) or the
+        entry's own field value (a templated ``subdirectory``) chose it, and
+        neither is Pyrite's to rename. Where Pyrite chose the name (``<id>.md``)
+        ``_free_default_path`` already chose a listed one. The message names
+        the reserved part's source; a field value that caused it also gets an
+        ``errors`` row ``{field, rule: "entry_path", got, message}`` (#1284).
+
+        ``_prepare`` (so a dry run) and ``save`` both reach this through
+        ``_resolve_file_path``, so the two answer alike."""
+        reason = entry_paths.unlisted_reason(self.path, path)
+        if reason is None or reason == entry_paths.OUTSIDE:
+            return
+        parts = entry_paths.parts_below(self.path, path) or ()
+        rel = "/".join(parts)
+        etype = entry.entry_type
+        type_schema = self.config.kb_schema.get_type_schema(etype)
+        declared = getattr(type_schema, "subdirectory", None) or ""
+        folder_reason = entry_paths.reason_for_folders(parts[:-1]) is not None
+        source: str | None = None
+        rows: list[dict] | None = None
+        if folder_reason and declared and "{" in declared:
+            for name in _TEMPLATE_FIELD_RE.findall(declared):
+                value = expand_subdirectory_template("{" + name + "}", entry)
+                if entry_paths.reason_for_folders((value,)) is not None:
+                    got = getattr(entry, name, None)
+                    if got is None:
+                        got = (getattr(entry, "metadata", None) or {}).get(name)
+                    source = f"field `{name}` is {got!r}, used by the subdirectory `{declared}` of type '{etype}'"
+                    message = entry_paths.unlisted_message(rel, reason, source)
+                    rows = [{"field": name, "rule": "entry_path", "got": got, "message": message}]
+                    break
+        if source is None:
+            if folder_reason and declared:
+                source = f"kb.yaml `subdirectory: {declared}` of type '{etype}'"
+            elif folder_reason and subdir:
+                source = f"the folder `{subdir}` of type '{etype}'"
+            elif from_pattern and type_schema is not None:
+                source = f"kb.yaml `file_pattern: {type_schema.file_pattern}` of type '{etype}'"
+        entry_paths.require_listed(self.path, path, source=source, errors=rows)
 
     def _free_default_path(self, entry_id: str, subdir: str | None) -> Path:
         """``<id>.md`` for a new entry, or the first ``<id>-N.md`` when that
@@ -673,12 +728,23 @@ class KBRepository:
         so does one the KB would not read (a link out, a hard link): what such
         a file holds decides nothing."""
         path = self._get_file_path(entry_id, subdir)
-        holder = self.read_id(path)[0] if self.present(path) else None
-        if holder is None or holder == entry_id:
-            return path
+        # A name the index walk skips (``readme.md`` in any case, #1552) is
+        # taken as if another id held it: Pyrite chose this name, so it
+        # chooses a listed one, and the id stays what the caller named. The
+        # test is on the lowercased name, never a probe of the disk, so a
+        # case-insensitive filesystem answers the same.
+        if entry_paths.is_listed(self.path, path):
+            holder = self.read_id(path)[0] if self.present(path) else None
+            if holder is None or holder == entry_id:
+                return path
         for n in range(2, 1000):
             candidate = path.with_name(f"{entry_id}-{n}.md")
-            if not self.present(candidate):
+            if not entry_paths.is_listed(self.path, candidate):
+                break  # the folder itself is skipped: no name in it helps
+            # A candidate that already holds this id is the entry's own file:
+            # a caller that recomputes the path after the create (a plugin
+            # printing it) gets the file written, not the next ``-N``.
+            if not self.present(candidate) or self.read_id(candidate)[0] == entry_id:
                 return candidate
         return path
 
@@ -1004,10 +1070,12 @@ class KBRepository:
         # any row can be stale: read through, it would count as an explicit
         # holder, and the delete would remove the user's link and keep the
         # entry, #1262). It also excludes a path the walk skips: a README, a
-        # path with a dot-prefixed part, one under ``_templates``. Such a file
-        # can hold an entry (a create titled "README" writes one, #1552); a
-        # delete before the next sync then answers not found for it, its row
-        # is dropped, and the file stays.
+        # path with a dot-prefixed part, one under ``_templates``, a name not
+        # ending in ``.md``. No write places an entry there any more: every
+        # writer asks ``entry_paths`` first, so a create titled "README"
+        # writes ``readme-2.md`` and a path kb.yaml or a field chose is
+        # refused (#1552). Only a file an earlier version wrote can still be
+        # such a holder; it is not found by id (``index health`` names it).
         if (
             indexed_path is not None
             and self._lexically_inside(indexed_path)
@@ -1193,8 +1261,11 @@ class KBRepository:
         if keep_filename and entry.file_path is not None:
             filename = entry.file_path.name
             if subdir:
-                return self._contained(self.path / subdir / filename)
-            return self._contained(self.path / filename)
+                path = self._contained(self.path / subdir / filename)
+            else:
+                path = self._contained(self.path / filename)
+            self._require_listed(path, entry, subdir, from_pattern=False)
+            return path
         # Check for custom file_pattern in the type schema
         return self._resolve_file_path(entry, subdir)
 
@@ -1541,9 +1612,7 @@ class KBRepository:
         """
         target = self._in_kb_link(md_file)
         if target is None or (
-            not fnmatch.fnmatch(target.name, "*.md")
-            or not self._lexically_listed(target)
-            or not _is_regular_file(target)
+            not entry_paths.is_listed(self.path, target) or not _is_regular_file(target)
         ):
             return None
         return target
@@ -1602,31 +1671,18 @@ class KBRepository:
         return self._lexically_listed(md_file) and self.alias_target(md_file) is None
 
     def _lexically_listed(self, md_file: Path) -> bool:
-        """The walk's skip rules on the path's spelling alone: hidden parts,
-        ``_templates``, a README. No I/O."""
-        # The parts below the KB root. A string prefix first: ``relative_to``
-        # walks the path's parents, and on a lookup's walk of a 2,000-file KB
-        # that was a third of the cost (#135). Both are lexical; a path the
-        # prefix does not match (another case on Windows) gets the full rule.
-        root = str(self.path)
-        prefix = root if root.endswith(os.sep) else root + os.sep
-        name = str(md_file)
-        if name.startswith(prefix):
-            parts: tuple[str, ...] = tuple(name[len(prefix) :].split(os.sep))
-        else:
-            try:
-                parts = md_file.relative_to(self.path).parts
-            except ValueError:
-                return False
-        # Skip hidden directories and files (check relative path only,
-        # so a KB stored under e.g. ~/.pyrite/kbs/ is not skipped)
-        if any(part.startswith(".") for part in parts):
-            return False
-        # Skip template scaffold files in _templates directories
-        if "_templates" in parts:
-            return False
-        # Skip README files (case-insensitive) — they lack frontmatter
-        return md_file.name.lower() != "readme.md"
+        """The walk's rule on the path's spelling alone, which is
+        ``entry_paths``' (#1552): no hidden part, no ``_templates`` part, not a
+        README, a ``.md`` name. No I/O. Every writer of a new entry-file name
+        asks the same predicate, so what a write places the walk lists.
+
+        A ``__collection.yaml`` is not a ``*.md`` entry file, but a delete's
+        index-row candidate (``files_to_delete``) may be one: it is held to
+        the folder rules alone, as it was before the suffix joined the rule."""
+        reason = entry_paths.unlisted_reason(self.path, md_file)
+        if reason == entry_paths.NOT_MARKDOWN and md_file.name == "__collection.yaml":
+            return True
+        return reason is None
 
     def list_all_files(self) -> Iterator[Path]:
         """Iterate over all entry file paths (md + collection yaml) without parsing."""
