@@ -14,11 +14,9 @@ Schema Validation (schema.py)
     │
     ▼
 Type Resolution (_resolve_entry_type)
-    │  Maps core types to plugin subtypes:
-    │    note     → article              (software-kb)
-    │    event    → investigation_event  (journalism-investigation)
-    │    person   → user_profile         (social)
-    │  SILENT — no error if no plugin subtype exists, falls through to core
+    │  Maps core types when declared:
+    │    event → investigation_event (journalism-investigation, declared by get_type_mappings)
+    │    otherwise the type named
     │
     ▼
 build_entry (factory.py)
@@ -86,15 +84,13 @@ spelling of field `k`, not a separate field:
 
 ## Type Resolution Details
 
-`_resolve_entry_type()` in `kb_service.py` consults the plugin registry to find if any plugin provides a subtype for a core type. This mapping is implicit — the plugin's `get_entry_types()` returns classes whose parent is a core type.
-
-**Why this matters:** When you call `kb_create(type="event")`, the entry you get back might be an `InvestigationEventEntry`, not an `Event`. The frontmatter will say `type: event`, but the Python class and its validation rules come from the plugin. If your code does `isinstance(entry, Event)`, it works (inheritance). If it does `type(entry).__name__ == "Event"`, it fails.
+`_resolve_entry_type()` in `kb_service.py` calls `resolve_entry_type()`, which maps a type only if an active plugin explicitly declares the mapping in `get_type_mappings()`. When the KB's `kb.yaml` declares types, both the source and target types must be declared for the mapping to apply; otherwise, the type named by the caller is stored directly without any subclass-based inference. See [Pyrite Plugin Protocol](../../../kb/components/pyrite-plugin-protocol.md) for the contract.
 
 ## build_entry Factory
 
 The factory (`pyrite/models/factory.py`) is the single point where entries are constructed. It handles two tricky problems:
 
-1. **Plugin subtype dispatch**: Uses `get_entry_class()` from the registry to find the right class, then calls `from_frontmatter()`.
+1. **Plugin type dispatch**: Uses `get_entry_class()` from the registry to find the right class, then calls `from_frontmatter()`.
 
 2. **Known vs unknown kwargs**: Plugin entry classes have specific dataclass fields. Extra kwargs (like `source_url`, `linkedin`) that aren't dataclass fields must go into the `metadata` dict, not as top-level frontmatter keys. The factory introspects `dataclasses.fields()` to make this separation.
 
