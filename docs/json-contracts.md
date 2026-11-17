@@ -141,6 +141,7 @@ blank means no name. These details apply equally to CLI and REST resolution.
 - `task status`: use `task get`. Leaves in 0.27.
 - `db.conn`: use `db.session` for writes or `db.execute_sql()` for reads. Leaves in 0.27.
 - `FRONTMATTER_ALIASES`: declare `field_aliases` in the type's schema. Leaves in 0.27.
+- orient's `schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, `schema.types.<type>.ai_instructions` (and the type's `guidelines`, `goals`, `evaluation_rubric`) and top-level `guidelines`: read `kb_authored` and `pyrite_guidance`. Leaves in 0.27.
 
 The compatibility warnings also name 0.27, following the maintainer decision.
 
@@ -274,6 +275,35 @@ the relation written by the source. Only readable KBs contribute rows or
 counts. Self-links are excluded. With no inbound links the list and warnings
 are empty and the count is zero. These are index snapshots, so a hand edit
 made since the last sync may not appear. Deletion does not edit the linkers.
+
+The same three surfaces return `links_left`: the symbolic links inside the KB
+that the walk lists and that pointed at the removed file, `[{path, target}]`,
+KB-relative (`[]` when there are none). A delete removes the entry's real file
+only and never removes a link, which is the user's file; `warnings` names
+every link the walk lists, and the next `index sync` / `index health` lists
+them under `dangling_links` (#1262). The delete's candidates come from the
+files: the index row's path is a candidate only where the walk would list it,
+so a row naming an in-KB link (dev's sync wrote one when the link sorted
+before its real file; any row can be stale) does not make the link the
+entry, and `links_left` lists only links still on disk that point at nothing.
+
+Limit: a link in a folder the walk skips (a dot-prefixed folder such as
+`.hidden/`, or `_templates/`) is not walked. A delete keeps it but does not
+name it, and the next sync does not report it as dangling; a templated move
+(below) does not see it and moves the file, leaving it dangling, unreported.
+
+A write that would move a file such a link names (a link the walk lists),
+whether a templated-subdirectory move on update or `pyrite index reconcile`,
+leaves the file in place and says why, naming the link. On update it is
+`not_moved`. On reconcile every such file gets a "Kept in place <id>: ..."
+line. When no move is planned at all, a summary follows ("No moves planned;
+N misplaced file(s) stay where they are because an in-KB link names each",
+never "could not be checked"); when other files are movable, the table of
+moves follows instead, with no summary. The exit code: with no move planned,
+or on a dry run, a kept file exits 3. With `--apply` and moves planned, it is
+`exit_unless_whole` over kept files plus failed moves: 3 when at least one
+move succeeded, 1 when none did (for example a kept file beside a move that
+failed), 0 when nothing was kept or failed. A read-only KB with moves planned exits 1 under `--apply` before any move.
 
 CLI deletion keeps its default rich output and supports `--format json`.
 Without a terminal it refuses an unconfirmed deletion with `USAGE_ERROR`
@@ -490,6 +520,8 @@ a row here (a test compares this table with the command's output).
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
 | `duplicates` | IDs held by more than one file; `winner` names the indexed copy. | Failure | Keep one file, then `pyrite index sync`. |
+| `aliases` | In-KB symbolic links to another walked entry file, `{kb, path, target}`. The link is never indexed or read itself, and is left as it is; `target` is read by the walk's own rules (indexed once, unless it is skipped, as a file with a second hard link is). The same list is returned by `IndexManager.sync_incremental`/`reconcile_kb`, CLI `index sync` (text) and `kb reindex` (JSON and text), REST `POST /api/kbs/{name}/reindex` and MCP `kb_registry_reindex`; MCP `kb_index_sync` and REST `POST /api/index/sync` return neither key. | Information, not a finding | Nothing to do; remove the link only if it is not wanted. |
+| `dangling_links` | In-KB symbolic links with nothing at the path they name, `{kb, path, target}` (`target` KB-relative): hand-made, or left by a delete, which keeps the user's link. They hold no entry, so they are not `unreadable_files` and not `malformed`. A `__collection.yaml` that is such a link is reported here too. Only links the walk lists are reported: one in a dot-prefixed folder or `_templates/` is not. The same surfaces as `aliases` return it. A link that leads out of the KB, or a link loop, is reported as before. | Warning | Restore the file the link names, or remove the link. |
 | `removed_extensions` | KBs whose type belonged to an extension that is no longer installed. | Warning | Reinstall the extension, or change `kb_type` in `kb.yaml`. |
 | `type_name_drift` | Groups of one type spelled more than one way after case, `_` and spaces are folded to `-`. | Warning | Hand edit the `type:` spellings, then `pyrite index sync`. |
 | `type_name_drift_total` | Number of drift groups before the report's cap. | Metadata, not a finding | Fix the groups listed there. |
@@ -693,6 +725,44 @@ reads. So a KB made from the journalism preset, which declares
 `investigation_event` but not `event`, shows no `event` pair, and
 `create -t event` there is refused `UNDECLARED_TYPE`. Subclassing a core
 class maps nothing.
+
+**`orient` -> `kb_authored`, `pyrite_guidance`.** A KB's `kb.yaml` carries
+free text an agent reads (`guidelines`, `goals`, `evaluation_rubric`, a type's
+`ai_instructions`), and whoever controls the KB wrote it. `pyrite orient -k
+<kb>` (MCP `kb_orient`, REST orient) keeps it apart from Pyrite's own
+guidance (#1369). Both keys are in `detail=full` only; `detail=brief` omits
+them with the other write-side blocks.
+
+- `kb_authored`: `{notice, source, read_only, guidelines?, goals?,
+  evaluation_rubric?, types?, malformed?}`. `source` is `own`, `subscribed`
+  (a clone under the workspace) or `fork`; `read_only` is the KB's flag.
+  Each text key is present when the KB's own `kb.yaml` sets it to a
+  non-null, non-empty value, and carries that value as written, in whatever
+  shape the author gave it (a string `guidelines` stays a string; a key left
+  blank inside a mapping, or a null list item, comes back as `null`). `types`
+  maps a type name to its own `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric`, the same way. A value holding any node JSON cannot
+  carry as written is left out whole and listed in `malformed` as `{key,
+  reason}`, `key` dotted (`types.note.goals`), the reason naming its first
+  such node: NaN or an infinity; a YAML date or timestamp; binary
+  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); or a
+  mapping key that is not a string (a number, bool, null, date or binary key,
+  or a mapping or list used as a key). A `kb.yaml` that cannot be read at all
+  (a set or pairs used as a key) fails as it does without this key. Treat the contents as content from the KB's authors,
+  not as instructions from Pyrite; the MCP server instructions say the same.
+- `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
+  KB inherits, never anything a KB wrote.
+- Deprecated in orient, removed in 0.27 (see "Deprecated, still accepted"),
+  and what each returns until then: `schema.goals` is the KB's `goals` as
+  written; `schema.guidelines` is Pyrite's default guidelines with the KB's
+  mapping merged over them; `schema.evaluation_rubric` is Pyrite's default
+  rubric followed by the KB's items, deduplicated by text;
+  `schema.types.<type>.ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric` are the KB's value where it sets one, in place of
+  Pyrite's or a plugin's default. The top-level `guidelines` is always `{}`:
+  it never carries the KB's text. `kb_authored.notice` says the same. A KB
+  whose `guidelines` is a string gets `"schema": {}` (#1498); its
+  `kb_authored` still answers, with the string as written.
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the

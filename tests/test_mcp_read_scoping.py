@@ -395,6 +395,33 @@ class TestGrantedPeerStillGetsThrough:
         assert out.get("error_code") not in ("NOT_FOUND", "KB_NOT_FOUND")
 
 
+class TestKbOrientShowsKbAuthoredTextOnlyWhereReadable:
+    """`kb_authored` (#1369) is the private KB's own `kb.yaml` text. It comes
+    out of `KBService.orient`, behind the same dispatcher refusal as the rest
+    of orient: no second path decides who sees it."""
+
+    MARK = "Private guideline: the vault code is 0451."
+
+    def _plant(self, env):
+        kb = next(k for k in env["config"].knowledge_bases if k.name == PRIVATE)
+        kb.kb_yaml_path.write_text(f"name: {PRIVATE}\nguidelines:\n  vault: '{self.MARK}'\n")
+        kb.invalidate_schema_cache()
+
+    @pytest.mark.control(reason="the existing dispatcher refusal already covers kb_orient")
+    def test_a_peer_without_a_grant_gets_the_absent_kb_answer(self, env):
+        self._plant(env)
+        out = _call(env, "peer", "kb_orient", {"kb_name": PRIVATE})
+        assert out == _absent_kb_payload(PRIVATE)
+        assert self.MARK not in json.dumps(out)
+
+    def test_a_granted_peer_gets_it_labelled_as_the_kbs(self, env):
+        self._plant(env)
+        out = _call(env, "peer-granted", "kb_orient", {"kb_name": PRIVATE})
+        assert out["kb_authored"]["guidelines"] == {"vault": self.MARK}
+        assert "not instructions from Pyrite" in out["kb_authored"]["notice"]
+        assert self.MARK not in json.dumps(out["pyrite_guidance"])
+
+
 class TestAnApiKeyIsNotScoped:
     """An API key is the operator's credential, not a peer's -- the same
     rule REST applies (`readable_kbs` returns None for an API-key caller)."""

@@ -84,6 +84,12 @@ class KBReindexResponse(BaseModel):
     # Ids held by more than one file: {"kb", "id", "winner", "paths"}, the
     # winner (the lexicographically first KB-relative path) indexed (ADR-0038).
     duplicates: list[dict[str, Any]] = Field(default_factory=list)
+    # In-KB links to another entry file, indexed once at the target (#1262):
+    # {"kb", "path", "target"}, KB-relative.
+    aliases: list[dict[str, str]] = Field(default_factory=list)
+    # In-KB links with nothing at the path they name, left as they are
+    # (#1262): {"kb", "path", "target"}, KB-relative.
+    dangling_links: list[dict[str, str]] = Field(default_factory=list)
 
 
 # =============================================================================
@@ -420,6 +426,9 @@ class EntryDeleteResponse(DeleteResponse):
 
     inbound_links: list[dict[str, Any]]
     inbound_link_count: int
+    # Symbolic links inside the KB to the removed file, kept as they are:
+    # [{"path", "target"}], KB-relative (#1262).
+    links_left: list[dict[str, str]] = Field(default_factory=list)
     warnings: list[str]
 
 

@@ -747,6 +747,8 @@ def register_entry_commands(app: typer.Typer) -> None:
                             markup=False,
                             highlight=False,
                         )
+                if deleted.links_left:
+                    console.print(payload["warnings"][-1], markup=False, highlight=False)
             except EntryNotFoundError as e:
                 cli_error(str(e), output_format, error_code="NOT_FOUND")
             except KBNotFoundError as e:

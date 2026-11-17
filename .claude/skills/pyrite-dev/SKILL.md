@@ -116,6 +116,7 @@ tests](../../../CONTRIBUTING.md#running-the-tests)).
 | Backend tests pass (all) | the draft PR's CI: `gh pr checks <n>` (the whole suite locally: `scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q`) | `gate` passes (it waits for every `test (<py>, <shard>)` leg) |
 | The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
+| A new error class, refusal message, result key or error code obeys the contracts (the tests that read the source, which your own tests never run) | the tests named in [gotchas.md](gotchas.md), "A New Error Class or Message: Run the Source-Reading Tests", and the rest its `grep` finds | all pass, before the push; CI is otherwise the first place they fail (#1542) |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
 | Lint passes | `.venv/bin/ruff check . && .venv/bin/ruff format --check .` | clean |
 
@@ -194,9 +195,9 @@ Done means the whole theme, with evidence for every claim. Then, in order:
    origin/dev`). `git diff <noted-head> HEAD` must be empty: the rewrite
    changes history, never content. Then `git push --force-with-lease`. Only your own branch, and only before the PR
    is marked ready.
-3. **Push**: in a cloud container, first read
-   `scripts/known-cloud-failures.json` or run
-   `python3 scripts/known_cloud_failures.py`. Compare exact test nodes; do not
+3. **Push**: in a cloud container, first run
+   `python3 scripts/known_cloud_failures.py`, the reading path for
+   `scripts/known-cloud-failures.json`. Compare exact test nodes; do not
    spend a task rediscovering a recorded cloud-only failure. Do not waive a
    changed test or CI. Keep newly observed failures distinct.
    (CONTRIBUTING, "Branches, hooks and pull requests"). A red

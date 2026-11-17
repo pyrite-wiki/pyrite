@@ -68,6 +68,34 @@ def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, 
     return stats["embedded"] + from_queue, max(0, skipped), max(0, -skipped)
 
 
+def _print_file_links(results: dict) -> None:
+    """The in-KB symbolic links a reconcile reported (#1262), for `index sync`
+    and `kb reindex`: aliases (another name for an entry file, never indexed
+    themselves) and dangling links (nothing at the path they name). Both are
+    the user's files and are left as they are."""
+    for key, heading, style in (
+        ("aliases", "Aliases: {n} (in-KB links to an entry file; not indexed themselves)", ""),
+        (
+            "dangling_links",
+            "Dangling links: {n} (in-KB links to a missing file; left as they are)",
+            "yellow",
+        ),
+    ):
+        rows = results.get(key, [])
+        if not rows:
+            continue
+        line = heading.format(n=len(rows))
+        console.print(f"  [{style}]{line}[/{style}]" if style else f"  {line}")
+        for row in rows[:5]:
+            console.print(
+                f"    • {row['kb']}: {row['path']} -> {row['target']}",
+                markup=False,
+                highlight=False,
+            )
+        if len(rows) > 5:
+            console.print(f"    [dim]… and {len(rows) - 5} more[/dim]")
+
+
 def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
     """One line per id held by several files, the indexed file first.
 
@@ -301,6 +329,8 @@ def index_sync(
         )
         for line in _duplicate_lines(duplicates):
             console.print(f"    • {line}", markup=False, highlight=False)
+
+    _print_file_links(results)
 
     # A KB whose files could not be read was not synced and kept its rows
     # (#1542): named, and the exit says the sync was not whole (below).
@@ -593,6 +623,8 @@ def index_health(
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
             "duplicates": duplicates,
+            "aliases": health.get("aliases", []),
+            "dangling_links": health.get("dangling_links", []),
             "removed_extensions": removed_extensions,
             "type_name_drift": health.get("type_name_drift", []),
             "type_name_drift_total": health.get("type_name_drift_total", 0),
@@ -653,12 +685,28 @@ def _report_health(
 
     console.print("\n[bold]Index Health Check[/bold]\n")
 
+    # Information, not a finding: in-KB links to an entry file (#1262).
+    aliases = health.get("aliases", [])
+    if aliases:
+        console.print(f"{len(aliases)} alias(es): in-KB links to an entry file, not indexed")
+
     if not is_unhealthy and not has_warning:
         console.print("[green]✓ Index is healthy[/green]")
         return
 
     if not is_unhealthy and has_warning:
         console.print("[green]✓ Index is healthy[/green]")
+
+    dangling = health.get("dangling_links") or []
+    if dangling:
+        console.print(
+            f"[yellow]⚠ {len(dangling)} in-KB file link(s) point at a missing file"
+            " (left as they are):[/yellow]"
+        )
+        for row in dangling[:10]:
+            console.print(
+                f"  • {row['kb']}: {row['path']} -> {row['target']}", markup=False, highlight=False
+            )
 
     if broken_links:
         console.print(
@@ -894,15 +942,28 @@ def index_reconcile(
     result = KBService(config, db).reconcile_templated_subdirectories(kb_name, apply=apply)
     for entry_id, error in result.errors:
         console.print(f"[yellow]Could not reconcile {entry_id}:[/yellow] {error}")
+    # Checked, and left in place: the user's link would point at nothing (#1262).
+    for entry_id, why in result.kept:
+        console.print(
+            f"[yellow]Kept in place {entry_id}:[/yellow] {why}", markup=True, highlight=False
+        )
 
     if not result.moves:
-        if not result.errors:
+        if not result.errors and not result.kept:
             console.print("[green]All templated subdirectories match.[/green]")
         else:
-            console.print(
-                f"[yellow]No moves planned; {len(result.errors)} entry path(s) could not be checked.[/yellow]"
-            )
-        if result.errors:
+            parts = []
+            if result.kept:
+                parts.append(
+                    f"{len(result.kept)} misplaced file(s) stay where they are because an "
+                    "in-KB link names each"
+                )
+            if result.errors:
+                parts.append(f"{len(result.errors)} entry path(s) could not be checked")
+            console.print(f"[yellow]No moves planned; {'; '.join(parts)}.[/yellow]")
+        if result.errors or result.kept:
+            # Not everything asked for was done: a file stays misplaced
+            # (#1262), or a path could not be checked.
             raise typer.Exit(PARTIAL_EXIT)
         return
 
@@ -925,7 +986,7 @@ def index_reconcile(
 
     if not apply:
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
-        if result.errors:
+        if result.errors or result.kept:
             raise typer.Exit(PARTIAL_EXIT)
         return
 
@@ -935,8 +996,9 @@ def index_reconcile(
 
     console.print(f"\n[green]Moved {result.moved} file(s).[/green]")
     console.print("The index was updated for successfully moved files.")
-    # Moves that failed were reported above; some moved, some did not.
-    exit_unless_whole(len(result.errors), result.moved)
+    # Moves that failed, and files kept in place for a link, were reported
+    # above; some moved, some did not.
+    exit_unless_whole(len(result.errors) + len(result.kept), result.moved)
 
 
 @index_app.command("jobs")

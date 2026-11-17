@@ -539,6 +539,9 @@ def kb_reindex(
             console.print(f"  [yellow]Duplicate ids: {len(duplicates)}[/yellow]")
             for line in _duplicate_lines(duplicates):
                 console.print(f"    • {line}", markup=False, highlight=False)
+        from .index_commands import _print_file_links
+
+        _print_file_links(result)
 
 
 @kb_app.command("health")

@@ -590,11 +590,21 @@ class KBFiles:
     def contains(self, path: str | os.PathLike[str]) -> bool:
         """Whether ``path`` resolves inside the root (no I/O beyond resolving),
         against the root as resolved for this write."""
+        return self.resolved(path) is not None
+
+    def resolved(self, path: str | os.PathLike[str]) -> Path | None:
+        """Where ``path`` leads, spelled under ``self.root`` (the root as the
+        KB names it, not its real path), or None when it leads out of the
+        root or cannot be resolved. The one answer to "does this name lead
+        out of the KB" (``contains``); no I/O beyond resolving, and nothing
+        is opened. A dangling link resolves to the missing name it points
+        at. Used to find which KB file an in-KB link names (#1262)."""
         try:
             real = os.path.realpath(self._absolute(path))
         except (OSError, ValueError, RuntimeError):
-            return False
-        return _parts_below(self.real_root, real) is not None
+            return None
+        parts = _parts_below(self.real_root, real)
+        return None if parts is None else self.root.joinpath(*parts)
 
     def check(self, path: str | os.PathLike[str], what: str = "file") -> bool:
         """``contains``, logging once per file when not."""
