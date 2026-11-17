@@ -252,8 +252,14 @@ def registry() -> dict[str, object]:
 UNBOUNDED: dict[tuple[str, str], str] = {}
 
 #: (command path, parameter name) -> why the checker cannot classify the type (a
-#: ``parser=`` or ``click_type=`` option) and why that is safe. Empty today.
-UNCLASSIFIED: dict[tuple[str, str], str] = {}
+#: ``parser=`` or ``click_type=`` option) and why that is safe. One row: `qa duplicates --threshold`.
+UNCLASSIFIED: dict[tuple[str, str], str] = {
+    ("pyrite qa duplicates", "threshold"): (
+        "a click float range accepts NaN; this hand-built type refuses a non-finite or "
+        "out-of-range value at parse time (usage error, exit 2); to be replaced by the "
+        "shared finite-float type tracked on #1541"
+    ),
+}
 
 #: #1541: unbounded on ``dev`` today, grouped by the module that declares them.
 #: Each module is a good first issue: add the range where the option is
