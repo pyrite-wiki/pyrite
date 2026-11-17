@@ -74,6 +74,10 @@ class KBHealthResponse(BaseModel):
     # not list them (#1552): a count, never the paths, over the network; a
     # warning, `healthy` unchanged. `pyrite index health` names them locally.
     unlisted_entry_files: int = 0
+    # How many folders the index walk could not list (#1546): a count, never
+    # the paths, over the network; `healthy` is false. `pyrite index health`
+    # names them locally.
+    unreadable_folders: int = 0
 
 
 class KBReindexResponse(BaseModel):

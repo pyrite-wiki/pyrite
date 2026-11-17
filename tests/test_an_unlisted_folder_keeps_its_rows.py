@@ -400,6 +400,24 @@ def test_mcp_and_rest_get_a_count_never_a_path(world):
     assert _world_rows(world) == SEEDED_IDS
 
 
+def test_network_health_is_unhealthy_with_a_count_never_a_path(world):
+    """REST and MCP ``kb health`` (shaped in ``KBRegistryService.health_kb``):
+    unhealthy, and the folders as a count, as sync and reindex give them."""
+    _world_shut(world, "folder-000")
+    world.cli("index", "sync", "-k", KB, "--no-embed")
+    where = str(world.root_kb)
+    answers = {
+        "mcp kb_registry_health": world.mcp()._dispatch_tool("kb_registry_health", {"name": KB}),
+        "rest kb health": world.client.get(f"/api/kbs/{KB}/health").json(),
+    }
+    for surface, body in answers.items():
+        assert body.get("healthy") is False, (surface, body)
+        assert body.get("unreadable_folders") == 1, (surface, body)
+        text = json.dumps(body)
+        assert f"{where}/sub" not in text, (surface, body)
+        assert "Permission denied" not in text, (surface, body)
+
+
 def test_an_alias_into_a_shut_folder_is_unreadable_not_dangling(tmp_path):
     """The maintainer's line (2026-11-17): an in-KB link into a folder that
     cannot be searched is reported as unreadable, not as a dangling link to a
