@@ -1764,6 +1764,9 @@ class KBService:
             **fields,
         )
         entry._create_fields = attributes
+        if allow_undeclared and kb_config.kb_schema.validation.get("enforce", False):
+            if not kb_config.kb_schema.get_type_schema(resolved_type):
+                self._validate_write(entry, kb_config.name, kb_config)
         fm = {
             **entry._frontmatter_for_file(),
             "id": "",

@@ -352,7 +352,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         if template:
             if kb_name:
                 with cli_context(kbs=(kb_name,)) as (config, _db, svc):
-                    kb_config = config.get_kb(kb_name)
+                    kb_config = svc.require_kb(kb_name)
                     try:
                         resolved_type, fm = svc.template_frontmatter(
                             entry_type,
@@ -364,6 +364,9 @@ def register_entry_commands(app: typer.Typer) -> None:
                         raise _with_cli_hint(e) from None
                     entry_type = resolved_type
             else:
+                # Without -k, create --template prints core types skeleton with type fields.
+                # The two branches are deliberately separate: the KB branch uses the KB's
+                # schema service, while the no-KB branch uses builtin CORE_TYPES.
                 fm = {
                     "id": "",
                     "type": entry_type,
