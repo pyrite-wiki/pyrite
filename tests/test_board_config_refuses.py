@@ -412,12 +412,18 @@ def test_the_cli_orient_shows_the_board_error(world, shape, fmt, tmp_path, monke
     from pyrite.plugins.registry import get_registry
 
     # The CLI is a fresh process: no plugin holds a server's context. In a
-    # shared test worker an earlier server's (closed) one may still be set.
-    for plugin in get_registry()._plugins.values():
-        if hasattr(plugin, "ctx"):
-            monkeypatch.setattr(plugin, "ctx", None)
+    # shared test worker an earlier server's (closed) one may still be set,
+    # so it is cleared for this call and put back after.
+    plugins = [p for p in get_registry()._plugins.values() if hasattr(p, "ctx")]
+    saved = [p.ctx for p in plugins]
     _break_the_board(world, shape, tmp_path, monkeypatch)
-    result = _cli(world, ["orient", "-k", KB, "--format", fmt])
+    try:
+        for plugin in plugins:
+            plugin.ctx = None
+        result = _cli(world, ["orient", "-k", KB, "--format", fmt])
+    finally:
+        for plugin, ctx in zip(plugins, saved, strict=True):
+            plugin.ctx = ctx
     assert result.exit_code == 0, result.output
     assert "board.yaml" in result.output, result.output
     assert MARKER not in result.output

@@ -1760,6 +1760,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
 }
 
 PRINTS: dict[tuple[str, str], tuple[str, str]] = {
+    ("pyrite/cli/browse_commands.py", "orient_kb"): (
+        "safe",
+        "orient answers; a plugin's board_error in red is part of the report (#1538)",
+    ),
     (
         "extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py",
         "evidence_chain",
