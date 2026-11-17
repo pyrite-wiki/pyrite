@@ -53,6 +53,8 @@ def _entries(path: Path) -> list[dict[str, str]] | None:
     return failures
 
 
+MISSING = f"Known cloud-only failures: the registry is missing and was not read.\n{TRAILER}\n"
+
 MALFORMED = (
     "Known cloud-only failures: the registry is malformed and was not read "
     f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
@@ -60,7 +62,10 @@ MALFORMED = (
 
 
 def render(path) -> str:
-    failures = _entries(Path(path))
+    path = Path(path)
+    if not path.is_file():
+        return MISSING
+    failures = _entries(path)
     if failures is None:
         return MALFORMED
     if not failures:
@@ -85,4 +90,4 @@ if __name__ == "__main__":
     )
     text = render(path)
     sys.stdout.write(text)
-    sys.exit(2 if text == MALFORMED else 0)
+    sys.exit(2 if text in (MALFORMED, MISSING) else 0)
