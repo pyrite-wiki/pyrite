@@ -11,8 +11,8 @@ The rule is lexical, on the path's parts below the root, with no I/O. A path
 is skipped when:
 
 - ``hidden``: a part starts with ``.`` (a dot-folder or a dot-file);
-- ``templates``: a part folds to ``_templates`` (the template service's
-  scaffolds);
+- ``templates``: a part is ``_templates`` in any letter case, on every disk
+  (the template service's scaffolds), or another spelling that folds to it;
 - ``readme``: the file name folds to ``readme.md`` (a README is the user's,
   assumed to carry no entry);
 - ``not_markdown``: the file name does not end in ``.md``, case-sensitively,
@@ -27,11 +27,12 @@ the Win32 API. The two reserved names are tested on the folded name, never on
 a probe of the disk, so a writer's spelling and the disk's spelling of the
 same folder get the same answer whatever the filesystem's rules (#1552 round
 1: ``subdirectory: memos/_TeMpLaTeS`` was written into ``memos/_templates/``
-on APFS). So the walk also skips, on every disk, a folder whose name folds
-to ``_templates`` but is spelled another way: another case (``_Templates``),
-a trailing dot or space (``_templates.``), or a case-fold variant
-(``_templateſ``). A disk keeps the spelling a folder was made with, so this
-is as true on APFS and NTFS as on a case-sensitive disk. At the next sync the
+on APFS). The rule: the walk skips a folder named ``_templates`` in any
+letter case, on every disk (maintainer, 2026-11-17), and the other spellings
+that fold to it, a trailing dot or space (``_templates.``) or a case-fold
+variant (``_templateſ``). A disk keeps the spelling a folder was made with, so
+a ``_Templates`` folder is skipped on APFS and NTFS as on a case-sensitive
+disk. At the next sync the
 rows of the entries in such a folder are retired, and ``index health`` names
 each of its files that states an ``id:`` under ``unlisted_entry_files``, with
 reason ``templates``; to keep them, rename the folder or move the entries out.
