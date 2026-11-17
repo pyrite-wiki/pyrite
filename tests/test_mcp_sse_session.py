@@ -22,7 +22,8 @@ never returns while the stream is open, and ``httpx.ASGITransport`` buffers
 the whole body. ``_SSE`` runs the app with its own ``receive``/``send`` on
 the TestClient portal's loop and reads events as they are sent; POSTs and
 REST calls go through ``httpx.ASGITransport`` on the same loop. Every wait
-is bounded by ``anyio.fail_after``.
+is bounded by ``anyio.fail_after``. The expiry test resumes its stopped
+loop clock after ``WAIT`` real seconds even if the endpoint never arrives.
 """
 
 from __future__ import annotations
@@ -427,6 +428,7 @@ class TestSessionLifetime:
         token = _login(w.app, "alice")
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         now = datetime.now(UTC)
+        expiry_seconds = 1.5
 
         class Clock(datetime):
             @classmethod
@@ -437,7 +439,7 @@ class TestSessionLifetime:
         # however long the runner takes to reach the endpoint event.
         monkeypatch.setattr("pyrite.services.auth_service.datetime", Clock)
         monkeypatch.setattr("pyrite.server.mcp_sessions.datetime", Clock)
-        soon = (now + timedelta(seconds=1.5)).isoformat()
+        soon = (now + timedelta(seconds=expiry_seconds)).isoformat()
         db = PyriteDB(w.config.settings.index_path)
         try:
             db.execute_write_sql(
@@ -454,11 +456,14 @@ class TestSessionLifetime:
             resumed_at = None
 
             def clock(current_loop):
+                current = real_time(current_loop)
                 if current_loop is not loop:
-                    return real_time(current_loop)
+                    return current
                 if resumed_at is None:
-                    return start
-                return start + 2 + real_time(loop) - resumed_at
+                    # A missing endpoint must still let the loop's fail_after
+                    # fire and unwind the patch before fixture teardown.
+                    return start if current - start < WAIT else current
+                return start + expiry_seconds + 0.5 + current - resumed_at
 
             with monkeypatch.context() as clocks:
                 clocks.setattr(asyncio.BaseEventLoop, "time", clock)
