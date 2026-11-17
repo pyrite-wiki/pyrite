@@ -74,6 +74,27 @@ def test_search_rich_escapes_brackets_in_snippet_and_title(cli_world):
     assert "store" in result.output
 
 
+def test_search_rich_escapes_backslash_before_highlight(cli_world):
+    """Backslash preceding highlight term does not escape markup or crash Rich."""
+    world = cli_world()
+    world.add_entry(
+        "test-kb",
+        text=(
+            "---\n"
+            "id: backslash-highlight-entry\n"
+            "type: note\n"
+            "title: Windows Path Note\n"
+            "---\n"
+            "\n"
+            "Configuration path is C:\\store location.\n"
+        ),
+    )
+
+    result = world.cli("search", "store", "-k", "test-kb", "--format", "rich")
+    assert result.exit_code == 0, result.output
+    assert r"C:\store" in result.output
+
+
 def test_search_files_rich_preserves_id_at_80_columns(cli_world, console_width, monkeypatch):
     """File-search fallback preserves full ID without truncation at 80 columns."""
     console_width(80)

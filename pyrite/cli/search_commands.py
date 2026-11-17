@@ -6,6 +6,7 @@ Commands: search (with file-based fallback)
 
 import logging
 import os
+import re
 
 import typer
 from rich.markup import escape
@@ -345,7 +346,11 @@ def register_search_command(app: typer.Typer):
                 date = r.get("date", "")[:10] if r.get("date") else ""
                 raw_snippet = r.get("snippet", "") or ""
                 snippet = (raw_snippet[:97] + "...") if len(raw_snippet) > 100 else raw_snippet
-                snippet = escape(snippet).replace("<mark>", "[bold]").replace("</mark>", "[/bold]")
+                parts = re.split(r"(</?mark>)", snippet)
+                snippet = "".join(
+                    "[bold]" if p == "<mark>" else "[/bold]" if p == "</mark>" else escape(p)
+                    for p in parts
+                )
                 raw_title = r.get("title", "") or ""
                 title = (raw_title[:37] + "...") if len(raw_title) > 40 else raw_title
                 title = escape(title)
