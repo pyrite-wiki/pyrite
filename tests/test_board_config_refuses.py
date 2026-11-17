@@ -796,20 +796,29 @@ def test_an_unexpected_failure_says_could_not_be_evaluated_and_logs(world, monke
     assert any(r.exc_info and "a bug" in str(r.exc_info[1]) for r in caplog.records)
 
 
-def test_every_checker_that_takes_params_is_declared():
-    """A checker that refuses to run with no params reads some: the loader
-    must know what (CHECKER_PARAMS), or it cannot check them."""
-    from pyrite_software_kb.board import _DRY_RUN_ENTRY, CHECKER_PARAMS
-
+def _checkers_that_need_params() -> list[str]:
+    """Named checkers that refuse to run with no params (they read some)."""
     from pyrite.services.rubric_checkers import NAMED_CHECKERS, CheckerConfigError
 
-    needs = set()
+    entry = {"id": "", "kb_name": "", "title": "", "body": "", "metadata": {}, "_links": []}
+    needs = []
     for name, checker in NAMED_CHECKERS.items():
         try:
-            checker(dict(_DRY_RUN_ENTRY), None, None)
+            checker(dict(entry), None, None)
         except CheckerConfigError:
-            needs.add(name)
-    assert needs == set(CHECKER_PARAMS), needs
+            needs.append(name)
+    return sorted(needs)
+
+
+@pytest.mark.parametrize("checker", _checkers_that_need_params())
+def test_every_checker_that_takes_params_is_declared(world, checker):
+    """Named in a board.yaml with no params, a checker that reads some is
+    refused by every tool, by the parameter's name: the loader knows what it
+    reads (a checker added without that knowledge answers less usefully)."""
+    _write_board(world, _GATE + f"      - text: t\n        checker: {checker}\n")
+    answer = _mcp(world, "sw_board", MCP_CALLS["sw_board"])
+    _assert_board_refusal(answer, checker)
+    assert f"checker '{checker}' needs" in answer["error"], answer
 
 
 @pytest.mark.parametrize("shape", sorted(s for s in REFUSED_SHAPES if s.startswith("param-")))
