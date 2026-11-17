@@ -1666,16 +1666,19 @@ class KBRepository:
         folder whose name ends in ``.md`` (the reconcile skips a folder as
         "not a regular file", #1119); a folder that is a link is not walked
         into."""
+        root = os.fspath(self.path)
         for dirpath, dirnames, filenames in self._folders(unreadable):
             for name in (*filenames, *dirnames):
                 if not name.endswith(".md"):
                     continue
-                md_file = Path(dirpath) / name
-                reason = entry_paths.unlisted_reason(self.path, md_file)
+                # Joined as text and asked as text: one Path per kept name
+                # (a lookup's walk of a 2,000-file KB, #135).
+                joined = os.path.join(dirpath, name)
+                reason = entry_paths.unlisted_reason(root, joined)
                 if reason is None:
-                    yield md_file, self.alias_target(md_file)
+                    yield Path(joined), self.alias_target(joined)
                 elif unlisted is not None and reason in entry_paths.HEALTH_REASONS:
-                    unlisted.append((md_file, reason))
+                    unlisted.append((Path(joined), reason))
 
     def unlisted_entry_rows(self, unlisted: list[tuple[Path, str]]) -> list[dict[str, str]]:
         """``{kb, path, reason}`` for each skipped path (from ``walk_files``)
@@ -1707,7 +1710,7 @@ class KBRepository:
         rows.sort(key=lambda r: r["path"])
         return rows
 
-    def alias_target(self, md_file: Path) -> Path | None:
+    def alias_target(self, md_file: Path | str) -> Path | None:
         """The walked entry file ``md_file`` is another name for, or None.
 
         An alias (#1262) is a path that is itself a symbolic link whose fully
@@ -1762,7 +1765,7 @@ class KBRepository:
             return None
         return target
 
-    def _in_kb_link(self, md_file: Path) -> Path | None:
+    def _in_kb_link(self, md_file: Path | str) -> Path | None:
         """Where ``md_file`` leads, spelled under ``self.path``, when it is a
         symbolic link under the root that does not lead out of the KB; None
         otherwise. Where it leads is ``KBFiles.resolved`` (the rule behind
