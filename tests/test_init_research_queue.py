@@ -92,6 +92,8 @@ def test_research_queue_init_lifecycle_and_health(cli_world, tmp_path: Path):
         "target_kb=wiki",
         "--field",
         "question=What are the best graph databases?",
+        "--field",
+        "sources_wanted=arxiv,github",
         "--format",
         "json",
     )
@@ -106,6 +108,7 @@ def test_research_queue_init_lifecycle_and_health(cli_world, tmp_path: Path):
     entry_text = entry_path.read_text(encoding="utf-8")
     assert "target_kb: wiki" in entry_text
     assert "What are the best graph databases?" in entry_text
+    assert "sources_wanted:" in entry_text
 
     # 3. Task claim
     claim_res = world.cli(
@@ -125,8 +128,12 @@ def test_research_queue_init_lifecycle_and_health(cli_world, tmp_path: Path):
     health_res = world.cli("index", "health", "-k", "tracker", "--format", "json")
     assert health_res.exit_code == 0, health_res.output
     health_data = json.loads(health_res.output)
+    assert health_data.get("status") == "healthy"
     assert not health_data.get("undeclared_types", [])
-    assert not health_data.get("malformed_entries", [])
+    assert not health_data.get("malformed_frontmatter", [])
+    assert not health_data.get("missing_required_fields", [])
+    assert not health_data.get("invalid_statuses", [])
+    assert not health_data.get("off_list_values", [])
 
 
 @pytest.mark.cli

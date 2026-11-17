@@ -1,6 +1,6 @@
 # Coordinate tasks with people and agents
 
-Use a registered, writable KB; initialize one with `pyrite init -t task -p tasks/ -n tasks` or `pyrite init -t research-queue -p queue/ -n queue`, or use an existing KB (this walkthrough uses `test-kb`). Start with
+Use a registered, writable KB; this walkthrough uses `test-kb`. To initialize a dedicated task tracking KB, run `pyrite init -t task` or `pyrite init -t research-queue`. Start with
 [getting started](getting-started.md). Explicit KB names keep identical task
 IDs in different KBs unambiguous. Results and refusal fields belong to
 [JSON contracts](json-contracts.md), rather than this walkthrough.
