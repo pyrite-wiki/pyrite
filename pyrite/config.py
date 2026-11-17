@@ -102,12 +102,11 @@ class KBConfig:
     types: dict[str, Any] | None = None
     policies: dict[str, Any] | None = None
 
-    # Internal cache — not serialized
+    # Internal cache — not serialized. ``_schema_stamp`` is the identity of
+    # the kb.yaml the cached schema was read from (``_kb_yaml_stamp``): a
+    # cache is served only while the file is still that file (#1547).
     _schema_cache: Any = field(default=None, init=False, repr=False)
-    #: Set by ``load_kb_yaml`` when this KB's kb.yaml could not be checked or
-    #: read (#1542) or loaded (#1547): the fixed text to show for it.
-    #: Not serialized. One unreadable KB must not stop the others (#1542).
-    unreadable: str | None = field(default=None, init=False, repr=False)
+    _schema_stamp: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.path = Path(self.path).expanduser().resolve()
@@ -163,16 +162,61 @@ class KBConfig:
 
         From ``read_kb_yaml``: a kb.yaml that cannot be loaded raises
         ``KBConfigInvalidError`` (never cached), so this KB is never read
-        as having no schema (#1547)."""
-        if self._schema_cache is None:
+        as having no schema (#1547). The cache is kept only while kb.yaml is
+        the file it was read from (``_kb_yaml_stamp``): a long-running
+        process (a server) whose kb.yaml is edited, broken or repaired after
+        it loaded answers what the file is now, as a fresh process does."""
+        stamp = self._kb_yaml_stamp()
+        if self._schema_cache is None or stamp != self._schema_stamp:
             from .schema import KBSchema
 
+            self._schema_cache = None
             self._schema_cache = KBSchema.from_dict(read_kb_yaml(self.path))
+            self._schema_stamp = stamp
         return self._schema_cache
+
+    def _kb_yaml_stamp(self) -> tuple[int, ...] | None:
+        """The identity of kb.yaml now, for the schema cache only: inode,
+        size, and modification and change times in nanoseconds (an atomic
+        replace is a new inode; an in-place edit moves the times). None when
+        nothing can be stat'ed there. It decides only whether to read again;
+        what the KB answers is ``read_kb_yaml``'s."""
+        import os
+
+        try:
+            st = os.stat(self.kb_yaml_path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
     def invalidate_schema_cache(self) -> None:
         """Clear cached KBSchema — call after kb.yaml changes."""
         self._schema_cache = None
+        self._schema_stamp = None
+
+    def readability_error(self) -> Any:
+        """The ``KBUnreadableError`` this KB's files answer now, or None:
+        ``check_readable``, asked live. ``KBFilesUnreadableError``
+        (``KB_UNREADABLE``) or ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``,
+        its parser's error as ``__cause__``). Read by ``pyrite kb list`` and
+        ``unreadable``."""
+        from .exceptions import KBUnreadableError
+
+        try:
+            self.check_readable()
+        except KBUnreadableError as e:
+            return e
+        return None
+
+    @property
+    def unreadable(self) -> str | None:
+        """The fixed text of ``readability_error()``, or None: asked now, so a
+        KB repaired or broken after the config loaded answers what its files
+        are (#1547). Logged by ``load_kb_yaml``; read by ``pyrite kb list``."""
+        from .exceptions import public_text
+
+        error = self.readability_error()
+        return None if error is None else public_text(error, already_logged=True)
 
     @property
     def local_db_path(self) -> Path:
@@ -235,21 +279,22 @@ class KBConfig:
 
         Every registered KB is loaded here at once, so a KB whose files this
         process cannot read (``check_readable``: a folder it may not list or
-        search, a kb.yaml it may not open) is marked ``unreadable`` and
-        logged by name; it never stops the load, or one such KB would stop
-        every command on every other KB (#1542). Every operation on this KB
-        that needs its files then stops with ``KBFilesUnreadableError``,
-        whose fixed message ``unreadable`` holds.
+        search, a kb.yaml it may not open) is logged by name; it never stops
+        the load, or one such KB would stop every command on every other KB
+        (#1542). Every operation on this KB that needs its files then stops
+        with ``KBFilesUnreadableError``.
 
         A kb.yaml that can be read and cannot be loaded as a mapping is the
-        same at this point (#1547): marked ``unreadable`` with
-        ``KBConfigInvalidError``'s fixed text, logged by name, and the load
-        goes on. ``pyrite kb list`` and index health ask ``check_readable``
-        again for the code and the parser's words."""
-        from .exceptions import KBUnreadableError, public_text
+        same at this point (#1547): logged by name with the parser's words,
+        and the load goes on. Nothing is recorded: ``unreadable``,
+        ``readability_error``, ``kb_schema`` and index health ask the file
+        again, so a KB broken or repaired later answers what it is now."""
+        from .exceptions import KBConfigInvalidError, KBUnreadableError, outside_text, public_text
         from .utils.kb_files import KBFileOutsideRootError
 
-        self.unreadable = None
+        # Snapshots of kb.yaml, read by nothing in Pyrite today (kb_schema is
+        # the reader); never left holding an earlier file's values.
+        self.schema = self.types = self.policies = None
         try:
             data = self._read_kb_yaml_or_raise()
         except KBFileOutsideRootError:
@@ -259,9 +304,20 @@ class KBConfig:
                 self.name,
             )
             return False
+        except KBConfigInvalidError as e:
+            # The parser's words for this process's log, the operator's own
+            # (outside_text withholds them from a network caller's context).
+            logger.warning(
+                "KB %s: %s (%s)",
+                self.name,
+                public_text(e, already_logged=True),
+                outside_text(e.__cause__ or e, already_logged=True),
+            )
+            return False
         except KBUnreadableError as e:
-            self.unreadable = public_text(e)  # its fixed text (ADR-0052 N3)
-            logger.warning("KB %s is unreadable: %s", self.name, self.unreadable)
+            logger.warning(
+                "KB %s is unreadable: %s", self.name, public_text(e, already_logged=True)
+            )
             return False
         if data is None or (not data and not self.kb_yaml_present):
             return False  # no folder, or no kb.yaml

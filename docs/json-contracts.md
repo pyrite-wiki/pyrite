@@ -1891,6 +1891,35 @@ result, and each `kb list` row with `unreadable`, carries `error_code`
 `pyrite kb schema add-type`, `remove-type` and `set` answer
 `KB_CONFIG_INVALID` before they write.
 
+What `kb.yaml` is decides, at the moment of the read, in every process:
+
+- **A running server.** A process that loaded its config while `kb.yaml` was
+  good answers `KB_CONFIG_INVALID` as soon as the file breaks, and answers
+  normally as soon as it is repaired: the schema is cached only while
+  `kb.yaml` is the file it was read from (its inode, size and times). Index
+  health, `unreadable`, sync and every operation on the KB read the file as
+  it is then. On a filesystem whose timestamps are coarser than a second, an
+  in-place edit that keeps the size within that second is not seen until the
+  next change.
+- **Kinds of path.** A directory, a FIFO, nesting deeper than the
+  interpreter's recursion limit (flow or block style), or anything else the
+  parser raises on, answers `KB_CONFIG_INVALID`. A socket answers
+  `KB_UNREADABLE` (the operating system refuses to open it). A dangling link
+  or a link loop is no `kb.yaml` (a KB with no schema); a link out of the KB
+  answers `OUTSIDE_KB_ROOT`. Every other KB still works in each case.
+- **Commands that span KBs.** `pyrite qa duplicates` leaves the KB out, names
+  it in `unreadable_kbs` (`{kb, error, error_code}`, present only when a KB
+  was left out) and exits 3. MCP `list_edge_types` without `kb_name` names it
+  the same way; with `kb_name` naming it, it answers `KB_CONFIG_INVALID`.
+- **One message.** `KB_CONFIG_INVALID`'s message is fixed wherever it is
+  printed, `pyrite-read` and `pyrite-admin` included; the parser's words are
+  in `pyrite kb list`'s `error_detail`, in `pyrite index health` and in the
+  log line the config load writes, on the local process only.
+- **Limit: a very large `kb.yaml`.** There is no size bound: every command
+  loads every `kb.yaml`, so a file of tens of megabytes slows every command
+  (measured: 64 MB of one scalar takes about 24 seconds to load; two million
+  short keys, more than a minute).
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"

@@ -364,20 +364,33 @@ class QAService:
         # the set is empty: a report that lists more candidates, never fewer
         # pairs than exist, and it writes nothing.
         settled_by_kb: dict[str, frozenset[str]] = {}
+        # A KB whose kb.yaml does not load (#1547), or whose files cannot be
+        # read (#1542), has no answer for "settled": its entries are left out
+        # and it is named, as a sync names it; the other KBs are compared.
+        unreadable_kbs: dict[str, dict[str, str]] = {}
 
         entries: list[dict[str, Any]] = []
         for row in rows:
             status = (row["status"] or "").lower()
             lifecycle = (row["lifecycle"] or "active").lower()
+            if row["kb_name"] in unreadable_kbs:
+                continue
             if statuses is not None:
                 if status not in statuses:
                     continue
             else:
                 if row["kb_name"] not in settled_by_kb:
                     kb_config = self.config.get_kb(row["kb_name"])
-                    settled_by_kb[row["kb_name"]] = settled_statuses(
-                        entry_type, kb_config.kb_schema if kb_config else None
-                    )
+                    try:
+                        schema = kb_config.kb_schema if kb_config else None
+                    except KBUnreadableError as e:
+                        unreadable_kbs[row["kb_name"]] = {
+                            "kb": row["kb_name"],
+                            "error": public_text(e, already_logged=True),
+                            "error_code": e.error_code,
+                        }
+                        continue
+                    settled_by_kb[row["kb_name"]] = settled_statuses(entry_type, schema)
                 if lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
                     continue
             entries.append(
@@ -452,13 +465,18 @@ class QAService:
                 pair["b"]["id"],
             )
         )
-        return {
+        result: dict[str, Any] = {
             "entry_type": entry_type,
             "threshold": threshold,
             "skipped_tokens": skipped_tokens,
             "count": len(pairs),
             "pairs": pairs,
         }
+        if unreadable_kbs:
+            # Left out and named (#1547): ``{kb, error, error_code}`` each;
+            # present only then, so a whole report keeps its shape.
+            result["unreadable_kbs"] = sorted(unreadable_kbs.values(), key=lambda r: r["kb"])
+        return result
 
     def _report_unreadable_kb(
         self, issues: list[dict[str, Any]], kb_name: str, *, tier: int = 1

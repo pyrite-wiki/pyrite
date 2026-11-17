@@ -475,30 +475,52 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
     the OS refuses ``KBFilesUnreadableError`` (``KB_UNREADABLE``). Bytes that
     can be read and cannot be loaded as a mapping -- not UTF-8, a YAML error
     (a syntax error, a control character, a duplicate key), a document over
-    the YAML limits, a top level that is a list or a scalar -- raise
+    the YAML limits, nesting past the recursion limit, a top level that is a
+    list or a scalar, a directory or a FIFO where the file should be -- raise
     ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``), the parser's error as
-    its cause. Never writes the file.
+    its cause. A socket answers ``KB_UNREADABLE``: the OS refuses to open it.
+    Nothing but a mapping or a typed Pyrite error leaves here. Never writes
+    the file.
 
     Every reader of a kb.yaml calls this; ``load_yaml_file`` itself is left
     as it is, since a plugin's own YAML (``board.yaml``) is read through it
     and is not a kb.yaml. ``tests/test_a_kb_yaml_that_does_not_load.py``
     fails on a new ``load_yaml_file(kb_root=...)`` elsewhere.
     """
-    from ..exceptions import KBConfigInvalidError
+    from ..exceptions import KBConfigInvalidError, PyriteError
     from .kb_files import KBFiles
 
     root = Path(kb_root)
     path = root / "kb.yaml"
-    if not KBFiles(root).present(path):
+    inside = KBFiles(root)
+    if not inside.present(path):  # nothing there, a dangling link, a link loop
         return {}
     try:
         data = load_yaml_file(path, kb_root=root)
-    except (UnicodeDecodeError, YAMLError, YamlLimitError) as e:
-        # The parser's words in str() for the log; public_message for a reply.
-        raise KBConfigInvalidError(f"{path}: {type(e).__name__}: {e}") from e
+    except YamlLimitError as e:  # Pyrite's own refusal: over the YAML limits
+        raise KBConfigInvalidError() from e
+    except PyriteError:
+        # Typed already: KB_UNREADABLE (the OS refused the read: a mode, a
+        # socket, an I/O error) or OUTSIDE_KB_ROOT (a link out of the KB).
+        raise
+    except FileNotFoundError as e:
+        # ``KBFiles.read_bytes`` reads regular files only: a directory or a
+        # FIFO stands where kb.yaml is, or the file went between the probe
+        # and the read (then it is absent, as for any later reader).
+        if not inside.present(path):
+            return {}
+        raise KBConfigInvalidError() from e
+    except Exception as e:  # noqa: BLE001 - every other way the parse fails
+        # Not UTF-8 (UnicodeDecodeError), a YAML error (syntax, a control
+        # character, a duplicate key, a tag), nesting past the interpreter's
+        # recursion limit (RecursionError), or anything else the parser
+        # raises: the file's bytes are the cause, so it is the file's answer.
+        # Nothing but a mapping or a typed Pyrite error leaves here.
+        raise KBConfigInvalidError() from e
     if not isinstance(data, Mapping):
-        shape = TypeError(f"the top level of kb.yaml is a {type(data).__name__}, not a mapping")
-        raise KBConfigInvalidError(f"{path}: {shape}") from shape
+        raise KBConfigInvalidError() from TypeError(
+            f"the top level of kb.yaml is a {type(data).__name__}, not a mapping"
+        )
     return data
 
 

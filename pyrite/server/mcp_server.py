@@ -1593,6 +1593,7 @@ class PyriteMCPServer:
         kb_name = args.get("kb_name")
 
         edge_types = []
+        unreadable_kbs = []
 
         for kb_config in self.config.all_kbs():
             if kb_name and kb_config.name != kb_name:
@@ -1600,7 +1601,17 @@ class PyriteMCPServer:
             if readable_kbs is not None and kb_config.name not in readable_kbs:
                 continue
 
-            schema = kb_config.kb_schema
+            try:
+                schema = kb_config.kb_schema
+            except KBUnreadableError as e:
+                if kb_name:
+                    raise  # the one KB asked for: its own refusal
+                # One KB whose kb.yaml does not load (#1547) or cannot be read
+                # (#1542) is named; the others are listed.
+                unreadable_kbs.append(
+                    {"kb": kb_config.name, "error": _safe_message(e), "error_code": e.error_code}
+                )
+                continue
             for type_name, type_schema in schema.types.items():
                 if not getattr(type_schema, "edge_type", False):
                     continue
@@ -1628,10 +1639,12 @@ class PyriteMCPServer:
                     }
                 )
 
-        return {
-            "edge_types": edge_types,
-            "total": len(edge_types),
-        }
+        result: dict[str, Any] = {"edge_types": edge_types, "total": len(edge_types)}
+        if unreadable_kbs:
+            # Present only when a KB was left out, so a whole answer keeps
+            # its shape (#1547).
+            result["unreadable_kbs"] = unreadable_kbs
+        return result
 
     # =========================================================================
     # Write handlers

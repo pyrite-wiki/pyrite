@@ -536,22 +536,55 @@ KB_ROOT_YAML_READERS = {
 
 
 def test_kb_yaml_is_turned_into_a_mapping_in_one_place():
+    """No second reader of a KB's own YAML: the only calls of
+    ``load_yaml_file`` that may pass ``kb_root`` (by keyword, or through
+    ``**kwargs``, under its own name or an alias it was imported as) are
+    ``read_kb_yaml``'s and ``board.yaml``'s.
+
+    Planted second readers (fix round 1), and the test that goes red:
+    ``load_yaml_file(p, **kw)`` -- this one and the census in
+    ``tests/test_kb_reads_are_one_function.py``; an aliased import
+    (``load_yaml_file as lyf``) -- this one; ``KBFiles.read_bytes`` then
+    ``load_yaml`` -- the census (a new ``KBFiles.read_bytes`` count);
+    ``safe_load_bounded(path.read_text())`` -- the census (a raw
+    ``read_text``); module-level code -- this one and the census. Limits, red
+    in neither:
+    a reader reached through ``getattr``, ``importlib`` or a re-export under
+    another module's name, and one that reads an existing ``KBFiles`` read's
+    bytes in an already-classified function without changing its counts.
+    """
     root = Path(__file__).resolve().parents[1]
     files = [*root.glob("pyrite/**/*.py"), *root.glob("extensions/*/src/**/*.py")]
     found = set()
     for path in files:
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        for func in ast.walk(tree):
-            if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            for node in ast.walk(func):
+        names = {"load_yaml_file"} | {
+            alias.asname
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == "load_yaml_file" and alias.asname
+        }
+        scopes = [("<module>", tree)] + [
+            (func.name, func)
+            for func in ast.walk(tree)
+            if isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef)
+        ]
+        for scope_name, scope in scopes:
+            for node in ast.walk(scope):
                 if (
                     isinstance(node, ast.Call)
-                    and getattr(node.func, "id", getattr(node.func, "attr", None))
-                    == "load_yaml_file"
-                    and any(kw.arg == "kb_root" for kw in node.keywords)
+                    and getattr(node.func, "id", getattr(node.func, "attr", None)) in names
+                    and any(kw.arg in ("kb_root", None) for kw in node.keywords)
                 ):
-                    found.add((str(path.relative_to(root)), func.name))
+                    found.add((str(path.relative_to(root)), scope_name))
+    # A call inside a function is also seen from "<module>": keep the function.
+    in_functions = {(module, name) for module, name in found if name != "<module>"}
+    found = in_functions | {
+        (module, name)
+        for module, name in found
+        if name == "<module>" and not any(m == module for m, _ in in_functions)
+    }
     assert found == KB_ROOT_YAML_READERS
 
 

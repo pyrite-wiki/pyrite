@@ -314,12 +314,16 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "with kb_root, KBFiles.read_bytes; the raw `open` branch is operator config, and every raw caller is counted as load_yaml_file(raw) at its own site",
     ),
     ("pyrite/utils/yaml.py", "read_kb_yaml"): (
-        {"KBFiles.present": 1, "load_yaml_file(kb_root)": 1},
-        "the one kb.yaml loader (#1547): KBFiles.present, then load_yaml_file(kb_root=)",
+        {"KBFiles.present": 2, "load_yaml_file(kb_root)": 1},
+        "the one kb.yaml loader (#1547): KBFiles.present, then load_yaml_file(kb_root=); present again when the read finds no regular file (a directory, a FIFO, or gone)",
     ),
 }
 
 SAME_ANSWER: dict[Site, Entry] = {
+    ("pyrite/config.py", "KBConfig._kb_yaml_stamp"): (
+        {"os.stat": 1},
+        "the schema cache's key only (#1547): any change reads kb.yaml again through read_kb_yaml (KBFiles), whose answer, a link out refused, is the same either way",
+    ),
     ("pyrite/services/kb_registry_service.py", "KBRegistryService._health_kb"): (
         {"path.exists": 1, "path.rglob": 1},
         "the KB's folder itself: the operator's registry entry, not a file in it; rglob('*.md') counts names, a link by its name on every Python",
@@ -716,7 +720,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 
 SIZES = {
     "DECIDED_INSIDE": 55,
-    "SAME_ANSWER": 19,
+    "SAME_ANSWER": 20,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
 }
@@ -1176,8 +1180,8 @@ MUTATIONS = [
     ),
     (
         "pyrite/utils/yaml.py",
-        "KBFiles(root).present(path)",
-        "path.read_text()",
+        "if not inside.present(path):  # nothing there",
+        "if not path.exists():  # nothing there",
     ),
     (
         "extensions/software-kb/src/pyrite_software_kb/board.py",

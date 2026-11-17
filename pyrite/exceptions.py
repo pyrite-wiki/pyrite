@@ -1136,15 +1136,16 @@ class KBConfigInvalidError(KBUnreadableError):
     so every catch site #1542 added passes it on with its own code, never
     retryable.
 
-    As ``BrandingInvalidError``: ``str()`` names the file and the parser's own
-    text, for the log (``public_text`` logs it once when it substitutes), and
-    ``public_message`` is the one text every surface shows, the local CLI
-    included; it names no KB, no path and nothing the parser said. The
-    parser's exception is ``__cause__``: only the local process is shown its
-    words, through ``outside_text`` (``pyrite kb list``, index health), since
-    they quote the operator's file (ADR-0052 N3). A KB in this state is never
-    read as having no schema: whatever needs its schema stops with this
-    error, and the reconcile refuses before it plans, so no row is removed.
+    One text everywhere: ``str()`` and ``public_message`` are the same fixed
+    sentence, which names no KB, no path and nothing the parser said, so any
+    print site (``pyrite-read``, an extension's own ``str(e)``) shows it; the
+    constructor takes no text. The parser's exception is ``__cause__``: only
+    the local process is shown its words, through ``outside_text``
+    (``pyrite kb list``'s ``error_detail``, index health, the load's log
+    line), since they quote the operator's file (ADR-0052 N3). A KB in this
+    state is never read as having no schema: whatever needs its schema stops
+    with this error, and the reconcile refuses before it plans, so no row is
+    removed.
     Raised by ``pyrite.utils.yaml.read_kb_yaml``.
     """
 
@@ -1153,8 +1154,11 @@ class KBConfigInvalidError(KBUnreadableError):
         "This knowledge base's kb.yaml could not be loaded (it is not valid UTF-8 "
         "YAML holding a mapping); the operator needs to correct the file."
     )
+    # Equal to str(): set so no reader can fall back to a text quoting the
+    # file. Nothing is masked; tests/test_public_message_logged_once.py
+    # reviews it as a fixed-text class.
     public_message = MESSAGE
     retryable = False
 
-    def __init__(self, detail: str = "") -> None:
-        super().__init__(detail or self.MESSAGE)
+    def __init__(self) -> None:
+        super().__init__(self.MESSAGE)
