@@ -26,6 +26,7 @@ from ..exceptions import (
     EntryNotFoundError,
     EvaluationFailedError,
     InvalidQATierError,
+    KBConfigInvalidError,
     KBUnreadableError,
     PyriteError,
     ValidationError,
@@ -39,10 +40,21 @@ from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_st
 from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
-from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
+from ..utils.kb_files import (
+    KB_YAML_REFUSALS,
+    KBFileOutsideRootError,
+    KBFileReadOutsideRootError,
+    KBFiles,
+    KBFilesUnreadableError,
+)
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
+
+#: ``_kb_folder_problem``'s answer for a kb.yaml that does not load (#1547).
+_KB_CONFIG_INVALID_PROBLEM = "its kb.yaml could not be loaded (KB_CONFIG_INVALID)"
+#: ... and for a kb.yaml that leads outside the KB (#1547).
+_KB_YAML_OUTSIDE_PROBLEM = "its kb.yaml leads outside the KB (OUTSIDE_KB_ROOT)"
 
 #: The tiers QA runs: 1 = structural and deterministic rubric checks, 2 = tier
 #: 1 plus the model-judged rubric. Every surface that takes a tier refuses any
@@ -360,22 +372,36 @@ class QAService:
         # the set is empty: a report that lists more candidates, never fewer
         # pairs than exist, and it writes nothing.
         settled_by_kb: dict[str, frozenset[str]] = {}
+        # A KB whose kb.yaml does not load (#1547), or whose files cannot be
+        # read (#1542), has no answer for "settled": its entries are left out
+        # and it is named, as a sync names it; the other KBs are compared.
+        unreadable_kbs: dict[str, dict[str, str]] = {}
 
         entries: list[dict[str, Any]] = []
         for row in rows:
             status = (row["status"] or "").lower()
             lifecycle = (row["lifecycle"] or "active").lower()
+            if row["kb_name"] in unreadable_kbs:
+                continue
+            # Every KB's schema is read, with --status too: a KB whose
+            # kb.yaml is refused is left out and named either way (#1547).
+            if row["kb_name"] not in settled_by_kb:
+                kb_config = self.config.get_kb(row["kb_name"])
+                try:
+                    schema = kb_config.kb_schema if kb_config else None
+                except KB_YAML_REFUSALS as e:
+                    unreadable_kbs[row["kb_name"]] = {
+                        "kb": row["kb_name"],
+                        "error": public_text(e, already_logged=True),
+                        "error_code": e.error_code,
+                    }
+                    continue
+                settled_by_kb[row["kb_name"]] = settled_statuses(entry_type, schema)
             if statuses is not None:
                 if status not in statuses:
                     continue
-            else:
-                if row["kb_name"] not in settled_by_kb:
-                    kb_config = self.config.get_kb(row["kb_name"])
-                    settled_by_kb[row["kb_name"]] = settled_statuses(
-                        entry_type, kb_config.kb_schema if kb_config else None
-                    )
-                if lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
-                    continue
+            elif lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
+                continue
             entries.append(
                 {
                     "id": row["id"],
@@ -448,13 +474,18 @@ class QAService:
                 pair["b"]["id"],
             )
         )
-        return {
+        result: dict[str, Any] = {
             "entry_type": entry_type,
             "threshold": threshold,
             "skipped_tokens": skipped_tokens,
             "count": len(pairs),
             "pairs": pairs,
         }
+        if unreadable_kbs:
+            # Left out and named (#1547): ``{kb, error, error_code}`` each;
+            # present only then, so a whole report keeps its shape.
+            result["unreadable_kbs"] = sorted(unreadable_kbs.values(), key=lambda r: r["kb"])
+        return result
 
     def _report_unreadable_kb(
         self, issues: list[dict[str, Any]], kb_name: str, *, tier: int = 1
@@ -557,6 +588,11 @@ class QAService:
         recreate a missing folder (#950 round 2).
         """
         problem = self._kb_folder_problem(kb_name)
+        if problem == _KB_CONFIG_INVALID_PROBLEM:
+            # Its own code, the same as every other operation on this KB (#1547).
+            raise KBConfigInvalidError()
+        if problem == _KB_YAML_OUTSIDE_PROBLEM:
+            raise KBFileReadOutsideRootError()
         if problem is not None:
             raise KBUnreadableError(f"KB '{kb_name}': {problem}; nothing was assessed")
 
@@ -583,6 +619,14 @@ class QAService:
             kb_config.check_readable()
         except KBFilesUnreadableError:
             return "its files cannot be read (the operating system refused)"
+        except KBConfigInvalidError:
+            # Read, and not loadable as a mapping (#1547): reported, never
+            # the end of a QA run over every KB.
+            return _KB_CONFIG_INVALID_PROBLEM
+        except KBFileOutsideRootError:
+            # A kb.yaml that leads outside the KB (a link out, a second hard
+            # link): the same, with its own code (#1547).
+            return _KB_YAML_OUTSIDE_PROBLEM
         return None
 
     def validate_all(

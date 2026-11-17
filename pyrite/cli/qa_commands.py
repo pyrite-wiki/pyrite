@@ -196,6 +196,8 @@ def qa_duplicates(
         )
 
     def render(console: Console, data: dict) -> None:
+        for row in data.get("unreadable_kbs", []):
+            console.print(f"Not compared: {row['kb']}: {row['error']}", markup=False)
         if data["skipped_tokens"]:
             console.print(
                 f"Common-token expansion skipped for {data['skipped_tokens']} tokens; "
@@ -213,6 +215,10 @@ def qa_duplicates(
                 highlight=False,
             )
 
+    if result.get("unreadable_kbs"):
+        # A KB left out (its kb.yaml does not load, or its files cannot be
+        # read): the report is not whole, exit 3 (#1547).
+        return Outcome.partial(result, rich=render)
     return Outcome.done(result, rich=render)
 
 

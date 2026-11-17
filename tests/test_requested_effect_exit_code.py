@@ -1679,6 +1679,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "embedding is owed, not failed (ADR-0035)",
     ),
     ("pyrite/cli/index_commands.py", "index_reconcile"): ("safe", "path display fallback"),
+    ("pyrite/cli/kb_commands.py", "kb_list"): (
+        "safe",
+        "a listing: a KB whose files or kb.yaml cannot be read or loaded is a row (#1542, #1547), not a lost effect",
+    ),
     ("pyrite/cli/index_commands.py", "index_sync"): (
         "safe",
         "embedding is owed, not failed (ADR-0035)",

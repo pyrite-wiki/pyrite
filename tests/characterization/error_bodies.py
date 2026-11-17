@@ -65,6 +65,8 @@ _BUILDERS: dict[str, Any] = {
     "ConfigFileUnreadableError": lambda: exc_module.ConfigFileUnreadableError(
         "config file unreadable", config_file="/config.yaml"
     ),
+    # Takes no text: its one message is fixed (#1547).
+    "KBConfigInvalidError": lambda: exc_module.KBConfigInvalidError(),
     "EvaluationFailedError": lambda: exc_module.EvaluationFailedError(
         "characterization-entry", "the model's reply was not JSON"
     ),

@@ -74,6 +74,7 @@ from ..services.read_shaping import project_fields
 from ..services.write_target import binding, current_target, session_for_call
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
+from ..utils.kb_files import KB_YAML_REFUSALS
 from .mcp_rate_limiter import MCPRateLimiter
 from .tool_schemas import CORE_TOOL_NAMES
 
@@ -1593,6 +1594,7 @@ class PyriteMCPServer:
         kb_name = args.get("kb_name")
 
         edge_types = []
+        unreadable_kbs = []
 
         for kb_config in self.config.all_kbs():
             if kb_name and kb_config.name != kb_name:
@@ -1600,7 +1602,17 @@ class PyriteMCPServer:
             if readable_kbs is not None and kb_config.name not in readable_kbs:
                 continue
 
-            schema = kb_config.kb_schema
+            try:
+                schema = kb_config.kb_schema
+            except KB_YAML_REFUSALS as e:
+                if kb_name:
+                    raise  # the one KB asked for: its own refusal
+                # One KB whose kb.yaml does not load (#1547), cannot be read
+                # (#1542) or leads outside the KB is named; the others are listed.
+                unreadable_kbs.append(
+                    {"kb": kb_config.name, "error": _safe_message(e), "error_code": e.error_code}
+                )
+                continue
             for type_name, type_schema in schema.types.items():
                 if not getattr(type_schema, "edge_type", False):
                     continue
@@ -1628,10 +1640,12 @@ class PyriteMCPServer:
                     }
                 )
 
-        return {
-            "edge_types": edge_types,
-            "total": len(edge_types),
-        }
+        result: dict[str, Any] = {"edge_types": edge_types, "total": len(edge_types)}
+        if unreadable_kbs:
+            # Present only when a KB was left out, so a whole answer keeps
+            # its shape (#1547).
+            result["unreadable_kbs"] = unreadable_kbs
+        return result
 
     # =========================================================================
     # Write handlers
@@ -2322,6 +2336,10 @@ class PyriteMCPServer:
                 return svc.set_schema(kb_name, schema)
 
         except KBReadOnlyError as e:
+            return _refusal(e)
+        except KB_YAML_REFUSALS as e:
+            # KB_UNREADABLE (#1542), KB_CONFIG_INVALID (#1547) or
+            # OUTSIDE_KB_ROOT keeps its own code, never retryable; nothing written.
             return _refusal(e)
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))
