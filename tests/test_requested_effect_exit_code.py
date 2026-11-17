@@ -1761,6 +1761,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("pyrite/services/file_search.py", "search_kb_files"): ("fixed", "TestSearchFiles"),
     ("pyrite/cli/search_commands.py", "_warn_if_stale"): ("safe", "a probe for a warning"),
+    ("pyrite/cli/search_commands.py", "_run_batch"): (
+        "safe",
+        "a refused query fills its own slot; exit_unless_whole exits 3 or 1 on any slot",
+    ),
     ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
 }
 
@@ -1835,6 +1839,10 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/cli/repo_commands.py", "repo_sync"): ("fixed", "TestRepoSync"),
     ("pyrite/cli/schema_commands.py", "schema_migrate"): ("fixed", "TestSchemaMigrate"),
     ("pyrite/cli/search_commands.py", "search"): ("fixed", "TestSearchFiles"),
+    ("pyrite/cli/search_commands.py", "_print_batch"): (
+        "safe",
+        "renders slots already counted by _run_batch, which exits 3 or 1 on a refused slot",
+    ),
     ("pyrite/read_cli.py", "_emit_error"): (
         "safe",
         "the helper that prints the error; its callers raise Exit(1)",
