@@ -30,5 +30,6 @@
   - Sending a file's out-of-range value spelled as text used to pass as "violation already on disk; kept", and the text was written: `"10.7"` over `10.7`, `"True"` over `true`, `"99"` over `99`. It is now refused with the `importance` row, and the file is unchanged.
   - Sending the file's own value back, such as `5.5` over `5.5`, is now kept with the warning and `changed: false`. MCP used to accept it with no warning, and REST `PUT` used to answer 422.
   - On REST `PUT` and an MCP echo of a read, `true` over a file holding `1` used to be taken as "unchanged" and accepted. It is now refused.
+  - Sending a file's own accepted digit text back, such as `"05"` over `'05'`, now stores `5`: the caller named the field, so the value is written in its stored form. It used to write nothing.
 - **A "violation already on disk; kept" warning now carries the rule of the row it keeps:** `range` for `importance`, `enum` for `lifecycle`, `required` or `format` for an event's `date`. It always used to say `model_validation`.
 - **`pyrite qa validate` now flags a non-whole importance it finds in the index.** It uses the same rule, so a real `5.5` stored in the index, for example by an update before this release, is now reported.
