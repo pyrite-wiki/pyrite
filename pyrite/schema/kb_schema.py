@@ -49,8 +49,10 @@ class KBSchema:
     policies: dict[str, Any] = field(default_factory=dict)
     validation: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 0
-    guidelines: dict[str, str] = field(default_factory=dict)
-    goals: dict[str, str] = field(default_factory=dict)
+    # Widened from dict[str, str] to support string forms in kb.yaml (#1498);
+    # see guidelines_mapping() / goals_mapping() for normalization.
+    guidelines: dict[str, Any] | str = field(default_factory=dict)
+    goals: dict[str, Any] | str = field(default_factory=dict)
     evaluation_rubric: list[str | dict[str, Any]] = field(default_factory=list)
     rubric_action: str = "fail"
 
@@ -293,6 +295,39 @@ class KBSchema:
             out["malformed"] = malformed
         return out
 
+    def guidelines_mapping(self) -> dict[str, Any]:
+        """The KB-level `guidelines` as a normalized mapping.
+
+        `kb.yaml` may hold a string here, the way a type's `guidelines` is
+        written (the journalism `known-entities` preset wrote one before
+        #1482): it is one guideline, under the key `general`. A mapping is
+        used as is. Any other value (a list, a number) is left out of the
+        export with a warning naming the key, instead of failing it (#1498).
+        `kb_authored_text` still returns the value as written.
+        """
+        value = self.guidelines
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            return {"general": value} if value.strip() else {}
+        if value not in (None, []):
+            logger.warning(
+                "kb.yaml of %r: `guidelines` is a %s, not a mapping or a string; "
+                "left out of the schema export",
+                self.name,
+                type(value).__name__,
+            )
+        return {}
+
+    def goals_mapping(self) -> dict[str, Any]:
+        """The KB-level `goals` as a normalized mapping for tag extraction."""
+        value = self.goals
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            return {"general": value} if value.strip() else {}
+        return {}
+
     def to_agent_schema(self, *, kb_type: str) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
 
@@ -369,7 +404,7 @@ class KBSchema:
 
         # KB-level intent: merge system defaults with KB overrides
         merged_guidelines = dict(SYSTEM_INTENT.get("guidelines", {}))
-        merged_guidelines.update(self.guidelines)
+        merged_guidelines.update(self.guidelines_mapping())
         if merged_guidelines:
             result["guidelines"] = merged_guidelines
 
