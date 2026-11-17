@@ -20,7 +20,7 @@ def _unit_interval(value: str) -> float:
 
     ``min=0, max=1`` is not enough: NaN compares false with both bounds, so Typer
     0.27 lets it through. A parameter *callback* is forbidden on the Outcome
-    contract, and ``click_type=`` is gone in Typer 0.29, so the range is checked
+    contract, and Typer 0.29 removed the ``click_type`` keyword, so the range is checked
     in a ``parser=`` function, at parse time, where a refusal is the usage error
     (exit 2) a bad range already is. The error is ``typer.BadParameter``: Typer
     vendors click, and only its own class is answered as ``USAGE_ERROR`` (exit 2).
