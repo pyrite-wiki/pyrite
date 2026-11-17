@@ -1,0 +1,1 @@
+- **`soupsieve` is locked at 4.1.1 on Python 3.11.5 and newer.** `uv.lock` now pins a version past 4.0.0, which closes two upstream high-severity advisories there; Python 3.11.0 to 3.11.4 still resolve 2.10 because no patched release supports them (#1536).
