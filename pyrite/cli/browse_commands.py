@@ -35,11 +35,13 @@ def _cli_error(message: str, output_format: str = "rich", error_code: str | None
 
 def validate_sort_by(value: str) -> str:
     """Validate list-entries --sort-by column (#1387)."""
-    allowed = ("title", "updated_at", "created_at", "entry_type")
+    from ..storage.backends.base_backend import BaseBackend
+
+    allowed = sorted(BaseBackend._SORT_COLUMNS)
     val = value.lower() if value else ""
-    if val in allowed:
+    if val in BaseBackend._SORT_COLUMNS:
         return val
-    raise typer.BadParameter(f"choose one of: {', '.join(allowed)}")
+    raise typer.BadParameter(f"unknown sort column '{value}'; choose one of: {', '.join(allowed)}")
 
 
 def validate_sort_order(value: str) -> str:
@@ -48,7 +50,7 @@ def validate_sort_order(value: str) -> str:
     val = value.lower() if value else ""
     if val in allowed:
         return val
-    raise typer.BadParameter(f"choose one of: {', '.join(allowed)}")
+    raise typer.BadParameter(f"unknown sort order '{value}'; choose one of: {', '.join(allowed)}")
 
 
 def register_browse_commands(app: typer.Typer) -> None:
