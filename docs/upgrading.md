@@ -8,6 +8,13 @@ to tell you are done. The reasons and the full detail are in the
 [JSON contracts](json-contracts.md), which this page links and does not
 repeat.
 
+## Upgrading from 0.26.3 to 0.26.4
+
+- **A software KB's `board.yaml`** that 0.26.3 read with an extra or misspelt
+  key, or with any shape the changelog lists for #1538, now refuses the tools
+  that read the board until the file is fixed. What the file may contain is in
+  [plugins: board.yaml](plugins.md#boardyaml-lanes-wip-limits-and-gates).
+
 ## Upgrading from 0.25.8 to 0.26.0
 
 Three things you do every day change, and every user rebuilds the index once.
