@@ -391,13 +391,22 @@ jobs:
       # fetch-depth: 0 above makes the range walkable. HEAD is the PR's merge
       # commit, HEAD^1 the base tip now: base.sha (the tip when the PR last
       # synced) would put every PR merged since into this range (#1074).
-      # --range walks each commit individually (not the range's cumulative
-      # diff), so an earlier offending commit isn't hidden by a later,
-      # unrelated commit that happens to touch tests/.
+      # CI judges the PR as a whole: a `fix:` passes if any commit in the range
+      # touches a test path, and the reason is that the merge queue squashes
+      # each pull request into a single commit on dev.
       - name: "Check fix: commits have tests (pull_request only)"
         if: github.event_name == 'pull_request' && matrix.shard == 1
         run: >-
           python scripts/check_fix_commit_has_tests.py --range
+          HEAD^1 HEAD
+
+      # A ratchet list (scripts/check_ratchets_only_shrink.py REGISTRY) may only
+      # shrink: a row added in the PR's range fails unless a commit carries a
+      # `Ratchet-raise: <list> <reason>` trailer (#1608). Same range as above.
+      - name: "Check ratchet lists only shrink (pull_request only)"
+        if: github.event_name == 'pull_request' && matrix.shard == 1
+        run: >-
+          python scripts/check_ratchets_only_shrink.py --range
           HEAD^1 HEAD
 
       # Advisory, never blocking (#278). #173 merged with its entry appended to

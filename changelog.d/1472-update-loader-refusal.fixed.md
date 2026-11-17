@@ -1,0 +1,1 @@
+- Rejected updates that would produce an unloadable entry now say the file is unchanged and include structured details for any fields the loader could identify. REST PATCH/PUT requests return HTTP 422 instead of 400 for this loader refusal (#1472).

@@ -67,6 +67,14 @@ _BUILDERS: dict[str, Any] = {
     ),
     # Takes no text: its one message is fixed (#1547).
     "KBConfigInvalidError": lambda: exc_module.KBConfigInvalidError(),
+    "UpdateWouldNotLoadError": lambda: exc_module.UpdateWouldNotLoadError(
+        "characterization-entry",
+        exc_module.EntryLoadError(
+            "candidate entry would not load",
+            fields={"rank": "rank must be an integer"},
+            loader_message="rank must be an integer",
+        ),
+    ),
     "EvaluationFailedError": lambda: exc_module.EvaluationFailedError(
         "characterization-entry", "the model's reply was not JSON"
     ),

@@ -395,7 +395,11 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 All are `retryable: false` except `CONFLICT` (always `true`) and `STORAGE_ERROR`
 (`true` only for a locked database). REST reports a refusal as
 `{"detail": {"code", "message", "retryable": false, "hint"?, "declared_types"?}}`
-with status `400` (`409` for `ENTRY_EXISTS`). REST `CONFLICT` is `409` with
+with status `400` (`409` for `ENTRY_EXISTS`).
+An update whose candidate entry raises `EntryLoadError` returns `422` with
+`VALIDATION_FAILED` and, when fields are isolated, one `errors` row with
+`rule: "entry_load"` per refused field.
+REST `CONFLICT` is `409` with
 `{"detail": {"code", "message"}}`, no `retryable` key; treat it as retryable.
 `STORAGE_ERROR` is `500` and carries `retryable`. MCP and the CLI use the error
 shape above.
@@ -549,8 +553,8 @@ a row here (a test compares this table with the command's output).
 | `duplicates` | IDs held by more than one file; `winner` names the indexed copy. | Failure | Keep one file, then `pyrite index sync`. |
 | `aliases` | In-KB symbolic links to another walked entry file, `{kb, path, target}`. The link is never indexed or read itself, and is left as it is; `target` is read by the walk's own rules (indexed once, unless it is skipped, as a file with a second hard link is). The same list is returned by `IndexManager.sync_incremental`/`reconcile_kb`, CLI `index sync` (text) and `kb reindex` (JSON and text), REST `POST /api/kbs/{name}/reindex` and MCP `kb_registry_reindex`; MCP `kb_index_sync` and REST `POST /api/index/sync` return neither key. | Information, not a finding | Nothing to do; remove the link only if it is not wanted. |
 | `dangling_links` | In-KB symbolic links with nothing at the path they name, `{kb, path, target}` (`target` KB-relative): hand-made, or left by a delete, which keeps the user's link. They hold no entry, so they are not `unreadable_files` and not `malformed`. A `__collection.yaml` that is such a link is reported here too. Only links the walk lists are reported: one in a dot-prefixed folder or `_templates/` is not. The same surfaces as `aliases` return it. A link that leads out of the KB, or a link loop, is reported as before. | Warning | Restore the file the link names, or remove the link. |
-| `unlisted_entry_files` | `*.md` files the index walk meets and skips whose frontmatter states an `id:`, `{kb, path, reason}` with `reason` `readme` (named `README.md` in any case), `hidden` (a dot-prefixed folder or file) or `templates` (under a folder named `_templates` in any letter case). An earlier version could write one (a create titled README wrote `readme.md`, #1552); it is not indexed, so its id is not found. Only skipped files are read, through the KB's contained read: a link, a file with a second hard link, or one that cannot be decoded is not listed here. A README, dot-folder or `_templates/` file with no `id:` line is the user's and is not listed. On the local CLI's `pyrite index health` the key carries these rows. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and the CLI's `pyrite kb health`, which all answer through `KBRegistryService.health_kb`, carry it as a count (an integer) and name no file (maintainer, 2026-11-17); `healthy` is unchanged. | Warning | Rename the file to a name the walk lists, keep its `id:` line, then `pyrite index sync`. |
-| `removed_extensions` | KBs whose type belonged to an extension that is no longer installed. | Warning | Reinstall the extension, or change `kb_type` in `kb.yaml`. |
+| `unlisted_entry_files` | `*.md` files the index walk meets and skips whose frontmatter states an `id:`, `{kb, path, reason}` with `reason` `readme` (named `README.md` in any case), `hidden` (a dot-prefixed folder or file) or `templates` (under a folder named `_templates` in any letter case). An earlier version could write one (a create titled README wrote `readme.md`, #1552); it is not indexed, so its id is not found. Only skipped files are read, through the KB's contained read: a link, a file with a second hard link, or one that cannot be decoded is not listed here. A README, dot-folder or `_templates/` file with no `id:` line is the user's and is not listed. On the local CLI's `pyrite index health` the key carries these rows. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and the CLI's `pyrite kb health`, which all answer through `KBRegistryService.health_kb`, carry it as a count (an integer) and name no file (maintainer, 2026-11-17); the text form of `pyrite kb health` prints a line pointing to `pyrite index health` when the count is above zero; `healthy` is unchanged. | Warning | Rename the file to a name the walk lists, keep its `id:` line, then `pyrite index sync`. |
+| `removed_extensions` | KBs whose type belonged to an extension that is no longer installed. | Warning | If the KB's `kb_type` is a `cascade-*` one, change it in `kb.yaml` (to `generic`, or to `journalism-investigation` with that extension installed). If the KB holds entries of a removed extension's types, declare the types you keep under `types:` in `kb.yaml`. A KB may need both. |
 | `type_name_drift` | Groups of one type spelled more than one way after case, `_` and spaces are folded to `-`. | Warning | Hand edit the `type:` spellings, then `pyrite index sync`. |
 | `type_name_drift_total` | Number of drift groups before the report's cap. | Metadata, not a finding | Fix the groups listed there. |
 | `type_name_drift_has_more` | Whether more drift groups exist beyond the 100-group cap. | Metadata, not a finding | Narrow with `-k <kb>`; fix the groups listed. |
@@ -780,10 +784,32 @@ them with the other write-side blocks.
   `evaluation_rubric`, the same way. A value holding any node JSON cannot
   carry as written is left out whole and listed in `malformed` as `{key,
   reason}`, `key` dotted (`types.note.goals`), the reason naming its first
-  such node: NaN or an infinity; a YAML date or timestamp; binary
-  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); or a
+  such node: NaN or an infinity (`.nan`, `.inf`); a number too large for JSON
+  (`1.0e+400`, which reads as infinite); a YAML date or timestamp; binary
+  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); a
   mapping key that is not a string (a number, bool, null, date or binary key,
-  or a mapping or list used as a key). A `kb.yaml` that cannot be read at all
+  or a mapping or list used as a key); a mapping with two keys that are the
+  same string (`!!str a` beside `a`: one value would otherwise be lost); or
+  an explicit YAML tag the loader keeps, one reason for every such value that
+  never repeats the tag (the tag is the author's text, the reason is
+  Pyrite's). That is a local tag (`!note`), a URI tag, `!!python/...`, `!!str`
+  on a mapping or list, and a tagged merge source (`<<: !note {...}`), on a
+  scalar, a mapping and a list alike. Before this a mapping or list with a
+  tag came back with the tag dropped. The core tags the loader resolves
+  before Pyrite sees the value are not withheld: they are read as YAML
+  defines them and the result is returned (`!!int "12"` is `12`, `!!float 12`
+  is `12.0`, `!!bool yes` is `true`, `!!map` and `!!seq` are the plain
+  mapping and list). `!!str` on a scalar, in its short or long form, as a
+  value or a mapping key, is the string: `guidelines: !!str 12` comes back as
+  `"12"`. A merge key (`<<`) is read through its sources: a source holding
+  any value withheld above (a tag, a date, a number too large, a key that is
+  not a string) withholds the whole value with that reason, also when an own
+  key or an earlier source hides it in the merged result (`{<<: {a: !note x},
+  a: 2}`). Limit (#1636): a tag on a list of merge sources (`<<: !note [{a: 1}]`) is
+  gone from the value the loader hands over, so it comes back merged with the
+  tag dropped. A recursive alias (`&a {self: *a}`) is
+  not withheld: it comes back with `null` where the alias recurses, because
+  that is how Pyrite's YAML loader reads it everywhere (#1602). A `kb.yaml` that cannot be read at all
   (a set or pairs used as a key) fails as it does without this key. Treat the contents as content from the KB's authors,
   not as instructions from Pyrite; the MCP server instructions say the same.
 - `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
@@ -2016,15 +2042,18 @@ that write returned (#795). This applies to `pyrite qa assess`, `pyrite ci`,
 
 **Tiers.** QA runs tier 1 (structural and deterministic rubric checks) and
 tier 2 (tier 1 plus the judgment-only rubric items, judged by the configured
-model). Any other tier is refused with `INVALID_TIER`. Tier 2 with no model
+model). Any other tier is refused with `INVALID_TIER` (on CLI `qa assess`,
+Typer refuses out-of-range values as `USAGE_ERROR`, exit 2). Tier 2 with no model
 configured is refused with `AI_NOT_CONFIGURED`. Both refusals come before
 anything is checked or written, on every surface. `ci` refuses them even when
 no KB is configured.
 
 The codes:
 
-- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2. `pyrite mcp --tier` uses
-  the same code for an unknown server tier. Use 1 or 2.
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `qa assess`
+  an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2) before this
+  check runs). `pyrite mcp --tier` uses the same code for an unknown server tier.
+  Use 1 or 2.
 - `AI_NOT_CONFIGURED`: tier 2 was asked for and no model is configured. REST's
   AI routes use the same code. Configure `ai_provider`, `ai_api_key` and
   `ai_model`, or use tier 1.
