@@ -1923,16 +1923,23 @@ What `kb.yaml` is decides, at the moment of the read, in every process:
   `kb_unreadable`.
 - **One message.** `KB_CONFIG_INVALID`'s message is fixed wherever it is
   printed, `pyrite-read` and `pyrite-admin` included. The parser's words are
-  in that process's own log: `pyrite`, `pyrite-read`, `pyrite-admin` and
-  `pyrite-server` each write one line at config load, at their default log
-  level, holding the fixed text and the parser's words; a process whose
-  `kb.yaml` breaks after it loaded logs the same line once, at the first read
-  that finds it broken. On the local CLI they are also in `pyrite kb list`'s
-  `error_detail` and in `pyrite index health`. No REST or MCP response
-  carries them.
+  in that process's own log. For a KB registered in `config.yaml`, `pyrite`,
+  `pyrite-read`, `pyrite-admin` and `pyrite-server` each write one record at
+  config load, at their default log level, holding the fixed text and the
+  parser's words (one record; the parser's message runs over several
+  lines). A KB added with `pyrite kb add` is not logged at config load: the
+  record is written when a command reads that KB's schema, so a command that
+  does not read it logs nothing about it, and `pyrite kb list` logs the fixed
+  text alone. A process whose
+  `kb.yaml` breaks after it loaded logs the same record once, at the first
+  read that finds it broken. On the local CLI the parser's words are also in
+  `pyrite kb list`'s `error_detail` and in `pyrite index health`. No REST or
+  MCP response carries them.
 - **Limit: a `kb.yaml` that loads but is not a schema** (`types: 3.5`,
   `types: [memo, 2]`): its own KB answers an untyped error, and `qa
-  duplicates` and MCP `list_edge_types` stop for every KB. Filed as #1591.
+  duplicates` and MCP `list_edge_types` stop for every KB. Since #1547 that
+  includes `qa duplicates --status`, which did not read schemas before and so
+  still answered beside such a file. Filed as #1591.
 - **Limit: a very large `kb.yaml`.** There is no size bound: every command
   loads every `kb.yaml`, so a file of tens of megabytes slows every command
   (measured: 64 MB of one scalar takes about 24 seconds to load; two million
