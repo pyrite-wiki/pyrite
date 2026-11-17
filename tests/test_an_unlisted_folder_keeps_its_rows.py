@@ -279,8 +279,10 @@ def test_readable_again_the_next_sync_reports_nothing(kb, shape):
 
 
 def test_a_kept_row_never_beats_a_file_read_now(kb):
-    """``a-locked/x.md`` sorts first, but its row is kept on faith: the file
-    read now (``z.md``) wins the id and the kept path is reported with it."""
+    """``a-locked/x.md`` sorts first, but its row could only be kept on
+    faith: the file read now (``z.md``) takes the id's row. The kept row is
+    then not kept, so its path is no duplicate (and never reaches a network
+    caller that way); its folder is named (round 2 of #1647)."""
     (kb.root / "a-locked").mkdir()
     (kb.root / "a-locked" / "x.md").write_text(_note("x", "X"))
     kb.im.sync_incremental(KB)
@@ -288,9 +290,90 @@ def test_a_kept_row_never_beats_a_file_read_now(kb):
     (kb.root / "z.md").write_text(_note("x", "X again"))
     result = kb.im.sync_incremental(KB)
     assert _rows(kb)["x"][0] == "z.md"
-    assert [d for d in result["duplicates"] if d["id"] == "x"] == [
-        {"kb": KB, "id": "x", "winner": "z.md", "paths": ["z.md", "a-locked/x.md"]}
+    assert [d for d in result["duplicates"] if d["id"] == "x"] == []
+    assert [f["path"] for f in result["unreadable_folders"]] == ["a-locked"]
+
+
+# The other half of the rule: a row is retired exactly when the files say the
+# file is gone. The walk's listing and ``KBFiles.present`` are the one answer
+# (round 2 of #1647, from the cold read of 3784c390).
+
+
+@pytest.mark.parametrize("name", RECONCILES)
+def test_a_file_gone_from_a_folder_it_can_list_is_retired(kb, name):
+    """At mode 600 the folder's listing works and ``gone.md`` is not in it:
+    the files say it is gone, so its row is retired (as on dev), and it is
+    named nowhere. ``inner.md``, listed but not stat-able, keeps its row."""
+    (kb.root / "sub" / "gone.md").write_text(_note("gone", "Gone"))
+    RECONCILES[name](kb)
+    assert "gone" in _rows(kb)
+    (kb.root / "sub" / "gone.md").unlink()
+    _shut(kb.shut, kb.root / "sub", 0o600)
+    result = _reported(kb, name)
+    assert set(_rows(kb)) == SEEDED_IDS
+    assert sorted(row["path"] for row in result["unreadable_files"]) == [
+        str(kb.root / "sub" / "inner.md")
     ]
+    if name in ("sync_incremental", "sync_kb"):
+        assert result["removed"] == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+@pytest.mark.parametrize("name", RECONCILES)
+def test_a_file_replaced_by_a_link_loop_is_retired(kb, name):
+    """A link that names itself: ``KBFiles.present`` says absent (ELOOP), so
+    the row is retired (as on dev) and the sync is not counted incomplete; the
+    loop stays reported under ``malformed`` (#1119)."""
+    RECONCILES[name](kb)
+    inner = kb.root / "sub" / "inner.md"
+    inner.unlink()
+    inner.symlink_to("inner.md")
+    result = _reported(kb, name)
+    assert set(_rows(kb)) == SEEDED_IDS - {"inner"}
+    assert result["unreadable_files"] == []
+    assert result["unreadable_folders"] == []
+    assert str(inner) in {row["path"] for row in result["malformed"]}
+
+
+def test_a_name_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
+    """A folder whose listing gives no type, and whose type the OS will not
+    tell (DT_UNKNOWN in a folder this process may not search): the walk
+    cannot know it is a folder, so it keeps the rows under it and names it,
+    rather than reading it as a file and the rows as gone."""
+    import pyrite.storage.repository as repository
+
+    kb.im.sync_incremental(KB)
+    real_scandir = os.scandir
+    untyped = str(kb.root / "sub" / "c")
+
+    class Untyped:
+        def __init__(self, item):
+            self._item = item
+            self.name = item.name
+            self.path = item.path
+
+        def is_dir(self, **kw):
+            raise PermissionError(13, "Permission denied")
+
+        def is_symlink(self):
+            raise PermissionError(13, "Permission denied")
+
+    class Listing:
+        def __init__(self, top):
+            self._it = real_scandir(top)
+
+        def __enter__(self):
+            return (Untyped(i) if i.path == untyped else i for i in self._it)
+
+        def __exit__(self, *exc):
+            self._it.close()
+
+    monkeypatch.setattr(repository.os, "scandir", Listing)
+    result = kb.im.sync_incremental(KB)
+    monkeypatch.undo()
+    assert set(_rows(kb)) == SEEDED_IDS
+    assert result["unreadable_folders"] == [{"kb": KB, "path": "sub/c", "error": FIXED}]
+    assert result["removed"] == 0
 
 
 # ---------------------------------------------------------------------------

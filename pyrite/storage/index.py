@@ -1124,7 +1124,19 @@ class IndexManager:
 
         def keep(rel: str, file_path: Path, error: str) -> None:
             """A walked path the reconcile could not stat, read or hash: named,
-            and its row (if it has one) kept from the row, as it is (#1546)."""
+            and its row (if it has one) kept from the row, as it is (#1546).
+
+            Unless the files say it is gone: ``KBFiles.present`` is the one
+            answer, and it counts a link loop (ELOOP) and a file removed while
+            walking (ENOENT) as absent, so their rows are retired, as before,
+            and they stay reported under ``malformed`` only. "There" (a file
+            this process may not read) and "could not tell" (a folder it may
+            not search) keep the row."""
+            try:
+                if not inside.present(file_path):
+                    return
+            except KBPresenceUnknownError:
+                pass
             plan.unreadable_files.append(
                 {"kb": kb_config.name, "path": str(file_path), "error": error}
             )
@@ -1215,34 +1227,31 @@ class IndexManager:
                 claim = _Claim(rel, file_path, id_text(entry.id), file_stat, entry)
             plan.holders.setdefault(claim.entry_id, []).append(claim)
 
-        # A row is retired only on evidence from the files (principle 5): a
-        # known path the walk did not reach -- under a folder it could not
-        # list, or one whose presence the OS will not tell -- keeps its row
-        # (#1546). A path the files say is absent loses it, as before.
+        # A row is retired only on evidence from the files (principle 5). A
+        # known path the walk did not meet is under a folder whose listing
+        # worked, which says the file is gone, so its row is retired, as
+        # before; or under a folder the walk could not list (named in
+        # ``unreadable_folders``), which says nothing, so its row is kept
+        # (#1546). The walk's listing is the one answer here: no other probe.
         walked_paths = {str(file_path) for _rel, file_path in files}
         shut = {tuple(folder.split("/")) for folder in plan.unreadable_folders}
         for path_text, (entry_id, _row) in path_to_row.items():
             if path_text in walked_paths or entry_id in plan.kept:
                 continue
             parts = entry_paths.parts_below(kb_config.path, path_text)
-            if parts is None:
+            if parts is None or not any(parts[:i] in shut for i in range(1, len(parts))):
                 continue
-            if not any(parts[:i] in shut for i in range(1, len(parts))):
-                try:
-                    inside.present(path_text)
-                    continue
-                except KBPresenceUnknownError:
-                    pass
             plan.kept[entry_id] = _Claim(
                 "/".join(parts), Path(path_text), entry_id, None, unreached=True
             )
 
         for entry_id in sorted(set(plan.holders) | set(plan.kept)):
             # `files` was sorted, so the first claim is the first path. A row
-            # kept on faith comes after every file read now, whatever its path.
-            claims = plan.holders.get(entry_id, [])
-            if entry_id in plan.kept:
-                claims = [*claims, plan.kept[entry_id]]
+            # kept on faith stands only for an id no file read now holds:
+            # otherwise the file read now takes the id's row, the kept row is
+            # not kept, and its path is no duplicate (its folder or file is
+            # named in ``unreadable_folders`` or ``unreadable_files``).
+            claims = plan.holders.get(entry_id) or [plan.kept[entry_id]]
             plan.winners[entry_id] = claims[0]
             if len(claims) > 1:
                 plan.duplicates.append(

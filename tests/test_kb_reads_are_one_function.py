@@ -242,6 +242,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBConfig.kb_yaml_present": 1},
         "kb_yaml_present (KBFiles.present)",
     ),
+    ("pyrite/storage/index.py", "IndexManager.plan_reconcile.keep"): (
+        {"KBFiles.present": 1},
+        "KBFiles.present, the one presence answer, for a walked path whose stat, read or hash failed: absent (a loop, a file removed meanwhile) retires its row; there or could not tell keeps it (#1546)",
+    ),
     ("pyrite/storage/repository.py", "KBRepository._folders"): (
         {"os.scandir": 1, "path.is_dir": 1, "path.is_symlink": 1},
         "names under the root, os.walk's walk written out: scandir lists a folder the walk reached from the root, and is_dir / is_symlink are the DirEntry's own answers about a name in it (a link is listed as its name, never followed or checked, and a folder link is not walked into, on every Python). The one walk behind _named and walk_files since #1546 (it replaced _named's os.walk and walk_files' rglob('*.md')), so a folder it could not list is recorded by the path it asked for, never read as empty",
@@ -365,8 +369,8 @@ SAME_ANSWER: dict[Site, Entry] = {
         "the stat of a file the reconcile just read through KBFiles",
     ),
     ("pyrite/storage/index.py", "IndexManager.plan_reconcile"): (
-        {"KBFiles.contains": 1, "KBFiles.present": 1, "path.stat": 1},
-        "after KBFiles.contains: a link out is skipped before the stat; KBFiles.present asks only about an indexed path the walk did not reach, to keep its row when the OS will not tell (#1546)",
+        {"KBFiles.contains": 1, "path.stat": 1},
+        "after KBFiles.contains: a link out is skipped before the stat",
     ),
     ("pyrite/storage/index.py", "unmodellable_files"): (
         {"path.stat": 1, "repo._read_inside": 1},
@@ -719,7 +723,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 56,
+    "DECIDED_INSIDE": 57,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

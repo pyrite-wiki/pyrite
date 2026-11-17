@@ -948,6 +948,15 @@ class KBRepository:
                             is_dir = item.is_dir()
                         except OSError:
                             is_dir = False
+                            # The OS would not say what it is (a folder that
+                            # gives no type, in one this process may not
+                            # search): it may be a folder, so the rows under
+                            # it are kept and it is named (#1546). Not a name
+                            # the walk lists as a file (``*.md``, a
+                            # ``__collection.yaml``): that file's own stat
+                            # names it.
+                            if not item.name.endswith(".md") and item.name != "__collection.yaml":
+                                could_not_list(os.path.join(top, item.name))
                         if not is_dir:
                             filenames.append(item.name)
                             continue
