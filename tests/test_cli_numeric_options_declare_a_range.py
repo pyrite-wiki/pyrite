@@ -318,15 +318,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite-read timeline", "min_importance"),
     ("pyrite-read timeline", "limit"),
     #
-    # extensions/software-kb/src/pyrite_software_kb/cli.py
-    ("pyrite sw adrs", "limit"),
-    ("pyrite sw adrs", "offset"),
-    ("pyrite sw backlog", "limit"),
-    ("pyrite sw backlog", "offset"),
-    ("pyrite sw standards", "limit"),
-    ("pyrite sw standards", "offset"),
-    ("pyrite sw components", "limit"),
-    ("pyrite sw components", "offset"),
     #
     # extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py
     ("pyrite investigation timeline", "min_importance"),
