@@ -37,6 +37,7 @@ RESERVED_FIELD_NAMES: frozenset[str] = frozenset(
         "_unparsed_timestamp_keys",
         "_unrepresented_keys",
         "_create_fields",
+        "_importance_given",
         # Frontmatter-only keys
         "type",
     }

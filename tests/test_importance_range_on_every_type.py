@@ -969,3 +969,87 @@ def test_a_csv_import_and_a_json_import_answer_a_bad_row_alike(rest, value):
         )
 
     assert shape(from_csv) == shape(from_json), (from_csv, from_json)
+
+
+# -- the value as given is the rule's input and nothing more ---------------------------------
+#
+# `Entry._importance_given` (#1588) is never written to an entry file, never stored in an
+# index row and never returned by a reader. "07" is accepted (plain ASCII digits) and is not
+# the int it reads as, so a leak would show as "07" or as the attribute's name.
+_GIVEN = "07"
+
+
+def _leaks(text: str) -> bool:
+    import re
+
+    # "07" as a value of its own, not inside a timestamp (17:07, -07-), a hash or a path
+    return (
+        "_importance_given" in text or re.search(r"(?<![\w.:+\-/])07(?![\w.:])", text) is not None
+    )
+
+
+@pytest.mark.parametrize("cls", _every_class())
+def test_the_value_as_given_reaches_no_serialization_of_any_entry_class(cls):
+    meta = {"id": "x", "title": "X", "type": "event", "date": "2026-01-02", "importance": _GIVEN}
+    entry = cls.from_frontmatter(meta, "")
+    assert entry.importance == 7 and type(entry.importance) is int
+    for out in (entry.to_frontmatter(), entry._frontmatter_for_file(), entry.to_db_dict("k", "p")):
+        assert not _leaks(repr(out)), out
+    assert not _leaks(repr(entry))
+
+
+@pytest.mark.parametrize("surf", ["cli", "mcp", "rest"])
+def test_a_created_value_as_given_reaches_no_file_row_or_reader(rest, surf):
+    """Created as "07": the file says `importance: 7`, the index row 7, and no reader on any
+    surface or format returns "07" or the attribute's name."""
+    from pyrite.server.mcp_server import PyriteMCPServer  # noqa: F401  (the real dispatcher)
+
+    with rest.pointed():
+        if surf == "cli":
+            res = rest.cli("create", "-k", KB, "-t", "note", "--title", "G1", "-b", "x",
+                           "-f", f"importance={json.dumps(_GIVEN)}", "--format", "json")  # fmt: skip
+            assert res.exit_code == 0, res.output
+        elif surf == "mcp":
+            res = rest.mcp()._dispatch_tool(
+                "kb_create",
+                {
+                    "kb_name": KB,
+                    "entry_type": "note",
+                    "title": "G1",
+                    "body": "x",
+                    "importance": _GIVEN,
+                },
+            )
+            assert res.get("created"), res
+        else:
+            response = rest.client.post(
+                "/api/entries", json={"kb": KB, "title": "G1", "body": "x", "importance": _GIVEN}
+            )
+            assert response.status_code in (200, 201), response.text
+        (path,) = sorted(rest.kb_path(KB).rglob("*.md"))
+        assert _importance_lines(path.read_text()) == ["importance: 7"]
+        assert rest.db.get_entry("g1", KB)["importance"] == 7
+        outputs = [
+            json.dumps(rest.mcp()._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": "g1"})),
+            rest.client.get("/api/entries/g1", params={"kb": KB}).text,
+            rest.client.get("/api/entries", params={"kb": KB}).text,
+        ]
+        for fmt in ("json", "markdown", "csv"):
+            outputs.append(
+                rest.client.get("/api/entries/export", params={"kb": KB, "format": fmt}).text
+            )
+        for fmt in ("json", "yaml", "markdown", "csv"):
+            outputs.append(rest.cli("get", "g1", "-k", KB, "--format", fmt).output)
+        for out in outputs:
+            assert not _leaks(out), out
+
+
+def test_a_caller_cannot_name_the_rules_input_itself(world):
+    """A request key spelled like the private field is not the rule's input: the value
+    judged is always the one sent as `importance`."""
+    res = world.mcp()._dispatch_tool(
+        "kb_create",
+        {"kb_name": KB, "entry_type": "note", "title": "S1", "body": "x", "importance": 99,
+         "_importance_given": 7},
+    )  # fmt: skip
+    _assert_refused(1 if not res.get("created") else 0, res)
