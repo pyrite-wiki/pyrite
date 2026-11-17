@@ -390,6 +390,7 @@ def test_a_checker_gives_the_files_verdict(answers, caller, case, verdict):
     assert answers[caller][item][case] is (verdict == "holds"), (caller, item, case)
 
 
+@pytest.mark.control(reason="guards a future checker; the case table covers every checker on dev")
 def test_every_named_checker_has_a_case():
     """A new checker cannot be added without a holding and a failing item."""
     assert {c["checker"] for c, _h, _f in CASES.values()} == set(NAMED_CHECKERS)
@@ -517,15 +518,24 @@ def _gate_of_tool_answer(tool: str, answer: dict, item: str) -> dict[str, bool]:
     return _gate_verdicts(answer)
 
 
+@pytest.mark.control(reason="guards a future gate tool; the five tools exist on dev")
 def test_every_gate_tool_is_listed():
     assert set(TOOL_CALLS) == set(GATE_OF_TOOL)
 
 
-@pytest.mark.parametrize("holds", [True, False], ids=["holds", "fails"])
+@pytest.mark.parametrize(
+    "holds",
+    [
+        pytest.param(True, id="holds"),
+        pytest.param(
+            False,
+            id="fails",
+            marks=pytest.mark.control(reason="dev fails these criteria for every item"),
+        ),
+    ],
+)
 @pytest.mark.parametrize("tool", sorted(GATE_OF_TOOL))
-def test_every_gate_tool_gives_the_files_verdict(tmp_path, tool, holds, request):
-    if not holds:
-        request.applymarker(pytest.mark.control(reason="dev fails these criteria for every item"))
+def test_every_gate_tool_gives_the_files_verdict(tmp_path, tool, holds):
     status, args = TOOL_CALLS[tool]
     kb_dir = tmp_path / "kbs" / KB
     kb_dir.mkdir(parents=True)
