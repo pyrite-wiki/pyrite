@@ -1424,6 +1424,10 @@ A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
 
+A single task (`pyrite task get`, MCP `task_status`) returns the task
+detail dictionary with `body` included directly from the file. Over the
+MCP chunk default, MCP returns ADR-0034 truncation markers as `kb_get` does.
+
 A single entry is read from its file as the file is now, so an edit made
 since the last `index sync` is in it; `content_hash` is the SHA-256 of the
 bytes that read. Lists and search are index reads and may lag.
@@ -1844,6 +1848,7 @@ checked against each command's Typer signature by
 | `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
 | `task create` | yes (shared; `-f` deprecated) | `json` |
+| `task get` | yes (shared; `-f` deprecated) | `rich` |
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.

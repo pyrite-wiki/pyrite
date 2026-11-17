@@ -396,51 +396,23 @@ def _render_task(console, result: dict) -> None:
         console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
         for c in children:
             console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
+    body = result.get("body", "")
+    if body:
+        console.print(f"\n{body}")
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
     svc, db = _get_service(kb_name)
     try:
-        task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
-        if not task:
+        task_detail = svc.get_task_detail(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not task_detail:
             missing = EntryNotFoundError(f"Task '{task_id}' not found")
             missing.suggestion = f"run `pyrite task list -k {kb_name or '<kb>'}` to find task IDs"
             raise missing
-
-        meta = task.get("metadata", {})
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-
-        children_list = svc.list_tasks(kb_name=kb_name, parent=task_id)
-        children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
-            for c in children_list
-        ]
-        task_kb = task.get("kb_name", kb_name or "")
-
-        result = {
-            "id": task["id"],
-            "title": task["title"],
-            "status": task.get("status") or meta.get("status", "open"),
-            "assignee": task.get("assignee") or meta.get("assignee", ""),
-            "priority": task.get("priority") or meta.get("priority", 5),
-            "parent": meta.get("parent", ""),
-            "dependencies": meta.get("dependencies", []),
-            "evidence": meta.get("evidence", []),
-            "due_date": task.get("due_date") or meta.get("due_date", ""),
-            "agent_context": meta.get("agent_context", {}),
-            "children": children,
-            "kb_name": task_kb,
-            # Computed from the children, never read from or written to the file.
-            "derived": svc.derived_for(task_kb, task["id"]),
-        }
     finally:
         db.close()
-    return Outcome.done(result, rich=_render_task)
+    return Outcome.done(task_detail, rich=_render_task)
 
 
 @task_app.command("update")
