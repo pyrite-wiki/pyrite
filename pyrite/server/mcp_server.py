@@ -2335,7 +2335,9 @@ class PyriteMCPServer:
                     return _error("MISSING_PARAMETER", "kb_name required for set_schema")
                 return svc.set_schema(kb_name, schema)
 
-        except (KBReadOnlyError, *KB_YAML_REFUSALS) as e:
+        except KBReadOnlyError as e:
+            return _refusal(e)
+        except KB_YAML_REFUSALS as e:
             # KB_UNREADABLE (#1542), KB_CONFIG_INVALID (#1547) or
             # OUTSIDE_KB_ROOT keeps its own code, never retryable; nothing written.
             return _refusal(e)

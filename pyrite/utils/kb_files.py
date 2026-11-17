@@ -169,7 +169,10 @@ class KBFileReadOutsideRootError(KBFileOutsideRootError):
 #: goes on; a call that names only that KB answers the refusal (#1547).
 #: ``KBFileOutsideRootError`` is a ``ValidationError``, not a
 #: ``KBUnreadableError``, hence a tuple.
-KB_YAML_REFUSALS: tuple[type[Exception], ...] = (KBUnreadableError, KBFileOutsideRootError)
+KB_YAML_REFUSALS: tuple[type[KBUnreadableError], type[KBFileOutsideRootError]] = (
+    KBUnreadableError,
+    KBFileOutsideRootError,
+)
 
 
 class KBFolderChanged(FileChanged):

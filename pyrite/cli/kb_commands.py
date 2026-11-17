@@ -529,7 +529,9 @@ def kb_reindex(
 
         try:
             result = registry.reindex_kb(kb_name)
-        except (KBNotFoundError, *KB_YAML_REFUSALS) as e:
+        except KBNotFoundError as e:
+            _kb_error(e, output_format)
+        except KB_YAML_REFUSALS as e:
             # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
             # (#1547); the reconcile refused before planning, rows kept.
             _kb_error(e, output_format)
