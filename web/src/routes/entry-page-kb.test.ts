@@ -1,14 +1,13 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { render, cleanup, waitFor, screen } from '@testing-library/svelte';
-import type { Writable } from 'svelte/store';
 
 // The entry page under a SvelteKit router that reuses it when only the query
 // changes (the layout keys on the pathname, +layout.svelte): the chooser's
 // links and a -> b moves must reload (#912).
-vi.mock('$app/stores', async () => {
-	const { writable } = await import('svelte/store');
+vi.mock('$app/state', async () => {
+	const { createPageState } = await import('$lib/test-utils/page-state.svelte');
 	return {
-		page: writable({
+		page: createPageState({
 			url: new URL('http://localhost/entries/dup'),
 			params: { id: 'dup' }
 		})
@@ -46,7 +45,8 @@ for (const heavy of [
 }
 
 import { api, ApiError } from '$lib/api/client';
-import { page } from '$app/stores';
+import { page } from '$app/state';
+import { setPage } from '$lib/test-utils/page-state.svelte';
 import { entryStore } from '$lib/stores/entries.svelte';
 import { kbStore } from '$lib/stores/kbs.svelte';
 
@@ -80,7 +80,7 @@ const entry = (kb: string) => ({
 
 function go(path: string) {
 	const url = new URL(`http://localhost${path}`);
-	(page as unknown as Writable<unknown>).set({ url, params: { id: 'dup' } });
+	setPage(page, { url, params: { id: 'dup' } });
 }
 
 beforeEach(() => {

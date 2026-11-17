@@ -7,10 +7,10 @@
 	import ViewSwitcher from '$lib/components/collection/ViewSwitcher.svelte';
 	import { collectionStore } from '$lib/stores/collections.svelte';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 
-	const collectionId = $derived($page.params.id as string);
-	const kb = $derived($page.url.searchParams.get('kb') ?? '');
+	const collectionId = $derived(page.params.id as string);
+	const kb = $derived(page.url.searchParams.get('kb') ?? '');
 
 	let sortBy = $state('title');
 	let sortOrder = $state<'asc' | 'desc'>('asc');

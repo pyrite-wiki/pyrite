@@ -6,7 +6,7 @@
 	import { api } from '$lib/api/client';
 	import { kbStore } from '$lib/stores/kbs.svelte';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import type { GraphNode, GraphEdge } from '$lib/api/types';
 	import { typeColor } from '$lib/constants';
 
@@ -54,7 +54,7 @@
 	}
 
 	onMount(() => {
-		selectedKb = $page.url.searchParams.get('kb') ?? '';
+		selectedKb = page.url.searchParams.get('kb') ?? '';
 		loadGraph();
 		loadEntryTypes();
 	});

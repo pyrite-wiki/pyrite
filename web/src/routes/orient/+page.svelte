@@ -3,7 +3,7 @@
 	import { api } from '$lib/api/client';
 	import { kbStore } from '$lib/stores/kbs.svelte';
 	import { typeColor } from '$lib/constants';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { entryHref } from '$lib/utils/entry-href';
 	import { onMount } from 'svelte';
 	import type { KBOrientResponse } from '$lib/api/types';
@@ -12,7 +12,7 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	const urlKB = $derived($page.url.searchParams.get('kb') ?? undefined);
+	const urlKB = $derived(page.url.searchParams.get('kb') ?? undefined);
 	const activeKB = $derived(urlKB ?? kbStore.activeKB ?? undefined);
 
 	$effect(() => {

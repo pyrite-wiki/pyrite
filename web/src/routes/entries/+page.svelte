@@ -7,7 +7,7 @@
 	import { searchStore } from '$lib/stores/search.svelte';
 	import { api } from '$lib/api/client';
 	import { onMount } from 'svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 
 	let filterType = $state('');
@@ -31,21 +31,21 @@
 	];
 
 	// Get params from URL
-	const urlKB = $derived($page.url.searchParams.get('kb') ?? undefined);
-	const urlTag = $derived($page.url.searchParams.get('tag') ?? undefined);
+	const urlKB = $derived(page.url.searchParams.get('kb') ?? undefined);
+	const urlTag = $derived(page.url.searchParams.get('tag') ?? undefined);
 	const activeKB = $derived(urlKB ?? kbStore.activeKB ?? undefined);
 
 	onMount(() => {
 		// Read initial filters from URL
-		filterType = $page.url.searchParams.get('type') ?? '';
-		filterStatus = $page.url.searchParams.get('status') ?? '';
-		filterMinImportance = $page.url.searchParams.get('min_importance') ?? '';
-		filterParticipant = $page.url.searchParams.get('participant') ?? '';
+		filterType = page.url.searchParams.get('type') ?? '';
+		filterStatus = page.url.searchParams.get('status') ?? '';
+		filterMinImportance = page.url.searchParams.get('min_importance') ?? '';
+		filterParticipant = page.url.searchParams.get('participant') ?? '';
 	});
 
 	// Sync filter state to URL params
 	function updateUrlParams() {
-		const url = new URL($page.url);
+		const url = new URL(page.url.href);
 		if (filterType) {
 			url.searchParams.set('type', filterType);
 		} else {
@@ -66,7 +66,7 @@
 		} else {
 			url.searchParams.delete('participant');
 		}
-		goto(url.toString(), { replaceState: true, keepFocus: true });
+		goto(url.toString(), { replace: true, reset: false });
 	}
 
 	// Determine if participant filtering is active (client-side filter)
@@ -125,7 +125,7 @@
 	}
 
 	function clearTag() {
-		const url = new URL($page.url);
+		const url = new URL(page.url.href);
 		url.searchParams.delete('tag');
 		goto(url.toString());
 	}

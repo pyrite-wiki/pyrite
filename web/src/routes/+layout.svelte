@@ -17,7 +17,7 @@
 	import { useStarred } from '$lib/stores/starred.svelte';
 	import { registerShortcut } from '$lib/utils/keyboard';
 	import { goto } from '$app/navigation';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import { UNTITLED_ROUTES } from './brand-title-routes';
@@ -36,7 +36,7 @@
 		// Initialize auth before loading KBs — session cookie must be
 		// available before API calls or they'll 401 when anonymous_tier=none
 		authStore.init().then(() => {
-			const path = $page.url.pathname;
+			const path = page.url.pathname;
 			const isAuthRoute = AUTH_ROUTES.includes(path);
 
 			if (authStore.authConfig.enabled && !authStore.isAuthenticated && !authStore.allowsAnonymous && !isAuthRoute) {
@@ -154,13 +154,13 @@
   NO title effect at all when the route has one. An earlier version of
   this fix instead wrote an unconditional title guarded by comparing
   document.title to a navigation snapshot; a same-route re-render (e.g.
-  entries/+page.svelte's goto(url, { replaceState: true }) on every filter
+  entries/+page.svelte's goto(url, { replace: true }) on every filter
   change) doesn't re-run the destination's static <title> effect, so that
   comparison can't tell "re-claimed the same title" from "claimed
   nothing" and clobbered it. See the conductor review on PR #202.
 -->
 <svelte:head>
-	{#if UNTITLED_ROUTES.includes($page.route.id ?? '')}
+	{#if UNTITLED_ROUTES.includes(page.route.id ?? '')}
 		<title>{brandStore.name}</title>
 	{/if}
 </svelte:head>
@@ -169,17 +169,17 @@
 	<div class="flex h-screen items-center justify-center bg-zinc-900">
 		<p class="text-zinc-400">Loading...</p>
 	</div>
-{:else if authStore.authConfig.enabled && !authStore.isAuthenticated && !authStore.allowsAnonymous && !AUTH_ROUTES.includes($page.url.pathname)}
+{:else if authStore.authConfig.enabled && !authStore.isAuthenticated && !authStore.allowsAnonymous && !AUTH_ROUTES.includes(page.url.pathname)}
 	<div class="flex h-screen items-center justify-center bg-zinc-900">
 		<p class="text-zinc-400">Redirecting to login...</p>
 	</div>
-{:else if AUTH_ROUTES.includes($page.url.pathname)}
+{:else if AUTH_ROUTES.includes(page.url.pathname)}
 	{@render children()}
 {:else}
 	<div class="flex h-screen overflow-hidden">
 		<Sidebar />
 		<main class="flex flex-1 flex-col overflow-hidden">
-			{#key $page.url.pathname}
+			{#key page.url.pathname}
 				<div class="flex min-h-0 flex-1 flex-col" in:fade={{ duration: 150, delay: 50 }} out:fade={{ duration: 100 }}>
 					{@render children()}
 				</div>

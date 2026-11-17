@@ -11,18 +11,17 @@ import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/sv
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
+// `page` from `$app/state` is a plain object whose fields are read at use, so
+// the double holds getters over the module-level params/search the test sets.
 const mockPage = vi.hoisted(() => {
 	let params = { id: 'hub' };
 	let search = '';
 	return {
-		get subscribe() {
-			return (run: (v: unknown) => void) => {
-				run({
-					params,
-					url: { searchParams: new URLSearchParams(search), pathname: `/entries/${params.id}` }
-				});
-				return () => {};
-			};
+		get params() {
+			return params;
+		},
+		get url() {
+			return { searchParams: new URLSearchParams(search), pathname: `/entries/${params.id}` };
 		},
 		set(id: string, s = '') {
 			params = { id };
@@ -30,7 +29,7 @@ const mockPage = vi.hoisted(() => {
 		}
 	};
 });
-vi.mock('$app/stores', () => ({ page: mockPage }));
+vi.mock('$app/state', () => ({ page: mockPage }));
 
 const mockAuthStore = vi.hoisted(() => ({
 	authConfig: { enabled: false },

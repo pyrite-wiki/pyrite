@@ -7,7 +7,7 @@
 	import { kbStore } from '$lib/stores/kbs.svelte';
 	import { api } from '$lib/api/client';
 	import { typeColor } from '$lib/constants';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { savedSearches, type SavedSearch } from '$lib/stores/saved-searches.svelte';
@@ -127,7 +127,7 @@
 
 	onMount(async () => {
 		// Read all search state from URL params (makes search results shareable)
-		const params = $page.url.searchParams;
+		const params = page.url.searchParams;
 		const initialQ = params.get('q') ?? '';
 		const initialMode = params.get('mode') as 'keyword' | 'semantic' | 'hybrid' | null;
 		const initialKb = params.get('kb') ?? '';

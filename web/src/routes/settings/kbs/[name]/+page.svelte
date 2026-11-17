@@ -3,7 +3,7 @@
 	import DefaultRoleSelect from '$lib/components/kb/DefaultRoleSelect.svelte';
 	import { api, ApiError } from '$lib/api/client';
 	import { authStore } from '$lib/stores/auth.svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import type {
 		KBInfo,
@@ -16,7 +16,7 @@
 	} from '$lib/api/types';
 
 	// Route is /settings/kbs/[name] so params.name is always defined at runtime.
-	const kbName = $derived($page.params.name as string);
+	const kbName = $derived(page.params.name as string);
 	let kb = $state<KBInfo | null>(null);
 	let permissions = $state<KBPermissionGrant[]>([]);
 	let users = $state<UserInfo[]>([]);

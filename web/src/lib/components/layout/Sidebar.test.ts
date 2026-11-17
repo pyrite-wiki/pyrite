@@ -11,10 +11,10 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/sv
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 
-vi.mock('$app/stores', async () => {
-	const { readable } = await import('svelte/store');
+vi.mock('$app/state', async () => {
+	const { createPageState } = await import('$lib/test-utils/page-state.svelte');
 	return {
-		page: readable({ url: new URL('http://localhost/entries'), params: {}, route: { id: '/entries' } })
+		page: createPageState({ url: new URL('http://localhost/entries'), params: {}, route: { id: '/entries' } })
 	};
 });
 
