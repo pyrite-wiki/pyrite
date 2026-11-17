@@ -463,7 +463,7 @@ class ErrorResponse(BaseModel):
 
 # What `importance` accepts, for the OpenAPI document; the rule itself is
 # `validate_importance`, applied by the write gate to the value as sent.
-_IMPORTANCE_SCHEMA = {"type": "integer", "minimum": 1, "maximum": 10}
+_IMPORTANCE_SCHEMA: dict[str, Any] = {"type": "integer", "minimum": 1, "maximum": 10}
 
 
 class CreateEntryRequest(BaseModel):
