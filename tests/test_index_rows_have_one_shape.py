@@ -1092,3 +1092,28 @@ def test_typed_values_the_indexer_binds_read_the_same_on_every_backend(seeded_ba
     assert by_id["f-dec"]["priority"] == 2.5 and type(by_id["f-dec"]["priority"]) is float
     assert by_id["f-int"]["status"] is True
     assert by_id["f-dec"]["status"] is False
+
+
+@pytest.mark.parametrize("entry_id", ["c-sweep", "t-quoted"])
+@pytest.mark.control(
+    reason="PUT carries no column field and the single read's metadata was already an "
+    "object; pinned so the fourth write-back surface stays byte-identical"
+)
+def test_a_rest_get_put_back_whole_leaves_the_file_byte_identical(rt_world, entry_id):
+    """REST PUT is the fourth write-back surface. It takes `title`, `body`,
+    `importance`, `tags` and `metadata` (no column field), so the read's
+    `metadata` object and `importance` integer are what it sends back; the
+    file must be unchanged, a nested bag and a quoted task priority included."""
+    w, emp = rt_world
+    (emp / "tasks/t-quoted.md").write_text(
+        '---\nid: t-quoted\ntype: task\ntitle: Quoted task\nstatus: open\npriority: "7"\n'
+        "importance: 4\ntags:\n- errand\nroom:\n  floor: 2\n---\nq\n"
+    )
+    w.index(KB)
+    path = emp / ("chores/c-sweep.md" if entry_id == "c-sweep" else "tasks/t-quoted.md")
+    before = path.read_bytes()
+    read = _rest(w, "get", f"/api/entries/{entry_id}", params={"kb": KB})
+    assert isinstance(read["metadata"], dict) and read["metadata"].get("room") == {"floor": 2}
+    body = {k: read[k] for k in ("title", "body", "importance", "tags", "metadata")}
+    _rest(w, "put", f"/api/entries/{entry_id}", json={"kb": KB, **body})
+    assert path.read_bytes() == before
