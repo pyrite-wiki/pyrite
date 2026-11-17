@@ -351,7 +351,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         # Template mode: the skeleton is the result
         if template:
             if kb_name:
-                with cli_context(kbs=(kb_name,), output_format=output_format) as (config, _db, svc):
+                with cli_context(kbs=(kb_name,)) as (config, _db, svc):
                     kb_config = config.get_kb(kb_name)
                     try:
                         resolved_type, fm = svc.template_frontmatter(
@@ -362,7 +362,6 @@ def register_entry_commands(app: typer.Typer) -> None:
                         )
                     except ValidationError as e:
                         raise _with_cli_hint(e) from None
-                    skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
                     entry_type = resolved_type
             else:
                 fm = {
@@ -382,7 +381,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                         fm[field_name] = 0
                     else:
                         fm[field_name] = ""
-                skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
+            skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
 
             def raw(console: Console, data: dict) -> None:
                 # The skeleton is a file's text: no markup, no wrapping.
