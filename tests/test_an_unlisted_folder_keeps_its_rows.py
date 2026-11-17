@@ -94,7 +94,8 @@ SEEDED_IDS = {"top", "inner", "d", "collection-c"}
 
 
 # Each shape: what to shut, and what the reconcile must name: folders
-# (KB-relative) and files (KB-relative; reported with their absolute path).
+# (KB-relative, sorted by path whatever order the filesystem lists them in)
+# and files (KB-relative; reported with their absolute path).
 def _folder_000(e, shut):
     _shut(shut, e.root / "sub", 0o000)
 

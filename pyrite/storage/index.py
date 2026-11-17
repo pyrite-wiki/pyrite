@@ -466,10 +466,12 @@ class ReconcilePlan:
 def _folder_rows(kb_name: str, folders: list[str]) -> list[dict[str, str]]:
     """``unreadable_folders`` rows: ``{"kb", "path", "error"}``, the path
     KB-relative and the error Pyrite's fixed ``KB_UNREADABLE`` text, never the
-    OS's words (#1546). One shape for the reconcile's result and health."""
+    OS's words (#1546). One shape for the reconcile's result and health,
+    sorted by path: the walk meets folders in the directory's own order,
+    which differs between filesystems."""
     return [
         {"kb": kb_name, "path": folder, "error": KBFilesUnreadableError.MESSAGE}
-        for folder in folders
+        for folder in sorted(folders)
     ]
 
 
