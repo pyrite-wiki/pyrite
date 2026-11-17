@@ -40,6 +40,7 @@ from pyrite_software_kb.workflows import (
     requires_reason,
 )
 
+from pyrite.config import KBConfig
 from pyrite.plugins.registry import PluginRegistry
 from pyrite.services.access_policy import UNSCOPED
 
@@ -1382,11 +1383,14 @@ class TestMilestoneValidator:
 
 
 class TestBoardConfig:
+    """`load_board_config` takes a resolved KB; the shapes it refuses are
+    tests/test_board_config_refuses.py (#1538)."""
+
     def test_fallback_to_defaults(self):
         from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG, load_board_config
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = load_board_config(Path(tmpdir))
+            config = load_board_config(KBConfig(name="t", path=Path(tmpdir), kb_type="software"))
             assert config["lanes"] == DEFAULT_BOARD_CONFIG["lanes"]
             assert config["wip_policy"] == "warn"
 
@@ -1401,12 +1405,12 @@ class TestBoardConfig:
                 "    statuses: [proposed]\n"
                 "  - name: Done\n"
                 "    statuses: [done]\n"
-                "wip_policy: block\n"
+                "wip_policy: enforce\n"
             )
-            config = load_board_config(Path(tmpdir))
+            config = load_board_config(KBConfig(name="t", path=Path(tmpdir), kb_type="software"))
             assert len(config["lanes"]) == 2
             assert config["lanes"][0]["name"] == "Todo"
-            assert config["wip_policy"] == "block"
+            assert config["wip_policy"] == "enforce"
 
     def test_lane_structure(self):
         from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG
@@ -1479,10 +1483,9 @@ class TestMilestonePluginRegistration:
     def test_preset_has_milestones_dir(self):
         assert "milestones" in SOFTWARE_KB_PRESET["directories"]
 
-    def test_preset_has_default_board(self):
-        assert "default_board" in SOFTWARE_KB_PRESET
-        assert "lanes" in SOFTWARE_KB_PRESET["default_board"]
-        assert "wip_policy" in SOFTWARE_KB_PRESET["default_board"]
+    def test_preset_holds_no_board(self):
+        """The built-in board is board.DEFAULT_BOARD_CONFIG alone (#1538)."""
+        assert "default_board" not in SOFTWARE_KB_PRESET
 
 
 # =========================================================================
@@ -1812,9 +1815,9 @@ class TestPullNext:
             finally:
                 db.close()
 
+    @pytest.mark.control(reason="behaviour kept by #1538; rewritten to read the KB's own board")
     def test_pull_next_wip_limit_enforce(self):
         """When WIP limit is reached and policy is enforce, return no recommendation."""
-        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Write a board config with enforce policy and wip_limit=1
@@ -1845,13 +1848,8 @@ class TestPullNext:
             )
             try:
                 plugin = _make_plugin_with_db(db)
-                from pyrite_software_kb.board import load_board_config as real_load
-
-                with patch(
-                    "pyrite_software_kb.board.load_board_config",
-                    side_effect=lambda p: real_load(Path(tmpdir)),
-                ):
-                    result = plugin._mcp_pull_next({"kb_name": "test"})
+                # The KB "test" is registered at tmpdir, so its board.yaml is read.
+                result = plugin._mcp_pull_next({"kb_name": "test"})
                 assert result["recommendation"] is None
                 assert "WIP limit" in result["reason"]
             finally:

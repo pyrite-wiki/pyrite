@@ -1540,26 +1540,22 @@ class SoftwareKBPlugin:
             return None
 
         import json
-        from pathlib import Path
 
-        from .board import load_board_config
+        from pyrite.exceptions import public_text
+
+        from .board import BoardConfigError
 
         db, should_close = self._get_db()
         try:
-            # Load board config
-            board_config = {"lanes": [], "wip_policy": "warn"}
+            # Load board config. The one catch of BoardConfigError (#1538): an
+            # orient that raised would lose the whole software block, so the
+            # first call of a session says what is wrong with the board instead.
+            board_error = None
             try:
-                if self.ctx is not None:
-                    config = self._get_config()
-                    kb_conf = config.get_kb(kb_name)
-                    if kb_conf:
-                        board_config = load_board_config(kb_conf.path)
-                    else:
-                        board_config = load_board_config(Path("."))
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                pass
+                lanes = self._board_config(db, kb_name, readable_kbs={kb_name})["lanes"]
+            except BoardConfigError as e:
+                lanes = []
+                board_error = public_text(e)
 
             # Query all backlog items for this KB
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item' AND kb_name = ?"
@@ -1567,14 +1563,12 @@ class SoftwareKBPlugin:
 
             # Build status→lane mapping
             status_to_lane: dict[str, int] = {}
-            for i, lane in enumerate(board_config.get("lanes", [])):
+            for i, lane in enumerate(lanes):
                 for s in lane["statuses"]:
                     status_to_lane[s] = i
 
             # Group items into lanes and collect in_progress/review
-            lane_counts: dict[int, int] = dict.fromkeys(
-                range(len(board_config.get("lanes", []))), 0
-            )
+            lane_counts: dict[int, int] = dict.fromkeys(range(len(lanes)), 0)
             in_progress_items: list[dict] = []
             review_items: list[dict] = []
 
@@ -1605,7 +1599,7 @@ class SoftwareKBPlugin:
 
             # Board summary (lane name → count + WIP status)
             board_summary = []
-            for i, lane_def in enumerate(board_config.get("lanes", [])):
+            for i, lane_def in enumerate(lanes):
                 count = lane_counts.get(i, 0)
                 entry = {"name": lane_def["name"], "count": count}
                 wip_limit = lane_def.get("wip_limit")
@@ -1662,17 +1656,21 @@ class SoftwareKBPlugin:
                     }
                 )
 
-            # Recommended next (reuse pull_next logic)
-            try:
-                pull_result = self._mcp_pull_next({"kb_name": kb_name})
-                rec = pull_result.get("recommendation")
-                recommended_next = (
-                    {"id": rec["id"], "title": rec["title"], "priority": rec["priority"]}
-                    if rec
-                    else None
-                )
-            except Exception:
-                recommended_next = None
+            # Recommended next (reuse pull_next logic). With a board that
+            # cannot be loaded there is no WIP limit to honour, so nothing is
+            # recommended; the board_error below says why.
+            recommended_next = None
+            if board_error is None:
+                try:
+                    pull_result = self._mcp_pull_next({"kb_name": kb_name})
+                    rec = pull_result.get("recommendation")
+                    recommended_next = (
+                        {"id": rec["id"], "title": rec["title"], "priority": rec["priority"]}
+                        if rec
+                        else None
+                    )
+                except Exception:
+                    recommended_next = None
 
             # Active epics with progress
             active_epics = []
@@ -1691,17 +1689,18 @@ class SoftwareKBPlugin:
             except Exception:
                 pass
 
-            return {
-                "software": {
-                    "board_summary": board_summary,
-                    "in_progress": in_progress_items,
-                    "review_queue": review_items,
-                    "active_epics": active_epics,
-                    "recent_adrs": recent_adrs,
-                    "top_components": top_components,
-                    "recommended_next": recommended_next,
-                }
+            software: dict[str, Any] = {
+                "board_summary": board_summary,
+                "in_progress": in_progress_items,
+                "review_queue": review_items,
+                "active_epics": active_epics,
+                "recent_adrs": recent_adrs,
+                "top_components": top_components,
+                "recommended_next": recommended_next,
             }
+            if board_error is not None:
+                software["board_error"] = board_error
+            return {"software": software}
         finally:
             if should_close:
                 db.close()
@@ -1718,9 +1717,6 @@ class SoftwareKBPlugin:
         full per-lane item list.
         """
         import json
-        from pathlib import Path
-
-        from .board import load_board_config
 
         db, should_close = self._get_db()
         kb_name = args.get("kb_name")
@@ -1728,14 +1724,9 @@ class SoftwareKBPlugin:
 
         try:
             # Load board config
-            if self.ctx is not None and kb_name:
-                config = self._get_config()
-                kb_conf = config.get_kb(kb_name)
-                board_config = (
-                    load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-                )
-            else:
-                board_config = load_board_config(Path("."))
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
 
             # Query all backlog items
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item'"
@@ -1882,9 +1873,6 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """View items in review status, sorted by wait time."""
         import json
-        from pathlib import Path
-
-        from .board import load_board_config
 
         db, should_close = self._get_db()
         kb_name = args.get("kb_name")
@@ -1933,22 +1921,13 @@ class SoftwareKBPlugin:
 
             # Load board config for review lane WIP limit
             wip_limit = None
-            try:
-                if self.ctx is not None and kb_name:
-                    config = self._get_config()
-                    kb_conf = config.get_kb(kb_name)
-                    board_config = (
-                        load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-                    )
-                else:
-                    board_config = load_board_config(Path("."))
-
-                for lane in board_config["lanes"]:
-                    if "review" in lane.get("statuses", []):
-                        wip_limit = lane.get("wip_limit")
-                        break
-            except Exception:
-                pass
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
+            for lane in board_config["lanes"]:
+                if "review" in lane["statuses"]:
+                    wip_limit = lane.get("wip_limit")
+                    break
 
             result: dict[str, Any] = {
                 "items": items,
@@ -2184,12 +2163,21 @@ class SoftwareKBPlugin:
         if not gate_config:
             return None
 
-        from pyrite.services.rubric_checkers import NAMED_CHECKERS
+        from .board import BoardConfigError, check_criterion, evaluating, gate_checker
+
+        # `board.load_board_config` has validated the config; these checks are
+        # the gate's own, so it never records a criterion it could not run as
+        # passed, nor reads an unknown policy as `warn` (#1538).
+        policy = gate_config.get("policy", "warn")
+        if policy not in ("warn", "enforce"):
+            raise BoardConfigError("has a gate whose 'policy' is not 'warn' or 'enforce'")
 
         criteria_results = []
         all_checkers_passed = True
 
-        for criterion in gate_config.get("criteria", []):
+        for n, criterion in enumerate(gate_config.get("criteria", []), 1):
+            where = f"criterion {n} of the gate for this status"
+            check_criterion(where, criterion)
             crit_type = criterion.get("type", "checker")
             text = criterion.get("text", "")
             hint = criterion.get("hint")
@@ -2201,19 +2189,17 @@ class SoftwareKBPlugin:
                 criteria_results.append(result)
                 continue
 
-            # Checker-based criterion
-            checker_name = criterion.get("checker")
-            if not checker_name:
-                criteria_results.append({"text": text, "passed": True, "type": "checker"})
-                continue
+            # Checker-based criterion (check_criterion refused one with none)
+            checker_name = criterion["checker"]
 
             # Special case: no_open_blockers needs DB access
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                failure = self._check_no_open_blockers(
-                    db, item_id, kb_name, readable_kbs=readable_kbs
-                )
+                with evaluating(where):
+                    failure = self._check_no_open_blockers(
+                        db, item_id, kb_name, readable_kbs=readable_kbs
+                    )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
@@ -2222,11 +2208,8 @@ class SoftwareKBPlugin:
                 criteria_results.append(result)
                 continue
 
-            # Standard named checker
-            checker_fn = NAMED_CHECKERS.get(checker_name)
-            if not checker_fn:
-                criteria_results.append({"text": text, "passed": True, "type": "checker"})
-                continue
+            # Standard named checker (check_criterion refused an unknown one)
+            checker_fn = gate_checker(checker_name)
 
             # Build entry dict for the checker
             entry_dict = dict(row) if not isinstance(row, dict) else row
@@ -2245,7 +2228,10 @@ class SoftwareKBPlugin:
                 ]
 
             params = criterion.get("params")
-            failure = checker_fn(entry_dict, None, params)
+            # Three outcomes: a failure row, None because it holds, or a
+            # refusal because it could not be evaluated on this item.
+            with evaluating(where):
+                failure = checker_fn(entry_dict, None, params)
             passed = failure is None
             result = {"text": text, "passed": passed, "type": "checker"}
             if not passed:
@@ -2257,25 +2243,45 @@ class SoftwareKBPlugin:
 
         return {
             "gate_name": gate_config.get("name", to_status),
-            "policy": gate_config.get("policy", "warn"),
+            "policy": policy,
             "passed": all_checkers_passed,
             "criteria": criteria_results,
         }
 
-    def _load_board_config_safe(self, kb_name: str | None) -> dict[str, Any]:
-        """Load board config, falling back to defaults on error."""
-        from pathlib import Path
+    def _board_config(
+        self,
+        db,
+        kb_name: object,
+        *,
+        readable_kbs: set[str] | None,
+        unnamed_gives_defaults: bool = False,
+    ):
+        """The board config of the KB ``kb_name`` names: the one path to
+        ``board.load_board_config`` (#1538).
 
-        from .board import load_board_config
+        The KB goes through the one resolver (config, the registry, then the
+        index's ``kb`` table), so the file read is the resolved KB's own root
+        and nowhere else. A name that does not resolve is ``KBNotFoundError``.
+        A call naming no KB is refused, except for the cross-KB views
+        (``unnamed_gives_defaults``), which answer from the built-in defaults
+        and read no file. A ``board.yaml`` that cannot be loaded is
+        ``BoardConfigError``; nothing here catches it."""
+        from pyrite.exceptions import ValidationError
+        from pyrite.services.access_policy import named_kb
+        from pyrite.services.kb_resolver import resolve_kb
 
-        try:
-            cfg = self._get_config()
-            kb_conf = cfg.get_kb(kb_name) if kb_name else None
-            if kb_conf:
-                return load_board_config(kb_conf.path)
-            return load_board_config(Path("."))
-        except Exception:
-            return {"lanes": [], "wip_policy": "warn"}
+        from .board import default_board_config, load_board_config
+
+        if named_kb(kb_name) is None:
+            if unnamed_gives_defaults:
+                return default_board_config()
+            raise ValidationError(
+                "This tool needs a KB: a board config is read from a KB's own root."
+            )
+        # The caller's readable set: a KB it may not read is not found, as
+        # at dispatch; the resolved KB's root holds its board.yaml.
+        kb = resolve_kb(self._get_config(), kb_name, readable_kbs=readable_kbs, db=db)
+        return load_board_config(kb)
 
     def _mcp_check_ready(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
@@ -2285,7 +2291,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
 
         try:
             query = (
@@ -2305,7 +2311,7 @@ class SoftwareKBPlugin:
             status = row["status"] or meta.get("status", "proposed")
             priority = row["priority"] or meta.get("priority", "medium")
 
-            board_config = self._load_board_config_safe(kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
@@ -2330,7 +2336,7 @@ class SoftwareKBPlugin:
         import json
 
         db, should_close = self._get_db()
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         status_filter = args.get("status")
 
         try:
@@ -2340,7 +2346,7 @@ class SoftwareKBPlugin:
 
             rows = db._raw_conn.execute(query, params).fetchall()
 
-            board_config = self._load_board_config_safe(kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
             not_ready_items: list[dict[str, Any]] = []
@@ -2541,26 +2547,15 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """Recommend next work item based on priority and WIP limits."""
         import json
-        from pathlib import Path
-
-        from .board import load_board_config
 
         db, should_close = self._get_db()
         kb_name = args.get("kb_name")
 
         try:
             # Load board config for WIP limits
-            try:
-                if self.ctx is not None and kb_name:
-                    config = self._get_config()
-                    kb_conf = config.get_kb(kb_name)
-                    board_config = (
-                        load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-                    )
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                board_config = {"lanes": [], "wip_policy": "warn"}
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
 
             # Count in_progress items and find WIP limit
             ip_query = "SELECT COUNT(*) as cnt FROM entry WHERE entry_type = 'backlog_item'"
@@ -2712,7 +2707,7 @@ class SoftwareKBPlugin:
         assignee = args["assignee"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
 
         try:
             # Get current entry
@@ -2762,21 +2757,7 @@ class SoftwareKBPlugin:
                 }
 
             # Evaluate DoR gate
-            from pathlib import Path
-
-            from .board import load_board_config
-
-            board_config = {"lanes": [], "wip_policy": "warn"}
-            try:
-                cfg = self._get_config()
-                kb_conf = cfg.get_kb(kb_name)
-                if kb_conf:
-                    board_config = load_board_config(kb_conf.path)
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                pass
-
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
@@ -2887,7 +2868,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         to_status = args["to_status"]
         reason = args.get("reason")
 
@@ -2929,21 +2910,7 @@ class SoftwareKBPlugin:
                 }
 
             # Evaluate quality gate
-            from pathlib import Path
-
-            from .board import load_board_config
-
-            board_config = {"lanes": [], "wip_policy": "warn"}
-            try:
-                cfg = self._get_config()
-                kb_conf = cfg.get_kb(kb_name)
-                if kb_conf:
-                    board_config = load_board_config(kb_conf.path)
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                pass
-
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, to_status, row, meta, readable_kbs=readable_kbs
             )
@@ -3003,7 +2970,7 @@ class SoftwareKBPlugin:
         reviewer = args["reviewer"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         outcome = args["outcome"]
         feedback = args.get("feedback")
 
@@ -3057,7 +3024,7 @@ class SoftwareKBPlugin:
             # Evaluate DoD gate when approving (transition to done)
             gate_result = None
             if target == "done":
-                board_config = self._load_board_config_safe(kb_name)
+                board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
                 gate_result = self._evaluate_gate(
                     db, board_config, "done", row, meta, readable_kbs=readable_kbs
                 )

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..exceptions import EntryTypeError, json_safe_value
-from ..schema import Link, Provenance, Source
+from ..schema import Link, Provenance, Source, validate_importance
 from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import load_yaml
 
@@ -760,6 +760,21 @@ class Entry(ABC):
             )
         if problem := lifecycle_validation_error(self.lifecycle):
             errors.append(problem)
+
+        # `importance` is a base field, 1-10 on every type (#1537). Check the
+        # file's value when loading fell back to a default (`importance: high`).
+        # A blank or null `importance:` is absent, not a violation: the file is
+        # a person's, and a blank key is common in a hand-made template.
+        importance = self.unrepresented_frontmatter().get("importance", self.importance)
+        if importance is not None and not validate_importance(importance):
+            errors.append(
+                {
+                    "field": "importance",
+                    "rule": "range",
+                    "message": f"Importance must be 1-10, got: {importance}",
+                    "expected": "1-10",
+                }
+            )
         return errors
 
     def validate(self) -> list[str]:
