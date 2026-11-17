@@ -1,0 +1,1 @@
+- Fields declared `text` or `string` preserve their typed string value on CLI `-f` / `--field` instead of being parsed as numbers or booleans (e.g. `version=1.10` is stored as `"1.10"` rather than `1.1`) (#1672).

@@ -146,16 +146,23 @@ def _field_type_for(
     config: Any, kb_name: str, entry_type: str | None, field_name: str
 ) -> str | None:
     """Return the declared type for a field, including core-type metadata."""
-    if not entry_type:
+    if not entry_type or config is None:
         return None
 
     kb_config = config.get_kb(kb_name)
     if kb_config is not None:
-        type_schema = kb_config.kb_schema.types.get(entry_type)
-        if type_schema is not None:
-            field_schema = type_schema.fields.get(field_name)
-            if field_schema is not None:
-                return field_schema.field_type
+        from ..schema.type_mapping import resolve_entry_type
+
+        resolved_type = resolve_entry_type(entry_type, kb_config.kb_type, kb_config.kb_schema)
+        type_fields = kb_config.kb_schema.type_fields(resolved_type)
+        if field_name in type_fields:
+            return type_fields[field_name].field_type
+
+        from ..schema.field_aliases import field_aliases
+
+        target = field_aliases(resolved_type).get(field_name, field_name)
+        if target in type_fields:
+            return type_fields[target].field_type
 
     from ..schema import CORE_TYPES
     from ..schema.field_aliases import field_aliases
@@ -164,22 +171,93 @@ def _field_type_for(
     # `participants` (the attribute name `create` accepts) is an alias of the
     # file key `actors`: it parses as the target does.
     name = field_aliases(entry_type).get(field_name, field_name) if entry_type else field_name
-    return core_fields.get(field_name) or core_fields.get(name)
+    spelled = core_fields.get(field_name) or core_fields.get(name)
+    if spelled:
+        from ..schema.kb_schema import _core_field_type
+
+        return _core_field_type(spelled)
+    return None
 
 
 def _parse_field_value(value: str, field_type: str | None = None) -> Any:
-    """Parse a ``--field`` value using its declared type when available.
+    """Parse a ``--field`` value using its declared type when available (#1672).
 
-    Parsing order:
-      1. JSON (strings, arrays, and objects): ``"a, b"``, ``[1,2]``, or ``{"k": "v"}``
-      2. Integer: ``42``
-      3. Float: ``3.14``
-      4. Boolean: ``true``/``false``
-      5. Comma-separated list for list-like fields: ``a,b,c`` → ``["a","b","c"]``
+    When a field has a declared type:
+      - ``text`` or ``string``: the value is kept exactly as typed, preventing
+        numbers/booleans/dates (such as ``1.10``, ``02134``, ``1e5``, ``true``,
+        ``2026-11-17``) from being converted to float, int, or bool. A quoted
+        JSON string (``"..."``) is unpacked if it decodes as a string.
+      - ``number``: parsed as int or float.
+      - ``checkbox``: parsed as boolean (``true``/``false``).
+      - ``date`` / ``datetime``: kept as string (unpacked from JSON quotes if given).
+      - list-like: parsed as JSON array or comma-separated items.
+
+    When undeclared (``field_type is None``), keeps the original fallback:
+      1. JSON (strings, arrays, and objects)
+      2. Integer
+      3. Float
+      4. Boolean
+      5. Comma-separated list for list-like fields
       6. Plain string (fallback)
     """
     stripped = value.strip()
 
+    # 1. Text-like declared fields: store exactly as typed (#1672)
+    if field_type in {"text", "string", "select", "object-ref"}:
+        if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
+            try:
+                unpacked = _json.loads(stripped)
+                if isinstance(unpacked, str):
+                    return unpacked
+            except _json.JSONDecodeError:
+                pass
+        return value
+
+    # 2. Number-like declared fields
+    if field_type in {"number", "int", "float"}:
+        try:
+            return int(stripped)
+        except ValueError:
+            pass
+        try:
+            return float(stripped)
+        except ValueError:
+            pass
+        return value
+
+    # 3. Boolean-like declared fields
+    if field_type in {"checkbox", "boolean", "bool"}:
+        if stripped.lower() in ("true", "1", "yes"):
+            return True
+        if stripped.lower() in ("false", "0", "no"):
+            return False
+        return value
+
+    # 4. Date-like declared fields
+    if field_type in {"date", "datetime"}:
+        if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
+            try:
+                unpacked = _json.loads(stripped)
+                if isinstance(unpacked, str):
+                    return unpacked
+            except _json.JSONDecodeError:
+                pass
+        return stripped
+
+    # 5. List-like declared fields
+    is_list_field = field_type in {"list", "multi-select", "tags"} or (
+        isinstance(field_type, str) and field_type.startswith("list[")
+    )
+    if is_list_field:
+        if stripped.startswith(("[", "{")):
+            try:
+                return _json.loads(stripped)
+            except _json.JSONDecodeError:
+                pass
+        if "," in stripped:
+            return [item.strip() for item in stripped.split(",") if item.strip()]
+
+    # 6. Undeclared fields (field_type is None) fallback:
     # 1. JSON strings, arrays, or objects
     if stripped.startswith(('"', "[", "{")):
         try:
@@ -206,9 +284,6 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
         return False
 
     # 5. Comma-separated list only when the schema declares a list-like field.
-    is_list_field = field_type in {"list", "multi-select", "tags"} or (
-        isinstance(field_type, str) and field_type.startswith("list[")
-    )
     if is_list_field and "," in stripped:
         return [item.strip() for item in stripped.split(",") if item.strip()]
 
