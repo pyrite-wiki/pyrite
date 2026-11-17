@@ -6,7 +6,7 @@ tags:
 - quality
 importance: 5
 kind: improvement
-status: in_progress
+status: done
 priority: high
 assignee: agent:cloud-worker
 effort: S
