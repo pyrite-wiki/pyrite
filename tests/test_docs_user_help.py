@@ -155,3 +155,9 @@ def test_reserved_name_is_refused_before_creating_kb(cli_world, tmp_path):
     assert result.exit_code == 1
     assert "INVALID_KB_NAME" in result.output
     assert not (folder / "kb.yaml").exists()
+
+
+def test_web_ui_landing_mode_documentation():
+    web_ui = (ROOT / "docs/web-ui.md").read_text(encoding="utf-8")
+    assert "configuration.md#where-a-users-write-lands-landing" in web_ui
+    assert "never writes to the main KB" not in web_ui
