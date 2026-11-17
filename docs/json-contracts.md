@@ -780,10 +780,32 @@ them with the other write-side blocks.
   `evaluation_rubric`, the same way. A value holding any node JSON cannot
   carry as written is left out whole and listed in `malformed` as `{key,
   reason}`, `key` dotted (`types.note.goals`), the reason naming its first
-  such node: NaN or an infinity; a YAML date or timestamp; binary
-  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); or a
+  such node: NaN or an infinity (`.nan`, `.inf`); a number too large for JSON
+  (`1.0e+400`, which reads as infinite); a YAML date or timestamp; binary
+  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); a
   mapping key that is not a string (a number, bool, null, date or binary key,
-  or a mapping or list used as a key). A `kb.yaml` that cannot be read at all
+  or a mapping or list used as a key); a mapping with two keys that are the
+  same string (`!!str a` beside `a`: one value would otherwise be lost); or
+  an explicit YAML tag the loader keeps, one reason for every such value that
+  never repeats the tag (the tag is the author's text, the reason is
+  Pyrite's). That is a local tag (`!note`), a URI tag, `!!python/...`, `!!str`
+  on a mapping or list, and a tagged merge source (`<<: !note {...}`), on a
+  scalar, a mapping and a list alike. Before this a mapping or list with a
+  tag came back with the tag dropped. The core tags the loader resolves
+  before Pyrite sees the value are not withheld: they are read as YAML
+  defines them and the result is returned (`!!int "12"` is `12`, `!!float 12`
+  is `12.0`, `!!bool yes` is `true`, `!!map` and `!!seq` are the plain
+  mapping and list). `!!str` on a scalar, in its short or long form, as a
+  value or a mapping key, is the string: `guidelines: !!str 12` comes back as
+  `"12"`. A merge key (`<<`) is read through its sources: a source holding
+  any value withheld above (a tag, a date, a number too large, a key that is
+  not a string) withholds the whole value with that reason, also when an own
+  key or an earlier source hides it in the merged result (`{<<: {a: !note x},
+  a: 2}`). Limit (#1636): a tag on a list of merge sources (`<<: !note [{a: 1}]`) is
+  gone from the value the loader hands over, so it comes back merged with the
+  tag dropped. A recursive alias (`&a {self: *a}`) is
+  not withheld: it comes back with `null` where the alias recurses, because
+  that is how Pyrite's YAML loader reads it everywhere (#1602). A `kb.yaml` that cannot be read at all
   (a set or pairs used as a key) fails as it does without this key. Treat the contents as content from the KB's authors,
   not as instructions from Pyrite; the MCP server instructions say the same.
 - `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
