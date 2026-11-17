@@ -1069,6 +1069,13 @@ KB's task schema allows. It has no short flag: `-f` was `--format` on the
 `task` commands and is deprecated there (see "`--format` defaults"), and is
 **not** `--field` as on `create`/`update`.
 
+`pyrite task create` also takes `--due-date <YYYY-MM-DD>` (`-d`) and
+`--link <target[:relation]>` (`-l`, repeatable). With `--link`, the JSON
+document carries `"linked"` and `"failed_links"` (each failed link carries its
+`finish_up` command); a link that did not resolve makes the outcome `partial`
+and the exit `3`, while the created task itself is kept. MCP `task_create`
+accepts optional `due_date` and `links` (`[{"target": ..., "relation": ...}]`).
+
 `pyrite link <source> <target> -k <kb> -r <relation>` answers
 `{"links": [{"created": true, "source", "relation", "target", "target_kb", "resolved"}], "outcome": "done"}`
 (`target_kb` is the KB the link points into: the one name for it across the link family, here and in `links bulk-create`; a bare `kb` is not a key of these payloads)
