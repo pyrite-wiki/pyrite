@@ -27,7 +27,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 ## Quick Start
 
 ```bash
-# Install (no PyPI wheel yet -- from source). Needs Python 3.11+.
+# Install (no PyPI wheel yet -- from source). Needs Python 3.11+ (3.11.5 or newer for the patched `soupsieve`).
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
