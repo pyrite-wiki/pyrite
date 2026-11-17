@@ -224,6 +224,10 @@ LOCATIONS: dict[str, tuple[dict, str]] = {
         {"checker": "priority_present"},
         "no-priority-line",
     ),
+    "column-priority-read-by-the-model-has_field": (
+        {"checker": "has_field", "params": {"field": "priority"}},
+        "no-priority-line",
+    ),
     "column-date-of-a-core-type": ({"checker": "has_field", "params": {"field": "date"}}, "event"),
     "tag-table": ({"checker": "has_field", "params": {"field": "tags"}}, "full"),
     "column-and-bag-priority": (
@@ -405,6 +409,18 @@ def _location_cells():
 
 @pytest.mark.parametrize(("location", "caller"), _location_cells())
 def test_has_field_reads_a_field_wherever_the_index_stores_it(answers, location, caller):
+    """A field the item has holds wherever the index keeps it.
+
+    The ``column-priority-read-by-the-model`` cells pin a decision (the plan
+    on #1660, agreed by the maintainer's conductor): a checker sees the item as
+    Pyrite reads it, the value ``pyrite get`` shows. A ``backlog_item`` that
+    leaves ``priority`` out of its file reads ``priority: medium`` (the type's
+    default, in the column), so ``priority_present`` and ``has_field
+    priority`` hold for it, in a gate and in QA, as ``status_present`` holds
+    for its defaulted ``status``. Telling a defaulted field from a written one
+    would need the index to record which fields the file wrote, a storage
+    change outside #1587.
+    """
     _criterion, item = LOCATIONS[location]
     assert answers[caller][item][f"at-{location}"] is True, (caller, item, location)
 
