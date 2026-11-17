@@ -6,6 +6,7 @@ import json
 import time
 
 import pytest
+import typer
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.task import TaskEntry
@@ -125,13 +126,27 @@ class TestDuplicates:
         assert "~" in result.stdout
         assert "[title]" in result.stdout
 
-    def test_a_bad_threshold_is_a_usage_error(self, cli_world):
+    @pytest.mark.parametrize("value", ["2", "abc"])
+    def test_a_bad_threshold_is_a_usage_error(self, cli_world, value):
         world = cli_world()
 
-        result = world.cli("qa", "duplicates", "-t", "task", "--threshold", "2")
+        result = world.cli("qa", "duplicates", "-t", "task", "--threshold", value)
 
         assert result.exit_code == 2
         assert "threshold" in (result.output + getattr(result, "stderr", "")).lower()
+
+    @pytest.mark.parametrize("value", ["0", "1"])
+    def test_cli_accepts_a_threshold_on_the_boundary(self, cli_world, value):
+        world = _world_with_pair(cli_world)
+
+        result = world.cli(
+            "qa", "duplicates", "-t", "task", "--threshold", value, "--format", "json"
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert payload["threshold"] == float(value)
+        assert payload["count"] == 1
 
     def test_two_thousand_entries_stay_inside_the_bound(self, dup_setup):
         rows = [
@@ -364,6 +379,21 @@ def test_cli_refuses_a_non_finite_threshold_as_a_usage_error(cli_world, value):
     assert result.exit_code == 2, result.output
     assert "NaN" not in result.stdout
     assert "NO_OUTCOME" not in result.stdout + result.output
+
+
+@pytest.mark.parametrize("value", ["2", "nan", "inf", "-inf", "abc", "", "1.1", "-0.1"])
+def test_parse_unit_interval_refuses_bad_values(value):
+    from pyrite.cli.qa_commands import _parse_unit_interval
+
+    with pytest.raises(typer.BadParameter, match="not a valid number|not in the range"):
+        _parse_unit_interval(value)
+
+
+@pytest.mark.parametrize(("value", "expected"), [("0.5", 0.5), ("0", 0.0), ("1", 1.0)])
+def test_parse_unit_interval_accepts_values_in_range(value, expected):
+    from pyrite.cli.qa_commands import _parse_unit_interval
+
+    assert _parse_unit_interval(value) == expected
 
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), -0.1, 1.1])

@@ -1,0 +1,1 @@
+- **Every Pyrite command starts again on Typer 0.29 (#1597).** `qa duplicates --threshold` used a `click_type=` setting Typer 0.29 removed, so no command line could even start. The option now parses the value with the same 0-to-1 check (NaN refused), and `--threshold 2`, `nan` and `abc` are still refused as usage errors.
