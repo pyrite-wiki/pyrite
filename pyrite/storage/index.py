@@ -26,7 +26,6 @@ from ..exceptions import (
     EntryValueError,
     KBConfigInvalidError,
     KBNotInConfigError,
-    KBUnreadableError,
     StorageError,
     outside_text,
     public_text,
@@ -50,6 +49,7 @@ from ..schema.field_aliases import (
     read_view,
 )
 from ..utils.kb_files import (
+    KB_YAML_REFUSALS,
     OUTSIDE_KB_REASON,
     KBFileOutsideRootError,
     KBFiles,
@@ -1367,10 +1367,10 @@ class IndexManager:
 
             try:
                 count = self.index_kb(kb.name, make_kb_progress(kb.name))
-            except KBUnreadableError as e:
+            except KB_YAML_REFUSALS as e:
                 # One unreadable KB (#1542), or one whose kb.yaml does not load
-                # (#1547), does not stop the others; its rows are kept (the
-                # reconcile refused before planning).
+                # or leads outside the KB (#1547), does not stop the others; its
+                # rows are kept (the reconcile refused before planning).
                 logger.warning("Skipping %s: %s", kb.name, public_text(e))
                 continue
             results[kb.name] = count
@@ -1697,8 +1697,9 @@ class IndexManager:
             except KBFilesUnreadableError as e:
                 # #1551's row, as it shipped: {kb, error}.
                 health["unreadable_kbs"].append({"kb": kb.name, "error": public_text(e)})
-            except KBConfigInvalidError:
-                # A kb.yaml that does not load (#1547): named once, in
+            except (KBConfigInvalidError, KBFileOutsideRootError):
+                # A kb.yaml that does not load, or leads outside the KB
+                # (#1547): named once, in
                 # `schema_errors` (``_load_schemas``), with its code and the
                 # parser's words for the local process; the verdict reads
                 # that row as unhealthy. Its files are not compared below:
@@ -2059,6 +2060,10 @@ class IndexManager:
                 # the local process, withheld from a network caller (N3).
                 why = outside_text(exc.__cause__ or exc)
                 loaded[kb.name] = (None, {"error": why, "error_code": exc.error_code})
+            except KBFileOutsideRootError as exc:
+                # A link out of the KB, or a second hard link (#1547): the
+                # error's own text (it names no path), and its code.
+                loaded[kb.name] = (None, {"error": public_text(exc), "error_code": exc.error_code})
             except Exception as exc:
                 loaded[kb.name] = (None, {"error": outside_text(exc) or type(exc).__name__})
         return loaded
@@ -2339,9 +2344,10 @@ class IndexManager:
                     one = self.reconcile_kb(kb, progress_callback=callback, verify=True)
                 else:
                     one = self.reconcile_kb(kb, progress_callback=callback)
-            except KBUnreadableError as e:
+            except KB_YAML_REFUSALS as e:
                 # Files the OS will not let Pyrite read (#1542), or a kb.yaml
-                # that does not load (#1547): not synced, rows kept, named.
+                # that does not load or leads outside the KB (#1547): not
+                # synced, rows kept, named.
                 if kb_name:
                     raise
                 reason = public_text(e)  # the error's fixed text (ADR-0052 N3)

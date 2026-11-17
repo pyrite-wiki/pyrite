@@ -107,6 +107,9 @@ class KBConfig:
     # cache is served only while the file is still that file (#1547).
     _schema_cache: Any = field(default=None, init=False, repr=False)
     _schema_stamp: Any = field(default=None, init=False, repr=False)
+    # The kb.yaml identity whose load failure this process has logged, so
+    # the parser's words reach its log once per file, not once per read.
+    _logged_stamp: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.path = Path(self.path).expanduser().resolve()
@@ -167,13 +170,45 @@ class KBConfig:
         process (a server) whose kb.yaml is edited, broken or repaired after
         it loaded answers what the file is now, as a fresh process does."""
         stamp = self._kb_yaml_stamp()
-        if self._schema_cache is None or stamp != self._schema_stamp:
-            from .schema import KBSchema
+        cached = self._schema_cache
+        if cached is not None and stamp == self._schema_stamp:
+            return cached
+        from .exceptions import KBConfigInvalidError
+        from .schema import KBSchema
 
+        try:
+            schema = KBSchema.from_dict(read_kb_yaml(self.path))
+        except KBConfigInvalidError as e:
             self._schema_cache = None
-            self._schema_cache = KBSchema.from_dict(read_kb_yaml(self.path))
-            self._schema_stamp = stamp
-        return self._schema_cache
+            self.log_config_invalid(e, stamp)
+            raise
+        # Built here and returned from here: another thread replacing the
+        # attribute meanwhile cannot make this call answer None.
+        self._schema_cache, self._schema_stamp = schema, stamp
+        return schema
+
+    def log_config_invalid(self, error: Any, stamp: Any = None) -> None:
+        """Write why this KB's kb.yaml does not load to this process's own log,
+        once per kb.yaml identity: the fixed text and the parser's words.
+
+        The log is the operator's, whatever the process (a CLI, ``pyrite-read``,
+        ``pyrite-server``), so the words are shown in full here
+        (``outside_text(local=True)``); no response carries them (ADR-0052 N3).
+        Called at config load (``load_kb_yaml``) and when ``kb_schema`` finds
+        the file broken later."""
+        from .exceptions import outside_text, public_text
+
+        if stamp is None:
+            stamp = self._kb_yaml_stamp()
+        if stamp is not None and stamp == self._logged_stamp:
+            return
+        self._logged_stamp = stamp
+        logger.warning(
+            "KB %s: %s The parser said: %s",
+            self.name,
+            public_text(error, already_logged=True),
+            outside_text(error.__cause__ or error, local=True, already_logged=True),
+        )
 
     def _kb_yaml_stamp(self) -> tuple[int, ...] | None:
         """The identity of kb.yaml now, for the schema cache only: inode,
@@ -195,16 +230,16 @@ class KBConfig:
         self._schema_stamp = None
 
     def readability_error(self) -> Any:
-        """The ``KBUnreadableError`` this KB's files answer now, or None:
-        ``check_readable``, asked live. ``KBFilesUnreadableError``
-        (``KB_UNREADABLE``) or ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``,
-        its parser's error as ``__cause__``). Read by ``pyrite kb list`` and
-        ``unreadable``."""
-        from .exceptions import KBUnreadableError
+        """The refusal this KB's files answer now (``KB_YAML_REFUSALS``), or
+        None: ``check_readable``, asked live. ``KBFilesUnreadableError``
+        (``KB_UNREADABLE``), ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``,
+        its parser's error as ``__cause__``) or ``KBFileReadOutsideRootError``
+        (``OUTSIDE_KB_ROOT``). Read by ``pyrite kb list`` and ``unreadable``."""
+        from .utils.kb_files import KB_YAML_REFUSALS
 
         try:
             self.check_readable()
-        except KBUnreadableError as e:
+        except KB_YAML_REFUSALS as e:
             return e
         return None
 
@@ -230,8 +265,11 @@ class KBConfig:
         files cannot be read: its folder cannot be listed, whether it has a
         kb.yaml cannot be told, or its kb.yaml is there and cannot be read.
         A missing folder (or a path that is not one) is not this answer; its
-        callers already handle that. A kb.yaml that leads outside the KB is
-        not either: the read that needs it refuses it (OUTSIDE_KB_ROOT).
+        callers already handle that. A kb.yaml that leads outside the KB (a
+        link out, a second hard link) raises ``KBFileReadOutsideRootError``
+        (``OUTSIDE_KB_ROOT``), as ``kb_schema`` does: the reconcile would
+        otherwise read every file against a schema it cannot have and
+        retire every row (#1547). Callers catch ``KB_YAML_REFUSALS``.
 
         The gate in front of anything that would read the KB's absence of
         files as a fact: the reconcile asks it before it may remove a row
@@ -243,12 +281,7 @@ class KBConfig:
         against no schema and the removal pass would retire every row
         (#1547).
         """
-        from .utils.kb_files import KBFileOutsideRootError
-
-        try:
-            self._read_kb_yaml_or_raise()
-        except KBFileOutsideRootError:
-            return
+        self._read_kb_yaml_or_raise()
 
     def _read_kb_yaml_or_raise(self) -> dict[str, Any] | None:
         """``check_readable``'s work, returning the kb.yaml mapping it loaded
@@ -289,7 +322,7 @@ class KBConfig:
         and the load goes on. Nothing is recorded: ``unreadable``,
         ``readability_error``, ``kb_schema`` and index health ask the file
         again, so a KB broken or repaired later answers what it is now."""
-        from .exceptions import KBConfigInvalidError, KBUnreadableError, outside_text, public_text
+        from .exceptions import KBConfigInvalidError, KBUnreadableError, public_text
         from .utils.kb_files import KBFileOutsideRootError
 
         # Snapshots of kb.yaml, read by nothing in Pyrite today (kb_schema is
@@ -305,14 +338,7 @@ class KBConfig:
             )
             return False
         except KBConfigInvalidError as e:
-            # The parser's words for this process's log, the operator's own
-            # (outside_text withholds them from a network caller's context).
-            logger.warning(
-                "KB %s: %s (%s)",
-                self.name,
-                public_text(e, already_logged=True),
-                outside_text(e.__cause__ or e, already_logged=True),
-            )
+            self.log_config_invalid(e)  # the parser's words, in this process's log
             return False
         except KBUnreadableError as e:
             logger.warning(

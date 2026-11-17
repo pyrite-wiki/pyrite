@@ -45,7 +45,6 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         EntryNotFoundError,
         KBNotFoundError,
         KBProtectedError,
-        KBUnreadableError,
         ValidationError,
         public_text,
     )
@@ -53,7 +52,9 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
 
     code = "ERROR"
     message = str(exc)
-    if isinstance(exc, KBUnreadableError):
+    from ..utils.kb_files import KB_YAML_REFUSALS
+
+    if isinstance(exc, KB_YAML_REFUSALS):
         code = exc.error_code  # KB_UNREADABLE, as on every surface (#1542)
         # KB_CONFIG_INVALID's text names the file and the parser's words; it
         # shows its fixed public message, as on every surface (#1547).
@@ -89,7 +90,8 @@ def kb_list(
         # reason the list fails. Asked now (``check_readable``), for a KB in
         # config.yaml and one `pyrite kb add` registered alike (a registry
         # KB never runs ``load_kb_yaml``).
-        from ..exceptions import KBConfigInvalidError, KBUnreadableError, outside_text, public_text
+        from ..exceptions import KBConfigInvalidError, outside_text, public_text
+        from ..utils.kb_files import KB_YAML_REFUSALS
 
         for kb in kbs:
             cfg = registry.get_kb_config(kb["name"])
@@ -97,7 +99,7 @@ def kb_list(
                 continue
             try:
                 cfg.check_readable()
-            except KBUnreadableError as exc:
+            except KB_YAML_REFUSALS as exc:
                 kb["unreadable"] = public_text(exc)  # the code's fixed text
                 kb["error_code"] = exc.error_code
                 if isinstance(exc, KBConfigInvalidError) and exc.__cause__ is not None:
@@ -522,11 +524,12 @@ def kb_reindex(
         svc,
         registry,
     ):
-        from ..exceptions import KBNotFoundError, KBUnreadableError
+        from ..exceptions import KBNotFoundError
+        from ..utils.kb_files import KB_YAML_REFUSALS
 
         try:
             result = registry.reindex_kb(kb_name)
-        except (KBNotFoundError, KBUnreadableError) as e:
+        except (KBNotFoundError, *KB_YAML_REFUSALS) as e:
             # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
             # (#1547); the reconcile refused before planning, rows kept.
             _kb_error(e, output_format)

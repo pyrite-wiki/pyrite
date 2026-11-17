@@ -46,6 +46,11 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
             row.get("error_code") == "KB_CONFIG_INVALID"
             for row in health.get("schema_errors") or []
         )
+        # A kb.yaml that leads outside the KB (#1547): its schema is refused
+        # the same way, so the KB is as unusable.
+        or any(
+            row.get("error_code") == "OUTSIDE_KB_ROOT" for row in health.get("schema_errors") or []
+        )
         or health.get("orphaned_entries")
         or "error" in off_list_severities
     )

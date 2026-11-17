@@ -74,6 +74,7 @@ from ..services.read_shaping import project_fields
 from ..services.write_target import binding, current_target, session_for_call
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
+from ..utils.kb_files import KB_YAML_REFUSALS
 from .mcp_rate_limiter import MCPRateLimiter
 from .tool_schemas import CORE_TOOL_NAMES
 
@@ -1603,11 +1604,11 @@ class PyriteMCPServer:
 
             try:
                 schema = kb_config.kb_schema
-            except KBUnreadableError as e:
+            except KB_YAML_REFUSALS as e:
                 if kb_name:
                     raise  # the one KB asked for: its own refusal
-                # One KB whose kb.yaml does not load (#1547) or cannot be read
-                # (#1542) is named; the others are listed.
+                # One KB whose kb.yaml does not load (#1547), cannot be read
+                # (#1542) or leads outside the KB is named; the others are listed.
                 unreadable_kbs.append(
                     {"kb": kb_config.name, "error": _safe_message(e), "error_code": e.error_code}
                 )
@@ -2334,9 +2335,9 @@ class PyriteMCPServer:
                     return _error("MISSING_PARAMETER", "kb_name required for set_schema")
                 return svc.set_schema(kb_name, schema)
 
-        except (KBReadOnlyError, KBUnreadableError) as e:
-            # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
-            # (#1547) keeps its own code, never retryable; nothing written.
+        except (KBReadOnlyError, *KB_YAML_REFUSALS) as e:
+            # KB_UNREADABLE (#1542), KB_CONFIG_INVALID (#1547) or
+            # OUTSIDE_KB_ROOT keeps its own code, never retryable; nothing written.
             return _refusal(e)
         except (PyriteError, ValueError) as e:
             return _error("OPERATION_FAILED", _safe_message(e))

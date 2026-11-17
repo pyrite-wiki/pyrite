@@ -191,7 +191,7 @@ CLI and MCP report the code without an HTTP status.
 | `CLIP_TOO_LARGE` | Clipper, central REST mapping 413 | The page is larger than the clipper's 5 MiB cap, counted after decompression; clip a smaller page. |
 | `BRANDING_INVALID` | Branding configuration, REST 500 | Ask the operator to repair `branding.yaml`; repeating the request will not fix configuration. |
 | `INTERNAL_ERROR` | Unclassified domain failure, REST 500 | Consult the server log; do not assume retrying is safe. |
-| `KB_CONFIG_INVALID` | A KB whose `kb.yaml` Pyrite can read but cannot load as a mapping: bytes that are not UTF-8, a YAML syntax error, a duplicate key, a document over the YAML limits, or a top level that is not a mapping (#1547). Every operation that needs that KB's schema, on every verb (get, create, update, delete, schema show/add/remove/set, sync, rebuild or reindex of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message; it names no KB, no path and nothing the parser said. The KB's index rows are kept, `kb.yaml` is never rewritten, and every other KB still works. `pyrite kb list` and `pyrite index health` on the local CLI show the parser's words; a network caller does not get them. | Correct `kb.yaml` by hand (`pyrite kb list` or `pyrite index health` says what is wrong), then `pyrite index sync`. |
+| `KB_CONFIG_INVALID` | A KB whose `kb.yaml` Pyrite can read but cannot load as a mapping: bytes that are not UTF-8, a YAML syntax error, a duplicate key, a document over the YAML limits, or a top level that is neither a mapping nor null (a list, a string, a number, a boolean) (#1547). A null document (empty, `~`, `null`, only comments) is a KB with no schema, not this code. Every operation that needs that KB's schema, on every verb (get, create, update, delete, schema show/add/remove/set, sync, rebuild or reindex of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message; it names no KB, no path and nothing the parser said. The KB's index rows are kept, `kb.yaml` is never rewritten, and every other KB still works. `pyrite kb list` and `pyrite index health` on the local CLI show the parser's words; a network caller does not get them. | Correct `kb.yaml` by hand (`pyrite kb list` or `pyrite index health` says what is wrong), then `pyrite index sync`. |
 | `KB_UNREADABLE` | A KB whose files Pyrite cannot read (its folder cannot be listed or searched, its `kb.yaml` cannot be opened): every operation that needs that KB's files, on every verb (get, create, update, delete, schema, sync of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message, whatever the operating system refused; it names no path. The KB's index rows are kept, and every other KB still works. | Fix the folder's or `kb.yaml`'s permissions, then `pyrite index sync`. |
 
 ## MCP operation codes
@@ -1879,7 +1879,7 @@ named rather than dropped:
 
 A registered KB whose `kb.yaml` can be read but cannot be loaded as a mapping
 (not UTF-8, a YAML syntax error, a duplicate key, over the YAML limits, a top
-level that is not a mapping; #1547) is handled the same way, whether it is in
+level that is neither a mapping nor null; #1547) is handled the same way, whether it is in
 `config.yaml` or was added with `pyrite kb add`, with its own code,
 `KB_CONFIG_INVALID`, and three differences: the fix is to correct the file, not
 its permissions; `pyrite kb list` gives its row `error_code` and `error_detail`
@@ -1898,23 +1898,40 @@ What `kb.yaml` is decides, at the moment of the read, in every process:
   normally as soon as it is repaired: the schema is cached only while
   `kb.yaml` is the file it was read from (its inode, size and times). Index
   health, `unreadable`, sync and every operation on the KB read the file as
-  it is then. On a filesystem whose timestamps are coarser than a second, an
-  in-place edit that keeps the size within that second is not seen until the
-  next change.
+  it is then. An atomic replace (a new inode) is always seen. Two in-place
+  writes of the same size within one step of the filesystem's timestamp
+  clock (on Linux that step can be a few milliseconds) leave the same
+  identity, so the second is not seen until the next change.
 - **Kinds of path.** A directory, a FIFO, nesting deeper than the
   interpreter's recursion limit (flow or block style), or anything else the
   parser raises on, answers `KB_CONFIG_INVALID`. A socket answers
-  `KB_UNREADABLE` (the operating system refuses to open it). A dangling link
-  or a link loop is no `kb.yaml` (a KB with no schema); a link out of the KB
-  answers `OUTSIDE_KB_ROOT`. Every other KB still works in each case.
-- **Commands that span KBs.** `pyrite qa duplicates` leaves the KB out, names
-  it in `unreadable_kbs` (`{kb, error, error_code}`, present only when a KB
-  was left out) and exits 3. MCP `list_edge_types` without `kb_name` names it
-  the same way; with `kb_name` naming it, it answers `KB_CONFIG_INVALID`.
+  `KB_UNREADABLE` (the operating system refuses to open it). A link out of
+  the KB (to another KB's `kb.yaml` or anywhere else) or a `kb.yaml` with a
+  second hard link answers `OUTSIDE_KB_ROOT`, and is handled like the other
+  two codes: index sync, build and reindex keep its rows, `kb list` marks it,
+  index health names it in `schema_errors` and is unhealthy. A dangling link
+  or a link loop is no `kb.yaml` (a KB with no schema), and so is a null
+  document. Every other KB still works in each case.
+- **Commands that span KBs.** For any of the three codes, `pyrite qa
+  duplicates` (with or without `--status`) leaves the KB out, names it in
+  `unreadable_kbs` (`{kb, error, error_code}`, present only when a KB was
+  left out) and exits 3. MCP `list_edge_types` without `kb_name` names it the
+  same way; with `kb_name` naming it, it answers that KB's refusal. Index
+  sync and build, index health, `kb list`, `qa validate` and MCP
+  `kb_qa_validate` name it and go on; MCP `kb_qa_status` counts it under
+  `kb_unreadable`.
 - **One message.** `KB_CONFIG_INVALID`'s message is fixed wherever it is
-  printed, `pyrite-read` and `pyrite-admin` included; the parser's words are
-  in `pyrite kb list`'s `error_detail`, in `pyrite index health` and in the
-  log line the config load writes, on the local process only.
+  printed, `pyrite-read` and `pyrite-admin` included. The parser's words are
+  in that process's own log: `pyrite`, `pyrite-read`, `pyrite-admin` and
+  `pyrite-server` each write one line at config load, at their default log
+  level, holding the fixed text and the parser's words; a process whose
+  `kb.yaml` breaks after it loaded logs the same line once, at the first read
+  that finds it broken. On the local CLI they are also in `pyrite kb list`'s
+  `error_detail` and in `pyrite index health`. No REST or MCP response
+  carries them.
+- **Limit: a `kb.yaml` that loads but is not a schema** (`types: 3.5`,
+  `types: [memo, 2]`): its own KB answers an untyped error, and `qa
+  duplicates` and MCP `list_edge_types` stop for every KB. Filed as #1591.
 - **Limit: a very large `kb.yaml`.** There is no size bound: every command
   loads every `kb.yaml`, so a file of tens of megabytes slows every command
   (measured: 64 MB of one scalar takes about 24 seconds to load; two million

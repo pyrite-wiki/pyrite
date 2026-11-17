@@ -174,7 +174,8 @@ def index_build(
         git_service = GitService()
         console.print("[dim]Building index with git attribution...[/dim]")
 
-    from ..exceptions import KBUnreadableError, public_text
+    from ..exceptions import public_text
+    from ..utils.kb_files import KB_YAML_REFUSALS
 
     unreadable: list[str] = []
     built = 0
@@ -205,7 +206,7 @@ def index_build(
                     )
                 else:
                     count = index_mgr.index_kb(kb.name, make_progress_callback(task))
-            except KBUnreadableError as exc:
+            except KB_YAML_REFUSALS as exc:
                 # Not rebuilt, its rows kept; the others go on (#1542). Also a
                 # kb.yaml that does not load, KB_CONFIG_INVALID (#1547).
                 unreadable.append(kb.name)
@@ -278,14 +279,14 @@ def index_sync(
 
     index_mgr = IndexManager(db, config)
 
-    from ..exceptions import KBUnreadableError
+    from ..utils.kb_files import KB_YAML_REFUSALS
 
     try:
         if verify:
             results = index_mgr.sync_incremental(kb_name, verify=True)
         else:
             results = index_mgr.sync_incremental(kb_name)
-    except KBUnreadableError as exc:
+    except KB_YAML_REFUSALS as exc:
         # `-k` named a KB whose files cannot be read (#1542), or whose
         # kb.yaml does not load (#1547): nothing synced, its rows kept.
         from ..utils.errors import cli_error_from

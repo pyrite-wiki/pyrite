@@ -637,3 +637,38 @@ def test_kb_unreadable_is_unchanged_and_distinct():
     assert KBConfigInvalidError.error_code == "KB_CONFIG_INVALID"
     assert KBConfigInvalidError.retryable is False
     assert KBConfigInvalidError.public_message == KBConfigInvalidError.MESSAGE
+
+
+#: A document whose top level is null (``~``, ``null``, empty, only comments
+#: or whitespace) holds no kb.yaml content: a KB with no schema, as with no
+#: kb.yaml. Any other top level that is not a mapping is refused.
+TOP_LEVELS = {
+    "empty": (b"", "no schema"),
+    "tilde": (b"~\n", "no schema"),
+    "null": (b"null\n", "no schema"),
+    "only-comments": (b"# a\n# b\n", "no schema"),
+    "only-whitespace": (b"  \n\n", "no schema"),
+    "empty-mapping": (b"{}\n", "no schema"),
+    "false": (b"false\n", "KB_CONFIG_INVALID"),
+    "zero": (b"0\n", "KB_CONFIG_INVALID"),
+    "string": (b"just text\n", "KB_CONFIG_INVALID"),
+    "list": (b"- a\n", "KB_CONFIG_INVALID"),
+    "empty-list": (b"[]\n", "KB_CONFIG_INVALID"),
+}
+
+
+@pytest.mark.control(reason="pins which top levels are refused and which read as no schema")
+@pytest.mark.parametrize("top", list(TOP_LEVELS))
+def test_a_null_top_level_is_no_schema_and_any_other_non_mapping_is_refused(top, tmp_path):
+    from pyrite.exceptions import PyriteError
+    from pyrite.utils.yaml import read_kb_yaml
+
+    raw, expected = TOP_LEVELS[top]
+    (tmp_path / "kb.yaml").write_bytes(raw)
+    if expected == "no schema":
+        assert dict(read_kb_yaml(tmp_path)) == {}
+        assert KBConfig(name="k", path=tmp_path).kb_schema.types == {}
+    else:
+        with pytest.raises(PyriteError) as caught:
+            read_kb_yaml(tmp_path)
+        assert caught.value.error_code == expected

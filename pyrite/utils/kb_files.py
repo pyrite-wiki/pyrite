@@ -94,6 +94,7 @@ __all__ = [
     "KBFilesUnreadableError",
     "KBFolderChanged",
     "KBPresenceUnknownError",
+    "KB_YAML_REFUSALS",
     "OwnerNotKeptError",
 ]
 
@@ -158,6 +159,17 @@ class KBFileReadOutsideRootError(KBFileOutsideRootError):
             "or the file has more than one hard link, whose other names may be "
             "outside it; nothing was read",
         )
+
+
+#: The per-KB refusals a read of a KB's kb.yaml can raise (``read_kb_yaml``,
+#: ``KBConfig.kb_schema``, ``KBConfig.check_readable``): ``KB_UNREADABLE``
+#: (the OS refused), ``KB_CONFIG_INVALID`` (it does not load as a mapping)
+#: and ``OUTSIDE_KB_ROOT`` (a link out of the KB, or a second hard link). A
+#: walk over KBs catches exactly these, names the KB with ``error_code`` and
+#: goes on; a call that names only that KB answers the refusal (#1547).
+#: ``KBFileOutsideRootError`` is a ``ValidationError``, not a
+#: ``KBUnreadableError``, hence a tuple.
+KB_YAML_REFUSALS: tuple[type[Exception], ...] = (KBUnreadableError, KBFileOutsideRootError)
 
 
 class KBFolderChanged(FileChanged):
