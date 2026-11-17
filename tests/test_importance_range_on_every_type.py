@@ -389,8 +389,8 @@ def test_a_journalism_kb_refuses_importance_99_with_the_models_answer(cli_world,
 #   mcp_set:    the verdict of the JSON value
 #
 # A create answers as an update that sets the same value on the same surface does
-# (#1588, decision (a)): no create column. Whole floats (`5.0`, `10.0`, `1e1`) are
-# with the maintainer (#1588); their rows keep the verdicts they had before #1588.
+# (#1588, decision (a)): no create column. A whole float (`5.0`, `10.0`, `1e1`) is accepted
+# and stored as its int (maintainer decision of 2026-11-17).
 _I = 123456789012345678901234567890
 KINDS = {
     # kind: (yaml, cli text, json value, file, cli_set, mcp_set)
@@ -508,19 +508,11 @@ def _stored_value(path: Path):
 
 
 def _stored_is_in_range(path: Path) -> bool:
-    """What the file now holds is a whole number in 1-10, by hand from the decision:
-    an int, plain ASCII digit text, or a whole float (whole floats are undecided and
-    keep the answer they had before #1588)."""
+    """What a write stored is the int a whole number in 1-10 is, by hand from the decisions:
+    an accepted value is written as the int the rule reads (`5.0`, `"05"` -> 5), never as text
+    or a float (#1588 fix round 2)."""
     value = _stored_value(path)
-    if isinstance(value, bool):
-        return False
-    if isinstance(value, int):
-        return 1 <= value <= 10
-    if isinstance(value, float):
-        return math.isfinite(value) and value == int(value) and 1 <= value <= 10
-    if isinstance(value, str):
-        return value != "" and all(c in "0123456789" for c in value) and 1 <= int(value) <= 10
-    return False
+    return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10
 
 
 def _md_files(world) -> list[Path]:
@@ -1078,21 +1070,20 @@ OTHER_TYPE = [
 SAME_VALUE = [("5.5", 5.5), ("10.7", 10.7), ("99", 99), ("high", "high"), ("true", True)]
 
 
-def _update_on(w, surf: str, value) -> tuple[bool, list[dict]]:
-    """(accepted, importance rows of the refusal) of one update of `seed` on one surface."""
+def _update_on(w, surf: str, value, field: str = "importance") -> tuple[bool, list[dict]]:
+    """(accepted, importance rows of the refusal) of one update of `seed`'s `field` on one
+    surface."""
     from pyrite.exceptions import ValidationError
     from pyrite.services.kb_service import KBService
 
     if surf == "mcp":
-        res = w.mcp()._dispatch_tool(
-            "kb_update", {"kb_name": KB, "entry_id": "seed", "importance": value}
-        )
+        res = w.mcp()._dispatch_tool("kb_update", {"kb_name": KB, "entry_id": "seed", field: value})
         return bool(res.get("updated")), _importance_rows(res)
     if surf.startswith("rest-"):
         body = (
-            {"kb": KB, "importance": value}
+            {"kb": KB, field: value}
             if surf == "rest-put"
-            else {"kb": KB, "field": "importance", "value": value}
+            else {"kb": KB, "field": field, "value": value}
         )
         response = w.client.request(surf[5:].upper(), "/api/entries/seed", json=body)
         if response.status_code == 200:
@@ -1101,15 +1092,15 @@ def _update_on(w, surf: str, value) -> tuple[bool, list[dict]]:
         assert detail["code"] == "VALIDATION_FAILED", response.text
         return False, [r for r in detail.get("errors") or [] if r.get("field") == "importance"]
     if surf == "cli":
-        res = w.cli("update", "seed", "-k", KB, "-f", f"importance={json.dumps(value)}",
+        res = w.cli("update", "seed", "-k", KB, "-f", f"{field}={json.dumps(value)}",
                     "--format", "json")  # fmt: skip
         return res.exit_code == 0, _importance_rows(_json(res.output))
     svc = KBService(w.config, w.db)
     try:
         if surf == "python-update":
-            svc.update("seed", KB, {"importance": value})
+            svc.update("seed", KB, {field: value})
         else:
-            svc.update_entry("seed", KB, importance=value)
+            svc.update_entry("seed", KB, **{field: value})
     except ValidationError as e:
         return False, [r for r in e.errors or [] if r.get("field") == "importance"]
     return True, []
@@ -1141,3 +1132,98 @@ def test_an_update_sending_the_files_own_value_is_kept(rest, surf, spelling, on_
         accepted, rows = _update_on(rest, surf, sent)
     assert accepted, rows
     assert path.read_bytes() == before
+
+
+# -- an accepted value is stored as the int the rule reads, on every create and update -----
+#
+# Fix round 2 of #1588 (maintainer decision 7, 2026-11-17: a whole float such as 5.0 is
+# accepted and stored as 5; it applies to an update as to a create). The one rule says which
+# int it reads (`importance_value`); a create and an update both store that int, so no
+# surface stores less normalised than dev did (dev's REST PUT stored 5 for 5.0 and 7 for "7"
+# through pydantic).
+CREATE_SURFACES = ["mcp", "rest-post", "cli", "python-create"]
+# (value sent, the line the file then holds)
+ACCEPTED_SPELLINGS = [
+    (5.0, "importance: 5"),
+    (10.0, "importance: 10"),
+    (1e1, "importance: 10"),
+    ("7", "importance: 7"),
+    ("05", "importance: 5"),
+    (7, "importance: 7"),
+]
+
+
+def _create_on(w, surf: str, value) -> None:
+    from pyrite.services.kb_service import KBService
+
+    if surf == "mcp":
+        res = w.mcp()._dispatch_tool(
+            "kb_create",
+            {"kb_name": KB, "entry_type": "note", "title": "C1", "body": "x", "importance": value},
+        )
+        assert res.get("created"), res
+    elif surf == "rest-post":
+        response = w.client.post(
+            "/api/entries", json={"kb": KB, "title": "C1", "body": "x", "importance": value}
+        )
+        assert response.status_code in (200, 201), response.text
+    elif surf == "cli":
+        res = w.cli("create", "-k", KB, "-t", "note", "--title", "C1", "-b", "x",
+                    "-f", f"importance={json.dumps(value)}", "--format", "json")  # fmt: skip
+        assert res.exit_code == 0, res.output
+    else:
+        KBService(w.config, w.db).create_entry(KB, "c1", "C1", "note", "x", importance=value)
+
+
+@pytest.mark.parametrize("surf", CREATE_SURFACES)
+@pytest.mark.parametrize(("sent", "line"), ACCEPTED_SPELLINGS, ids=repr)
+def test_a_create_stores_an_accepted_importance_as_the_int_the_rule_reads(rest, surf, sent, line):
+    with rest.pointed():
+        _create_on(rest, surf, sent)
+    (path,) = sorted(rest.kb_path(KB).rglob("*.md"))
+    assert _importance_lines(path.read_text()) == [line]
+
+
+@pytest.mark.parametrize("surf", UPDATE_SURFACES)
+@spellings
+@pytest.mark.parametrize(("sent", "line"), ACCEPTED_SPELLINGS, ids=repr)
+def test_an_update_stores_an_accepted_importance_as_the_int_the_rule_reads(
+    rest, surf, spelling, sent, line
+):
+    path = rest.add_entry(KB, _raw_file("note", "seed", "3", spelling))
+    before = path.read_text()
+    with rest.pointed():
+        accepted, rows = _update_on(rest, surf, sent)
+    assert accepted, rows
+    expected = line if spelling == "top" else "  " + line
+    # only the importance line changed, to the int, at the spelling the file had
+    assert path.read_text() == before.replace(
+        "  importance: 3" if spelling == "nested" else "importance: 3", expected
+    )
+
+
+@pytest.mark.control(reason="guest rule: a value already on disk is not rewritten by another write")
+@pytest.mark.parametrize("surf", UPDATE_SURFACES)
+@spellings
+@pytest.mark.parametrize("on_disk", ["5", "5.0", "'05'", '"7"', "1e1"], ids=repr)
+def test_an_update_of_another_field_leaves_an_accepted_importance_on_disk_as_it_is(
+    rest, surf, spelling, on_disk
+):
+    path = rest.add_entry(KB, _raw_file("note", "seed", on_disk, spelling))
+    before = path.read_text()
+    with rest.pointed():
+        accepted, rows = _update_on(rest, surf, "Renamed", field="title")
+    assert accepted, rows
+    assert path.read_text() == before.replace("title: seed", "title: Renamed")
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "reads_as"), [("!!str 7", 7), ("'05'", 5), ("5.0", 5), ("1e1", 10), ("7", 7)]
+)
+def test_every_reader_sees_the_int_the_rule_reads_from_a_file(yaml_text, reads_as):
+    """`Entry.importance` (what the index, `get` and every reader see) is the int the one rule
+    reads the file's value as; `!!str 7` used to read as the default 5."""
+    from pyrite.models.core_types import get_entry_class
+
+    entry = get_entry_class("note").from_markdown(_raw_file("note", "seed", yaml_text))
+    assert entry.importance == reads_as and type(entry.importance) is int

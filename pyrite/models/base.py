@@ -16,6 +16,7 @@ from typing import Any, ClassVar
 
 from ..exceptions import EntryTypeError, json_safe_value
 from ..schema import Link, Provenance, Source, validate_importance
+from ..schema.validators import importance_value
 from ..utils.frontmatter import require_frontmatter
 from ..utils.yaml import load_yaml
 
@@ -492,7 +493,13 @@ class Entry(ABC):
             "title": title,
             "body": body,
             "summary": meta.get("summary", ""),
-            "importance": safe_int(meta.get("importance"), 5),
+            # The int the one rule reads the value as (`importance_value`: `5.0`
+            # and `"05"` are 5); a value the rule refuses keeps its old reading
+            # (`safe_int`) for readers, and is refused by `validation_errors`.
+            "importance": (
+                importance_value(meta.get("importance"))
+                or safe_int(meta.get("importance"), DEFAULT_IMPORTANCE)
+            ),
             # What the rule judges (#1588): the value as given, not its int.
             "_importance_given": meta.get("importance", _ABSENT),
             "tags": _as_list(meta.get("tags")),
@@ -794,6 +801,23 @@ class Entry(ABC):
                 }
             )
         return errors
+
+    def file_value(self, field_name: str, value: Any) -> Any:
+        """The form a write stores ``value`` in, for ``field_name``.
+
+        An accepted ``importance`` is stored as the int the one rule reads it
+        as (``importance_value``): an update writes ``5`` for ``5.0`` or
+        ``"05"``, as a create does (#1588, maintainer decision of 2026-11-17).
+        A value the rule refuses is returned as it is, for the rule to refuse
+        on the written result. Every other field: the value as sent. The
+        update's write path (``KBService._value_for_file``) asks this for
+        every field it sets, so no field's storage rule lives there.
+        """
+        if field_name == "importance":
+            accepted = importance_value(value)
+            if accepted is not None:
+                return accepted
+        return value
 
     def rule_input(self, field_name: str) -> Any:
         """The value :meth:`validation_errors` judges for ``field_name``.

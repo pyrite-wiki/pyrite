@@ -2835,6 +2835,9 @@ class KBService:
                     ],
                 )
             value = TimestampText(spelled)
+        # The model says what form a field's accepted value is stored in
+        # (`importance`: the int the one rule reads, #1588); this path adds none.
+        value = entry.file_value(key, value)
         if hasattr(entry, key):
             _as_field_type(entry, key, value)  # validation only: refuses before any write
         return _plain_value(value)
