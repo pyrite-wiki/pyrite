@@ -303,9 +303,6 @@ NOT_YET: set[tuple[str, str]] = {
     # pyrite/cli/collection_commands.py
     ("pyrite collections query", "limit"),
     #
-    # pyrite/cli/qa_commands.py
-    ("pyrite qa assess", "tier"),
-    ("pyrite qa assess", "max_age"),
     #
     # pyrite/cli/link_commands.py
     ("pyrite links batch-suggest", "limit_per_entry"),

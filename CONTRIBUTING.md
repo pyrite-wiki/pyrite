@@ -513,7 +513,9 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 - Tests live in `tests/`; extension tests in `extensions/<name>/tests/`
 - Name test files `test_*.py`
 - A `fix:` commit must include a test that fails without the fix (a hook checks
-  that it touches `tests/`)
+  that it touches `tests/`). A test-only commit followed by a `fix:` commit fails
+  the check: put the test in the same commit as the fix, or combine the commits if
+  already separated (or use another prefix like `refactor:`).
 - Use pytest fixtures for common setup (`tmp_kb`, isolated plugin registry);
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
