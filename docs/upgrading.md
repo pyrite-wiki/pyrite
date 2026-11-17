@@ -14,6 +14,10 @@ repeat.
   key, or with any shape the changelog lists for #1538, now refuses the tools
   that read the board until the file is fixed. What the file may contain is in
   [plugins: board.yaml](plugins.md#boardyaml-lanes-wip-limits-and-gates).
+- **A `judgment` or `agent_responsibility` criterion that carries `checker` or
+  `params`** is now refused by the tools that read the board (0.26.3 loaded it
+  and never ran the checker). Remove the key, or drop `type` to make the
+  criterion a checker.
 
 ## Upgrading from 0.25.8 to 0.26.0
 
