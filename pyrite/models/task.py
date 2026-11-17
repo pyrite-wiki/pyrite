@@ -144,6 +144,10 @@ def task_priority_problem(value: Any) -> str | None:
 # parent or unblock dependents.
 TASK_RESOLVED_STATUSES = ("done", "cancelled")
 
+#: The task type's metadata as `resolve_type_metadata` reads it: what ends a
+#: task's live work is what resolves it (one definition; #934).
+TASK_TYPE_METADATA = {"settled_statuses": list(TASK_RESOLVED_STATUSES)}
+
 # =========================================================================
 # Workflow
 # =========================================================================

@@ -206,6 +206,11 @@ class TypeSchema:
     evaluation_rubric: list[str | dict[str, Any]] = field(
         default_factory=list
     )  # Assertions for QA validation
+    #: Statuses that end live work (#934), as the operator wrote them: ``None`` is
+    #: "not declared", ``[]`` is "declared: none". Kept raw like ``field_aliases``,
+    #: so a malformed value is reported by ``qa validate`` and ignored by
+    #: ``core_types.settled_statuses``, never a crash at load.
+    settled_statuses: Any = None
     edge_type: bool = False  # Whether this type represents an edge/relationship
     endpoints: dict[str, EndpointSpec] = field(default_factory=dict)  # Edge endpoint specs
     state_machine: dict[str, Any] | None = None  # Per-type workflow override (Tier A r1175)
