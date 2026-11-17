@@ -14,7 +14,8 @@ import pyrite.cli  # noqa: F401
 from pyrite.config import KBConfig
 from tests._world import build_world
 
-# Windows compatibility polyfills (on Linux in CI these already exist natively)
+# Windows compatibility: pyrite.utils.private_files tighten_file calls os.getuid,
+# and pyrite.storage.index reads os.O_NONBLOCK, neither of which exists on Windows.
 if not hasattr(os, "getuid"):
     os.getuid = lambda: 0
 if not hasattr(os, "O_NONBLOCK"):
@@ -52,15 +53,15 @@ def test_wiki_stubs_accepts_positive_limit_and_pages(tmp_path: Path, runner: Cli
     try:
         world.add_entry(
             "wiki-kb",
-            "---\nid: article-1\ntype: article\ntitle: Article One\nquality: stub\n---\nStub 1",
+            "---\nid: article-1\ntype: article\ntitle: Article One\nquality: stub\ncreated_at: 2026-01-01T00:00:00\n---\nStub 1",
         )
         world.add_entry(
             "wiki-kb",
-            "---\nid: article-2\ntype: article\ntitle: Article Two\nquality: stub\n---\nStub 2",
+            "---\nid: article-2\ntype: article\ntitle: Article Two\nquality: stub\ncreated_at: 2026-01-02T00:00:00\n---\nStub 2",
         )
         world.add_entry(
             "wiki-kb",
-            "---\nid: article-3\ntype: article\ntitle: Article Three\nquality: featured\n---\nNon-stub",
+            "---\nid: article-3\ntype: article\ntitle: Article Three\nquality: featured\ncreated_at: 2026-01-03T00:00:00\n---\nNon-stub",
         )
 
         with world.pointed():
