@@ -255,7 +255,7 @@ UNBOUNDED: dict[tuple[str, str], str] = {}
 #: ``parser=`` or ``click_type=`` option) and why that is safe. One row: `qa duplicates --threshold`.
 UNCLASSIFIED: dict[tuple[str, str], str] = {
     ("pyrite qa duplicates", "threshold"): (
-        "a click float range accepts NaN; this hand-built type refuses a non-finite or "
+        "a click float range accepts NaN; this parser refuses a non-finite or "
         "out-of-range value at parse time (usage error, exit 2); to be replaced by the "
         "shared finite-float type tracked on #1541"
     ),
