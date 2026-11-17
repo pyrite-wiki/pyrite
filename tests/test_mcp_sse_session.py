@@ -27,6 +27,7 @@ is bounded by ``anyio.fail_after``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import tempfile
@@ -420,11 +421,23 @@ class TestSessionLifetime:
 
         _run(client, scenario)
 
-    def test_session_expiry_ends_the_stream(self, env):
+    @pytest.mark.timeout(30)  # real-time backstop while the handshake clock is stopped
+    def test_session_expiry_ends_the_stream(self, env, monkeypatch):
         client, w = env
         token = _login(w.app, "alice")
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        soon = (datetime.now(UTC) + timedelta(seconds=1.5)).isoformat()
+        now = datetime.now(UTC)
+
+        class Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz) if tz else now.astimezone().replace(tzinfo=None)
+
+        # Authentication and registration must see the same unexpired credential,
+        # however long the runner takes to reach the endpoint event.
+        monkeypatch.setattr("pyrite.services.auth_service.datetime", Clock)
+        monkeypatch.setattr("pyrite.server.mcp_sessions.datetime", Clock)
+        soon = (now + timedelta(seconds=1.5)).isoformat()
         db = PyriteDB(w.config.settings.index_path)
         try:
             db.execute_write_sql(
@@ -435,9 +448,28 @@ class TestSessionLifetime:
             db.close()
 
         async def scenario(tg):
-            sse = await _SSE(w.app, _cookie(token)).open(tg)
-            assert await sse.wait_ended(), "SSE session outlived its session's expiry"
-            assert _live_sessions() == 0, "an expired session stayed registered"
+            loop = asyncio.get_running_loop()
+            real_time = asyncio.BaseEventLoop.time
+            start = real_time(loop)
+            resumed_at = None
+
+            def clock(current_loop):
+                if current_loop is not loop:
+                    return real_time(current_loop)
+                if resumed_at is None:
+                    return start
+                return start + 2 + real_time(loop) - resumed_at
+
+            with monkeypatch.context() as clocks:
+                clocks.setattr(asyncio.BaseEventLoop, "time", clock)
+                sse = await _SSE(w.app, _cookie(token)).open(tg)
+                assert not sse.ended.is_set()
+                assert _live_sessions() == 1
+                # Advance beyond the deadline set by the real session registry,
+                # then let time run so wait_ended still has its normal timeout.
+                resumed_at = real_time(loop)
+                assert await sse.wait_ended(), "SSE session outlived its session's expiry"
+                assert _live_sessions() == 0, "an expired session stayed registered"
 
         _run(client, scenario)
 
