@@ -92,6 +92,28 @@ class TestEveryHealthKeyIsDocumented:
             "stale rows": sorted(rows - reported),
         }
 
+    def test_removed_extensions_action_does_not_suggest_reinstall(self):
+        """The removed extension cannot be reinstalled (#1477).
+
+        The action must advise changing kb_type or declaring the types in kb.yaml,
+        and not advise reinstalling an extension that no longer exists.
+        """
+        docs = (Path(__file__).resolve().parent.parent / "docs" / "json-contracts.md").read_text(
+            encoding="utf-8"
+        )
+        section = docs.split("**`index health` keys.**", 1)[1].split("\n**", 1)[0]
+        action = None
+        for line in section.splitlines():
+            if line.startswith("| `removed_extensions` |"):
+                parts = [p.strip() for p in line.split("|")]
+                action = parts[4]
+                break
+
+        assert action is not None, "removed_extensions row not found in index health table"
+        assert "Reinstall" not in action
+        assert "kb_type" in action
+        assert "types" in action
+
 
 class TestExitCodeReflectsStatus:
     def test_healthy_index_exits_zero(self, two_kb_env):
