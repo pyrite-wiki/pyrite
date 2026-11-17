@@ -233,7 +233,11 @@ class KBSchema:
         "12"` is `12`, `!!float 12` is `12.0`, `!!bool yes` is `true`, `!!map`
         and `!!seq` are the plain mapping and list, and a `!!str` scalar, in
         its short or long form, as a value or a mapping key, is the string.
-        Limit: a tag on a LIST of merge sources (`<<: !note [{a: 1}]`) is gone
+        A merge key (`<<`) is read through its sources: a source holding any
+        value withheld above (a tag, a date, a number too large, a key that is
+        not a string) withholds the whole value with that reason, also when an
+        own key or an earlier source hides it in the merged result.
+        Limit (#1636): a tag on a LIST of merge sources (`<<: !note [{a: 1}]`) is gone
         from the loaded value, so it comes back merged with the tag dropped.
         A recursive alias (`&a {self: *a}`) is not withheld: it comes back
         with null where the alias recurses, because that is how Pyrite's YAML
@@ -603,16 +607,22 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
     `!!omap` as an ordered mapping: JSON has neither); any explicit tag other
     than `!!str` on a scalar (`tag`: round-trip mode keeps a tagged scalar as
     a `TaggedScalar` and a tagged collection's tag on its `.tag`, and builds
-    nothing from it, the same for a merge source, whose tag is on the source
-    the loaded value still holds); a mapping with two keys that are the same
+    nothing from it); a mapping with two keys that are the same
     string (`same_key`: a `!!str` key and a plain one that print alike); and
     any mapping key that is not a string. The core tags the loader resolves
     before this sees the value (`!!int`, `!!float`, `!!bool`, `!!null`,
     `!!map`, `!!seq`, the long form of the string tag) are read as YAML
     defines them and returned. A `!!str` scalar is the string, as a value or a
     key. A null anywhere inside a value is JSON null and comes back as
-    written. A recursive alias is not seen here: the loader has already put
-    null where it recurses.
+    written. A merge key (`<<`) is read through its sources: the loaded value
+    still holds each source, and every source is converted too, so a source
+    holding any value withheld above (a tag, a date, a number too large, a key
+    that is not a string) withholds the whole value with that reason, also
+    when an own key or an earlier source hides that value in the merged
+    result (dev returned such a value without the hidden part). A tag on a
+    LIST of merge sources is gone from the loaded value and is not seen: a
+    limit, #1636. A recursive alias is not seen here: the loader has already
+    put null where it recurses.
     """
     from ruamel.yaml.comments import CommentedOrderedMap, TaggedScalar
 

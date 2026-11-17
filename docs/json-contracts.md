@@ -770,7 +770,11 @@ them with the other write-side blocks.
   is `12.0`, `!!bool yes` is `true`, `!!map` and `!!seq` are the plain
   mapping and list). `!!str` on a scalar, in its short or long form, as a
   value or a mapping key, is the string: `guidelines: !!str 12` comes back as
-  `"12"`. Limit: a tag on a list of merge sources (`<<: !note [{a: 1}]`) is
+  `"12"`. A merge key (`<<`) is read through its sources: a source holding
+  any value withheld above (a tag, a date, a number too large, a key that is
+  not a string) withholds the whole value with that reason, also when an own
+  key or an earlier source hides it in the merged result (`{<<: {a: !note x},
+  a: 2}`). Limit (#1636): a tag on a list of merge sources (`<<: !note [{a: 1}]`) is
   gone from the value the loader hands over, so it comes back merged with the
   tag dropped. A recursive alias (`&a {self: *a}`) is
   not withheld: it comes back with `null` where the alias recurses, because
