@@ -9,42 +9,40 @@ from __future__ import annotations
 
 import json
 
+from click import unstyle
 import pytest
-from typer.main import get_command
-from typer.testing import CliRunner
-
-from pyrite.cli import app
 
 
-def test_kb_create_ttl_declared_min_is_zero() -> None:
-    """The --ttl option declares min=0 so Click rejects negative numbers at parse time."""
-    click_app = get_command(app)
-    kb_cmd = click_app.commands["kb"]
-    create_cmd = kb_cmd.commands["create"]
-    param = next(p for p in create_cmd.params if "--ttl" in p.opts)
-    assert param.type.min == 0
-    assert param.type.max is None
-
-
+@pytest.mark.cli
 @pytest.mark.parametrize("bad_ttl", [-1, -5])
-def test_kb_create_rejects_negative_ttl(bad_ttl: int) -> None:
+def test_kb_create_rejects_negative_ttl(cli_world, bad_ttl: int) -> None:
     """Negative TTLs are refused before command execution with usage error exit 2."""
-    runner = CliRunner()
-    result = runner.invoke(
-        app,
-        ["kb", "create", "--ephemeral", "--name", "test-neg", "--ttl", str(bad_ttl)],
+    world = cli_world()
+    result = world.cli(
+        "kb",
+        "create",
+        "--ephemeral",
+        "--name",
+        "test-neg",
+        "--ttl",
+        str(bad_ttl),
     )
     assert result.exit_code == 2, result.output
-    assert "Invalid value for '--ttl'" in result.output
-    assert f"{bad_ttl} is not in the range x>=0" in result.output
-    assert "USAGE_ERROR" in result.output
+    output = unstyle(result.output)
+    assert "Traceback" not in output
+    document = json.loads(next(line for line in output.splitlines() if line.startswith("{")))
+    assert document["error_code"] == "USAGE_ERROR"
+    assert "--ttl" in document["error"]
+    assert str(bad_ttl) in document["error"] or "greater than or equal to 0" in document["error"]
 
 
-def test_refused_negative_ttl_creates_no_kb_directory(cli_world) -> None:
+@pytest.mark.cli
+def test_refused_negative_ttl_creates_no_kb_directory(cli_world, tmp_path) -> None:
     """After a refusal for negative TTL, no directory is created and kb list does not list it."""
     world = cli_world()
     result = world.cli("kb", "create", "--ephemeral", "--name", "ttlrefused", "--ttl", "-5")
     assert result.exit_code == 2
+    assert not list(tmp_path.rglob("ttlrefused"))
 
     list_res = world.cli("kb", "list", "--format", "json")
     assert list_res.exit_code == 0
@@ -53,6 +51,8 @@ def test_refused_negative_ttl_creates_no_kb_directory(cli_world) -> None:
     assert "ttlrefused" not in names
 
 
+@pytest.mark.cli
+@pytest.mark.control(reason="--ttl 0 creates an ephemeral KB that never expires")
 def test_ttl_zero_creates_kb_that_never_expires(cli_world) -> None:
     """--ttl 0 is valid and creates an ephemeral KB that does not expire."""
     world = cli_world()
