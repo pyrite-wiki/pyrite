@@ -15,7 +15,8 @@ import pyrite.cli  # noqa: F401
 from pyrite.config import KBConfig
 from tests._world import build_world
 
-# Windows compatibility polyfills (on Linux in CI these already exist natively)
+# Windows compatibility: pyrite.utils.private_files tighten_file calls os.getuid,
+# and pyrite.storage.index reads os.O_NONBLOCK, neither of which exists on Windows.
 if not hasattr(os, "getuid"):
     os.getuid = lambda: 0
 if not hasattr(os, "O_NONBLOCK"):
@@ -99,14 +100,22 @@ def test_sw_list_commands_limit_zero_and_paging(
                     f"---\nid: comp-000{i}\ntype: component\ntitle: Component {i}\nkind: service\n---\nBody",
                 )
 
+        expected_titles = {
+            "adrs": {"ADR 1", "ADR 2", "ADR 3"},
+            "backlog": {"Item 1", "Item 2", "Item 3"},
+            "standards": {"Standard 1", "Standard 2", "Standard 3"},
+            "components": {"Component 1", "Component 2", "Component 3"},
+        }[cmd]
+
         with world.pointed():
             # --limit 0 returns all 3 items
             res0 = runner.invoke(cli.sw_app, [cmd, "-k", "sw-kb", "--limit", "0", "-f", "json"])
             assert res0.exit_code == 0, res0.output
             items0 = json.loads(res0.output)
             assert len(items0) == 3
+            assert {i["title"] for i in items0} == expected_titles
 
-            # --limit 1 --offset 1 returns 1 item
+            # --limit 1 --offset 1 returns 1 item, matching the second item of items0
             res1 = runner.invoke(
                 cli.sw_app,
                 [cmd, "-k", "sw-kb", "--limit", "1", "--offset", "1", "-f", "json"],
@@ -114,5 +123,6 @@ def test_sw_list_commands_limit_zero_and_paging(
             assert res1.exit_code == 0, res1.output
             items1 = json.loads(res1.output)
             assert len(items1) == 1
+            assert items1 == items0[1:2]
     finally:
         world.close()
