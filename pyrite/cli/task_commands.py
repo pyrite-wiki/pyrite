@@ -20,8 +20,12 @@ import typer
 from rich.table import Table
 
 from ..exceptions import EntryNotFoundError, ValidationError
+from ..services.access_policy import UNSCOPED
 from ..utils.frontmatter import Frontmatter, split_frontmatter
 from .context import read_input_file
+from .entry_commands import _read_stdin
+from .outcome import Outcome
+from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT, cli_console
 
 if TYPE_CHECKING:
     from ..services.task_service import TaskService
@@ -174,6 +178,7 @@ def _parse_task_create_fields(
         fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
     return fields
 
+
 def _resolve_task_body(
     body: str | None,
     body_file: Path | None,
@@ -192,10 +197,8 @@ def _resolve_task_body(
             f"Provide only one body source: {' and '.join(given)} given. "
             "Use --body, --body-file, or --stdin, not more than one."
         )
-    if stdin_flag:
-        # Same as pyrite create: read stdin as-is, even if terminal
-        import sys
-        resolved = sys.stdin.read()
+    if stdin_flag or body_file == Path("-"):
+        resolved = _read_stdin()
     elif body_file is not None:
         try:
             resolved = read_input_file(body_file, "Body file")
@@ -217,6 +220,7 @@ def _resolve_task_body(
             "Use `pyrite create -t task --body-file <file>` if you want frontmatter fields."
         )
     return resolved
+
 
 @task_app.command("create")
 def task_create(
@@ -535,26 +539,22 @@ def task_update(
     if priority is not None:
         updates["priority"] = priority
     if reason is not None:
-        # Lands on the task entry's status_reason field via the
-        # KBService.update_entry pass-through. The relaxed-mode
-        # validator reads it from the entry attribute on the next
-        # before_save hook.
         updates["status_reason"] = reason
     if comment is not None:
         updates["comment"] = comment
     if by is not None:
         updates["by"] = by
-    resolved_body = _resolve_task_body(body, body_file, stdin_flag)
-    if resolved_body is not None:
-        updates["body"] = resolved_body
-    if not updates:
-        raise ValidationError(
-            "No updates specified: pass --status, --assignee, --priority, --body, "
-            "--body-file, --stdin, --reason, --comment or --by."
-        )
 
     svc, db = _get_service(kb_name)
     try:
+        resolved_body = _resolve_task_body(body, body_file, stdin_flag)
+        if resolved_body is not None:
+            updates["body"] = resolved_body
+        if not updates:
+            raise ValidationError(
+                "No updates specified: pass --status, --assignee, --priority, --body, "
+                "--body-file, --stdin, --reason, --comment or --by."
+            )
         result = svc.update_task(task_id, kb_name, **updates)
     finally:
         db.close()
