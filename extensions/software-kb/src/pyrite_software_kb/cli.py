@@ -24,7 +24,9 @@ from .adr_listing import (
 if TYPE_CHECKING:
     from pyrite.storage.database import PyriteDB
 
-sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
+sw_app = typer.Typer(
+    help="Software KB commands (ADRs, backlog, standards, components). Note: 'sw review -o approved' closes items directly to 'done'."
+)
 console = cli_console()
 logger = logging.getLogger(__name__)
 
@@ -93,7 +95,6 @@ def sw_adrs(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -283,7 +284,6 @@ def sw_backlog(
     limit: int | None = typer.Option(
         None,
         "--limit",
-        "-l",
         help="Max items to return (default 50; pass 0 or a negative number for no limit)",
     ),
     offset: int = typer.Option(0, "--offset", help="Skip this many items before returning"),
@@ -291,7 +291,6 @@ def sw_backlog(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -398,7 +397,6 @@ def sw_epics(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -450,7 +448,6 @@ def sw_epic_detail(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -541,7 +538,6 @@ def sw_standards(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -611,7 +607,6 @@ def sw_validations(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -671,7 +666,6 @@ def sw_conventions(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -916,7 +910,6 @@ def sw_milestones(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1000,7 +993,6 @@ def sw_board_cmd(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1087,7 +1079,6 @@ def sw_review_queue(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1268,13 +1259,25 @@ def sw_submit(
 @sw_app.command("transition")
 def sw_transition(
     item_id: str = typer.Argument(..., help="Backlog item ID"),
-    to_status: str = typer.Argument(..., help="Target status"),
+    to_status: str = typer.Argument(
+        ...,
+        help="Target status: proposed, planned, accepted, in_progress, review, done, retired, deferred, wont_do",
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     reason: str | None = typer.Option(
         None, "--reason", "-r", help="Reason (required for some transitions)"
     ),
 ):
-    """Transition a backlog item to a new status (validates workflow rules)."""
+    """Transition a backlog item to a new status (validates workflow rules).
+
+    Allowed statuses:
+      proposed, planned, accepted, in_progress, review, done, retired,
+      deferred, wont_do.
+
+    Note:
+      `sw review -o approved` automatically marks an item 'done', closing it.
+      Do not call `sw transition <id> done` after an approved review.
+    """
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
 
@@ -1305,9 +1308,14 @@ def sw_transition(
         if not can_transition(BACKLOG_WORKFLOW, current_status, to_status, "write"):
             allowed = get_allowed_transitions(BACKLOG_WORKFLOW, current_status, "write")
             targets = [t["to"] for t in allowed]
+            hint = ""
+            if current_status == "done" and to_status == "done":
+                hint = " (item is already done; 'sw review -o approved' closes items directly)"
+            elif current_status == to_status:
+                hint = f" (item is already in '{current_status}' status)"
             console.print(
                 f"[red]Error:[/red] Cannot transition from '{current_status}' to '{to_status}'. "
-                f"Allowed: {', '.join(targets) or 'none'}"
+                f"Allowed: {', '.join(targets) or 'none'}{hint}"
             )
             raise typer.Exit(1)
 
@@ -1346,7 +1354,6 @@ def sw_pull_next(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1391,15 +1398,16 @@ def sw_review_cmd(
         ...,
         "--outcome",
         "-o",
-        help="Review outcome: approved (moves item to done) or changes_requested (moves item back to in_progress)",
+        help="Review outcome: approved (moves item to done, closing it) or changes_requested (moves item back to in_progress)",
     ),
     reviewer: str = typer.Option(..., "--reviewer", help="Who is reviewing"),
     feedback: str | None = typer.Option(None, "--feedback", help="Review notes/feedback"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
-    """Record a review outcome for an item in review status.
+    """Record a review outcome for an item in review status ('approved' closes item as 'done').
 
-    Outcome 'approved' moves the item to 'done'. Outcome 'changes_requested'
+    Outcome 'approved' moves the item to 'done' (closing it; do not run
+    'sw transition <id> done' afterwards). Outcome 'changes_requested'
     moves the item back to 'in_progress' and requires feedback.
     """
     require_kb(load_config(), kb_name, output_format="rich")
@@ -1475,7 +1483,6 @@ def sw_components(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1555,7 +1562,6 @@ def sw_check_ready(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1599,7 +1605,6 @@ def sw_refine_cmd(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),
@@ -1661,7 +1666,6 @@ def sw_context_for_item(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
         callback=output_format_choice("json", "rich"),
         help="Output format: json, rich",
     ),

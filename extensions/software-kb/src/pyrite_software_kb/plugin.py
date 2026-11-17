@@ -2914,9 +2914,16 @@ class SoftwareKBPlugin:
             # Validate transition
             if not can_transition(BACKLOG_WORKFLOW, current_status, to_status, "write"):
                 allowed = get_allowed_transitions(BACKLOG_WORKFLOW, current_status, "write")
+                err_msg = f"Cannot transition from '{current_status}' to '{to_status}'"
+                if current_status == "done" and to_status == "done":
+                    err_msg += (
+                        " (item is already done; 'sw review -o approved' closes items directly)"
+                    )
+                elif current_status == to_status:
+                    err_msg += f" (item is already in '{current_status}' status)"
                 return {
                     "transitioned": False,
-                    "error": f"Cannot transition from '{current_status}' to '{to_status}'",
+                    "error": err_msg,
                     "current_status": current_status,
                     "allowed_transitions": [t["to"] for t in allowed],
                 }

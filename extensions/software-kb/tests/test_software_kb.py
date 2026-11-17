@@ -3977,6 +3977,84 @@ class TestTransition:
             finally:
                 db.close()
 
+    def test_transition_done_to_done_includes_helpful_hint(self):
+        """Transitioning from done to done should mention that 'sw review -o approved' closes items directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-done",
+                        "title": "Done Feature",
+                        "entry_type": "backlog_item",
+                        "status": "done",
+                        "meta": {"kind": "feature", "status": "done"},
+                    },
+                ],
+            )
+            try:
+                plugin = _make_plugin_with_db(db)
+                result = plugin._mcp_transition(
+                    {
+                        "item_id": "item-done",
+                        "kb_name": "test",
+                        "to_status": "done",
+                    }
+                )
+                assert result["transitioned"] is False
+                assert "sw review -o approved" in result["error"]
+                assert "already done" in result["error"]
+            finally:
+                db.close()
+
+    def test_cli_transition_done_to_done_hint(self):
+        from unittest.mock import patch
+
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-done",
+                        "title": "Done Feature",
+                        "entry_type": "backlog_item",
+                        "status": "done",
+                        "meta": {"kind": "feature", "status": "done"},
+                    },
+                ],
+            )
+            try:
+                config = _cli_config(tmpdir)
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=config),
+                    patch("pyrite_software_kb.cli.require_kb"),
+                    patch("pyrite_software_kb.cli.require_entry_kb", return_value="test"),
+                    patch("pyrite.storage.database.PyriteDB", return_value=db),
+                    patch(
+                        "pyrite_software_kb.cli._query_entries",
+                        return_value=[
+                            {
+                                "id": "item-done",
+                                "title": "Done Feature",
+                                "status": "done",
+                                "_meta": {},
+                            }
+                        ],
+                    ),
+                ):
+                    result = runner.invoke(
+                        sw_app, ["transition", "item-done", "done", "-k", "test"]
+                    )
+                    assert result.exit_code != 0
+                    assert "sw review -o approved" in result.output
+                    assert "already done" in result.output
+            finally:
+                db.close()
+
 
 # =========================================================================
 # Workflow normalization
@@ -4906,6 +4984,59 @@ class TestBacklogCliPaginationFlags:
         call_args = mock_plugin._mcp_backlog.call_args[0][0]
         assert call_args["limit"] == 5
         assert call_args["offset"] == 10
+
+    def test_backlog_short_flags_removed(self):
+        """sw backlog must not accept -l or -f as short flags (#1286)."""
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from unittest.mock import patch
+
+            with patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)):
+                res_l = runner.invoke(sw_app, ["backlog", "-l", "5", "--kb", "test"])
+                assert res_l.exit_code != 0
+                assert "No such option: -l" in res_l.output
+
+                res_f = runner.invoke(sw_app, ["backlog", "-f", "rich", "--kb", "test"])
+                assert res_f.exit_code != 0
+                assert "No such option: -f" in res_f.output
+
+
+class TestSoftwareKbHelpTexts:
+    def test_sw_help_mentions_review_closes_done(self):
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["--help"])
+        assert result.exit_code == 0
+        norm_output = " ".join(result.output.split())
+        assert "sw review -o approved" in norm_output
+        assert "closes items directly to 'done'" in norm_output
+
+    def test_sw_transition_help_lists_statuses_and_note(self):
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["transition", "--help"])
+        assert result.exit_code == 0
+        assert "Allowed statuses:" in result.output
+        norm_output = " ".join(result.output.split())
+        assert "sw review -o approved" in norm_output
+
+    def test_sw_review_help_mentions_approved_closes_done(self):
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["review", "--help"])
+        assert result.exit_code == 0
+        norm_output = " ".join(result.output.split())
+        assert "closes item as 'done'" in norm_output
+        assert "sw transition" in norm_output
 
 
 # =========================================================================

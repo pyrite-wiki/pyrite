@@ -257,6 +257,12 @@ def index_sync(
         "--verify",
         help="Hash all known files whose stat is unchanged and sync changed content (foreground only).",
     ),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich (default), json, yaml",
+    ),
 ):
     """Incremental sync, with optional content-hash verification."""
     from ..storage import IndexManager
@@ -265,13 +271,18 @@ def index_sync(
         raise typer.BadParameter("--verify cannot be combined with --background")
 
     config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db, output_format="rich")
+    require_kb(config, kb_name, db=db, output_format=output_format)
 
     if background:
         from ..services.index_worker import IndexWorker
 
         worker = IndexWorker(db, config)
         job_id = worker.submit_sync(kb_name)
+        payload = {"job_id": job_id, "submitted": True}
+        formatted = _format_output(payload, output_format)
+        if formatted is not None:
+            typer.echo(formatted)
+            return
         console.print(f"[green]Sync job submitted:[/green] {job_id}")
         console.print("Use 'pyrite index jobs' to check progress.")
         return
@@ -290,7 +301,43 @@ def index_sync(
         # rows kept (#1542).
         from ..utils.errors import cli_error_from
 
-        cli_error_from(exc)
+        cli_error_from(exc, output_format=output_format)
+
+    # Auto-embed new/updated entries if embeddings are available.
+    #
+    # The queue is settled FIRST and outside the `changed > 0` gate, for two
+    # separate reasons. (a) `changed > 0` gates the *file*-driven embed only:
+    # under ADR-0035 a write indexes its own entry and leaves a queue row, so
+    # a sync can find nothing changed on disk and still owe embeddings --
+    # which is the whole point of `pyrite index sync` as a drain point. (b) a
+    # queued row means "this entry changed", and only draining re-embeds it;
+    # `embed_all(force=False)` would skip it because a (stale) vector exists.
+    changed = results["added"] + results["updated"]
+    embedded_count = 0
+    if not no_embed:
+        _settle_embed_queue(db, model_name=config.settings.embedding_model)
+
+    if changed > 0 and not no_embed:
+        try:
+            from ..services.embedding_service import EmbeddingService, is_available
+
+            if is_available() and db.vec_available:
+                svc = EmbeddingService(db, model_name=config.settings.embedding_model)
+                stats = svc.embed_all(kb_name=kb_name)
+                if stats["embedded"] > 0:
+                    embedded_count = stats["embedded"]
+                    results["embedded"] = embedded_count
+        except Exception:
+            logger.debug("Embedding not available, skipping")
+
+    unreadable_kbs = results.get("unreadable_kbs", [])
+    synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
+
+    formatted = _format_output(results, output_format)
+    if formatted is not None:
+        typer.echo(formatted)
+        exit_unless_whole(len(unreadable_kbs), synced)
+        return
 
     console.print("[green]Sync complete:[/green]")
     console.print(f"  Added: {results['added']}")
@@ -334,39 +381,15 @@ def index_sync(
 
     # A KB whose files could not be read was not synced and kept its rows
     # (#1542): named, and the exit says the sync was not whole (below).
-    unreadable_kbs = results.get("unreadable_kbs", [])
     for item in unreadable_kbs:
         console.print(
             f"  [red]Not synced: {item['kb']}: {item['error']}[/red]",
             highlight=False,
         )
 
-    # Auto-embed new/updated entries if embeddings are available.
-    #
-    # The queue is settled FIRST and outside the `changed > 0` gate, for two
-    # separate reasons. (a) `changed > 0` gates the *file*-driven embed only:
-    # under ADR-0035 a write indexes its own entry and leaves a queue row, so
-    # a sync can find nothing changed on disk and still owe embeddings --
-    # which is the whole point of `pyrite index sync` as a drain point. (b) a
-    # queued row means "this entry changed", and only draining re-embeds it;
-    # `embed_all(force=False)` would skip it because a (stale) vector exists.
-    changed = results["added"] + results["updated"]
-    if not no_embed:
-        _settle_embed_queue(db, model_name=config.settings.embedding_model)
+    if embedded_count > 0:
+        console.print(f"  Embedded: {embedded_count}")
 
-    if changed > 0 and not no_embed:
-        try:
-            from ..services.embedding_service import EmbeddingService, is_available
-
-            if is_available() and db.vec_available:
-                svc = EmbeddingService(db, model_name=config.settings.embedding_model)
-                stats = svc.embed_all(kb_name=kb_name)
-                if stats["embedded"] > 0:
-                    console.print(f"  Embedded: {stats['embedded']}")
-        except Exception:
-            logger.debug("Embedding not available, skipping")
-
-    synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
     exit_unless_whole(len(unreadable_kbs), synced)
 
 
@@ -418,6 +441,12 @@ def index_stats(
 def index_embed(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to embed (all if omitted)"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-embed all entries"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=validate_output_format,
+        help="Output format: rich (default), json, yaml",
+    ),
 ):
     """Generate vector embeddings for semantic search."""
     from ..services.embedding_service import (
@@ -430,11 +459,12 @@ def index_embed(
     # The KB first (#952): a name that is not a KB is refused before the
     # dependency check, so the answer names the thing that is wrong.
     config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db, output_format="rich")
+    require_kb(config, kb_name, db=db, output_format=output_format)
     if not is_available():
         missing = semantic_unavailable(False)  # never None while the package is absent
         cli_error(
             "sentence-transformers is not installed.",
+            output_format=output_format,
             error_code="DEPENDENCY_MISSING",
             suggestion=missing[2] if missing else None,
         )
@@ -445,6 +475,7 @@ def index_embed(
         _, cause, remedy = unavailable
         cli_error(
             cause[0].upper() + cause[1:] + ".",
+            output_format=output_format,
             error_code="DEPENDENCY_MISSING",
             suggestion=remedy,
         )
@@ -455,6 +486,7 @@ def index_embed(
     if IndexManager(db, config).is_empty():
         cli_error(
             "Index is empty.",
+            output_format=output_format,
             error_code="INDEX_EMPTY",
             suggestion="run `pyrite index build` first",
         )
@@ -507,11 +539,29 @@ def index_embed(
 
         cli_error(
             str(e),
+            output_format=output_format,
             error_code="DEPENDENCY_MISSING",
             suggestion=extra_install_command("semantic"),
         )
 
     embedded, skipped, overshoot = _embed_counts(stats, from_queue, force)
+
+    result_data = {
+        "embedded": embedded,
+        "skipped": skipped,
+        "from_queue": from_queue,
+        "overshoot": overshoot,
+        "other_kbs": other_kbs,
+        "truncated": stats.get("truncated", 0),
+        "errors": stats["errors"],
+    }
+    formatted = _format_output(result_data, output_format)
+    if formatted is not None:
+        typer.echo(formatted)
+        if stats["errors"]:
+            exit_unless_whole(stats["errors"], embedded + skipped)
+        return
+
     console.print("\n[green]Embedding complete.[/green]")
     console.print(f"  Embedded: {embedded}")
     console.print(f"  Skipped: {skipped}")
