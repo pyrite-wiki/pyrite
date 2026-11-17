@@ -278,6 +278,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.resolved": 1, "os.path.islink": 1},
         "where an in-KB link leads (#1262): the name is decided under the root lexically first; islink is the lstat of that name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains). Nothing is read",
     ),
+    ("pyrite/storage/repository.py", "KBRepository.unlisted_entry_rows"): (
+        {"os.path.islink": 1, "repo._inside_text": 1},
+        "index health's unlisted_entry_files (#1552): islink is the lstat of a name the walk met, never followed (a link is not read at all); every other skipped file is read through _inside_text (KBFiles), so a hard link or a link out reads as nothing",
+    ),
     ("pyrite/storage/repository.py", "KBRepository.alias_target"): (
         {"_is_regular_file": 1},
         "_in_kb_link (KBFiles.resolved), then a stat of a target KBFiles placed inside: is it a regular file. Nothing is read: the entry is read at the target through KBFiles",
@@ -723,7 +727,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 57,
+    "DECIDED_INSIDE": 58,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
