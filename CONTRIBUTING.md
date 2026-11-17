@@ -504,10 +504,10 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 
 - Tests live in `tests/`; extension tests in `extensions/<name>/tests/`
 - Name test files `test_*.py`
-- A `fix:` commit must include a test that fails without the fix (a hook checks
-  that it touches `tests/`). A test-only commit followed by a `fix:` commit fails
-  the check: put the test in the same commit as the fix, or combine the commits if
-  already separated (or use another prefix like `refactor:`).
+- A `fix:` commit must include a test that fails without the fix (the local
+  commit-msg hook checks that a `fix:` commit touches `tests/`). In CI, the pull
+  request as a whole is judged: a branch with a `test:` commit followed by a
+  `fix:` commit passes because pull requests are squashed when merged to `dev`.
 - Use pytest fixtures for common setup (`tmp_kb`, isolated plugin registry);
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
@@ -553,9 +553,8 @@ Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration un
   only and moves by fast-forward to a commit that already passed CI.
 - Branch from `dev`, open the PR against `dev`. Name the branch for what it
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
-  `process/*` (tooling and workflow). Never push to `dev`. Rebase is the default merge
-  method (it keeps your commits and their messages); squash is fine for a
-  branch whose history is noise.
+  `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
+  each pull request into a single commit on `dev`.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
