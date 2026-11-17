@@ -564,11 +564,12 @@ def test_refine_naming_no_kb_is_refused_on_the_cli(world, board_in_the_working_d
 def test_the_gate_never_records_what_it_could_not_run_as_passed(world, gate):
     """`_evaluate_gate` refuses on its own, even handed a config the loader
     did not validate."""
-    from pyrite_software_kb.board import BoardConfigError
     from pyrite_software_kb.plugin import SoftwareKBPlugin
 
+    from pyrite.exceptions import ValidationError
+
     row = {"id": "item-ready", "kb_name": KB, "title": "t", "status": "accepted"}
-    with pytest.raises(BoardConfigError):
+    with pytest.raises(ValidationError, match="board.yaml"):
         SoftwareKBPlugin()._evaluate_gate(
             world.db, {"gates": {"in_progress": gate}}, "in_progress", row, {}, readable_kbs=None
         )
