@@ -1,12 +1,16 @@
 """A write never stores an importance outside 1-10, on any type, by any surface (#1537).
 
-The property: ``importance`` is a base field, 1 to 10 on every entry. A create
-or an update that sets it outside that range is refused with
-``VALIDATION_FAILED``, an ``errors`` row naming ``importance``, and no file
-written or changed -- on every entry type and on every surface (the CLI's
-``-f importance=`` and MCP ``kb_create`` / ``kb_update``). A value the file
-already holds is the file's: an update of another field succeeds and reports
-it ("violation already on disk; kept", design principle 2).
+The property: ``importance`` is a base field, 1 to 10 on every entry. An update
+that sets it outside that range, ``pyrite add`` of a file that holds it, and a
+create of a whole number outside it are refused with ``VALIDATION_FAILED``, an
+``errors`` row naming ``importance``, and no file written or changed -- on every
+entry type and on every surface (the CLI's ``-f importance=`` and MCP
+``kb_create`` / ``kb_update``). A create first turns a non-number into the
+default (or ``true`` into 1) and cuts a decimal to a whole number in the model,
+so the create rows assert "refused, or what is stored is in 1 to 10", not that
+every bad value is refused. A value the file already holds is the file's: an
+update of another field succeeds and reports it ("violation already on disk;
+kept", design principle 2).
 
 Before #1537 only ``EventEntry`` carried the rule, so a ``person`` stored
 ``importance: 99`` and ``pyrite qa validate`` then reported what Pyrite had just
@@ -18,8 +22,19 @@ The types are not listed by hand: the core registry (``ENTRY_TYPE_REGISTRY``),
 every plugin-declared class (``get_registry().get_all_entry_types()``), and a
 type a ``kb.yaml`` declares alone (``GenericEntry``). A type added to any of
 them is covered by ``test_every_entry_class_carries_the_rule`` without a new
-line here. The ``event`` rows are controls: they passed before the fix and
-must still pass.
+line here.
+
+Event rows. These are controls (``_EVENT_CONTROL``): they passed before #1537
+and must still pass -- the ``core-event`` rows of the create, update, on-disk
+and add tests for 0, 11, -5, 99, the in-range values and an absent value, and
+the ``EventEntry`` class rows (and its subclasses) for 0, 11, -5, 99. These are
+not controls: the ``event`` cells of the value-kind block below (``KINDS``, run
+for a note and an event) pin the answers on both types, and on an event some
+changed with #1537 -- ``.inf`` / ``-.inf`` (they crashed an update and ``add``),
+``true`` (it passed as 1), a number above 10 that is not whole such as 10.9 (an
+update and ``add`` accepted it), blank and null (an update no longer warns about
+them, and an MCP update that sets null was refused), and numeric text ``10.9``
+on a CLI update.
 """
 
 from __future__ import annotations
@@ -368,10 +383,12 @@ def test_a_journalism_kb_refuses_importance_99_with_the_models_answer(cli_world,
 #   cli_set:    the verdict of the `-f importance=<text>` text as text ("null" and
 #               "" are strings on the command line)
 #   mcp_set:    the verdict of the JSON value
-#   create_*:   "refused" for a number out of range, "safe" for anything else: a
-#               create turns a non-number into the default or into 1 or 0 in the
-#               model before the check (a known limit, not part of this fix), so
-#               the property is "refused, or what is stored is in 1-10"
+#   create_*:   "refused" for a whole number out of range (and for a value that the
+#               model turns into 0), "safe" for anything else: a create turns a
+#               non-number into the default or into 1 (`true`), and cuts a decimal
+#               to a whole number (10.7 stores 10), in the model before the check (a
+#               known limit, not part of this fix), so the property is "refused, or
+#               what is stored is in 1-10"
 _I = 123456789012345678901234567890
 KINDS = {
     # kind: (yaml, cli text, json value, file, cli_set, mcp_set, create_cli, create_mcp)
