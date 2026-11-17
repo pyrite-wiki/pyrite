@@ -8,81 +8,73 @@ Regression coverage for:
 
 from __future__ import annotations
 
-import tempfile
+import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
 from pyrite.cli import app
-from pyrite.config import KBConfig, PyriteConfig, Settings
-from pyrite.services.task_service import TaskService
-from pyrite.storage.database import PyriteDB
-
-runner = CliRunner()
+from pyrite.config import KBConfig
 
 
 @pytest.fixture
-def long_id_task_cli_env():
+def long_id_task_world(cli_world, tmp_path: Path):
     """Temp task KB with parent and child tasks having IDs longer than 12 characters."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        tasks_path = tmpdir / "tasks-kb"
-        (tasks_path / "tasks").mkdir(parents=True)
+    kb_path = tmp_path / "tasks-kb"
+    (kb_path / "tasks").mkdir(parents=True)
 
-        kb_config = KBConfig(
-            name="test-tasks", path=tasks_path, kb_type="task", description="Test task KB"
-        )
-        config = PyriteConfig(
-            knowledge_bases=[kb_config],
-            settings=Settings(index_path=tmpdir / "index.db"),
-        )
-        db = PyriteDB(config.settings.index_path)
-        db.register_kb(
-            name="test-tasks", kb_type="task", path=str(tasks_path), description="Test task KB"
-        )
-        svc = TaskService(config, db)
+    world = cli_world(
+        kbs=[KBConfig(name="test-tasks", path=kb_path, kb_type="task", description="Test task KB")]
+    )
 
-        # Create parent task with id > 12 chars: parent-epic-for-login
-        parent = svc.create_task(
-            kb_name="test-tasks",
-            title="Parent epic for login",
-        )
-        # Create child task with id > 12 chars: write-the-login-form
-        child = svc.create_task(
-            kb_name="test-tasks",
-            title="Write the login form",
-            parent=parent["entry_id"],
-        )
-        # Create task with exactly 12 chars: exactly twel
-        exact = svc.create_task(
-            kb_name="test-tasks",
-            title="Exactly twel",
-        )
-        db.close()
+    # Create parent task with id > 12 chars: parent-epic-for-login
+    parent_res = world.cli(
+        "task", "create", "Parent epic for login", "-k", "test-tasks", "--format", "json"
+    )
+    parent_id = json.loads(parent_res.output)["entry_id"]
 
-        with patch("pyrite.cli.context.load_config", return_value=config):
-            yield {
-                "config": config,
-                "parent_id": parent["entry_id"],
-                "child_id": child["entry_id"],
-                "exact_id": exact["entry_id"],
-            }
+    # Create child task with id > 12 chars: write-the-login-form
+    child_res = world.cli(
+        "task",
+        "create",
+        "Write the login form",
+        "-k",
+        "test-tasks",
+        "--parent",
+        parent_id,
+        "--format",
+        "json",
+    )
+    child_id = json.loads(child_res.output)["entry_id"]
+
+    # Create task with exactly 12 chars: exactly-twlv
+    exact_res = world.cli("task", "create", "Exactly twlv", "-k", "test-tasks", "--format", "json")
+    exact_id = json.loads(exact_res.output)["entry_id"]
+    assert len(exact_id) == 12
+
+    return {
+        "world": world,
+        "parent_id": parent_id,
+        "child_id": child_id,
+        "exact_id": exact_id,
+    }
 
 
 @pytest.mark.cli
-def test_task_list_rich_displays_full_ids_and_parent_id(long_id_task_cli_env):
+def test_task_list_rich_displays_full_ids_and_parent_id(long_id_task_world):
     """`task list --format rich` displays the full task ID and parent ID without 12-char cut."""
-    parent_id = long_id_task_cli_env["parent_id"]
-    child_id = long_id_task_cli_env["child_id"]
-    exact_id = long_id_task_cli_env["exact_id"]
+    world = long_id_task_world["world"]
+    parent_id = long_id_task_world["parent_id"]
+    child_id = long_id_task_world["child_id"]
+    exact_id = long_id_task_world["exact_id"]
 
-    res = runner.invoke(
-        app,
-        ["task", "list", "-k", "test-tasks", "--format", "rich"],
-        env={"COLUMNS": "200"},
-    )
+    with world.pointed():
+        res = CliRunner().invoke(
+            app,
+            ["task", "list", "-k", "test-tasks", "--format", "rich"],
+            env={"COLUMNS": "200"},
+        )
     assert res.exit_code == 0, res.output
 
     # The full IDs must be present in the rich table output
@@ -92,16 +84,18 @@ def test_task_list_rich_displays_full_ids_and_parent_id(long_id_task_cli_env):
 
 
 @pytest.mark.cli
-def test_task_get_rich_displays_full_child_ids(long_id_task_cli_env):
+def test_task_get_rich_displays_full_child_ids(long_id_task_world):
     """`task get <parent> --format rich` displays child tasks by their full IDs."""
-    parent_id = long_id_task_cli_env["parent_id"]
-    child_id = long_id_task_cli_env["child_id"]
+    world = long_id_task_world["world"]
+    parent_id = long_id_task_world["parent_id"]
+    child_id = long_id_task_world["child_id"]
 
-    res = runner.invoke(
-        app,
-        ["task", "get", parent_id, "-k", "test-tasks", "--format", "rich"],
-        env={"COLUMNS": "200"},
-    )
+    with world.pointed():
+        res = CliRunner().invoke(
+            app,
+            ["task", "get", parent_id, "-k", "test-tasks", "--format", "rich"],
+            env={"COLUMNS": "200"},
+        )
     assert res.exit_code == 0, res.output
 
     # The full child ID must appear in the children section
@@ -109,15 +103,21 @@ def test_task_get_rich_displays_full_child_ids(long_id_task_cli_env):
 
 
 @pytest.mark.cli
-def test_task_list_rich_narrow_terminal_folds_without_crash(long_id_task_cli_env):
+def test_task_list_rich_narrow_terminal_folds_without_crash(long_id_task_world):
     """In a narrow terminal (COLUMNS=60), task list folds IDs across lines without truncating."""
-    res = runner.invoke(
-        app,
-        ["task", "list", "-k", "test-tasks", "--format", "rich"],
-        env={"COLUMNS": "60"},
-    )
+    world = long_id_task_world["world"]
+    with world.pointed():
+        res = CliRunner().invoke(
+            app,
+            ["task", "list", "-k", "test-tasks", "--format", "rich"],
+            env={"COLUMNS": "60"},
+        )
     assert res.exit_code == 0, res.output
     # Long IDs fold across lines rather than being cut or replaced with ellipsis
     assert "..." not in res.output
-    assert "write-th" in res.output and "form" in res.output
-    assert "parent-" in res.output and "login" in res.output
+    # Reassemble columns from table rows to verify full IDs are preserved across folded cells
+    lines = res.output.splitlines()
+    id_col = "".join(line.split("│")[1].strip() for line in lines if len(line.split("│")) >= 3)
+    parent_col = "".join(line.split("│")[6].strip() for line in lines if len(line.split("│")) >= 7)
+    assert "write-the-login-form" in id_col
+    assert "parent-epic-for-login" in parent_col
