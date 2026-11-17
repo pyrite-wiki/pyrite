@@ -348,7 +348,11 @@ def _error_code(output: str) -> str | None:
 
 
 @pytest.fixture
-def one_broken(tmp_path):
+def one_broken(tmp_path, monkeypatch):
+    # The walks run commands that write relative to the working directory
+    # (an export's default folder): run them where nothing is kept.
+    (tmp_path / "cwd").mkdir()
+    monkeypatch.chdir(tmp_path / "cwd")
     world, good, bad = _two_kbs(tmp_path)
     (bad / "kb.yaml").write_bytes(BROKEN)
     try:
