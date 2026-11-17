@@ -221,8 +221,16 @@ class KBSchema:
         documents for the key: a string `guidelines` stays a string. A value
         holding any node JSON cannot carry as written is left out whole and
         named under `malformed` with the reason for its first such node: NaN
-        or an infinity; a date or timestamp; binary; a set; ordered pairs
-        (`!!pairs`, `!!omap`); a mapping key that is not a string. A field
+        or an infinity; a number too large for JSON (`1.0e+400`, which reads
+        as infinite); a date or timestamp; binary; a set; ordered pairs
+        (`!!pairs`, `!!omap`); a mapping key that is not a string; any
+        explicit YAML tag other than `!!str` on a scalar (a local `!note`, a
+        URI tag, `!!python/...`, or any tag on a mapping or list, `!!str`
+        included), one reason for all of them that never prints the tag. A
+        `!!str`-tagged scalar, as a value or a mapping key, is the string.
+        A recursive alias (`&a {self: *a}`) is not withheld: it comes back
+        with null where the alias recurses, because that is how Pyrite's YAML
+        loader reads it (#1602 tracks refusing it). A field
         whose value is null or empty is omitted. A kb.yaml the loader cannot
         read at all (a set or pairs used as a mapping key) fails before this,
         as on dev. tests/test_orient_kb_authored_shapes.py holds every kind
@@ -236,6 +244,8 @@ class KBSchema:
                 return
             plain, problem = _plain_json(value)
             if problem is None:
+                if plain == "":  # a `!!str ''` is as empty as `''`: omitted too
+                    return
                 target[key] = plain
             else:
                 malformed.append({"key": path, "reason": _NOT_PLAIN_JSON[problem]})
@@ -557,6 +567,8 @@ class KBSchema:
 #: Why a kb.yaml value is not returned in `kb_authored`: Pyrite's own text.
 _NOT_PLAIN_JSON = {
     "nan": "a NaN or infinite number, which JSON cannot carry",
+    "too_large": "a number too large for JSON (it reads as infinite)",
+    "tag": "a value with a YAML tag, which JSON cannot carry as written",
     "key": "a mapping with a key that is not a string",
     "date": "a YAML date or timestamp, which JSON cannot carry as written",
     "binary": "a YAML binary value, which JSON cannot carry as written",
@@ -566,6 +578,9 @@ _NOT_PLAIN_JSON = {
 }
 
 
+_STR_TAG = "tag:yaml.org,2002:str"
+
+
 def _plain_json(value: Any) -> tuple[Any, str | None]:
     """`(value as plain JSON types, None)`: str, int, float, bool, None, list,
     dict, the same shape and contents; or `(None, problem)`, a key of
@@ -573,28 +588,52 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
     YAML loader's round-trip subclasses (a commented mapping, a scalar float)
     become their plain base types; nothing else is converted.
 
-    Withheld: NaN and infinities; dates and timestamps; binary; sets; ordered
-    pairs (`!!pairs` loads as a list of tuples, `!!omap` as an ordered
-    mapping: JSON has neither); and any mapping key that is not a string.
-    A null anywhere inside a value is JSON null and comes back as written.
+    Withheld: NaN and infinities; an overflowed number (`1.0e+400`: ruamel
+    loads it as a `ScalarFloat` equal to infinity, where a written `.inf` is
+    a plain float, so the two get different reasons); dates and timestamps;
+    binary; sets; ordered pairs (`!!pairs` loads as a list of tuples,
+    `!!omap` as an ordered mapping: JSON has neither); any explicit tag other
+    than `!!str` on a scalar (`tag`: round-trip mode keeps a tagged scalar as
+    a `TaggedScalar` and a tagged collection's tag on its `.tag`, and builds
+    nothing from it); and any mapping key that is not a string. A `!!str`
+    scalar is the string, as a value or a key. A null anywhere inside a value
+    is JSON null and comes back as written. A recursive alias is not seen
+    here: the loader has already put null where it recurses.
     """
-    from ruamel.yaml.comments import CommentedOrderedMap
+    from ruamel.yaml.comments import CommentedOrderedMap, TaggedScalar
+
+    def has_tag(node: Any) -> bool:
+        # A mapping or list keeps an explicit tag on `.tag.value`; None when
+        # untagged (the core `!!map` / `!!seq` leave it None).
+        return getattr(getattr(node, "tag", None), "value", None) is not None
 
     if value is None:
         return None, None
     if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
         return bool(value), None
+    if isinstance(value, TaggedScalar):
+        if value.tag.value == _STR_TAG:
+            return str(value.value), None
+        return None, "tag"
     if isinstance(value, str):
         return str(value), None
     if isinstance(value, int):
         return int(value), None
     if isinstance(value, float):
-        return (float(value), None) if math.isfinite(value) else (None, "nan")
+        if math.isfinite(value):
+            return float(value), None
+        return None, ("too_large" if type(value).__name__ == "ScalarFloat" else "nan")
     if isinstance(value, CommentedOrderedMap | tuple):
         return None, "pairs"
     if isinstance(value, dict):
+        if has_tag(value):
+            return None, "tag"
         out: dict[str, Any] = {}
         for k, v in value.items():
+            if isinstance(k, TaggedScalar):
+                if k.tag.value != _STR_TAG:
+                    return None, "tag"
+                k = str(k.value)
             if not isinstance(k, str):
                 return None, "key"
             plain, problem = _plain_json(v)
@@ -603,6 +642,8 @@ def _plain_json(value: Any) -> tuple[Any, str | None]:
             out[str(k)] = plain
         return out, None
     if isinstance(value, list):
+        if has_tag(value):
+            return None, "tag"
         items = []
         for v in value:
             plain, problem = _plain_json(v)

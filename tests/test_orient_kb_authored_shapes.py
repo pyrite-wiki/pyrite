@@ -15,6 +15,13 @@ allow_nan=False)` succeeds and decodes to an equal value of the same types.
 Only for a node the oracle says JSON cannot carry is the spec's reason
 (`REASON`) consulted, and the test asserts that exact text. The surface test
 runs each shape through the service, MCP, REST and the CLI.
+
+Tags (#1568): `!!str` on a scalar is the string it says; any other explicit
+tag (a local `!note`, a URI tag, `!!str` on a list or mapping) is withheld
+whole under one reason that is true of the value and never prints the tag.
+A number that overflows a double (`1.0e+400`) is withheld as too large. The
+oracle disagrees with Pyrite's loader on a few of these; each disagreement is
+a written exception below, never a change to production code to match it.
 """
 
 import json
@@ -24,8 +31,10 @@ import pytest
 import yaml
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.exceptions import KBConfigInvalidError
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
+from pyrite.utils.yaml import read_kb_yaml
 
 TOP_FIELDS = ("guidelines", "goals", "evaluation_rubric")
 TYPE_FIELDS = ("ai_instructions", "guidelines", "goals", "evaluation_rubric")
@@ -44,6 +53,7 @@ SHAPES = {
     "date": "2024-01-02",
     "int-key-mapping": "{1: one}",
     "nan": ".nan",
+    "tagged-string": "!!str 12",
 }
 
 
@@ -84,7 +94,10 @@ def _config(tmp_path, kb_yaml: str) -> PyriteConfig:
 
 
 def _orient(tmp_path, kb_yaml: str) -> dict:
-    config = _config(tmp_path, kb_yaml)
+    return _orient_config(_config(tmp_path, kb_yaml))
+
+
+def _orient_config(config: PyriteConfig) -> dict:
     db = PyriteDB(config.settings.index_path)
     try:
         return KBService(config, db).orient("k")
@@ -112,6 +125,23 @@ KINDS = {
     "omap": "!!omap [a: 1, b: 2]",
     "mapping": "{x: y}",
     "list": "[x, y]",
+    # Tags (#1568). The tag text is the KB author's: no reason may print it.
+    "str-tag-int": "!!str 12",
+    "str-tag-word": "!!str hello",
+    "local-tag-scalar": "!note hello",
+    "local-tag-mapping": "!note {a: b}",
+    "local-tag-list": "!note [a, b]",
+    "uri-tag": "!<tag:example.com,2026:x> hi",
+    "str-tag-on-list": "!!str [a]",
+    # Overflow: a finite-looking number that is infinite as a double.
+    "overflow": "1.0e+400",
+    "-overflow": "-1.0e+400",
+    "overflow-no-dot": "1e400",
+    # A recursive alias (#1602 is the follow-up): the anchor sits on the
+    # field's own value, so it can be written at top, mapping-value and
+    # list-item only.
+    "recursive-map": "&a {self: *a}",
+    "recursive-list": "&a [x, *a]",
 }
 
 #: Every position a node can sit in under a key kb_authored reads.
@@ -138,6 +168,37 @@ REASON = {
     "omap": "a YAML ordered-pairs node (!!pairs or !!omap), which JSON cannot carry as written",
 }
 KEY_REASON = "a mapping with a key that is not a string"
+TAG_REASON = "a value with a YAML tag, which JSON cannot carry as written"
+TOO_LARGE_REASON = "a number too large for JSON (it reads as infinite)"
+#: The catch-all: no shape the grid lists may be named with it.
+OTHER_REASON = "a YAML value of a kind JSON cannot carry as written"
+REASON.update(
+    {
+        "overflow": TOO_LARGE_REASON,
+        "-overflow": TOO_LARGE_REASON,
+        "overflow-no-dot": TOO_LARGE_REASON,
+        "local-tag-scalar": TAG_REASON,
+        "local-tag-mapping": TAG_REASON,
+        "local-tag-list": TAG_REASON,
+        "uri-tag": TAG_REASON,
+        "str-tag-on-list": TAG_REASON,
+    }
+)
+#: Text a reason must never echo: the KB author's tag, not Pyrite's.
+AUTHORS_TAG_TEXT = ("note", "example.com")
+
+#: Kinds whose tag is on a scalar, and on a collection. At the mapping-key
+#: position a collection is a key that is not a string whatever its tag (the
+#: loader drops the tag when it builds the key), while a tagged scalar key is
+#: named by its tag: the tag is the first thing wrong with it (#1568).
+TAGGED_SCALAR_KINDS = {"local-tag-scalar", "uri-tag"}
+TAGGED_COLLECTION_KINDS = {"local-tag-mapping", "local-tag-list", "str-tag-on-list"}
+
+#: What Pyrite's loader reads for a recursive alias: null where the alias
+#: recurses (ruamel does this; entry frontmatter reads the same). PyYAML builds
+#: a real cycle instead, which no JSON carries; #1602 tracks refusing it.
+RECURSIVE_AS_PYRITE_READS = {"recursive-map": {"self": None}, "recursive-list": ["x", None]}
+RECURSIVE_POSITIONS = ("top", "mapping-value", "list-item")
 
 
 def _node_yaml(kind: str, position: str) -> str:
@@ -166,7 +227,27 @@ def _same(a, b) -> bool:
 
 
 def _expected(field, kind, position):
-    """("returned", value) | ("omitted",) | ("withheld", reason) | ("unreadable",)."""
+    """("returned", value) | ("omitted",) | ("withheld", reason).
+
+    Three disagreements between the reference reader (PyYAML) and Pyrite's
+    loader (ruamel) are decided here by hand, each from the spec, not from the
+    code under test; nothing in production bends to match the oracle:
+    - a tag PyYAML cannot construct (a local tag, a URI tag, `!!str` on a
+      list) raises `ConstructorError`; the answer is the tag reason;
+    - `1e400` (no dot) PyYAML reads as the string "1e400"; ruamel reads an
+      infinity, which is too large for JSON;
+    - a recursive alias PyYAML builds as a real cycle; ruamel reads null where
+      it recurses (`RECURSIVE_AS_PYRITE_READS`).
+    """
+    if kind in RECURSIVE_AS_PYRITE_READS:
+        v = RECURSIVE_AS_PYRITE_READS[kind]
+        return ("returned", {"top": v, "mapping-value": {"k": v}, "list-item": [v]}[position])
+    if kind in TAGGED_SCALAR_KINDS:
+        return ("withheld", TAG_REASON)
+    if kind in TAGGED_COLLECTION_KINDS:
+        return ("withheld", KEY_REASON if position == "mapping-key" else TAG_REASON)
+    if kind == "overflow-no-dot":
+        return ("withheld", KEY_REASON if position == "mapping-key" else TOO_LARGE_REASON)
     kb_yaml = _kb_yaml_text(field, _node_yaml(kind, position))
     try:
         value = _as_written(kb_yaml, field)
@@ -187,21 +268,32 @@ def _kb_yaml_text(field: tuple[str, ...], text: str) -> str:
     return f"name: k\n{field[0]}: {text}\ntypes:\n  note:\n    description: A note\n"
 
 
-@pytest.mark.parametrize("position", POSITIONS)
-@pytest.mark.parametrize("kind", KINDS)
-@pytest.mark.parametrize("field", FIELDS, ids=".".join)
+def _cells():
+    for field in FIELDS:
+        for kind in KINDS:
+            for position in POSITIONS:
+                if kind in RECURSIVE_AS_PYRITE_READS and position not in RECURSIVE_POSITIONS:
+                    continue  # the anchor cannot be written there (as a key it is unhashable)
+                yield pytest.param(field, kind, position, id=f"{'.'.join(field)}-{kind}-{position}")
+
+
+@pytest.mark.parametrize(("field", "kind", "position"), list(_cells()))
 def test_every_node_kind_in_every_position_is_returned_or_withheld_with_a_true_reason(
     tmp_path, field, kind, position
 ):
-    kb_yaml = _kb_yaml_text(field, _node_yaml(kind, position))
+    config = _config(tmp_path, _kb_yaml_text(field, _node_yaml(kind, position)))
     try:
-        result = _orient(tmp_path, kb_yaml)
-    except Exception as exc:  # the KB's own loader cannot read the file
+        # The KB's own loader, outside orient: `KBConfig.kb_schema` is
+        # `KBSchema.from_dict(read_kb_yaml(kb path))`, so the typed refusal of
+        # `read_kb_yaml` (#1547) is the loader failing.
+        read_kb_yaml(config.knowledge_bases[0].path)
+    except KBConfigInvalidError as exc:
         pytest.skip(
-            f"kb.yaml unreadable by Pyrite's loader ({type(exc).__name__}): orient fails here "
-            "as on dev, out of scope for #1369"
+            f"kb.yaml unreadable by Pyrite's loader ({type(exc).__name__}: {exc}): "
+            "orient fails here as on dev, out of scope for #1369"
         )
-    authored = result["kb_authored"]
+    # No `try`: anything orient itself raises fails the test.
+    authored = _orient_config(config)["kb_authored"]
     expected = _expected(field, kind, position)
     key = ".".join(field)
     malformed = [m for m in authored.get("malformed", []) if m["key"] == key]
@@ -215,6 +307,9 @@ def test_every_node_kind_in_every_position_is_returned_or_withheld_with_a_true_r
     else:
         assert _at(authored, field) is _ABSENT
         assert malformed == [{"key": key, "reason": expected[1]}]
+    for item in authored.get("malformed", []):
+        assert item["reason"] != OTHER_REASON  # no listed shape is the catch-all
+        assert not any(t in item["reason"] for t in AUTHORS_TAG_TEXT)  # Pyrite's text only
     assert _json_carries(authored)
 
 
@@ -260,6 +355,10 @@ def test_every_surface_returns_the_same_kb_authored(tmp_path, shape):
         world.close()
 
     assert via_mcp == via_rest == via_cli == service
+    if shape == "tagged-string":
+        # The acceptance line of #1568: the string, on all four surfaces.
+        assert service["guidelines"] == "12" and service["types"]["note"]["goals"] == "12"
+        assert "malformed" not in service
     for value in (via_mcp, via_rest, via_cli):
         assert not any(isinstance(v, float) and not math.isfinite(v) for v in _leaves(value))
 
@@ -273,3 +372,13 @@ def _leaves(node):
             yield from _leaves(v)
     else:
         yield node
+
+
+def test_an_empty_str_tagged_value_is_omitted_like_an_empty_string(tmp_path):
+    """`!!str ''` is the string `''` (#1568), and an empty field value is left out."""
+    authored = _orient(
+        tmp_path, "name: k\nguidelines: !!str ''\ngoals: !!str 12\nevaluation_rubric: ''\n"
+    )["kb_authored"]
+    assert authored["goals"] == "12"
+    assert "guidelines" not in authored and "evaluation_rubric" not in authored
+    assert "malformed" not in authored

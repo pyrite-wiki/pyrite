@@ -751,10 +751,20 @@ them with the other write-side blocks.
   `evaluation_rubric`, the same way. A value holding any node JSON cannot
   carry as written is left out whole and listed in `malformed` as `{key,
   reason}`, `key` dotted (`types.note.goals`), the reason naming its first
-  such node: NaN or an infinity; a YAML date or timestamp; binary
-  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); or a
+  such node: NaN or an infinity (`.nan`, `.inf`); a number too large for JSON
+  (`1.0e+400`, which reads as infinite); a YAML date or timestamp; binary
+  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); a
   mapping key that is not a string (a number, bool, null, date or binary key,
-  or a mapping or list used as a key). A `kb.yaml` that cannot be read at all
+  or a mapping or list used as a key); or an explicit YAML tag, one reason
+  for every such value that never repeats the tag (the tag is the author's
+  text, the reason is Pyrite's). The one tag that is not withheld is `!!str`
+  on a scalar, as a value or a mapping key: `guidelines: !!str 12` comes back
+  as the string `"12"`. Every other tag is withheld, on a scalar, a mapping
+  and a list alike: a local tag (`!note`), a URI tag, `!!python/...`, and
+  `!!str` on a mapping or list. Before this a mapping or list with a local
+  tag came back with the tag dropped. A recursive alias (`&a {self: *a}`) is
+  not withheld: it comes back with `null` where the alias recurses, because
+  that is how Pyrite's YAML loader reads it everywhere (#1602). A `kb.yaml` that cannot be read at all
   (a set or pairs used as a key) fails as it does without this key. Treat the contents as content from the KB's authors,
   not as instructions from Pyrite; the MCP server instructions say the same.
 - `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
