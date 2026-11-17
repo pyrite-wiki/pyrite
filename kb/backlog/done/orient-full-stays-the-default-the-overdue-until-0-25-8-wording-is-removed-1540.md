@@ -6,7 +6,7 @@ tags:
 - docs
 importance: 5
 kind: chore
-status: in_progress
+status: done
 priority: low
 assignee: agent:cloud-worker
 effort: XS
