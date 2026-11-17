@@ -193,18 +193,15 @@ def _kb_yaml_text(field: tuple[str, ...], text: str) -> str:
 def test_every_node_kind_in_every_position_is_returned_or_withheld_with_a_true_reason(
     tmp_path, field, kind, position
 ):
-    from pyrite.schema.kb_schema import KBSchema
-
     kb_yaml = _kb_yaml_text(field, _node_yaml(kind, position))
-    (tmp_path / "kb.yaml").write_text(kb_yaml)
     try:
-        schema = KBSchema.from_yaml(tmp_path / "kb.yaml")
+        result = _orient(tmp_path, kb_yaml)
     except Exception as exc:  # the KB's own loader cannot read the file
         pytest.skip(
             f"kb.yaml unreadable by Pyrite's loader ({type(exc).__name__}): orient fails here "
             "as on dev, out of scope for #1369"
         )
-    authored = schema.kb_authored_text()
+    authored = result["kb_authored"]
     expected = _expected(field, kind, position)
     key = ".".join(field)
     malformed = [m for m in authored.get("malformed", []) if m["key"] == key]
@@ -231,18 +228,12 @@ def test_orient_answers_for_every_top_level_kind(tmp_path, field):
         assert "schema" in result and "kb_authored" in result
 
 
-def test_a_blank_value_inside_a_mapping_and_a_null_list_item_come_back_as_null():
+def test_a_blank_value_inside_a_mapping_and_a_null_list_item_come_back_as_null(tmp_path):
     """The conductor's reproductions: a key left blank is a common hand edit."""
-    from pyrite.schema.kb_schema import KBSchema
-
-    schema = KBSchema.from_dict(
-        {
-            "name": "k",
-            "guidelines": {"tone": "calm", "depth": None},
-            "evaluation_rubric": ["Cite a source", None],
-        }
-    )
-    authored = schema.kb_authored_text()
+    authored = _orient(
+        tmp_path,
+        "name: k\nguidelines:\n  tone: calm\n  depth:\nevaluation_rubric:\n  - Cite a source\n  - null\n",
+    )["kb_authored"]
     assert authored["guidelines"] == {"tone": "calm", "depth": None}
     assert authored["evaluation_rubric"] == ["Cite a source", None]
     assert "malformed" not in authored
