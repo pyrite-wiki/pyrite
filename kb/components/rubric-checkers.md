@@ -45,7 +45,7 @@ What that means for `has_field`:
 - It sees `tags`, `title` and `summary`, as well as the bag and the field columns.
 - It does not see `aliases`, `sources` or `links`. The link checkers read `_links`.
 - It tests truthiness, so `priority: 0` and `status: ""` are missing. `priority_present` asks only for a key, so `priority: 0` holds and `priority: ""` does not.
-- A column holds Pyrite's reading of the item, which can be a type's default rather than a line in the file. A `backlog_item` that writes no `priority` reads `medium`, as `pyrite get` shows it, so `priority_present` holds for it.
+- For a type whose model gives a field a default, `has_field` and `priority_present` hold when the file leaves that field out, because the item has that value as Pyrite reads it, the value `pyrite get` shows. A `backlog_item` with no `priority` line reads `medium`, and a `task` reads `5`. A checker cannot tell a defaulted field from a written one: that would need the index to record which fields the file wrote.
 
 The entry is read from the index, so a hand edit that has not been synced gives the indexed verdict, as every index read does. In a gate, the builder runs outside `board.evaluating`, so a failed read keeps its own error and never names `board.yaml` (#1585).
 

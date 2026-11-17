@@ -56,7 +56,7 @@ gates:                      # optional; absent means no gates
 
 These keys are the only ones read; any other key, at any level, is refused rather than ignored. An empty file declares no lanes and no gates.
 
-A checker sees the item's own fields wherever the index keeps them: `priority`, `status`, `assignee`, `summary` and the dates as much as a field such as `effort`, plus its tags and links. A criterion therefore gives the same verdict in a gate as in `pyrite qa validate` ([the entry a checker receives](../kb/components/rubric-checkers.md#the-entry-a-checker-receives)).
+A checker sees the item's own fields wherever the index keeps them: `priority`, `status`, `assignee`, `summary` and the dates as much as a field such as `effort`, plus its tags and links. A criterion therefore gives the same verdict in a gate as in `pyrite qa validate` ([the entry a checker receives](../kb/components/rubric-checkers.md#the-entry-a-checker-receives)). For a field the item's type defaults, `has_field` and `priority_present` hold when the file leaves it out, because the item has that value as Pyrite reads it: a backlog item with no `priority` line has `priority: medium`.
 
 A criterion reads only the keys its `type` uses, and any other key is refused: a `checker` criterion (the default) reads `text`, `type`, `checker`, `params` and `hint`; a `judgment` or `agent_responsibility` criterion is never run, so it reads `text`, `type` and `hint` only. The refusal is on the key being present, whatever its value: `checker: null` on a `judgment` criterion is refused too.
 
