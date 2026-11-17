@@ -2035,7 +2035,7 @@ class PyriteMCPServer:
             "parent": meta.get("parent", ""),
             "dependencies": meta.get("dependencies", []),
             "evidence": meta.get("evidence", []),
-            "due_date": meta.get("due_date", ""),
+            "due_date": task.get("due_date") or meta.get("due_date", ""),
             "agent_context": meta.get("agent_context", {}),
             "children": children,
             "kb_name": task_kb,
@@ -2109,16 +2109,21 @@ class PyriteMCPServer:
     def _task_create(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create a new task. `assignee` is a person argument (`CORE_PERSON_ARGUMENTS`):
         the dispatcher has already set it from the session."""
-        return self.task_svc.create_task(
-            kb_name=args["kb_name"],
-            title=args["title"],
-            body=args.get("body", ""),
-            parent=args.get("parent", ""),
-            priority=args.get("priority", 5),
-            assignee=args.get("assignee") or "",
-            dependencies=args.get("dependencies"),
-            tags=args.get("tags"),
-        )
+        try:
+            return self.task_svc.create_task(
+                kb_name=args["kb_name"],
+                title=args["title"],
+                body=args.get("body", ""),
+                parent=args.get("parent", ""),
+                priority=args.get("priority", 5),
+                assignee=args.get("assignee") or "",
+                dependencies=args.get("dependencies"),
+                tags=args.get("tags"),
+                due_date=args.get("due_date", ""),
+                links=args.get("links"),
+            )
+        except (ValidationError, AccessDenied) as e:
+            return _refusal(e)
 
     def _task_update(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
         """Update task fields. `assignee` is a person argument the dispatcher

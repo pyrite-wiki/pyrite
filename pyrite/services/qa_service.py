@@ -690,6 +690,9 @@ class QAService:
         """Assess a single entry and create a qa_assessment entry.
 
         ``readable_kbs`` bounds the link checks, as in `validate_entry`.
+        A KB outside it reads as a miss: the entry is answered exactly as
+        a missing one, so a caller who cannot read the KB cannot write an
+        assessment into it (#1499 acceptance 2).
 
         Returns dict with assessment_id, qa_status, issues_found, issues,
         llm_available.
@@ -706,8 +709,16 @@ class QAService:
         """
         self.require_tier(tier)
         self._require_readable_kb(kb_name)
+        if readable_kbs is not None and kb_name not in readable_kbs:
+            raise EntryNotFoundError(f"Entry '{entry_id}' not found in KB '{kb_name}'")
         result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
+        # Only the first message is carried: entry_not_found is appended
+        # before any unmodellable-frontmatter note validate_entry adds, so
+        # the error stays the plain not-found message.
+        for issue in issues:
+            if issue.get("rule") == "entry_not_found":
+                raise EntryNotFoundError(issue["message"])
 
         # Tier 2: LLM rubric evaluation, before anything is written
         if tier >= 2:

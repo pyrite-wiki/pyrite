@@ -1411,9 +1411,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",
@@ -3746,9 +3771,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",

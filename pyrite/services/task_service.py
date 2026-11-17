@@ -10,7 +10,9 @@ from ..config import PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
     EntryNotFoundError,
+    PyriteError,
     ValidationError,
+    public_text,
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
@@ -62,6 +64,8 @@ class TaskService:
         dependencies: list[str] | None = None,
         tags: list[str] | None = None,
         fields: dict[str, Any] | None = None,
+        due_date: str = "",
+        links: list[Any] | None = None,
         *,
         # Legacy alias
         parent_task: str = "",
@@ -85,6 +89,57 @@ class TaskService:
         # Support legacy parent_task parameter
         parent = parent or parent_task
 
+        if due_date is not None and due_date != "":
+            from ..schema.validators import validate_date
+
+            if not isinstance(due_date, str) or not validate_date(due_date):
+                message = f"Invalid due_date '{due_date}': must be YYYY-MM-DD"
+                raise ValidationError(
+                    message,
+                    errors=[
+                        {
+                            "field": "due_date",
+                            "rule": "format",
+                            "expected": "YYYY-MM-DD",
+                            "got": due_date,
+                        }
+                    ],
+                )
+
+        parsed_links = []
+        if links is not None:
+            if not isinstance(links, list):
+                raise ValidationError(
+                    "links must be a list of {target, relation} objects",
+                    errors=[{"field": "links", "rule": "type", "expected": "list"}],
+                )
+            from .kb_service import check_link_spec
+
+            allowed_keys = {"target", "relation"}
+            for idx, link_item in enumerate(links):
+                if not isinstance(link_item, dict):
+                    raise ValidationError(
+                        f"links[{idx}] must be a dictionary, got {type(link_item).__name__}",
+                        errors=[{"field": f"links[{idx}]", "rule": "type", "expected": "dict"}],
+                    )
+                extra = set(link_item.keys()) - allowed_keys
+                if extra:
+                    invalid_key = sorted(extra)[0]
+                    raise ValidationError(
+                        f"links[{idx}] has undeclared key '{invalid_key}': only 'target' and 'relation' are accepted",
+                        errors=[
+                            {
+                                "field": f"links[{idx}].{invalid_key}",
+                                "rule": "undeclared",
+                                "message": f"undeclared key '{invalid_key}'",
+                            }
+                        ],
+                    )
+                t = link_item.get("target")
+                rel = link_item.get("relation")
+                target, relation, _ = check_link_spec(t, rel)
+                parsed_links.append({"target": target, "relation": relation})
+
         entry_id = generate_entry_id(title)
         kwargs: dict[str, Any] = {"status": "open", "priority": priority}
         if parent:
@@ -95,6 +150,8 @@ class TaskService:
             kwargs["dependencies"] = dependencies
         if tags:
             kwargs["tags"] = tags
+        if due_date:
+            kwargs["due_date"] = due_date
         if fields:
             kwargs.update(fields)
 
@@ -106,6 +163,29 @@ class TaskService:
             {**kwargs, "id": entry_id, "title": title, "entry_type": "task", "body": body},
         )
         entry = written.entry
+
+        linked: list[dict[str, Any]] = []
+        failed_links: list[dict[str, Any]] = []
+        for l in parsed_links:
+            target = l["target"]
+            relation = l["relation"]
+            try:
+                self.kb_svc.add_link(
+                    entry.id,
+                    kb_name,
+                    target,
+                    relation=relation,
+                )
+                linked.append({"target": target, "relation": relation})
+            except (PyriteError, ValueError) as e:
+                failed_links.append(
+                    {
+                        "target": target,
+                        "relation": relation,
+                        "error": public_text(e),
+                    }
+                )
+
         result: dict[str, Any] = {
             "created": True,
             "entry_id": entry.id,
@@ -116,6 +196,11 @@ class TaskService:
             "assignee": getattr(entry, "assignee", ""),
             "kb_name": kb_name,
         }
+        if getattr(entry, "due_date", ""):
+            result["due_date"] = entry.due_date
+        if links is not None:
+            result["linked"] = linked
+            result["failed_links"] = failed_links
         if written.warnings:
             result["warnings"] = written.warnings
         return result
@@ -290,7 +375,7 @@ class TaskService:
         are listed in config order, readable KBs only.
         """
         sql = (
-            "SELECT id, title, kb_name, status, assignee, priority, metadata "
+            "SELECT id, title, kb_name, status, assignee, priority, due_date, metadata "
             "FROM entry WHERE entry_type = 'task' AND id = :id"
         )
         params: dict[str, Any] = {"id": task_id}
