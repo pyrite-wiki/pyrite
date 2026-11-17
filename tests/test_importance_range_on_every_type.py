@@ -322,3 +322,32 @@ def test_add_of_an_event_file_holding_importance_99_is_refused(world, tmp_path):
     res = world.cli("add", str(src), "-k", KB, "--format", "json")
     assert res.exit_code != 0, res.output
     assert _snapshot(world) == before
+
+
+# -- a plugin-scoped KB answers as every other KB does ---------------------------------
+
+
+@pytest.mark.parametrize("surf", sorted(SURFACES))
+def test_a_journalism_kb_refuses_importance_99_with_the_models_answer(cli_world, tmp_path, surf):
+    """The journalism plugin used to refuse this itself (`SCHEMA_VIOLATION`, a row
+    with no `rule`); the model answers first now: `VALIDATION_FAILED`, the same
+    row an event has."""
+    world = cli_world(
+        kbs=[KBConfig(name="ji", path=tmp_path / "ji", kb_type="journalism-investigation")]
+    )
+    before = {p: p.read_bytes() for p in world.kb_path("ji").rglob("*") if p.is_file()}
+    if surf == "cli":
+        res = world.cli(
+            "create", "-k", "ji", "-t", "person", "--title", "P", "-b", "x",
+            "-f", "importance=99", "--format", "json",
+        )  # fmt: skip
+        code, body = res.exit_code, _json(res.output)
+    else:
+        body = world.mcp()._dispatch_tool(
+            "kb_create",
+            {"kb_name": "ji", "entry_type": "person", "title": "P", "body": "x", "importance": 99},
+        )
+        code = 0 if body.get("created") else 1
+    _assert_refused(code, body)
+    assert any(r.get("rule") == "range" for r in body["errors"]), body
+    assert {p: p.read_bytes() for p in world.kb_path("ji").rglob("*") if p.is_file()} == before
