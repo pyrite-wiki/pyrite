@@ -243,8 +243,8 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "kb_yaml_present (KBFiles.present)",
     ),
     ("pyrite/storage/repository.py", "KBRepository._folders"): (
-        {"os.walk": 1},
-        "names under the root by os.walk: a link is listed as its name, never followed or checked, and a folder link is not walked into, on every Python (fixed here). The one walk behind _named and walk_files since #1546 (which moved _named's os.walk here and replaced walk_files' rglob('*.md')), so a folder it could not list is recorded (onerror), never read as empty",
+        {"os.scandir": 1, "path.is_dir": 1, "path.is_symlink": 1},
+        "names under the root, os.walk's walk written out: scandir lists a folder the walk reached from the root, and is_dir / is_symlink are the DirEntry's own answers about a name in it (a link is listed as its name, never followed or checked, and a folder link is not walked into, on every Python). The one walk behind _named and walk_files since #1546 (it replaced _named's os.walk and walk_files' rglob('*.md')), so a folder it could not list is recorded by the path it asked for, never read as empty",
     ),
     ("pyrite/storage/repository.py", "KBRepository._publish_rewrite"): (
         {"repo._read_inside": 1},

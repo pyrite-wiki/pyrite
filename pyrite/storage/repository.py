@@ -907,30 +907,64 @@ class KBRepository:
 
     def _folders(self, unreadable: list[str] | None = None) -> Iterator[tuple[str, list, list]]:
         """The one walk of the KB's folders, behind both listings
-        (``walk_files`` and ``_named``): ``os.walk`` top-down, a folder that
-        is a link not walked into.
+        (``walk_files`` and ``_named``): what ``os.walk`` yields top-down,
+        ``(dirpath, dirnames, filenames)``, a folder that is a link listed in
+        ``dirnames`` but not walked into.
 
         A folder the walk could not list says nothing about the files in it,
         so it is never read as "no files" (#1546). ``unreadable``, when
         given, receives the KB-relative path (POSIX spelling) of each folder
-        the walk could not list, once, in walk order. Not the root (the KB
-        gate, ``KBConfig.check_readable``, answers for it: #1551), and not a
-        folder the walk's own rule would never list anything in (under a
-        hidden or ``_templates`` part, ``entry_paths.reason_for_folders``),
-        so it never changes what a sync reports. Only the outermost of
-        nested folders can be named: the walk cannot see past it."""
+        the walk could not list, or list to the end, once, in walk order:
+        the path the walk asked for, never text from the error. Not the root
+        (the KB gate, ``KBConfig.check_readable``, answers for it: #1551),
+        and not a folder the walk's own rule would never list anything in
+        (under a hidden or ``_templates`` part,
+        ``entry_paths.reason_for_folders``), so it never changes what a sync
+        reports. Only the outermost of nested folders can be named: the walk
+        cannot see past it."""
 
-        def could_not_list(error: OSError) -> None:
-            if unreadable is None or error.filename is None:
+        def could_not_list(folder: str) -> None:
+            if unreadable is None:
                 return
-            parts = entry_paths.parts_below(self.path, error.filename)
+            parts = entry_paths.parts_below(self.path, folder)
             if parts is None or entry_paths.reason_for_folders(parts) is not None:
                 return
             rel = "/".join(parts)
             if rel not in unreadable:
                 unreadable.append(rel)
 
-        return os.walk(self.path, onerror=could_not_list)
+        stack = [os.fspath(self.path)]
+        while stack:
+            top = stack.pop()
+            dirnames: list[str] = []
+            filenames: list[str] = []
+            into: list[str] = []
+            try:
+                with os.scandir(top) as listing:
+                    for item in listing:
+                        # As os.walk: a probe that fails is "not a folder",
+                        # and a link to a folder is listed, never entered.
+                        try:
+                            is_dir = item.is_dir()
+                        except OSError:
+                            is_dir = False
+                        if not is_dir:
+                            filenames.append(item.name)
+                            continue
+                        dirnames.append(item.name)
+                        try:
+                            is_link = item.is_symlink()
+                        except OSError:
+                            is_link = False
+                        if not is_link:
+                            into.append(item.name)
+            except OSError:
+                # Not listed, or not to the end: as os.walk, nothing of it is
+                # yielded, and the rows under it are kept.
+                could_not_list(top)
+                continue
+            yield top, dirnames, filenames
+            stack.extend(os.path.join(top, name) for name in reversed(into))
 
     def id_of_file(self, file_path: Path) -> str | None:
         """The id ``file_path`` holds, by the loader's rule; None when it is
