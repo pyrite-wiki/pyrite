@@ -1528,6 +1528,8 @@ class SoftwareKBPlugin:
 
         import json
 
+        from pyrite.exceptions import public_text
+
         from .board import BoardConfigError
 
         db, should_close = self._get_db()
@@ -1537,10 +1539,10 @@ class SoftwareKBPlugin:
             # first call of a session says what is wrong with the board instead.
             board_error = None
             try:
-                board_config = self._board_config(db, kb_name)
+                board_config = self._board_config(db, kb_name, readable_kbs={kb_name})
             except BoardConfigError as e:
                 board_config = {"lanes": []}
-                board_error = str(e)
+                board_error = public_text(e)
 
             # Query all backlog items for this KB
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item' AND kb_name = ?"
@@ -1711,7 +1713,9 @@ class SoftwareKBPlugin:
 
         try:
             # Load board config
-            board_config = self._board_config(db, kb_name, unnamed_gives_defaults=True)
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
 
             # Query all backlog items
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item'"
@@ -1906,7 +1910,9 @@ class SoftwareKBPlugin:
 
             # Load board config for review lane WIP limit
             wip_limit = None
-            board_config = self._board_config(db, kb_name, unnamed_gives_defaults=True)
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
             for lane in board_config["lanes"]:
                 if "review" in lane["statuses"]:
                     wip_limit = lane.get("wip_limit")
@@ -2225,7 +2231,14 @@ class SoftwareKBPlugin:
             "criteria": criteria_results,
         }
 
-    def _board_config(self, db, kb_name: object, *, unnamed_gives_defaults: bool = False):
+    def _board_config(
+        self,
+        db,
+        kb_name: object,
+        *,
+        readable_kbs: set[str] | None,
+        unnamed_gives_defaults: bool = False,
+    ):
         """The board config of the KB ``kb_name`` names: the one path to
         ``board.load_board_config`` (#1538).
 
@@ -2237,7 +2250,7 @@ class SoftwareKBPlugin:
         and read no file. A ``board.yaml`` that cannot be loaded is
         ``BoardConfigError``; nothing here catches it."""
         from pyrite.exceptions import ValidationError
-        from pyrite.services.access_policy import UNSCOPED, named_kb
+        from pyrite.services.access_policy import named_kb
         from pyrite.services.kb_resolver import resolve_kb
 
         from .board import default_board_config, load_board_config
@@ -2248,9 +2261,9 @@ class SoftwareKBPlugin:
             raise ValidationError(
                 "This tool needs a KB: a board config is read from a KB's own root."
             )
-        # Dispatch has already settled what the caller may read; this resolve
-        # only turns the name into the KB whose root holds its board.yaml.
-        kb = resolve_kb(self._get_config(), kb_name, readable_kbs=UNSCOPED, db=db)
+        # The caller's readable set: a KB it may not read is not found, as
+        # at dispatch; the resolved KB's root holds its board.yaml.
+        kb = resolve_kb(self._get_config(), kb_name, readable_kbs=readable_kbs, db=db)
         return load_board_config(kb)
 
     def _mcp_check_ready(
@@ -2281,7 +2294,7 @@ class SoftwareKBPlugin:
             status = row["status"] or meta.get("status", "proposed")
             priority = row["priority"] or meta.get("priority", "medium")
 
-            board_config = self._board_config(db, kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
@@ -2316,7 +2329,7 @@ class SoftwareKBPlugin:
 
             rows = db._raw_conn.execute(query, params).fetchall()
 
-            board_config = self._board_config(db, kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
             not_ready_items: list[dict[str, Any]] = []
@@ -2523,7 +2536,9 @@ class SoftwareKBPlugin:
 
         try:
             # Load board config for WIP limits
-            board_config = self._board_config(db, kb_name, unnamed_gives_defaults=True)
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
 
             # Count in_progress items and find WIP limit
             ip_query = "SELECT COUNT(*) as cnt FROM entry WHERE entry_type = 'backlog_item'"
@@ -2725,7 +2740,7 @@ class SoftwareKBPlugin:
                 }
 
             # Evaluate DoR gate
-            board_config = self._board_config(db, kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
@@ -2878,7 +2893,7 @@ class SoftwareKBPlugin:
                 }
 
             # Evaluate quality gate
-            board_config = self._board_config(db, kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, to_status, row, meta, readable_kbs=readable_kbs
             )
@@ -2992,7 +3007,7 @@ class SoftwareKBPlugin:
             # Evaluate DoD gate when approving (transition to done)
             gate_result = None
             if target == "done":
-                board_config = self._board_config(db, kb_name)
+                board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
                 gate_result = self._evaluate_gate(
                     db, board_config, "done", row, meta, readable_kbs=readable_kbs
                 )

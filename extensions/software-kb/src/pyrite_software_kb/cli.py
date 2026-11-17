@@ -1019,6 +1019,7 @@ def sw_board_cmd(
     ),
 ):
     """View kanban board with backlog items grouped by lane."""
+    from pyrite.services.access_policy import UNSCOPED
     from pyrite.storage.database import PyriteDB
 
     from .plugin import SoftwareKBPlugin
@@ -1032,7 +1033,9 @@ def sw_board_cmd(
         # The plugin's one path to the board config: the named KB's own root,
         # or the defaults for a board across every KB (#1538).
         board_config = _refusal_rendered(
-            lambda: SoftwareKBPlugin()._board_config(db, kb_name, unnamed_gives_defaults=True),
+            lambda: SoftwareKBPlugin()._board_config(
+                db, kb_name, readable_kbs=UNSCOPED, unnamed_gives_defaults=True
+            ),
             fmt,
         )
 

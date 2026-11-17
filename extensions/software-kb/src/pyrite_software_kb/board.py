@@ -79,9 +79,10 @@ class BoardConfigError(ValidationError):
 
     A gate or limit the file declares cannot be evaluated, so every tool that
     decides or reports one refuses rather than answer as if it had run. The
-    text is Pyrite's own: the file name and the kind of problem, with a line
-    or a position; never a value from the file or the YAML parser's message,
-    so it is safe on every surface."""
+    text is Pyrite's own: the file name and the kind of problem, with a
+    position in the file's structure (lane 2, gate 1 criterion 3); never a
+    value from the file, nor the YAML parser's message or position, so it is
+    safe on every surface."""
 
     def __init__(self, problem: str):
         super().__init__(
@@ -116,20 +117,20 @@ def load_board_config(kb: KBConfig) -> dict:
     from pyrite.utils.kb_files import KBFiles
     from pyrite.utils.yaml import load_yaml_file
 
-    kb_root = Path(kb.path)
-    board_file = kb_root / BOARD_FILE
+    kb_path = Path(kb.path)
+    board_file = kb_path / BOARD_FILE
     # The KB's own probe: a link out is there whatever it points at, and the
     # read below refuses it, so the answer never says what lies outside.
-    if not KBFiles(kb_root).present(board_file):
+    if not KBFiles(kb_path).present(board_file):
         return default_board_config()
     try:
-        data = load_yaml_file(board_file, kb_root=kb_root)
+        data = load_yaml_file(board_file, kb_root=kb_path)
     except UnicodeDecodeError:
         raise BoardConfigError("is not UTF-8 text") from None
-    except YAMLError as e:
-        mark = getattr(e, "problem_mark", None)
-        where = f" (line {mark.line + 1})" if mark is not None else ""
-        raise BoardConfigError(f"does not parse as YAML{where}") from None
+    except YAMLError:
+        # Not the parser's message, nor its position: both come from the
+        # exception, and its message quotes the file (ADR-0052 N3).
+        raise BoardConfigError("does not parse as YAML") from None
     return _validated(data)
 
 
