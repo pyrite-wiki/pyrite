@@ -38,20 +38,31 @@ checker knows these rules and nothing about how the loader works:
 Planted violations go through the same checker and each must be found by the
 rule it names, so a checker that finds nothing cannot pass.
 
-Limits, which are the behavioural tests' job (``tests/test_board_config_refuses.py``):
+What this checker cannot see, and what covers each
+(``tests/test_board_config_refuses.py`` unless named):
 
-- A name built from a variable (``f"board.{ext}"``) or a path read by a
+- A file name built from a variable (``f"board.{ext}"``), or a path read by a
   helper outside the extension: ``test_a_kb_that_does_not_resolve_is_refused``
-  and the views-with-no-KB tests plant a board.yaml with a marker in the
-  working directory and assert it reaches no answer.
-- A board obtained or swallowed one call away (a method that calls a handler
-  inside ``except Exception``, as orient's recommendation does): orient skips
-  that call when the board did not load, and
+  and the views-with-no-KB tests plant a board.yaml with a marker outside the
+  KB's root and assert it reaches no answer.
+- A failed load swallowed one call away (a method that calls a handler inside
+  ``except Exception``, as orient's recommendation does): orient skips that
+  call when the board did not load, and
   ``test_orient_answers_and_says_what_is_wrong_with_the_board`` pins it.
-- A handler that never calls ``_board_config`` and builds its own lanes: the
-  receivers are derived from the source (``BOARD_TOOLS``), and
-  ``test_the_walk_finds_the_known_loaders`` names the handlers that must be
-  among them.
+- A handler that never calls ``_board_config`` and builds its own lanes, or
+  a handler defined outside the plugin class: the receivers are derived by
+  "reaches ``_board_config``", which is exactly what such a handler does not
+  do. ``test_the_walk_finds_the_known_loaders`` fails if one of today's
+  handlers stops reaching it; for a new handler of that kind no test does.
+- Evaluation. Rule 6 is about loading; nothing here sees a criterion that
+  was evaluated and turned into a pass: a caller catching the refusal from
+  ``_evaluate_gate``, or a checker answering "no finding" because it skipped.
+  Behaviourally: ``test_a_pattern_that_times_out_on_an_item_is_refused_every_time``,
+  ``test_an_unexpected_failure_says_could_not_be_evaluated_and_logs``,
+  ``test_a_checker_that_cannot_run_on_an_entry_refuses``,
+  ``test_the_gate_never_records_what_it_could_not_run_as_passed`` and the
+  refusal grid; a new catch around ``_evaluate_gate`` in a handler is seen by
+  none of them unless it sits on a path they drive.
 """
 
 from __future__ import annotations

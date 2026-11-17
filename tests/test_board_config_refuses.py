@@ -10,8 +10,8 @@ KB file reader's own refusals keep their codes. ``board.yaml`` is the user's
 file and is only read: the entry file is byte-identical after every refusal.
 
 And the board config is read from the KB's own root: a call naming a KB that
-does not resolve is refused, and a ``board.yaml`` anywhere else (the process's
-working directory) never reaches an answer.
+does not resolve is refused, and a ``board.yaml`` outside the KB's root never
+reaches an answer.
 
 Every case runs through the real surfaces: ``PyriteMCPServer._dispatch_tool``
 and the ``pyrite sw`` commands, which call the same handlers.
@@ -571,17 +571,17 @@ def test_a_valid_warn_gate_runs_and_passes_the_claim(world):
 
 
 @pytest.fixture
-def board_in_the_working_directory(tmp_path, monkeypatch):
-    """A board.yaml with the marker in the process's working directory: it is
-    nobody's KB, so it must reach no answer."""
-    cwd = tmp_path / "cwd"
-    cwd.mkdir()
-    (cwd / "board.yaml").write_text(
+def a_board_outside_the_kb(tmp_path, monkeypatch):
+    """A board.yaml with the marker outside the KB's root: it is nobody's KB,
+    so it must reach no answer."""
+    outside = tmp_path / "outside-the-kb"
+    outside.mkdir()
+    (outside / "board.yaml").write_text(
         f"lanes:\n  - name: {MARKER}\n    statuses: [accepted, review, in_progress]\n"
         f"    wip_limit: 99\n"
     )
-    monkeypatch.chdir(cwd)
-    return cwd
+    monkeypatch.chdir(outside)
+    return outside
 
 
 #: Handlers that load a board config for a named KB, called directly with a
@@ -633,7 +633,7 @@ def _plugin_without_the_kb(world):
 
 
 @pytest.mark.parametrize("handler", sorted(HANDLER_CALLS))
-def test_a_kb_that_does_not_resolve_is_refused(gone_world, handler, board_in_the_working_directory):
+def test_a_kb_that_does_not_resolve_is_refused(gone_world, handler, a_board_outside_the_kb):
     from pyrite.exceptions import KBNotFoundError
 
     plugin = _plugin_without_the_kb(gone_world)
@@ -650,38 +650,34 @@ def test_a_kb_that_does_not_resolve_is_refused(gone_world, handler, board_in_the
 DEFAULT_LANES = ["Backlog", "Ready", "In Progress", "Review", "Done"]
 
 
-def test_the_board_naming_no_kb_shows_the_default_lanes(world, board_in_the_working_directory):
+def test_the_board_naming_no_kb_shows_the_default_lanes(world, a_board_outside_the_kb):
     answer = _mcp(world, "sw_board", {})
     assert [lane["name"] for lane in answer["lanes"]] == DEFAULT_LANES, answer
     assert MARKER not in json.dumps(answer)
 
 
-def test_the_review_queue_naming_no_kb_shows_the_default_limit(
-    world, board_in_the_working_directory
-):
+def test_the_review_queue_naming_no_kb_shows_the_default_limit(world, a_board_outside_the_kb):
     answer = _mcp(world, "sw_review_queue", {})
     assert answer["wip_limit"] == 3, answer
 
 
-def test_pull_next_naming_no_kb_applies_the_default_limit(world, board_in_the_working_directory):
+def test_pull_next_naming_no_kb_applies_the_default_limit(world, a_board_outside_the_kb):
     answer = _mcp(world, "sw_pull_next", {})
     assert answer["wip_status"]["limit"] == 5, answer
     assert answer["wip_status"]["policy"] == "warn", answer
 
 
-def test_the_cli_board_naming_no_kb_shows_the_default_lanes(world, board_in_the_working_directory):
+def test_the_cli_board_naming_no_kb_shows_the_default_lanes(world, a_board_outside_the_kb):
     result = _cli(world, ["sw", "board"])
     assert [lane["name"] for lane in _cli_json(result)["lanes"]] == DEFAULT_LANES, result.output
 
 
-def test_the_cli_pull_next_naming_no_kb_applies_the_default_limit(
-    world, board_in_the_working_directory
-):
+def test_the_cli_pull_next_naming_no_kb_applies_the_default_limit(world, a_board_outside_the_kb):
     result = _cli(world, ["sw", "pull-next"])
     assert _cli_json(result)["wip_status"]["limit"] == 5, result.output
 
 
-def test_the_cli_pull_next_applies_the_named_kbs_wip_limit(world, board_in_the_working_directory):
+def test_the_cli_pull_next_applies_the_named_kbs_wip_limit(world, a_board_outside_the_kb):
     _write_board(world, VALID_GATED)
     result = _cli(world, CLI_CALLS["sw pull-next"])
     assert _cli_json(result)["wip_status"]["limit"] == 4, result.output
@@ -708,7 +704,7 @@ def test_a_valid_enforced_gate_blocks_review_and_transition(world):
     assert _snapshot(world) == before
 
 
-def test_refine_naming_no_kb_is_refused_on_the_cli(world, board_in_the_working_directory):
+def test_refine_naming_no_kb_is_refused_on_the_cli(world, a_board_outside_the_kb):
     result = _cli(world, ["sw", "refine"])
     assert result.exit_code == 1, result.output
     answer = _cli_json(result)
