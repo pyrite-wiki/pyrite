@@ -10,7 +10,9 @@ from ..config import PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
     EntryNotFoundError,
+    PyriteError,
     ValidationError,
+    public_text,
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
@@ -82,14 +84,10 @@ class TaskService:
         Returns:
             Dict with created=True and entry details.
         """
-        from ..exceptions import PyriteError, ValidationError
         from ..schema import generate_entry_id
 
         # Support legacy parent_task parameter
         parent = parent or parent_task
-
-        if fields:
-            fields = dict(fields)
 
         if due_date is not None and due_date != "":
             from ..schema.validators import validate_date
@@ -131,7 +129,7 @@ class TaskService:
                         f"links[{idx}] has undeclared key '{invalid_key}': only 'target' and 'relation' are accepted",
                         errors=[
                             {
-                                "field": invalid_key,
+                                "field": f"links[{idx}].{invalid_key}",
                                 "rule": "undeclared",
                                 "message": f"undeclared key '{invalid_key}'",
                             }
@@ -180,8 +178,6 @@ class TaskService:
                 )
                 linked.append({"target": target, "relation": relation})
             except (PyriteError, ValueError) as e:
-                from ..utils.errors import public_text
-
                 failed_links.append(
                     {
                         "target": target,
@@ -198,9 +194,10 @@ class TaskService:
             "priority": getattr(entry, "priority", 5),
             "parent": getattr(entry, "parent", ""),
             "assignee": getattr(entry, "assignee", ""),
-            "due_date": getattr(entry, "due_date", ""),
             "kb_name": kb_name,
         }
+        if getattr(entry, "due_date", ""):
+            result["due_date"] = entry.due_date
         if links is not None:
             result["linked"] = linked
             result["failed_links"] = failed_links

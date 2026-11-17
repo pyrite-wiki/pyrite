@@ -114,7 +114,7 @@ class TestCreateTask:
         assert result["due_date"] == "2026-11-20"
 
         # Check DB index row
-        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=None)
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
         assert task is not None
         assert task["due_date"] == "2026-11-20"
 
@@ -152,12 +152,12 @@ class TestCreateTask:
         assert "links" not in result
 
         # Verify kb_get returns links
-        entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=None)
+        entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
         assert entry is not None
         assert any(l["target_id"] == target_id for l in entry.get("links", []))
 
         # Verify target entry shows the task in backlinks
-        backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=None)
+        backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=UNSCOPED)
         assert any(b["id"] == result["entry_id"] for b in backlinks)
 
     @pytest.mark.parametrize(
@@ -204,7 +204,7 @@ class TestCreateTask:
         assert "links" not in result
 
         # Task was created and exists
-        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=None)
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
         assert task is not None
 
 
