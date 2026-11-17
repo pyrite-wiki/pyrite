@@ -1,6 +1,9 @@
 """KBSchema - per-KB schema loaded from kb.yaml."""
 
+import collections.abc
+import datetime
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -205,6 +208,55 @@ class KBSchema:
         whose `create` refused them.
         """
         return sorted(self.types)
+
+    def kb_authored_text(self) -> dict[str, Any]:
+        """The free text this KB's own `kb.yaml` carries for an agent to read.
+
+        Only what the KB's authors wrote: `guidelines`, `goals`,
+        `evaluation_rubric`, and per type `ai_instructions`, `guidelines`,
+        `goals`, `evaluation_rubric`. Pyrite's defaults (`SYSTEM_INTENT`, core
+        and plugin type metadata) are not in it; `to_agent_schema` merges both
+        and cannot tell them apart (#1369).
+
+        Each value comes back as written, in whatever shape the author gave
+        it (a mapping, string, list, number, bool, with null anywhere inside),
+        as plain JSON values. It is never coerced to the shape Pyrite
+        documents for the key: a string `guidelines` stays a string. A value
+        holding any node JSON cannot carry as written is left out whole and
+        named under `malformed` with the reason for its first such node: NaN
+        or an infinity; a date or timestamp; binary; a set; ordered pairs
+        (`!!pairs`, `!!omap`); a mapping key that is not a string. A field
+        whose value is null or empty is omitted. A kb.yaml the loader cannot
+        read at all (a set or pairs used as a mapping key) fails before this,
+        as on dev. tests/test_orient_kb_authored_shapes.py holds every kind
+        in every position.
+        """
+        out: dict[str, Any] = {}
+        malformed: list[dict[str, str]] = []
+
+        def put(target: dict[str, Any], key: str, path: str, value: Any) -> None:
+            if value is None or value == "" or value == {} or value == []:
+                return
+            plain, problem = _plain_json(value)
+            if problem is None:
+                target[key] = plain
+            else:
+                malformed.append({"key": path, "reason": _NOT_PLAIN_JSON[problem]})
+
+        for key in ("guidelines", "goals", "evaluation_rubric"):
+            put(out, key, key, getattr(self, key))
+        types: dict[str, Any] = {}
+        for name, ts in self.types.items():
+            block: dict[str, Any] = {}
+            for key in ("ai_instructions", "guidelines", "goals", "evaluation_rubric"):
+                put(block, key, f"types.{name}.{key}", getattr(ts, key))
+            if block:
+                types[name] = block
+        if types:
+            out["types"] = types
+        if malformed:
+            out["malformed"] = malformed
+        return out
 
     def to_agent_schema(self, *, kb_type: str) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
@@ -503,3 +555,68 @@ class KBSchema:
             logger.warning("Schema validation failed for %s", entry_type, exc_info=True)
 
         return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+
+
+#: Why a kb.yaml value is not returned in `kb_authored`: Pyrite's own text.
+_NOT_PLAIN_JSON = {
+    "nan": "a NaN or infinite number, which JSON cannot carry",
+    "key": "a mapping with a key that is not a string",
+    "date": "a YAML date or timestamp, which JSON cannot carry as written",
+    "binary": "a YAML binary value, which JSON cannot carry as written",
+    "set": "a YAML set, which JSON cannot carry as written",
+    "pairs": "a YAML ordered-pairs node (!!pairs or !!omap), which JSON cannot carry as written",
+    "other": "a YAML value of a kind JSON cannot carry as written",
+}
+
+
+def _plain_json(value: Any) -> tuple[Any, str | None]:
+    """`(value as plain JSON types, None)`: str, int, float, bool, None, list,
+    dict, the same shape and contents; or `(None, problem)`, a key of
+    `_NOT_PLAIN_JSON`, for the first node JSON cannot carry as written. The
+    YAML loader's round-trip subclasses (a commented mapping, a scalar float)
+    become their plain base types; nothing else is converted.
+
+    Withheld: NaN and infinities; dates and timestamps; binary; sets; ordered
+    pairs (`!!pairs` loads as a list of tuples, `!!omap` as an ordered
+    mapping: JSON has neither); and any mapping key that is not a string.
+    A null anywhere inside a value is JSON null and comes back as written.
+    """
+    from ruamel.yaml.comments import CommentedOrderedMap
+
+    if value is None:
+        return None, None
+    if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
+        return bool(value), None
+    if isinstance(value, str):
+        return str(value), None
+    if isinstance(value, int):
+        return int(value), None
+    if isinstance(value, float):
+        return (float(value), None) if math.isfinite(value) else (None, "nan")
+    if isinstance(value, CommentedOrderedMap | tuple):
+        return None, "pairs"
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for k, v in value.items():
+            if not isinstance(k, str):
+                return None, "key"
+            plain, problem = _plain_json(v)
+            if problem is not None:
+                return None, problem
+            out[str(k)] = plain
+        return out, None
+    if isinstance(value, list):
+        items = []
+        for v in value:
+            plain, problem = _plain_json(v)
+            if problem is not None:
+                return None, problem
+            items.append(plain)
+        return items, None
+    if isinstance(value, datetime.date):
+        return None, "date"
+    if isinstance(value, bytes | bytearray):
+        return None, "binary"
+    if isinstance(value, collections.abc.Set):
+        return None, "set"
+    return None, "other"

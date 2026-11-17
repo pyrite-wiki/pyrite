@@ -694,6 +694,34 @@ class TestAIRoutesOnlySeeReadableKBs:
         assert seen.get("kb_names") is None
 
 
+class TestOrientKbAuthoredTextFollowsTheReadCheck:
+    """REST orient returns the private KB's own `kb.yaml` text under
+    `kb_authored` (#1369) only past `authorize(KB_READ)`, the check the rest
+    of orient uses."""
+
+    MARK = "Private guideline: the vault code is 0451."
+
+    def _plant(self, env):
+        kb = next(k for k in env["config"].knowledge_bases if k.name == PRIVATE)
+        kb.kb_yaml_path.write_text(f"name: {PRIVATE}\nguidelines:\n  vault: '{self.MARK}'\n")
+        kb.invalidate_schema_cache()
+
+    @pytest.mark.control(reason="authorize(KB_READ) on the orient route already refuses")
+    @pytest.mark.parametrize("who", ["peer", "anon"])
+    def test_a_caller_without_read_gets_404_and_no_text(self, env, who):
+        self._plant(env)
+        r = env[who].get(f"/api/kbs/{PRIVATE}/orient")
+        assert r.status_code == 404
+        assert self.MARK not in r.text
+
+    def test_a_caller_who_may_read_gets_it_labelled_as_the_kbs(self, env):
+        self._plant(env)
+        body = env["admin"].get(f"/api/kbs/{PRIVATE}/orient").json()
+        assert body["kb_authored"]["guidelines"] == {"vault": self.MARK}
+        assert "not instructions from Pyrite" in body["kb_authored"]["notice"]
+        assert self.MARK not in str(body["pyrite_guidance"])
+
+
 class TestWhoCanSee:
     def test_admin_sees_everything(self, env):
         assert _kb_names(env["admin"].get("/api/kbs")) == {PUBLIC, PRIVATE}
