@@ -31,29 +31,44 @@ Structured knowledge management for software teams -- ADRs, design docs, coding 
 
 #### `board.yaml`: lanes, WIP limits and gates
 
-A software KB's board (its lanes, WIP limits and the Definition of Ready and Done gates of ADR-0021) is read from `board.yaml` in the KB's own root. `pyrite init -t software` writes none; with no file, the built-in board applies (five lanes, both gates at `warn`). A file replaces the built-in board whole; nothing is merged.
+A software KB's board (its lanes, WIP limits and the Definition of Ready and Done gates of ADR-0021) is read from `board.yaml` in the KB's own root. `pyrite init -t software` writes none; with no file, the built-in board applies (five lanes, both gates at `warn`). A file replaces the built-in board whole; nothing is merged. A KB's board.yaml is read only when that KB is named; with no KB named, `sw board`, `sw pull-next` and `sw review-queue` use the built-in board.
 
 ```yaml
 lanes:                      # optional; absent means no lanes
-  - name: Ready             # required, text
-    statuses: [accepted]    # required, a list of statuses
+  - name: Ready             # required, text, one per lane
+    statuses: [accepted]    # required, a list of statuses; a status is in one lane only
   - name: In Progress
     statuses: [in_progress]
     wip_limit: 3            # optional, a whole number, 0 or more
 wip_policy: enforce         # optional: warn (default) or enforce
 gates:                      # optional; absent means no gates
-  in_progress:              # the status the gate guards
-    name: Definition of Ready
+  in_progress:              # a backlog status: proposed, planned, accepted, in_progress, review, done, retired, deferred, wont_do
+    name: Definition of Ready   # optional, text
     policy: enforce         # optional: warn (default) or enforce
     criteria:
-      - text: Effort estimated
+      - text: Effort estimated  # text
         checker: has_field  # a checker Pyrite has (pyrite/services/rubric_checkers.py, or no_open_blockers)
-        params: {field: effort}
+        params: {field: effort} # a mapping the checker can use
       - text: Problem statement is clear
         type: judgment      # checker (default), judgment or agent_responsibility
+        hint: Add a Problem section   # optional, text
 ```
 
-An empty file declares no lanes and no gates. A file that cannot be loaded (it does not parse, is not a mapping, has a field of the wrong type, a lane with no `statuses`, a policy other than `warn` or `enforce`, or a criterion naming a checker Pyrite does not have) is refused: every tool that reads the board (`sw_claim`, `sw_transition`, `sw_review`, `sw_pull_next`, `sw_check_ready`, `sw_refine`, `sw_board`, `sw_review_queue`, and the `pyrite sw` commands that call them) answers `VALIDATION_FAILED`, not retryable, with a message naming `board.yaml` and the problem, and changes nothing. `kb_orient` still answers, with `board_error` in its software block. A tool called for a KB that does not resolve is refused (`KB_NOT_FOUND`); `sw_board`, `sw_review_queue` and `sw_pull_next` called with no KB span every KB and use the built-in board.
+These keys are the only ones read; any other key, at any level, is refused rather than ignored. An empty file declares no lanes and no gates.
+
+**Which tools read the board.** MCP `sw_claim`, `sw_transition`, `sw_review` when approving, `sw_pull_next`, `sw_check_ready`, `sw_refine`, `sw_board`, `sw_review_queue` and the software block of `kb_orient`; and the `pyrite sw` commands that call them: `sw check-ready`, `sw refine`, `sw review` (approving), `sw pull-next`, `sw board`, plus `pyrite orient`. `pyrite sw claim`, `pyrite sw transition`, `pyrite sw submit`, MCP `sw_submit` and a `changes_requested` review change status without consulting the board (#1288).
+
+**A board that cannot be loaded is refused.** Every tool above answers one refusal, with a message that names `board.yaml` and the kind of problem and quotes nothing from the file, and changes nothing. The code is `VALIDATION_FAILED` (not retryable), or the KB file reader's own when it refused the read: `OUTSIDE_KB_ROOT` (a link on its path leaves the KB, or more than one hard link), `KB_UNREADABLE`, `INVALID_FRONTMATTER` (over the YAML limits). Refused:
+
+- a file that does not parse, is not UTF-8, is nested too deeply, is not a file (a directory), or is not a mapping;
+- a key Pyrite does not read, at any level;
+- `lanes` not a list; a lane that is not a mapping, has no `name`, or no `statuses` list; two lanes with the same name, or one status in two lanes; a `wip_limit` that is not a whole number of 0 or more;
+- `wip_policy` other than `warn` or `enforce`;
+- `gates` not a mapping; a gate keyed by something that is not a backlog status; a gate that is not a mapping, whose `name` is not text, whose `policy` is not `warn` or `enforce`, or whose `criteria` is not a list;
+- a criterion that is not a mapping, whose `text` or `hint` is not text, whose `type` is unknown, a checker criterion with no `checker` or naming one Pyrite does not have, `params` that is not a mapping, or `params` its checker cannot use (a missing parameter, a pattern that does not compile; checked when the file is loaded, so the file is refused by every tool above, not only by those that run the gate);
+- a checker that cannot run on one item (a pattern that takes too long on its body): the call on that item is refused.
+
+Accepted: a lane listing a status the workflow does not have (the lane shows what has that status, which is nothing), and keys inside `params` a checker does not read. `kb_orient` and `pyrite orient` still answer: the software block carries `board_error` (the refusal's text), `board_summary` is empty and `recommended_next` is null. A tool called for a KB that does not resolve is refused (`KB_NOT_FOUND`); `sw_refine` (MCP) and `pyrite sw refine` called with no KB are refused; the tools that take an item id read the board of the KB that item is in.
 
 [Full docs](https://github.com/pyrite-wiki/pyrite/blob/main/kb/components/software-kb-extension.md)
 
