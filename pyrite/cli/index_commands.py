@@ -625,6 +625,7 @@ def index_health(
             "duplicates": duplicates,
             "aliases": health.get("aliases", []),
             "dangling_links": health.get("dangling_links", []),
+            "unlisted_entry_files": health.get("unlisted_entry_files", []),
             "removed_extensions": removed_extensions,
             "type_name_drift": health.get("type_name_drift", []),
             "type_name_drift_total": health.get("type_name_drift_total", 0),
@@ -706,6 +707,18 @@ def _report_health(
         for row in dangling[:10]:
             console.print(
                 f"  • {row['kb']}: {row['path']} -> {row['target']}", markup=False, highlight=False
+            )
+
+    unlisted = health.get("unlisted_entry_files") or []
+    if unlisted:
+        console.print(
+            f"[yellow]⚠ {len(unlisted)} entry file(s) where the index walk does not list"
+            " them (not indexed; rename each to a listed name, keep its `id:` line,"
+            " then `pyrite index sync`):[/yellow]"
+        )
+        for row in unlisted[:10]:
+            console.print(
+                f"  • {row['kb']}: {row['path']} ({row['reason']})", markup=False, highlight=False
             )
 
     if broken_links:

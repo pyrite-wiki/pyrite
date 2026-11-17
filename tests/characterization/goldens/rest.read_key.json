@@ -3627,7 +3627,8 @@
       "source": "config",
       "type_name_drift": [],
       "type_name_drift_has_more": false,
-      "type_name_drift_total": 0
+      "type_name_drift_total": 0,
+      "unlisted_entry_files": []
     },
     "status": 200
   },
@@ -3644,7 +3645,8 @@
       "source": "config",
       "type_name_drift": [],
       "type_name_drift_has_more": false,
-      "type_name_drift_total": 0
+      "type_name_drift_total": 0,
+      "unlisted_entry_files": []
     },
     "status": 200
   },
@@ -3661,7 +3663,8 @@
       "source": "config",
       "type_name_drift": [],
       "type_name_drift_has_more": false,
-      "type_name_drift_total": 0
+      "type_name_drift_total": 0,
+      "unlisted_entry_files": []
     },
     "status": 200
   },

@@ -1578,14 +1578,54 @@ class KBRepository:
             if target is None:
                 yield md_file
 
-    def walk_files(self) -> Iterator[tuple[Path, Path | None]]:
+    def walk_files(
+        self, unlisted: list[tuple[Path, str]] | None = None
+    ) -> Iterator[tuple[Path, Path | None]]:
         """Every markdown path the walk's lexical rules keep, with the walked
         file it is an alias of (``alias_target``), or None for an entry file.
         ``list_files`` keeps the Nones; the reconcile's plan reports the rest
-        as aliases from the same pass, so there is one walk and one rule."""
+        as aliases from the same pass, so there is one walk and one rule.
+
+        ``unlisted``, when given, receives ``(path, reason)`` for each path
+        the same pass meets and the rule skips (``entry_paths.HEALTH_REASONS``:
+        a README, a hidden part, ``_templates``), unread: ``index health``
+        asks which of them state an ``id:`` (``unlisted_entry_rows``, #1552)."""
         for md_file in self.path.rglob("*.md"):
-            if self._lexically_listed(md_file):
+            reason = entry_paths.unlisted_reason(self.path, md_file)
+            if reason is None:
                 yield md_file, self.alias_target(md_file)
+            elif unlisted is not None and reason in entry_paths.HEALTH_REASONS:
+                unlisted.append((md_file, reason))
+
+    def unlisted_entry_rows(self, unlisted: list[tuple[Path, str]]) -> list[dict[str, str]]:
+        """``{kb, path, reason}`` for each skipped path (from ``walk_files``)
+        whose frontmatter states an ``id:``: an entry file an earlier version
+        wrote where the walk does not list it (#1552). Reported, never
+        indexed, never repaired.
+
+        Only these paths are read, each through the KB's contained read
+        (``_inside_text``): a name that is a symbolic link (an in-KB link to
+        an entry, or one out of the KB) is not read, nor is a file
+        ``KBFiles`` refuses (a second hard link); a file that cannot be read
+        or decoded is not this report's. A file with no ``id:`` line -- a
+        hand-kept README, a template scaffold -- is the user's and is not
+        named."""
+        rows: list[dict[str, str]] = []
+        for path, reason in unlisted:
+            if os.path.islink(path):
+                continue
+            text = self._inside_text(path)
+            if text is None:
+                continue
+            try:
+                stated = explicit_entry_id(text)
+            except Exception:  # noqa: BLE001 - frontmatter that does not parse states nothing
+                continue
+            if isinstance(stated, str) and stated.strip():
+                rel = path.relative_to(self.path).as_posix()
+                rows.append({"kb": self.name, "path": rel, "reason": reason})
+        rows.sort(key=lambda r: r["path"])
+        return rows
 
     def alias_target(self, md_file: Path) -> Path | None:
         """The walked entry file ``md_file`` is another name for, or None.

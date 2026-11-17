@@ -70,6 +70,9 @@ class KBHealthResponse(BaseModel):
     type_name_drift_total: int = 0
     type_name_drift_has_more: bool = False
     schema_errors: list[dict[str, Any]] = Field(default_factory=list)
+    # Entry files an earlier version wrote where the index walk does not list
+    # them, {"kb", "path", "reason"} (#1552); a warning, `healthy` unchanged.
+    unlisted_entry_files: list[dict[str, str]] = Field(default_factory=list)
 
 
 class KBReindexResponse(BaseModel):

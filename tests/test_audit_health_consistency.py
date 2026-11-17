@@ -194,3 +194,30 @@ def test_regular_file_symlink_remains_readable(cli_world):
     cli = CliRunner().invoke(app, ["index", "health"])
     assert cli.exit_code == 0, cli.output
     assert json.loads(cli.stdout)["unreadable_files"] == []
+
+
+@pytest.mark.parametrize("surface", ["cli", "admin", "qa"])
+def test_an_unlisted_entry_file_is_a_warning_everywhere_never_unhealthy(cli_world, surface):
+    """#1552: an entry file an earlier version wrote where the walk does not
+    list it (a create titled README wrote `readme.md`) is named under
+    `unlisted_entry_files`, a warning on every surface: the index answers
+    from the files it lists, and the user should know the file is there."""
+    world, folder = _world(cli_world)
+    (folder / "notes").mkdir()
+    (folder / "notes" / "readme.md").write_text(
+        "---\nid: readme\ntype: note\ntitle: README\n---\nBody\n", encoding="utf-8"
+    )
+    if surface == "qa":
+        result = QAService(world.config, world.db).validate_kb(KB, readable_kbs=UNSCOPED)
+        assert not any(
+            row["field"] == "index" and row["severity"] == "error" for row in result["issues"]
+        ), result
+        return
+    result = CliRunner().invoke(admin_app if surface == "admin" else app, ["index", "health"])
+    assert result.exit_code == 0, (result.output, result.exception)
+    if surface == "cli":
+        report = json.loads(result.stdout)
+        assert report["status"] == "warning"
+        assert report["unlisted_entry_files"] == [
+            {"kb": KB, "path": "notes/readme.md", "reason": "readme"}
+        ]

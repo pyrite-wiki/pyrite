@@ -699,6 +699,7 @@ class KBRegistryService:
                 "type_name_drift_total",
                 "type_name_drift_has_more",
                 "schema_errors",
+                "unlisted_entry_files",
             )
         }
 

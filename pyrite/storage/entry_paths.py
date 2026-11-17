@@ -44,6 +44,11 @@ NOT_MARKDOWN = "not_markdown"
 #: (``KBFiles`` answers ``OUTSIDE_KB_ROOT`` for it).
 OUTSIDE = "outside"
 
+#: The reasons ``index health`` reports a skipped file under
+#: ``unlisted_entry_files`` (#1552). ``not_markdown`` is not among them: the
+#: walk's ``rglob("*.md")`` never meets such a file.
+HEALTH_REASONS = (README, HIDDEN, TEMPLATES)
+
 _WHY = {
     README: "a file named README.md (in any case) is the user's, not an entry",
     HIDDEN: "a part starting with '.' is hidden",

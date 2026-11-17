@@ -61,6 +61,10 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # by a delete that keeps the user's link): no entry is there, so no
         # read answers from anything but the files; the user should know (#1262).
         or health.get("dangling_links")
+        # An entry file an earlier version wrote where the walk does not list
+        # it (a create titled README wrote `readme.md`): not indexed, so no
+        # read answers from it, but its id is not findable (#1552).
+        or health.get("unlisted_entry_files")
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
     return {"status": status, "is_unhealthy": is_unhealthy, "has_warning": has_warning}
