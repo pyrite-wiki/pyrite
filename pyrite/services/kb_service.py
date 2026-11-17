@@ -1662,7 +1662,11 @@ class KBService:
         # ``repo.present``, not ``Path.exists``: never "absent" because a
         # file outside is missing.
         taken = repo.present(resolved_path)
-        if taken or resolved_path in (pending_paths or ()):
+        pending_keys = {
+            entry_paths.folded_path_key(kb_config.path, p) for p in (pending_paths or ())
+        }
+        resolved_key = entry_paths.folded_path_key(kb_config.path, resolved_path)
+        if taken or resolved_key in pending_keys:
             holder = repo.holder_of_path(resolved_path) if taken else None
             held = f", which holds '{holder}'" if holder and holder != entry.id else ""
             raise EntryExistsError(
@@ -1743,6 +1747,8 @@ class KBService:
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         owns: frozenset[str] = frozenset(),
+        pending_paths: set[Path] | None = None,
+        taken: set[Path] = frozenset(),
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1752,6 +1758,7 @@ class KBService:
             allow_undeclared=allow_undeclared,
             builder=builder,
             owns=owns,
+            pending_paths=pending_paths,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         prepared_id = entry.id
@@ -1769,7 +1776,7 @@ class KBService:
         # changes before the file is written.
         warnings = self._validate_write(entry, kb_name, kb_config)
         try:
-            self._doc_mgr.save_entry(entry, kb_name, kb_config, is_create=True)
+            self._doc_mgr.save_entry(entry, kb_name, kb_config, is_create=True, taken=taken)
         except FileExistsError as e:
             # #391 cold read round 2: the exists() check in _prepare and this
             # write are two different moments -- two truly concurrent creates
@@ -1930,8 +1937,12 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         hook_ctx=hook_ctx,
                         embed=False,
+                        pending_paths=would_create_paths,
+                        taken=frozenset(would_create_paths),
                     )
                     entry, warnings = written.entry, written.warnings
+                    if entry.file_path is not None:
+                        would_create_paths.add(entry.file_path)
                     created_ids.append((entry.id, kb_name))
                     item = {"created": True, "entry_id": entry.id}
                 if warnings:

@@ -763,6 +763,18 @@ PARITY_BATCHES = {
         {"entry_type": "pat_title", "id": "x1", "title": "Pat B"},
         {"entry_type": "pat_title", "id": "x2", "title": "Pat B"},
     ],
+    "case collision default names": [{"id": "Abc"}, {"id": "abc"}],
+    "case collision default names reversed": [{"id": "abc"}, {"id": "Abc"}],
+    "case collision with pattern colliding with stepped": [
+        {"id": "Abc"},
+        {"id": "abc"},
+        {"entry_type": "pat_title", "id": "p1", "title": "abc-2"},
+    ],
+    "case collision with pattern colliding with stepped reversed": [
+        {"entry_type": "pat_title", "id": "p1", "title": "abc-2"},
+        {"id": "Abc"},
+        {"id": "abc"},
+    ],
 }
 
 
@@ -877,3 +889,48 @@ def test_create_entry_text_writes_a_listed_path(tmp_path):
     root.mkdir()
     create_entry_text(root / "notes" / "readme-2.md", _note("readme", "R"), root=root)
     assert (root / "notes" / "readme-2.md").is_file()
+
+
+def test_taken_names_comparison_folds_case_and_normalises(tmp_path):
+    """Disk-independent test (#1623): ``_free_default_path`` compares taken
+    paths using ``entry_paths.fold``."""
+    root = tmp_path / "kb"
+    root.mkdir()
+    (root / "kb.yaml").write_text(KB_YAML)
+    repo = KBRepository(KBConfig(name="k", path=root, kb_type="generic"))
+
+    # Abc in taken causes abc to step to -2
+    p1 = repo._free_default_path("abc", None, taken={root / "Abc.md"})
+    assert p1 == root / "abc-2.md"
+
+    # abc in taken causes Abc to step to -2
+    p2 = repo._free_default_path("Abc", None, taken={root / "abc.md"})
+    assert p2 == root / "Abc-2.md"
+
+    # Both abc.md and abc-2.md in taken causes ABC to step to -3
+    p3 = repo._free_default_path("ABC", None, taken={root / "abc.md", root / "abc-2.md"})
+    assert p3 == root / "ABC-3.md"
+
+
+@pytest.mark.control(
+    reason="under maintainer decision (a) on #1623, a case-sensitive disk steps "
+    "the second case-colliding id to -2 so a KB written on Linux never holds "
+    "two files that collide when cloned on a case-insensitive disk"
+)
+def test_case_sensitive_disk_steps_second_case_variant_id(tmp_path):
+    env = Env(tmp_path / "env")
+    try:
+        results = env.svc.bulk_create_entries(
+            KB,
+            [
+                {"entry_type": "note", "id": "Abc", "title": "Abc", "body": "1"},
+                {"entry_type": "note", "id": "abc", "title": "abc", "body": "2"},
+            ],
+        )
+        assert results[0]["created"] is True
+        assert results[1]["created"] is True
+        files = {f.name for f in env.root.rglob("*.md")}
+        assert "Abc.md" in files
+        assert "abc-2.md" in files
+    finally:
+        env.close()

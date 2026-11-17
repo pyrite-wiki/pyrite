@@ -5,6 +5,8 @@ Consolidates the repeated save-register-index pattern from KBService
 into a single class, completing the ODM abstraction layer.
 """
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 
@@ -37,6 +39,7 @@ class DocumentManager:
         kb_config: KBConfig,
         *,
         is_create: bool = False,
+        taken: set[Path] = frozenset(),
     ) -> Path:
         """Save an entry to disk, register the KB, and index it.
 
@@ -101,6 +104,7 @@ class DocumentManager:
             subdir=subdir,
             keep_filename=not is_create,
             exclusive=is_create,
+            taken=taken,
         )
 
         # Clean up old file if path changed (template-driven move)

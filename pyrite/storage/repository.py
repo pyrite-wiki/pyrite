@@ -658,16 +658,16 @@ class KBRepository:
     ) -> Path:
         """Resolve the file path for an entry, respecting file_pattern if set.
 
-        ``taken``: paths an earlier item of the same dry-run batch would have
-        written (``KBService.bulk_create_entries(validate_only=True)``). The
+        ``taken``: paths an earlier item of the same batch has written (or
+        would write in a dry run: ``KBService.bulk_create_entries``). The
         default name treats each as held by another id, as the real batch
         finds the file there, so a dry run picks the ``-N`` the real write
-        picks (#1552 round 1). One exception: the paths are compared as
-        spelled, so on a case-insensitive disk two items whose paths differ
-        only in case (``Abc``, ``abc``) are two names here and one on disk;
-        the real write then steps the second to ``-2`` (or refuses a
-        ``file_pattern`` name) where the dry run answered valid. It fails
-        safe (#1552, a stated limit)."""
+        picks (#1552 round 1). The paths in ``taken`` are compared with
+        ``entry_paths.fold`` on every disk (#1623, maintainer decision
+        2026-11-17), so on a case-insensitive and case-sensitive disk alike
+        two items whose names differ only in case step the second to ``-2``
+        (or refuse a ``file_pattern`` name), and dry-run and real writes agree.
+        """
         schema = self.config.kb_schema
         type_schema = schema.get_type_schema(entry.entry_type)
         if type_schema:
@@ -766,9 +766,14 @@ class KBRepository:
         # chooses a listed one, and the id stays what the caller named. The
         # test is on the folded name (``entry_paths.fold``), never a probe of
         # the disk, so a case-insensitive filesystem answers the same.
-        # A path in ``taken`` is held by an earlier item of the same dry-run
+        # A path in ``taken`` is held by an earlier item of the same
         # batch, never by this id (the batch refuses a repeated id first).
-        if entry_paths.is_listed(self.path, path) and path not in taken:
+        # Compared by ``entry_paths.fold`` on every disk (#1623).
+        taken_keys = {entry_paths.folded_path_key(self.path, p) for p in taken}
+        if (
+            entry_paths.is_listed(self.path, path)
+            and entry_paths.folded_path_key(self.path, path) not in taken_keys
+        ):
             holder = self.read_id(path)[0] if self.present(path) else None
             if holder is None or holder == entry_id:
                 return path
@@ -776,7 +781,7 @@ class KBRepository:
             candidate = path.with_name(f"{entry_id}-{n}.md")
             if not entry_paths.is_listed(self.path, candidate):
                 break  # the folder itself is skipped: no name in it helps
-            if candidate in taken:
+            if entry_paths.folded_path_key(self.path, candidate) in taken_keys:
                 continue
             # A candidate that already holds this id is the entry's own file:
             # a caller that recomputes the path after the create (a plugin
@@ -1222,6 +1227,7 @@ class KBRepository:
         touch_updated_at: bool = True,
         keep_filename: bool = False,
         exclusive: bool = False,
+        taken: Set[Path] = frozenset(),
     ) -> Path:
         """
         Save an entry to file.
@@ -1257,7 +1263,7 @@ class KBRepository:
         # No mkdir here: the create below makes the file's folders beneath
         # the root (KBFiles), so a folder that is a link out is the write's
         # refusal, never an OSError that depends on what lies outside.
-        file_path = self._target_path(entry, subdir, keep_filename)
+        file_path = self._target_path(entry, subdir, keep_filename, taken=taken)
 
         # Stamp current schema version on save
         if getattr(self.config, "kb_yaml_present", False):
@@ -1288,7 +1294,14 @@ class KBRepository:
 
         return file_path
 
-    def _target_path(self, entry: Entry, subdir: str | None, keep_filename: bool) -> Path:
+    def _target_path(
+        self,
+        entry: Entry,
+        subdir: str | None,
+        keep_filename: bool,
+        *,
+        taken: Set[Path] = frozenset(),
+    ) -> Path:
         """Where ``entry`` lives: ``subdir`` (inferred from the type when
         None) and either its existing filename (``keep_filename``, an update
         or a rename: a file's name is fixed at creation, #391) or a fresh one
@@ -1304,7 +1317,7 @@ class KBRepository:
             self._require_listed(path, entry, subdir, from_pattern=False)
             return path
         # Check for custom file_pattern in the type schema
-        return self._resolve_file_path(entry, subdir)
+        return self._resolve_file_path(entry, subdir, taken=taken)
 
     def delete(
         self,
