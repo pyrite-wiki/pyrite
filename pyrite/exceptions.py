@@ -664,12 +664,24 @@ class EntryLoadError(FrontmatterError):
 
 
 class UpdateWouldNotLoadError(ValidationError):
-    """The proposed update failed to load before it could be written."""
+    """The proposed update failed to load before it could be written.
+
+    The cause's loader message and field messages must already be text for
+    the caller; this constructor does not filter outside text.
+    """
 
     def __init__(self, entry_id: str, cause: EntryLoadError):
         # The repository already filters loader details for network callers.
         errors = [
-            {"field": field, "rule": "entry_load", "message": message}
+            {
+                "field": field,
+                "rule": "entry_load",
+                "message": (
+                    "The entry type refused this field."
+                    if message == OUTSIDE_TEXT_WITHHELD
+                    else message
+                ),
+            }
             for field, message in cause.fields.items()
         ]
         reason = cause.loader_message

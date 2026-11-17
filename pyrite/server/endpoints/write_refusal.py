@@ -25,7 +25,8 @@ def refusal_http(exc: ValidationError) -> HTTPException:
 
     The service decides; this only picks the status. `ENTRY_EXISTS` is a
     conflict (409). Unloadable files and unloadable updates return 422.
-    Other refusals return 400. The same request fails the same way.
+    Other refusals return 400. Never retryable: the same request fails
+    the same way.
 
     ``exc.error_code`` is a class attribute on every ``PyriteError`` since
     ADR-0037 theme 2 -- the base ``ValidationError``'s is

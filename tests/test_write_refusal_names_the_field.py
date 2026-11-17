@@ -457,7 +457,7 @@ def test_refused_update_reports_why_the_candidate_did_not_load(surface_world, mo
     assert "fixed by hand" not in message
     if value == "field-refusal":
         assert "summary" in message
-        expected = OUTSIDE_TEXT_WITHHELD if surface != "cli" else "invalid summary"
+        expected = "The entry type refused this field." if surface != "cli" else "invalid summary"
         assert detail["errors"] == [{"field": "summary", "rule": "entry_load", "message": expected}]
     else:
         assert "errors" not in detail
@@ -465,6 +465,43 @@ def test_refused_update_reports_why_the_candidate_did_not_load(surface_world, mo
         assert expected in message
     if surface == "rest":
         assert response.status_code == 422
+
+
+@pytest.mark.control(reason="a non-EntryLoadError candidate failure keeps the existing refusal")
+def test_unexpected_candidate_load_error_keeps_prior_refusal(typed_world, monkeypatch, caplog):
+    entry_id = "unexpected-load-fault"
+    path = typed_world.add_entry(
+        SCHEMA_KB, f"---\nid: {entry_id}\ntype: note\ntitle: Original\n---\nOriginal body\n"
+    )
+    original = path.read_bytes()
+    private_detail = "candidate load fault at /private/operator/secret.yaml"
+    set_attribute = NoteEntry.__setattr__
+
+    def fail_candidate_file_path(self, name, value):
+        # The repository assigns the file path after the type loader returns,
+        # outside its EntryLoadError wrapping.
+        if name == "file_path" and isinstance(value, Path) and self.summary == "load-fault":
+            raise RuntimeError(private_detail)
+        set_attribute(self, name, value)
+
+    monkeypatch.setattr(NoteEntry, "__setattr__", fail_candidate_file_path)
+
+    response = typed_world.client.patch(
+        f"/api/entries/{entry_id}",
+        json={"kb": SCHEMA_KB, "field": "summary", "value": "load-fault"},
+    )
+
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "VALIDATION_FAILED", detail
+    assert detail["retryable"] is False
+    assert detail["message"] == (
+        f"Cannot update '{entry_id}': the result would not load ({OUTSIDE_TEXT_WITHHELD})"
+    )
+    assert private_detail not in response.text
+    assert "errors" not in detail
+    assert path.read_bytes() == original
+    assert private_detail in caplog.text
 
 
 def test_a_schema_refusal_without_rows_leaves_the_key_out():
