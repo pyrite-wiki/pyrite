@@ -332,21 +332,28 @@ def register_search_command(app: typer.Typer):
                 return
 
             table = Table(title=f"Search Results ({len(results)})")
-            table.add_column("KB", style="cyan", width=12)
-            table.add_column("Type", style="green", width=10)
-            table.add_column("Title", width=40)
+            table.add_column("KB", style="cyan")
+            table.add_column("ID", style="dim", no_wrap=True, overflow="fold")
+            table.add_column("Type", style="green")
+            table.add_column("Title")
             show_date = any(r.get("date") for r in results)
             if show_date:
-                table.add_column("Date", width=10)
-            table.add_column("Snippet", width=50)
+                table.add_column("Date")
+            table.add_column("Snippet")
 
             for r in results:
                 date = r.get("date", "")[:10] if r.get("date") else ""
                 raw_snippet = r.get("snippet", "") or ""
                 snippet = (raw_snippet[:97] + "...") if len(raw_snippet) > 100 else raw_snippet
+                snippet = snippet.replace("<mark>", "[bold]").replace("</mark>", "[/bold]")
                 raw_title = r.get("title", "") or ""
                 title = (raw_title[:37] + "...") if len(raw_title) > 40 else raw_title
-                cells = [r.get("kb_name", ""), r.get("entry_type", ""), title]
+                cells = [
+                    r.get("kb_name", ""),
+                    r.get("id", ""),
+                    r.get("entry_type", ""),
+                    title,
+                ]
                 table.add_row(*cells, *([date] if show_date else []), snippet)
 
             console.print(table)
@@ -480,12 +487,12 @@ def _search_files(
 
     table = Table(title=f"Search Results ({len(results)})")
     table.add_column("KB", style="cyan")
+    table.add_column("ID", style="dim", no_wrap=True, overflow="fold")
     table.add_column("Type", style="green")
     table.add_column("Title")
-    table.add_column("ID", style="dim")
 
     for kb_name, entry, _path in results:
-        table.add_row(kb_name, entry.entry_type, entry.title, entry.id)
+        table.add_row(kb_name, entry.id, entry.entry_type, entry.title)
 
     console.print(table)
     exit_unless_whole(unreadable, scanned)
