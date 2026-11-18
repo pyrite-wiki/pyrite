@@ -682,7 +682,7 @@ class KBRegistryService:
                 1 for f in kb_path.rglob("*.md") if not any(p.startswith(".") for p in f.parts)
             )
 
-        from .index_health import health_verdict
+        from .index_health import health_verdict, network_shape
 
         stats = self.db.get_kb_stats(name) or {}
         entry_count = stats.get("entry_count", 0)
@@ -707,6 +707,9 @@ class KBRegistryService:
         # never their paths (maintainer, 2026-11-17, #1552); the local CLI's
         # `pyrite index health` names them.
         drift["unlisted_entry_files"] = len(health["unlisted_entry_files"])
+        # Folders the walk could not list (#1546): as the sync and reindex
+        # results give them to a network caller, through the one function.
+        drift["unreadable_folders"] = network_shape(health)["unreadable_folders"]
 
         return {
             "name": name,
