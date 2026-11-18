@@ -400,6 +400,59 @@ class TaskService:
             raise AmbiguousEntryError(task_id, candidates)
         return rows[0]
 
+    def get_task_detail(
+        self,
+        task_id: str,
+        kb_name: str | None = None,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> dict[str, Any] | None:
+        """Get full task details including body, children and derived completion.
+
+        The single builder for CLI `task get` and MCP `task_status` (#1681).
+        Reads fields from the fresh index row and body from the file on disk.
+        If either the index row or the underlying file is missing, returns None.
+        """
+        task = self.get_task(task_id, kb_name, readable_kbs=readable_kbs)
+        if not task:
+            return None
+
+        task_kb = task.get("kb_name", kb_name or "")
+        entry = self.kb_svc.get_entry(task_id, kb_name=task_kb, readable_kbs=readable_kbs)
+        if not entry:
+            return None
+
+        meta = parse_metadata(task.get("metadata"))
+
+        children_list = self.list_tasks(
+            kb_name=task_kb,
+            kb_names=None if kb_name else readable_kbs,
+            parent=task_id,
+        )
+        children = [
+            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
+            for c in children_list
+        ]
+
+        return {
+            "id": task["id"],
+            "title": task["title"],
+            "status": task.get("status") or meta.get("status", "open"),
+            "assignee": task.get("assignee") or meta.get("assignee", ""),
+            "priority": coerce_task_priority(
+                task.get("priority") or meta.get("priority", 5), task["id"]
+            ),
+            "parent": meta.get("parent", ""),
+            "dependencies": meta.get("dependencies", []),
+            "evidence": meta.get("evidence", []),
+            "due_date": task.get("due_date") or meta.get("due_date", ""),
+            "agent_context": meta.get("agent_context", {}),
+            "children": children,
+            "kb_name": task_kb,
+            "derived": self.derived_for(task_kb, task["id"]),
+            "body": entry.get("body", "") or "",
+        }
+
     def derived_completion(self, kb_name: str) -> dict[str, dict[str, Any]]:
         """Every task's derived completion in ``kb_name``, keyed by task id.
 
