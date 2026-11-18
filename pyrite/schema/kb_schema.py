@@ -18,7 +18,7 @@ from .field_schema import (
     _validate_field_value,
 )
 from .provenance import get_all_relationship_types
-from .reserved import RESERVED_FIELD_NAMES
+from .reserved import RESERVED_FIELD_NAMES, reserved_field_error_message
 from .validators import validate_date
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ class KBSchema:
     goals: dict[str, str] = field(default_factory=dict)
     evaluation_rubric: list[str | dict[str, Any]] = field(default_factory=list)
     rubric_action: str = "fail"
+    ignored_declarations: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "KBSchema":
@@ -72,24 +73,36 @@ class KBSchema:
     def from_dict(cls, data: dict[str, Any]) -> "KBSchema":
         """Create from dictionary."""
         types = {}
+        ignored_declarations: list[dict[str, Any]] = []
         for type_name, type_data in data.get("types", {}).items():
             if isinstance(type_data, dict):
                 # Parse rich field definitions if present
                 fields = {}
-                for field_name, field_data in type_data.get("fields", {}).items():
-                    if isinstance(field_data, dict):
-                        fields[field_name] = FieldSchema.from_dict(field_name, field_data)
+                raw_fields = type_data.get("fields", {})
+                if isinstance(raw_fields, dict):
+                    for field_name, field_data in raw_fields.items():
+                        if isinstance(field_data, dict):
+                            fields[field_name] = FieldSchema.from_dict(field_name, field_data)
 
-                # Strip fields that collide with reserved names
-                collisions = set(fields.keys()) & RESERVED_FIELD_NAMES
-                if collisions:
-                    logger.warning(
-                        "Type '%s': field names %s collide with reserved names and will be ignored",
-                        type_name,
-                        collisions,
-                    )
-                    for col_name in collisions:
-                        del fields[col_name]
+                    # Strip fields that collide with reserved names and record them
+                    collisions = set(raw_fields.keys()) & RESERVED_FIELD_NAMES
+                    if collisions:
+                        logger.warning(
+                            "Type '%s': field names %s collide with reserved names and will be ignored",
+                            type_name,
+                            collisions,
+                        )
+                        for col_name in sorted(collisions):
+                            ignored_declarations.append(
+                                {
+                                    "type": type_name,
+                                    "field": col_name,
+                                    "reason": reserved_field_error_message(type_name, col_name),
+                                    "reserved": sorted(RESERVED_FIELD_NAMES),
+                                }
+                            )
+                            if col_name in fields:
+                                del fields[col_name]
 
                 endpoints = {}
                 for role, ep_data in type_data.get("endpoints", {}).items():
@@ -140,6 +153,7 @@ class KBSchema:
             goals=data.get("goals", {}),
             evaluation_rubric=data.get("evaluation_rubric", []),
             rubric_action=rubric_action,
+            ignored_declarations=ignored_declarations,
         )
 
     def get_type_schema(self, entry_type: str) -> TypeSchema | None:

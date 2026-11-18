@@ -42,3 +42,12 @@ RESERVED_FIELD_NAMES: frozenset[str] = frozenset(
         "type",
     }
 )
+
+
+def reserved_field_error_message(type_name: str, field_name: str) -> str:
+    """Error message when a custom field declaration collides with a reserved name."""
+    reserved_sorted = ", ".join(sorted(RESERVED_FIELD_NAMES))
+    return (
+        f"Type '{type_name}': field '{field_name}' is a reserved name and cannot be declared under fields. "
+        f"Reserved names: {reserved_sorted}"
+    )
