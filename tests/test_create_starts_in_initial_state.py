@@ -388,7 +388,7 @@ def test_rest_post_task_status_in_progress_is_refused(tmp_path):
                 "kb": "test-kb",
                 "entry_type": "task",
                 "title": "REST Task Probe",
-                "status": "in_progress",
+                "metadata": {"status": "in_progress"},
             },
         )
         assert resp.status_code == 400, resp.text
