@@ -293,12 +293,6 @@ NOT_YET: set[tuple[str, str]] = {
     # pyrite/cli/browse_commands.py
     ("pyrite orient", "recent"),
     #
-    # pyrite/cli/__init__.py
-    ("pyrite ci", "tier"),
-    ("pyrite serve", "port"),
-    #
-    # pyrite/cli/kb_commands.py
-    ("pyrite kb create", "ttl"),
     #
     # pyrite/cli/collection_commands.py
     ("pyrite collections query", "limit"),

@@ -1696,6 +1696,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
                 issues.append(
@@ -1807,6 +1808,74 @@ class QAService:
                 ),
             }
         )
+
+    def _check_number_as_text(
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str,
+        kb_config: Any,
+        entry: Any,
+        file_path: Path,
+        shown: Any,
+    ) -> None:
+        """Report a field the type declares a number whose file value is text.
+
+        The message says what a read returns for it, taken from the reader
+        itself (`IndexManager.read_fields`, the single read every surface
+        uses), never from a description of the rule: a kb.yaml number's
+        ``"7"`` reads 7 and ``"007"`` reads as text, but a task's ``"007"``
+        reads 7, because a task's priority is the model's integer
+        (`coerce_task_priority`). A write of a number read stores that number:
+        the file's text goes (the maintainer's decisions on #1628,
+        2026-11-17). Text that is no number at all (``high``) is the schema
+        pass's ``field_number`` and the task-priority check's, not reported
+        twice here.
+        """
+        from ..exceptions import KBConfigInvalidError
+
+        source = entry._source_frontmatter or {}
+        try:
+            declared = kb_config.kb_schema.type_fields(entry.entry_type)
+        except KBConfigInvalidError:
+            return
+        texts = {}
+        for name, field_schema in declared.items():
+            value = source.get(name)
+            if field_schema.field_type != "number" or not isinstance(value, str):
+                continue
+            try:
+                float(value)
+            except ValueError:
+                continue
+            texts[name] = value
+        if not texts:
+            return
+        from ..storage.index import IndexManager
+
+        read = IndexManager(self.db, self.config).read_fields(
+            entry, kb_name, file_path, content_hash="", row=None
+        )
+        for name, value in texts.items():
+            got = read.get(name)
+            reading = (
+                f"Pyrite reads it as the number {got}, and an update of the value read "
+                f"writes {got} without the quotes"
+                if isinstance(got, int | float) and not isinstance(got, bool)
+                else "Pyrite reads it as that text"
+            )
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "number_as_text",
+                    "severity": "warning",
+                    "field": name,
+                    "message": (
+                        f"{shown}: {name} is the text {value!r} in a field declared a "
+                        f"number; {reading}. Write it as a plain number to keep one form."
+                    ),
+                }
+            )
 
     @staticmethod
     def _check_non_string_titles(

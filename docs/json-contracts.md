@@ -428,7 +428,19 @@ contributes a row without `rule`. A row from the entry model also carries
 `message` — the sentence that reaches `error`, so a caller never has to parse
 it — and `expected` when the fix is mechanical; a row from the KB schema or a
 plugin validator carries `expected` and, where the rule knows it, `got`: the
-allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried. A row from
+allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried.
+`importance` has one rule on every type, write and surface (#1588): a whole
+number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as
+plain ASCII digits (`"05"`), and every create and update stores it as that number
+(`5.0` and `"05"` are written as `5`; `pyrite add` leaves a file's own `'05'` as
+written, and every reader sees `5`); anything else (`5.5`, `true`, `" 5 "`,
+`"+5"`, `"１０"`, `high`) is refused with the model row `{"field": "importance",
+"rule": "range", ...}` (over REST, HTTP 400 `VALIDATION_FAILED`, where `99` and
+`10.7` used to get pydantic's 422; the OpenAPI schema names the integer to send).
+A value already in a file, at the top level or under `metadata:`, is never
+rewritten by a write that does not set it, and is kept with a warning carrying
+that `rule` only while the write leaves it as it is or sends that same value in
+the same YAML type (`"10.7"` over `10.7` is a new value, judged and refused). A row from
 the KB schema's enum pass also names `origin` (`field` for a field's own
 `options:`/`values:` list, `rule` for a `validation.rules` entry), `severity`
 (`error`, or `warning` when the field has `allow_other: true`), and
@@ -844,7 +856,8 @@ what the read returned is not a change: it is not written, and is listed
 in the result's `unchanged` field (apart from `ignored`, which names keys no
 update writes), so the file keeps `importance: high` rather than Pyrite's
 reading `5` (#561). A request that names fields on its own writes each one
-as sent, even a value equal to the reading.
+as sent, even a value equal to the reading (`importance` is written as the int
+the rule reads: `"05"` and `5.0` as `5`).
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 
@@ -1593,6 +1606,74 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
 
+## Entry row shape
+
+These readers return entry rows from the index in one shape, whatever the
+surface (MCP, `--format json`, REST) and the backend (SQLite, Postgres): the
+list and find tools (`kb_list_entries`, `kb_recent`, `kb_batch_read`,
+`kb_find_by_status`, `kb_find_by_assignee`, `kb_find_overdue`,
+`kb_find_by_location`), search (`kb_search`, keyword and semantic legs),
+folder collections, and the single read (`kb_get`). Each reader keeps its
+own set of keys: shaping adds none. Where a row carries one of these, it has
+this type:
+
+| Key | JSON type |
+|---|---|
+| `metadata` | an object; `{}` when the entry has none |
+| `aliases` | a list; `[]` when the entry has none |
+| `importance` | an integer (or `null`) |
+| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | at its own name too on the list readers (`kb_list_entries`, `kb_recent`, `kb_batch_read`) and the single read; search and the finds return only the columns they select, so there it is in `metadata` alone (the keyword search row's `rank` is its score) |
+| a column field (`priority`, `status`, `assignee`, `due_date` ...) | by the type's declaration (`KBSchema.type_fields`: kb.yaml, plugins, and a task's own `priority`, a number); see below |
+
+How a column field reads. A field declared a `number` reads as a number when
+the stored text is a plain ASCII whole number or decimal, with an optional
+leading minus (`7`, `2.5`, `-7`, `-1.5`): no plus sign, no surrounding space,
+no leading zero, no exponent, no digits from other scripts. Any other text
+(`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
+the task model's integer (`coerce_task_priority`: a word on the 1 to 10
+scale, any other non-integer the default 5), so every spelling of it reads
+as that integer and `task_list` and `kb_get` agree. A field declared a
+`checkbox` reads the stored `1`, `0`, `true` or `false` as a boolean. Every
+other field, and one the type does not declare, reads as text. A
+whole-valued decimal (`7.0`) reads as `7.0` on SQLite and as `7` on
+Postgres.
+
+What a caller reads, sent back as that one field (MCP `kb_update`,
+`pyrite update -f`, REST PATCH), leaves the file as it was, except in
+these cases. REST PUT takes no column field, so it has none. A read never
+writes anything.
+
+- A quoted plain number in a field declared a number: `priority: "7"`
+  reads 7 (and `"-7"` reads -7), and writing that number back stores it
+  without the quotes (`priority: 7`). `qa validate` reports the text (`number_as_text`), saying what
+  Pyrite reads it as.
+- A task's `priority` spelled as anything but a plain whole number
+  (`high`, `P1`, `"007"`, `"+7"`, `"1e1"`): it reads as the model's integer
+  (7, 5, 7, 7, 10), and writing that back stores the integer in place of
+  the file's spelling. `qa validate` reports the file's value
+  (`task_priority`, or `number_as_text` for numeric text).
+- A quoted `"true"`, `"false"`, `"1"` or `"0"` in a field declared a
+  checkbox: it reads as a boolean, and writing that back stores `true` or
+  `false`.
+- An unquoted `1` or `0` in a field declared a checkbox: it reads as a
+  boolean, and writing that back stores `true` or `false` (on earlier
+  releases it was stored as the quoted text `"1"` or `"0"`).
+- A YAML boolean in a field declared a number: `priority: true` reads 1
+  (and `false` reads 0), and writing that back stores the number
+  (`priority: 1`; earlier releases stored the quoted text `"1"`).
+- A number the index spells with an exponent, in a field declared a number:
+  `priority: 0.00001` reads as the index's text for it, which the strict
+  rule keeps as text, and writing that back stores that text quoted. The
+  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
+  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
+  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
+  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
+
+`kb_timeline` returns `date` and `location` as stored text: its rows carry
+no `entry_type`, so no declaration applies. The type-specific tools
+(`task_*`, `sw_*` and the other plugin tools) return their own dicts, not
+index rows. (#1503)
+
 ## Body truncation
 
 Entries with large bodies may come back chunked. When truncated, the
@@ -2042,7 +2123,7 @@ that write returned (#795). This applies to `pyrite qa assess`, `pyrite ci`,
 
 **Tiers.** QA runs tier 1 (structural and deterministic rubric checks) and
 tier 2 (tier 1 plus the judgment-only rubric items, judged by the configured
-model). Any other tier is refused with `INVALID_TIER` (on CLI `qa assess`,
+model). Any other tier is refused with `INVALID_TIER` (on CLI `ci` and `qa assess`,
 Typer refuses out-of-range values as `USAGE_ERROR`, exit 2). Tier 2 with no model
 configured is refused with `AI_NOT_CONFIGURED`. Both refusals come before
 anything is checked or written, on every surface. `ci` refuses them even when
@@ -2050,7 +2131,7 @@ no KB is configured.
 
 The codes:
 
-- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `qa assess`
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `ci` and `qa assess`
   an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2) before this
   check runs). `pyrite mcp --tier` uses the same code for an unknown server tier.
   Use 1 or 2.

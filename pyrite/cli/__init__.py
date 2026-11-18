@@ -291,6 +291,8 @@ def ci_command(
     tier: int = typer.Option(
         1,
         "--tier",
+        min=1,
+        max=2,
         help="Assessment tier: 1=structural, 2=structural plus the model-judged rubric "
         "(one model call per entry with judgment items; needs a configured model)",
     ),
@@ -302,7 +304,7 @@ def ci_command(
     Use --tier 2 to include the model-judged rubric: its findings are warnings
     that count at the gate, and an entry the model did not answer for is an
     `evaluation_failed` error. With no model configured, --tier 2 is refused
-    (AI_NOT_CONFIGURED); an unknown tier is refused (INVALID_TIER).
+    (AI_NOT_CONFIGURED); an out-of-range tier is refused as a usage error.
 
     Without --kb, every KB is validated: those in the config and those
     registered in the index (`pyrite kb add`). A KB whose folder is missing or
@@ -541,7 +543,14 @@ def show_config():
 @app.command("serve")
 def serve(
     host: str = typer.Option(None, "--host", "-h", help="Host to bind to"),
-    port: int = typer.Option(None, "--port", "-p", help="Port to bind to"),
+    port: int = typer.Option(
+        None,
+        "--port",
+        "-p",
+        min=1,
+        max=65535,
+        help="Port to bind to",
+    ),
     dev: bool = typer.Option(
         False, "--dev", help="API-only mode (frontend dev server runs separately on :5173)"
     ),
