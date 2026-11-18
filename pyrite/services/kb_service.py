@@ -1545,10 +1545,19 @@ class KBService:
             return str(val) if isinstance(val, str) else None
         if repo.exists(entry_id):
             try:
-                existing = repo.load(entry_id)
-                if existing is not None:
-                    title = getattr(existing, "title", None)
-                    return str(title) if isinstance(title, str) else None
+                if hasattr(self, "db") and self.db is not None:
+                    row = self.db.get_entry(entry_id, repo.name)
+                    if row and row.get("title"):
+                        return str(row["title"])
+                path = repo.find_file(entry_id)
+                if path:
+                    raw = repo._inside_bytes(path)
+                    if raw is not None:
+                        from ..storage.repository import _text_of
+
+                        fm, _ = repo._frontmatter_of(_text_of(raw))
+                        title = fm.get("title")
+                        return str(title) if isinstance(title, str) else None
             except Exception:
                 return None
         return None

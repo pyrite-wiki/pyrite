@@ -232,7 +232,11 @@ def test_existing_idless_files_do_not_change_id(cli_world):
 
 
 def test_title_of_existing_typing(cli_world):
-    """Direct unit test for _title_of_existing helper and its return types."""
+    """Direct unit test for _title_of_existing helper and its return types.
+
+    Ensures _title_of_existing inspects frontmatter without invoking repo.load
+    to preserve architectural loader call site classifications.
+    """
     world = cli_world()
     kb_svc = KBService(world.config, world.db)
     repo = KBRepository(world.config.get_kb("test-kb"))
