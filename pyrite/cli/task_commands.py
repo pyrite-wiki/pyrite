@@ -338,20 +338,62 @@ def task_list(
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
     priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
+    dispatchable: bool = typer.Option(
+        False,
+        "--dispatchable",
+        help="Only tasks a worker can take now (for a caller who may claim, each one is a "
+        "task claim accepts): open, unassigned, unparked, unblocked, no children; "
+        "highest priority first. Adds counts and excluded.",
+    ),
+    fields: str | None = typer.Option(
+        None,
+        "--fields",
+        help="Comma-separated fields per task (id and kb_name are always kept); * for all",
+    ),
 ) -> Outcome:
     """List tasks with optional filters."""
+    from ..services.read_shaping import parse_cli_fields
+
+    fields_list = parse_cli_fields(fields)
     svc, db = _get_service(kb_name)
     try:
-        items = svc.list_tasks(
+        data = svc.task_listing(
             kb_name=kb_name,
             status=status,
             assignee=assignee,
             parent=parent,
             priority=priority,
+            dispatchable=dispatchable,
+            fields=fields_list,
         )
     finally:
         db.close()
-    return Outcome.done({"count": len(items), "tasks": items}, rich=_render_list)
+    if fields_list:
+        from ..services.task_service import TaskService
+
+        unmatched = [
+            f
+            for f in fields_list
+            if f not in TaskService.TASK_ROW_FIELDS and not any(f in t for t in data["tasks"])
+        ]
+        if unmatched:
+            typer.echo(
+                f"warning: no task carries: {', '.join(unmatched)} "
+                "(field names are case-sensitive; '*' returns every field)",
+                err=True,
+            )
+
+    def rich(console, data: dict) -> None:
+        if fields_list:
+            from ..formats.tabular import projected_rich_table
+
+            console.print(projected_rich_table(data["tasks"], fields_list, "Tasks"))
+        else:
+            _render_list(console, data)
+        if "counts" in data:
+            console.print(", ".join(f"{k}: {v}" for k, v in data["counts"].items()), markup=False)
+
+    return Outcome.done(data, rich=rich)
 
 
 @task_app.command("get")

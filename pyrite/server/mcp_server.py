@@ -1911,15 +1911,19 @@ class PyriteMCPServer:
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
         """List tasks with filters."""
+        from ..services.read_shaping import parse_fields_param
+
         kb_name = args.get("kb_name")
-        tasks = self.task_svc.list_tasks(
+        listing: dict[str, Any] = self.task_svc.task_listing(
             kb_name=kb_name,
             kb_names=None if kb_name else readable_kbs,
             status=args.get("status"),
             assignee=args.get("assignee"),
             parent=args.get("parent"),
+            dispatchable=bool(args.get("dispatchable")),
+            fields=parse_fields_param(args.get("fields")),
         )
-        return {"count": len(tasks), "tasks": tasks}
+        return listing
 
     def _resolve_task_kb(
         self, task_id: str, kb_name: str | None, *, readable_kbs: set[str] | None

@@ -11,6 +11,7 @@ from pydantic import BaseModel
 
 from ...plugins.identity import CALLER, resolve_person_arguments
 from ...services.access_policy import KB, Action, ReadScope
+from ...services.read_shaping import parse_fields_param
 from ...services.task_service import TaskService
 from ..api import (
     get_task_service,
@@ -30,6 +31,14 @@ def list_tasks(
     status: str | None = Query(None, description="Filter by status ('open' also matches unset)"),
     assignee: str | None = Query(None, description="Filter by assignee, e.g. 'mark'"),
     parent: str | None = Query(None, description="Filter by parent task id"),
+    dispatchable: bool = Query(
+        False,
+        description="Only tasks a worker can take now, highest priority first; "
+        "adds counts and excluded",
+    ),
+    fields: str | None = Query(
+        None, description="Comma-separated fields per task; id and kb_name are always kept"
+    ),
     svc: TaskService = Depends(get_task_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
@@ -41,14 +50,15 @@ def list_tasks(
     and an assignee, and ``count`` counts the rows returned, so the
     readable set goes into the SQL rather than into a comprehension.
     """
-    tasks = svc.list_tasks(
+    return svc.task_listing(
         kb_name=kb,
         status=status,
         assignee=assignee,
         parent=parent,
         kb_names=None if kb else scope.as_set(),
+        dispatchable=dispatchable,
+        fields=parse_fields_param(fields),
     )
-    return {"count": len(tasks), "tasks": tasks}
 
 
 class TaskClaimRequest(BaseModel):

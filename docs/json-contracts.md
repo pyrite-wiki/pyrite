@@ -1171,6 +1171,51 @@ when no link is broken, and `1` with `"outcome": "nothing"` when any is, with
 the findings still in the document (`missing_targets`, `total_references`,
 `targets`, each target with its `references`).
 
+## Task list: `task list`, `task_list`, `GET /tasks`
+
+The three return one body, built by `TaskService.task_listing`:
+`{"count", "tasks"}` (the CLI adds `outcome`), newest task first. A zero-row
+list is `done` (ADR-0046). Two optional arguments, each absent by default, and
+without them the body is unchanged:
+
+- **`--fields a,b`** (MCP `fields: ["a","b"]`, REST `?fields=a,b`) projects
+  each `tasks` row through `project_fields`: the named keys plus `id` and
+  `kb_name`, never a key the row lacks. CLI `*` means every field.
+- **`--dispatchable`** (MCP `dispatchable: true`, REST `?dispatchable=true`)
+  keeps only the tasks a worker can take now, and orders them by priority
+  highest first, then oldest `created_at`, then KB, then id. One classifier
+  decides it (`pyrite/models/task_queue.py`), over the effective status
+  (ADR-0045 decision 7), and it writes nothing. The body gains:
+
+  ```json
+  {"count": 2, "tasks": [...],
+   "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
+              "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
+              "unreadable": 0},
+   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}]}
+  ```
+
+  `counts` has every key, even at zero, and sums to the tasks the other
+  filters matched. `excluded` lists each **open** task that was left out,
+  with its one reason, in the same order; tasks that are not open are only
+  counted. For a caller who may claim, every listed task is one `task claim`
+  accepts now: a row the claim would refuse is left out with its reason. A
+  task gets the first reason that applies:
+
+  | Reason | The task |
+  |---|---|
+  | `not_open` | effective status is not `open` (a parent done by its children is `not_open`) |
+  | `empty_status` | its file says `status: ""`: read as open, but the claim takes only `open` or an unset status |
+  | `orphaned` | its index row's file is gone |
+  | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
+  | `assigned` | names any assignee |
+  | `parked` | `parked_awaiting` says why it waits; empty, whitespace, `''` and `null` do not park, and the body is never read |
+  | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
+  | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
+
+  With `--fields`, the CLI names on stderr any field no task carries (as
+  `search` does); nothing is refused.
+
 ## Link discovery: what is left out
 
 `pyrite links discover`, `pyrite links batch-suggest`, MCP `kb_discover_neighbors`

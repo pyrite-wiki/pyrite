@@ -174,6 +174,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo._read_inside": 1},
         "_read_inside",
     ),
+    ("pyrite/services/task_service.py", "TaskService._file_present"): (
+        {"KBFiles.present": 1},
+        "KBFiles.present of the indexed path: an open task whose file is gone is `orphaned` (#1686)",
+    ),
     ("pyrite/services/template_service.py", "TemplateService._parse_template_file"): (
         {"KBFiles.read_bytes": 1},
         "KBFiles.read_bytes",
@@ -727,7 +731,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 58,
+    "DECIDED_INSIDE": 59,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

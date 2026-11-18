@@ -628,6 +628,20 @@ READ_TOOLS = {
                     "type": "string",
                     "description": "Filter by parent task ID",
                 },
+                "dispatchable": {
+                    "type": "boolean",
+                    "description": "Only tasks a worker can take now (for a caller who may claim, "
+                    "each one is a task_claim accepts): open, unassigned, unparked, "
+                    "dependencies resolved, no children; highest priority first, then oldest. "
+                    "Adds `counts` (per reason) and `excluded` (each open task left out, with "
+                    "its reason).",
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Return only these fields per task. `id` and `kb_name` are "
+                    "always included.",
+                },
             },
             "required": [],
         },
