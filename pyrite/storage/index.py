@@ -124,6 +124,22 @@ _FENCED_CODE_RE = re.compile(r"^(```|~~~).*?^\1\s*$", re.MULTILINE | re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"``[^`\n]+?``|`[^`\n]+?`")
 
 
+# A `prefix:` naming another KB at the front of a reference value, the shape
+# the wikilink grammar (`_WIKILINK_RE` group 1) accepts.
+_REF_PREFIX_RE = re.compile(r"^([a-z0-9-]+):(.+)$", re.DOTALL)
+
+
+def _strip_wikilink_brackets(value: str) -> str:
+    """``[[target]]`` -> ``target``, once, trimming space inside and outside the
+    brackets; any other text is returned trimmed. Shared by every frontmatter
+    value that names an entry (object-ref fields, edge endpoints), so a value
+    spelled ``x`` and ``[[x]]`` is one id. An empty ``[[]]`` returns ``""``."""
+    text = value.strip()
+    if text.startswith("[[") and text.endswith("]]"):
+        text = text[2:-2].strip()
+    return text
+
+
 def _strip_code_regions(text: str) -> str:
     """Blank out fenced code blocks and inline code spans before link extraction.
 
@@ -550,6 +566,20 @@ class IndexManager:
         `resolve_entry` (#979)."""
         return self.config.link_kb(prefix, kb_name)
 
+    def _object_ref_target(self, value: str, kb_name: str) -> tuple[str, str]:
+        """The entry an object-ref value names, as ``(id, kb)``: brackets
+        stripped, and a ``prefix:`` resolved to its KB by the rule a wikilink's
+        prefix uses (``_link_kb``), so ``x``, ``[[x]]``, ``other:x`` and
+        ``[[other:x]]`` index as the id they name (#1693). A prefix that names no
+        KB stays as written, as a wikilink's does: the row names a KB that does
+        not exist, and no entry matches it. The id is ``""`` when the value
+        names nothing (``[[]]``)."""
+        text = _strip_wikilink_brackets(value)
+        match = _REF_PREFIX_RE.match(text)
+        if match is None:
+            return text, kb_name
+        return match.group(2).strip(), self._link_kb(match.group(1), kb_name)
+
     def _frontmatter_link(self, link: dict[str, Any], kb_name: str) -> dict[str, Any]:
         """A frontmatter ``links:`` item as the index stores it: its ``kb`` is
         a KB field in link position (a name or a shortname, like a ``[[kb:id]]``
@@ -867,20 +897,19 @@ class IndexManager:
                             value = fm.get(field_name)
                             if value:
                                 target_type = field_schema.constraints.get("target_type")
-                                if isinstance(value, list):
-                                    for v in value:
-                                        if isinstance(v, str):
-                                            refs.append(
-                                                {
-                                                    "target_id": v,
-                                                    "field_name": field_name,
-                                                    "target_type": target_type,
-                                                }
-                                            )
-                                elif isinstance(value, str):
+                                named: set[tuple[str, str]] = set()
+                                for v in value if isinstance(value, list) else [value]:
+                                    if not isinstance(v, str):
+                                        continue
+                                    target_id, target_kb = self._object_ref_target(v, kb_name)
+                                    # `[x, "[[x]]"]` names one entry: one row.
+                                    if not target_id or (target_id, target_kb) in named:
+                                        continue
+                                    named.add((target_id, target_kb))
                                     refs.append(
                                         {
-                                            "target_id": value,
+                                            "target_id": target_id,
+                                            "target_kb": target_kb,
                                             "field_name": field_name,
                                             "target_type": target_type,
                                         }
@@ -904,9 +933,7 @@ class IndexManager:
                         value = fm.get(endpoint_spec.field)
                         if value and isinstance(value, str):
                             # Strip wikilink brackets if present: [[target]] -> target
-                            endpoint_id = value.strip()
-                            if endpoint_id.startswith("[[") and endpoint_id.endswith("]]"):
-                                endpoint_id = endpoint_id[2:-2].strip()
+                            endpoint_id = _strip_wikilink_brackets(value)
                             if endpoint_id:
                                 edge_endpoints.append(
                                     {

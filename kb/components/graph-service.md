@@ -16,7 +16,7 @@ tags: [core, services, graph]
 | Method | Description |
 |--------|-------------|
 | `get_graph()` | Get graph data for visualization (delegates to `db.get_graph_data`) |
-| `get_refs_to()` | Get entries referencing a given entry via object-ref fields |
+| `get_refs_to()` | Get entries referencing a given entry via object-ref fields (any spelling of the value: `x`, `[[x]]`, `other:x`; #1693) |
 | `get_refs_from()` | Get entries a given entry references via object-ref fields |
 | `get_backlinks()` | Get entries that link TO a given entry (with pagination); rows carry `relation`, `forward_relation`, `inverse_relation` (see docs/json-contracts.md) |
 | `get_outlinks()` | Get entries a given entry links TO |

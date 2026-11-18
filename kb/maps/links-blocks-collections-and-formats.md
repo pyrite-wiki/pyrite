@@ -48,8 +48,14 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    collection is an entry whose source is a query; `__`-prefixed files are
    collection metadata, not entries. **decided** [[adr-0011]] (five phases;
    completion unchecked).
-7. `object-ref` fields reference other entries and feed the reference table.
-   **decided** [[adr-0008]].
+7. `object-ref` fields reference other entries and feed the reference table
+   (`entry_ref`). A value indexes as the entry it names, in any spelling:
+   `x` and `[[x]]` are `(x, this KB)`; `other:x` and `[[other:x]]` are
+   `(x, the KB "other" resolves to)`, by the prefix rule wikilinks use (a prefix
+   that names no KB stays as written, a broken reference); an empty `[[]]`
+   names nothing and gets no row; one row per field and entry named. Only
+   fields kb.yaml declares `object-ref` are indexed. **decided** [[adr-0008]];
+   spellings #1693.
 8. Output formats (json, markdown, yaml, csv, toon, text) come from one registry
    behind `Accept` and `--format`; the file stays Markdown and YAML. Import
    reuses the registry and is marked future. **decided** [[adr-0010]].
