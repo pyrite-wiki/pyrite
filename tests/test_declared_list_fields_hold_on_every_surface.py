@@ -75,6 +75,7 @@ def _shipped_list_fields() -> list[tuple[str, str, str]]:
 SHIPPED = _shipped_list_fields()
 
 
+@pytest.mark.control(reason="checks the enumeration is not vacuous; true before and after")
 def test_the_enumeration_finds_the_core_list_fields():
     """The walk is not vacuous: the two core list fields are in it."""
     found = {(t, f) for _p, t, f in SHIPPED}

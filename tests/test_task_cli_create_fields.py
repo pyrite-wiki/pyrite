@@ -166,6 +166,9 @@ def test_conductor_desk_recipe_creates_a_task_in_one_step(desk_env):
     assert fm["priority"] == 3
 
 
+@pytest.mark.control(
+    reason="a JSON array was always stored as sent; the comma cell beside it is red"
+)
 @pytest.mark.cli
 def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
     """A schema-declared list field uses the shared value parser: several

@@ -315,6 +315,9 @@ class TestValidateEntrySwitch:
 
 
 class TestWritePath:
+    @pytest.mark.control(
+        reason="a mapping was always a type error under enforce; the value changed so it stays bad after the #1502 coercion"
+    )
     def test_a_type_error_on_disk_is_a_warning_on_an_unrelated_update(self, svc_factory):
         """A multi-select holding a scalar is a type error under `enforce`.
         ADR-0042 decision 8 (#676): a violation already on disk, in a field the

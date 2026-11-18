@@ -64,17 +64,27 @@ class TestParseFieldValue:
 
     # --- Commas: never split (#1502; several values go as a JSON array) ---
 
+    @pytest.mark.control(
+        reason="the parser never split a value given no field type; the split cells are now medium tests (test_declared_list_fields_hold_on_every_surface.py), which are red"
+    )
     def test_a_comma_list_is_one_value_for_a_list_field(self):
         # The CLI parses syntax only; the service stores a scalar sent to a
         # declared list as one item (tests/test_declared_list_fields_hold_on_every_surface.py).
         assert _parse_field_value("ICE,Adelanto") == "ICE,Adelanto"
 
+    @pytest.mark.control(
+        reason="the parser never split a value given no field type; the split cells are now medium tests (test_declared_list_fields_hold_on_every_surface.py), which are red"
+    )
     def test_a_comma_list_is_one_value_for_a_multi_select_field(self):
         assert _parse_field_value("ICE, Adelanto, CBP") == "ICE, Adelanto, CBP"
 
+    @pytest.mark.control(
+        reason="the parser never split a value given no field type; the split cells are now medium tests (test_declared_list_fields_hold_on_every_surface.py), which are red"
+    )
     def test_a_trailing_comma_is_kept(self):
         assert _parse_field_value("a,b,") == "a,b,"
 
+    @pytest.mark.control(reason="a JSON array was always parsed as a list")
     def test_a_json_array_gives_several_values(self):
         assert _parse_field_value('["ICE", "Adelanto, CA"]') == ["ICE", "Adelanto, CA"]
 
@@ -83,6 +93,9 @@ class TestParseFieldValue:
             _parse_field_value("narrow the scope, then expand") == "narrow the scope, then expand"
         )
 
+    @pytest.mark.control(
+        reason="the parser never split a value given no field type; the split cells are now medium tests (test_declared_list_fields_hold_on_every_surface.py), which are red"
+    )
     def test_comma_in_text_field_stays_a_string(self):
         assert _parse_field_value("Portland, OR") == "Portland, OR"
 
@@ -104,6 +117,7 @@ class TestParseFieldValue:
 class TestParseFieldValueEndToEnd:
     """Test that parsed values survive through build_entry for known types."""
 
+    @pytest.mark.control(reason="a JSON array of participants always built a list")
     def test_participants_json_array_creates_event(self):
         """Several participants go as a JSON array: an EventEntry with that list
         (a comma list is one value now, #1502)."""

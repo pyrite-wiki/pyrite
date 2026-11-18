@@ -357,6 +357,9 @@ class TestLoadPathIsUnchanged:
 
 
 class TestCliNeverSplits:
+    @pytest.mark.control(
+        reason="the parser never split a value given no field type; the split cells are now medium tests (test_declared_list_fields_hold_on_every_surface.py), which are red"
+    )
     def test_create_f_participants_and_actors_are_never_split(self):
         """The CLI parses syntax only (#1502): `a,b` is one value for the alias
         and its target alike; the service stores it as the one-item list
