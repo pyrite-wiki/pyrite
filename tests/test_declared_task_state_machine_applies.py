@@ -262,3 +262,119 @@ def test_the_audit_comment_route_applies_the_declared_table(world_for):
     assert _file_status(world) == "open"  # declared table: no open -> claimed
     world.cli(*args, "-s", "review")
     assert _file_status(world) == "review"  # declared table: open -> review
+
+
+# -- scope and consequences, pinned as built (maintainer questions Q1, Q2) ----
+#
+# These cells record what the code does TODAY so a later decision shows up as
+# a test change, not a silent one. They are not the maintainer's answers.
+
+EVENT_YAML = """\
+name: work
+kb_type: generic
+types:
+  task: {}
+  event:
+    state_machine:
+      states: [confirmed, disputed, proven]
+      transitions:
+        - {from: confirmed, to: disputed, requires: write}
+"""
+
+EVENT_RELAXED_YAML = """\
+name: work
+kb_type: generic
+types:
+  task: {}
+  event:
+    state_machine:
+      enforce_transitions: false
+      require_reason_on_transition: true
+      states: [confirmed, disputed, proven]
+"""
+
+EVENT_FILE = (
+    "---\nid: e1\ntitle: E\ntype: event\ndate: '2026-01-01'\nstatus: confirmed\n---\n\nHappened.\n"
+)
+
+
+def _event_status(world) -> str:
+    text = (world.kb_path(KB) / "events" / "e1.md").read_text(encoding="utf-8")
+    return yaml.safe_load(text.split("---", 2)[1])["status"]
+
+
+def _move_event(world, surface: str, status: str, reason: str | None = None) -> None:
+    if surface == "cli_update":
+        args = ["update", "e1", "-k", KB, "-f", f"status={status}", "--format", "json"]
+        if reason:
+            args += ["-f", f"status_reason={reason}"]
+        world.cli(*args)
+    else:
+        fields = {"entry_id": "e1", "kb_name": KB, "status": status}
+        if reason:
+            fields["status_reason"] = reason
+        world.mcp(tier="write")._dispatch_tool("kb_update", fields)
+
+
+@pytest.mark.parametrize("surface", ["cli_update", "mcp_kb_update"])
+def test_q2_a_non_task_type_with_a_declared_machine_is_judged_by_it(world_for, surface):
+    """Q2 (open): the hook applies to ANY type whose kb.yaml declares a
+    `state_machine` and whose entry class carries a `status` (`event` does; a
+    generic custom type does not, so its old status is missing and the hook
+    fails open). It is not limited to `task` (`is_task_or_opted_in` in
+    `_task_validate_transition`); the #1709 decision says "task". Before the
+    fix the declared machine was never read, so an event moved freely. Pinned
+    as built; narrowing to `task` would change this cell, not the others."""
+    world = world_for(EVENT_YAML)
+    world.add_entry(KB, EVENT_FILE, filename="events/e1.md")
+    _move_event(world, surface, "proven")  # declared table: confirmed -> proven is absent
+    assert _event_status(world) == "confirmed"
+    _move_event(world, surface, "disputed")  # declared table: confirmed -> disputed
+    assert _event_status(world) == "disputed"
+
+
+def test_q2_a_reason_never_reaches_a_non_task_type_whose_class_has_no_status_reason(world_for):
+    """Q2 (open), a consequence: the hook reads `status_reason` from the entry
+    CLASS. `event` has no such attribute, so a relaxed reasons-required machine
+    declared on it refuses every move, a reason given or not. Pinned as built."""
+    world = world_for(EVENT_RELAXED_YAML)
+    world.add_entry(KB, EVENT_FILE, filename="events/e1.md")
+    _move_event(world, "cli_update", "proven", reason="because")
+    assert _event_status(world) == "confirmed"
+
+
+@pytest.mark.parametrize("route", ["cli", "mcp", "rest"])
+def test_q1_claim_in_a_relaxed_reasons_required_kb_is_refused(world_for, route):
+    """Q1 (open): `claim` passes no `status_reason`, so a relaxed KB with
+    `require_reason_on_transition: true` refuses `open -> claimed`. Pinned as
+    built; the options are accept and document, give claim a reason, or exempt
+    `open -> claimed`. The claim's index change is rolled back."""
+    world = world_for(RELAXED_YAML)
+    if route == "cli":
+        world.cli("task", "claim", "x", "-k", KB, "-a", "bob", "--format", "json")
+    elif route == "mcp":
+        world.mcp(tier="write")._dispatch_tool(
+            "task_claim", {"task_id": "x", "kb_name": KB, "assignee": "bob"}
+        )
+    else:
+        world.client.post("/api/tasks/x/claim", params={"kb": KB}, json={"assignee": "bob"})
+    assert _file_status(world) == "open"
+    assert _index_status(world) == "open"
+
+
+# -- a kb.yaml that does not load: bulk create answers as it did before -------
+
+
+def test_a_bulk_create_on_a_kb_yaml_that_does_not_load_fails_per_item(world_for):
+    """`bulk_create_entries` used to build its hook context without the schema,
+    so an unloadable kb.yaml was refused per item inside the batch. Carrying
+    the schema must not turn that into a refusal of the whole call."""
+    world = world_for(NO_MACHINE_YAML)
+    (world.kb_path(KB) / "kb.yaml").write_bytes(b"name: work\ntypes: {note: [unclosed\n")
+    answer = world.mcp(tier="write")._dispatch_tool(
+        "kb_bulk_create",
+        {"kb_name": KB, "entries": [{"entry_type": "note", "title": "A"}]},
+    )
+    assert "error_code" not in answer, answer
+    assert (answer["total"], answer["created"], answer["failed"]) == (1, 0, 1)
+    assert answer["results"][0]["error_code"] == "KB_CONFIG_INVALID"
