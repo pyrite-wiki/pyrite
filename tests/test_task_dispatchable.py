@@ -426,6 +426,10 @@ def test_unknown_fields_are_named_on_stderr(world):
     assert "case-sensitive" in result.stderr
     known = world.cli("task", "list", "-k", WORK, "--fields", "id,priority,parked_awaiting")
     assert known.exit_code == 0 and known.stderr == ""
+    # The keys the unknown-name warning knows are the keys a row has.
+    from pyrite.services.task_service import TaskService
+
+    assert set(TaskService.TASK_ROW_FIELDS) == TODAYS_ROW_KEYS
 
 
 def test_rich_fields_table_shows_the_named_columns(world):
@@ -486,10 +490,6 @@ def test_without_the_flag_the_listing_is_todays(world, surface):
         out = rest(world, kb=WORK)
         assert set(out) == {"count", "tasks"}
     assert all(set(t) == TODAYS_ROW_KEYS for t in out["tasks"])
-    # The keys the unknown-name warning knows are the keys a row has.
-    from pyrite.services.task_service import TaskService
-
-    assert set(TaskService.TASK_ROW_FIELDS) == TODAYS_ROW_KEYS
     # Every task in the index, newest first, orphan included.
     assert out["count"] == len(WORK_FILES)
     assert out["tasks"][-1]["id"] == "lg-child"  # created 00:00, the oldest
