@@ -11,6 +11,7 @@ from ..exceptions import (
     AmbiguousEntryError,
     EntryLoadError,
     EntryNotFoundError,
+    KBNotFoundError,
     PyriteError,
     ValidationError,
     public_text,
@@ -716,6 +717,18 @@ class TaskService:
             for row, reason in classify_tasks(inputs, derived)
         ]
 
+    def _row_kb(self, kb_name: str):
+        """The configured KB an index row names, through the one resolver
+        (``kb_resolver.resolve_kb``, #1530), or None when no configured KB
+        has that name any more: a row's KB is not a caller's request, so a
+        KB no longer configured is skipped by the listing, never refused."""
+        from .kb_resolver import resolve_kb
+
+        try:
+            return resolve_kb(self.config, kb_name, readable_kbs=None)
+        except KBNotFoundError:
+            return None
+
     def _claim_can_load(self, task: dict[str, Any]) -> bool:
         """Whether ``KBService.claim_entry``'s load of this task succeeds: the
         same call (``KBRepository(kb).load``), so the list never promises a
@@ -725,7 +738,7 @@ class TaskService:
         claim either, so it is not judged here."""
         from ..storage.repository import KBRepository
 
-        kb = self.config.get_kb(task["kb_name"])
+        kb = self._row_kb(task["kb_name"])
         if kb is None:
             return True
         try:
@@ -741,7 +754,7 @@ class TaskService:
         from ..utils.kb_files import KBFiles, KBPresenceUnknownError
 
         file_path = row.get("file_path")
-        kb = self.config.get_kb(task["kb_name"])
+        kb = self._row_kb(task["kb_name"])
         if not file_path or kb is None:
             return True
         try:
