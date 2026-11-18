@@ -97,4 +97,16 @@ describe('TableView', () => {
 		const formatted = new Date('2025-06-15T10:00:00Z').toLocaleDateString();
 		expect(screen.getByText(formatted)).toBeInTheDocument();
 	});
+
+	it('renders a numeric date as its original value', () => {
+		const entry = { ...sampleEntry, date: 2025 };
+		render(TableView, { props: { entries: [entry], columns: ['date'] } });
+		expect(screen.getByText('2025')).toBeInTheDocument();
+	});
+
+	it('renders an empty date as empty instead of Invalid Date', () => {
+		const entry = { ...sampleEntry, date: '' };
+		render(TableView, { props: { entries: [entry], columns: ['date'] } });
+		expect(screen.queryByText('Invalid Date')).not.toBeInTheDocument();
+	});
 });
