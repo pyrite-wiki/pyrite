@@ -568,17 +568,22 @@ class IndexManager:
 
     def _object_ref_target(self, value: str, kb_name: str) -> tuple[str, str]:
         """The entry an object-ref value names, as ``(id, kb)``: brackets
-        stripped, and a ``prefix:`` resolved to its KB by the rule a wikilink's
-        prefix uses (``_link_kb``), so ``x``, ``[[x]]``, ``other:x`` and
-        ``[[other:x]]`` index as the id they name (#1693). A prefix that names no
-        KB stays as written, as a wikilink's does: the row names a KB that does
-        not exist, and no entry matches it. The id is ``""`` when the value
+        stripped, and a ``prefix:`` read as a KB only when it names a registered
+        KB (by full name, then shortname: the check ``resolve_entry`` makes), so
+        ``x``, ``[[x]]``, ``other:x`` and ``[[other:x]]`` index as the id they
+        name (#1693). Any other value is the whole id in this KB, as it was
+        before and as ``resolve_entry`` reads it: a colon is legal in an entry
+        id, so ``doi:10.1000-x`` and ``https://ex.org/x`` name entries of those
+        ids, not the KBs ``doi`` and ``https``. The id is ``""`` when the value
         names nothing (``[[]]``)."""
         text = _strip_wikilink_brackets(value)
         match = _REF_PREFIX_RE.match(text)
-        if match is None:
-            return text, kb_name
-        return match.group(2).strip(), self._link_kb(match.group(1), kb_name)
+        if match is not None:
+            kb = self.config.readable_kb_named(match.group(1), readable_kbs=None)
+            rest = match.group(2).strip()
+            if kb is not None and rest:
+                return rest, kb.name
+        return text, kb_name
 
     def _frontmatter_link(self, link: dict[str, Any], kb_name: str) -> dict[str, Any]:
         """A frontmatter ``links:`` item as the index stores it: its ``kb`` is

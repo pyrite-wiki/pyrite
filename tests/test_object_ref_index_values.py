@@ -1,12 +1,13 @@
-"""An object-ref value indexes as the entry it names, in any spelling (#1693, slice 1).
+"""An object-ref value indexes as the entry it names, in four spellings (#1693, slice 1).
 
 The property: a value in a field kb.yaml declares ``object-ref`` is indexed as
 the entry it names. ``x`` and ``[[x]]`` give one ``entry_ref`` row with target
 ``(x, this KB)``; ``other:x`` and ``[[other:x]]`` give one row with target
 ``(x, <the KB the prefix "other" resolves to>)``, by the rule wikilinks use
-(``PyriteConfig.link_kb``: full name, then shortname; a prefix that names no KB
-stays as written, so the reference is broken, as a broken wikilink is). Lists
-and scalars alike. A full rebuild and an incremental sync give the same rows.
+(full name, then shortname). A prefix is a KB only when it names a registered
+KB, the check ``resolve_entry`` makes; otherwise the colon is part of the id and
+the whole value (``doi:10.1000-x``, ``https://ex.org/x``) is the id, in this KB,
+as on dev. Lists and scalars alike. A full rebuild and an incremental sync give the same rows.
 
 Expected rows are written by hand from that property, not computed by the code.
 """
@@ -60,11 +61,19 @@ CASES = [
     ("list-prefixed", "[other-kb:x]", [("x", OTHER)]),
     ("list-wiki-prefixed", "['[[other-kb:x]]']", [("x", OTHER)]),
     ("list-mixed", "[x, '[[x]]', 'other-kb:x', '[[other-kb:x]]']", [("x", MAIN), ("x", OTHER)]),
-    # An unknown prefix is kept as written, as `link_kb` keeps it for a wikilink:
-    # the row names (x, "nope"), a KB that does not exist. It is not stored under
-    # the source KB, and `get_refs_to('x', main)` does not return it.
-    ("scalar-unknown-prefix", "nope:x", [("x", "nope")]),
-    ("scalar-wiki-unknown-prefix", "'[[nope:x]]'", [("x", "nope")]),
+    # A prefix is a KB only when it names a registered KB (the check
+    # `resolve_entry` makes). Otherwise the colon is part of the id, as on dev:
+    # the whole value is the id, in the source KB.
+    ("scalar-unknown-prefix", "nope:x", [("nope:x", MAIN)]),
+    ("scalar-wiki-unknown-prefix", "'[[nope:x]]'", [("nope:x", MAIN)]),
+    ("scalar-doi", "doi:10.1000-x", [("doi:10.1000-x", MAIN)]),
+    ("scalar-wiki-doi", "'[[doi:10.1000-x]]'", [("doi:10.1000-x", MAIN)]),
+    ("scalar-url", "'https://ex.org/x'", [("https://ex.org/x", MAIN)]),
+    (
+        "list-doi-and-url",
+        "['doi:10.1000-x', 'https://ex.org/x']",
+        [("doi:10.1000-x", MAIN), ("https://ex.org/x", MAIN)],
+    ),
     # No name, no row.
     ("scalar-empty-brackets", "'[[]]'", []),
     ("scalar-blank-brackets", "'[[  ]]'", []),
@@ -126,8 +135,13 @@ def test_get_refs_to_returns_the_source_in_each_case(world):
     want_other = {i for i, _v, t in CASES if ("x", OTHER) in t}
     assert in_main == want_main
     assert in_other == want_other
-    # The unknown prefix and the empty brackets name no entry in either KB.
-    assert not ({"scalar-unknown-prefix", "scalar-empty-brackets"} & (in_main | in_other))
+    # An unregistered prefix is part of the id: these name `nope:x`, `doi:...`,
+    # not `x`; the empty brackets name nothing.
+    unnamed = {"scalar-unknown-prefix", "scalar-doi", "scalar-url", "scalar-empty-brackets"}
+    assert not (unnamed & (in_main | in_other))
+    # ...and they are found by the id they do name.
+    for target, source in (("nope:x", "scalar-unknown-prefix"), ("doi:10.1000-x", "scalar-doi")):
+        assert {r["id"] for r in world.db.get_refs_to(target, MAIN)} >= {source}
 
 
 def test_get_refs_from_names_the_entry_not_the_spelling(world):
