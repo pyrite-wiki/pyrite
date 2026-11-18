@@ -226,6 +226,7 @@ def test_the_ast_count_is_the_text_count():
         cwd=REPO,
         capture_output=True,
         text=True,
+        timeout=60,
     )
     if out.returncode not in (0, 1):  # not a git checkout (an sdist): nothing to compare
         pytest.skip("git grep unavailable")
