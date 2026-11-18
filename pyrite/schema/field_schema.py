@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,11 @@ if TYPE_CHECKING:
     from ..models import Entry
 
 _TEMPLATE_RE = re.compile(r"\{(\w+)\}")
+
+#: The field types whose value is a list: a value sent to one is stored as a
+#: list (:meth:`FieldSchema.coerce`) and a value on disk that is not one is a
+#: type finding (`_validate_field_value`), #1502.
+LIST_FIELD_TYPES = ("list", "multi-select", "tags")
 
 
 def expand_subdirectory_template(template: str, entry: Entry) -> str:
@@ -133,9 +139,28 @@ class FieldSchema:
             return copy.deepcopy(self.default)
         if self.field_type in ("text", "select"):
             return ""
-        if self.field_type in ("list", "multi-select", "tags"):
+        if self.field_type in LIST_FIELD_TYPES:
             return []
         return None
+
+    def coerce(self, value: Any) -> Any:
+        """``value`` as this field stores it when a caller sends it (#1502).
+
+        THE coercion of a write's value to its declared type, called by the
+        service on every surface (``KBService._with_declared_fields`` on a
+        create, ``KBService._resolve_operation``'s ``Set`` on an update). A
+        field typed ``list``, ``multi-select`` or ``tags`` that is sent a value
+        which is not a list stores ``[value]``: one item, never split on
+        commas. An empty value (``None``, ``''``) stays empty, and a mapping is
+        left for the type check ("expected list"); every other type and value
+        is returned unchanged. A value already on disk is never passed here:
+        a file is reported, not repaired (principle 2).
+        """
+        if self.field_type not in LIST_FIELD_TYPES:
+            return value
+        if value is None or value == "" or isinstance(value, list | dict):
+            return value
+        return [value]
 
     def allowed_values(self) -> list[Any]:
         """The declared enum for this field: ``options`` (or ``values``), else
@@ -548,7 +573,23 @@ def _validate_field_value(
                 }
             )
 
+    elif ft in ("list", "tags"):
+        # A list field holding a scalar or a mapping (#1502): a type error,
+        # governed by `validation.enforce` like `multi-select`'s above. Its
+        # own rule, `field_type`, so a reader keyed on `rule` never takes it
+        # for the enum check's `field_list` (an off-list element).
+        if not isinstance(value, list):
+            errors.append(
+                {
+                    "field": field_name,
+                    "rule": "field_type",
+                    "expected": "list",
+                    # A loaded mapping is a YAML-library class: name it as one.
+                    "got": "dict" if isinstance(value, Mapping) else type(value).__name__,
+                }
+            )
+
     # select / list / multi-select membership: see enum_check.enum_findings.
-    # text, object-ref, tags -- no validation beyond presence (for now)
+    # text, object-ref -- no validation beyond presence (for now)
 
     return errors

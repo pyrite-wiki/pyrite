@@ -10,7 +10,13 @@ from typing import Any
 
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
 from .enum_check import enum_findings, is_empty
-from .field_schema import EndpointSpec, FieldSchema, TypeSchema, _validate_field_value
+from .field_schema import (
+    LIST_FIELD_TYPES,
+    EndpointSpec,
+    FieldSchema,
+    TypeSchema,
+    _validate_field_value,
+)
 from .provenance import get_all_relationship_types
 from .reserved import RESERVED_FIELD_NAMES
 from .validators import validate_date
@@ -505,6 +511,25 @@ class KBSchema:
                                 "got": ep_value,
                             }
                         )
+
+        # A list field declared at any layer (`type_fields`: core < plugin <
+        # kb.yaml) holds a list (#1502). The loop above type-checks kb.yaml's
+        # own `fields` only; the list-typed fields it did not see (core's
+        # `person.affiliations`, a plugin's) get the same check here, with the
+        # same `enforce` severity. Widened for list types only: core- and
+        # plugin-declared numbers and selects stay unchecked, as before.
+        seen = set(type_schema.fields) if type_schema else set()
+        list_enforce = self.validation.get("enforce", False)
+        for field_name, declared in self.type_fields(entry_type).items():
+            if field_name in seen or declared.field_type not in LIST_FIELD_TYPES:
+                continue
+            if field_name not in fields or is_empty(fields[field_name]):
+                continue
+            for item in _validate_field_value(field_name, fields[field_name], declared):
+                if list_enforce:
+                    errors.append(item)
+                else:
+                    warnings.append({**item, "severity": "warning"})
 
         # Declared enums (field options/values/items and rule `enum:`), one
         # function for every reader; severity is `validation.enforce_enums`'s,
