@@ -13,8 +13,8 @@ repeat.
 - **Markdown links to entry files are links now**: an ordinary Markdown link
   to another entry's `.md` file (see
   [links](links.md#markdown-links-to-entry-files)). Run `pyrite index sync`
-  once after upgrading. The first open of the index marks every entry to be
-  read again, so that sync reads every file (it takes about as long as an
+  once after upgrading. The first open of the index (SQLite, or a Postgres
+  index at its first startup) marks every entry to be read again, so that sync reads every file (it takes about as long as an
   `index build`) and reports nothing changed. Until it has run, `index
   health` shows every entry as stale. You are done when `index health` shows
   no stale entries.

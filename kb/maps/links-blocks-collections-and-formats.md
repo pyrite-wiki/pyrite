@@ -35,8 +35,9 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    the path text when nothing is there (a broken link). One backend resolver
    re-derives those rows on every write and delete, so the order of writes
    does not matter. A URL, an image, a link in code, a self-link, a path that
-   leaves the KB, a root-relative `/x.md` and a file the walk does not list
-   are not links (#1723).
+   leaves the KB, a root-relative `/x.md` and a path the walk does not list
+   are not links; a listed `.md` that is not indexed as an entry is a broken
+   link (#1723).
 2. Backlinks, outlinks and edge endpoints are index rows rebuilt from the
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by

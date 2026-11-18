@@ -39,13 +39,22 @@ broken. A path through a symbolic link inside the KB names the file it leads
 to.
 
 These are not entry links: a URL, a `#fragment` alone, an image, a link inside
-code, a link to the file itself, a root-relative `/x.md` (the site's root may
-not be the KB's), a path that leaves the KB, and a file the index does not
-read as an entry (`README.md`, `_templates/`, hidden folders, other suffixes).
-A link whose path has no suffix (`beta`, not `beta.md`) counts only when `beta.md` exists when
-the linking file is indexed; a target created later is seen the next time the
-linking file is read. A `.md` link with nothing at its path is a broken link,
-which `links check` reports under the path.
+code, a link to the file itself, a root-relative or absolute path such as
+`/x.md` (the site's root may not be the KB's), a path that leaves the KB, and a
+path the index walk does not list (`README.md`, `_templates/`, hidden folders,
+other suffixes). The rule is about the path, not about what is in the file: a
+listed `.md` file that is not indexed as an entry (its frontmatter does not
+load, or another file wins its duplicate id) is a broken link.
+
+A link whose path has no suffix (`beta`, not `beta.md`) counts only when
+`beta.md` exists when the linking file is indexed; a target created later is
+seen the next time the linking file is read. Likewise, a link through a
+symbolic link names the file the symbolic link pointed at when the linking
+file was indexed: point the symbolic link elsewhere and the link keeps the old
+file until the linking file is read again. A `.md` link with nothing at its
+path is a broken link, which `links check` reports under the path. The path is
+compared as written: on a case-insensitive or normalising filesystem, a link
+spelled `A.md` to the file `a.md` is reported broken.
 
 ## Check broken targets
 
