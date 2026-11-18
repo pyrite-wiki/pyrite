@@ -15,7 +15,14 @@ import struct
 from typing import Any, ClassVar
 
 from ..models import Link
-from .base_backend import BaseBackend, LinkKey, _link_rows
+from .base_backend import (
+    BaseBackend,
+    DeclaredFieldTypes,
+    LinkKey,
+    _link_rows,
+    shape_entry_row,
+    shape_entry_rows,
+)
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 
@@ -337,7 +344,7 @@ class SQLiteBackend(BaseBackend):
         params.extend([limit, offset])
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     def search_by_tag(
         self, tag: str, kb_name: str | None = None, limit: int = 50
@@ -356,7 +363,7 @@ class SQLiteBackend(BaseBackend):
         params.append(limit)
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     def search_by_date_range(
         self,
@@ -374,7 +381,7 @@ class SQLiteBackend(BaseBackend):
         params.append(limit)
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     def search_by_tag_prefix(
         self, prefix: str, kb_name: str | None = None, limit: int = 50
@@ -393,7 +400,7 @@ class SQLiteBackend(BaseBackend):
         params.append(limit)
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     # =====================================================================
     # Semantic search (sqlite-vec embeddings)
@@ -563,6 +570,7 @@ class SQLiteBackend(BaseBackend):
         # the budget to survive a post-KNN filter).
         k = min(limit * 2, _SQLITE_VEC_MAX_K)
         results = SemanticRows()
+        declared = DeclaredFieldTypes(self._session)
         while True:
             with self._raw_cursor() as cur:
                 rows = cur.execute(sql, [blob, k, *candidate_params, *params]).fetchall()
@@ -577,7 +585,7 @@ class SQLiteBackend(BaseBackend):
                 if similarity is None or 1.0 - cosine_distance < min_similarity:
                     continue
                 entry["similarity"] = similarity
-                results.append(entry)
+                results.append(shape_entry_row(entry, declared))
                 if len(results) >= limit:
                     break
             if len(results) >= limit or k >= _SQLITE_VEC_MAX_K:

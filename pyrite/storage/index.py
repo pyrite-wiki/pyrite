@@ -1043,6 +1043,17 @@ class IndexManager:
             file_values=source,
             agrees=_read_value_is_the_bags,
         )
+        # A column field read by its declared type, as every reader of index
+        # rows reads it (`shape_entry_row`, #1503): the single read and the
+        # rows agree, and `priority: 7` declared a number reads 7, so a value
+        # read and written back leaves the file as it is. After
+        # `read_metadata`, which compares the read's values as the TEXT
+        # column holds them.
+        from .backends.base_backend import DeclaredFieldTypes, cast_declared_columns
+
+        cast_declared_columns(
+            result, DeclaredFieldTypes(self.db.session)(kb_name, entry.entry_type)
+        )
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
         result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
