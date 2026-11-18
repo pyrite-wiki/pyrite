@@ -2659,7 +2659,8 @@ class IndexManager:
         Returns ``added``, ``updated``, ``removed``, ``malformed``,
         ``skipped`` non-regular files, ``duplicates``, ``aliases`` and
         ``changed`` (the ids and KB-relative paths each reconcile changed,
-        ``reconcile_kb``) summed over the KBs.
+        ``reconcile_kb``) summed over the KBs, and ``synced_kbs``, the names
+        of the KBs it reconciled.
         The CLI prints malformed, skipped and duplicate files as a summary
         rather than per-file tracebacks (Tier A 1080).
         """
@@ -2684,6 +2685,9 @@ class IndexManager:
             # or removed (#1691): what ``index sync --confirm`` confirms when
             # it names no id.
             "changed": [],
+            # The KBs this sync reconciled, by name (#1691): a confirm refuses
+            # a KB the sync did not reach rather than answer for it.
+            "synced_kbs": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2719,6 +2723,7 @@ class IndexManager:
             results["unreadable_folders"].extend(one["unreadable_folders"])
             results["unreadable_files"].extend(one["unreadable_files"])
             results["changed"].extend(one["changed"])
+            results["synced_kbs"].append(kb.name)
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))
         return results

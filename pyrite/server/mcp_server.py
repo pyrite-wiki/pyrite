@@ -2209,7 +2209,15 @@ class PyriteMCPServer:
         if confirm is not None:
             from ..services.index_confirm import confirm_entries
 
-            results["confirm"] = confirm_entries(self.index_mgr, kb_name, confirm, results)
+            # The KB is resolved here, at the entry point, through the one
+            # resolver (T3-1, #1530); the confirm takes the handle. The caller
+            # is unscoped: a scoped caller is refused this tool before the
+            # handler runs (fail closed; tests/test_mcp_tool_registry_is_scoped.py,
+            # OPTIONAL_KB_TOOLS), and declaring a readable set here would turn
+            # that refusal off. `_confirm_names` has refused an absent name.
+            resolved = self.svc.resolve_kb(kb_name, readable_kbs=None)
+            assert resolved is not None
+            results["confirm"] = confirm_entries(self.index_mgr, resolved, confirm, results)
         # What a network caller gets of the result (#1546, #1552), the confirm
         # block included: one place decides it.
         shaped = network_shape(results)

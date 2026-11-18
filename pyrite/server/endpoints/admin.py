@@ -101,9 +101,11 @@ def sync_index(
     ``pyrite index sync --confirm`` prints (``services.index_confirm``,
     #1691). It needs ``wait=true`` and ``kb``.
     """
+    resolved = None
     if kb is not None:
         # Through the one resolver, for the caller: an unknown name is 404
-        # KB_NOT_FOUND, as on the other admin KB routes.
+        # KB_NOT_FOUND, as on the other admin KB routes. The confirm takes
+        # this handle (T3-1, #1530).
         resolved = resolve_named_kb(request, policy, kb)
         kb = resolved.name if resolved is not None else None
     if confirm is not None:
@@ -136,7 +138,8 @@ def sync_index(
         if confirm is not None:
             from ...services.index_confirm import confirm_entries
 
-            result["confirm"] = confirm_entries(index_mgr, kb, confirm, result)
+            assert resolved is not None  # confirm without a kb is refused above
+            result["confirm"] = confirm_entries(index_mgr, resolved, confirm, result)
         # What a network caller gets of the result (#1546, #1552), the confirm
         # block included: one place decides it.
         shaped = network_shape(result)

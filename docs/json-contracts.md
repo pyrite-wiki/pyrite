@@ -2249,8 +2249,8 @@ one `ERROR [CODE]` line, a storage fault as the JSON error shape (plus the
 every refusal as the one line;
 `PYRITE_FORMAT=json` or `--format json` prints the sync result (`added`, `updated`, `removed`, `malformed`,
 `skipped`, `duplicates`, `aliases`, `dangling_links`, `unreadable_kbs`,
-`unreadable_folders`, `unreadable_files`, `changed`, and `embedded` when the
-sync embedded any) plus `outcome`. `changed` lists `{kb, id, path, change}`
+`unreadable_folders`, `unreadable_files`, `changed`, `synced_kbs` (the KBs it
+reconciled), and `embedded` when the sync embedded any) plus `outcome`. `changed` lists `{kb, id, path, change}`
 for each row added, updated or removed (`IndexManager.sync_incremental` and
 `reconcile_kb` return it too). The exit codes are unchanged.
 

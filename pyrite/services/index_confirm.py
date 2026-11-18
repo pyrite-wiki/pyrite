@@ -29,14 +29,22 @@ can be confirmed by its path), gets one row:
 from __future__ import annotations
 
 import logging
+import sqlite3
 from typing import TYPE_CHECKING, Any
+
+from sqlalchemy import exc as sa_exc
 
 from ..exceptions import KBNotFoundError, PyriteError
 
 if TYPE_CHECKING:
     from ..storage.index import IndexManager
+    from .kb_resolver import ResolvedKB
 
 logger = logging.getLogger(__name__)
+
+#: What a read of the index can raise: the SQLite driver's errors, and
+#: SQLAlchemy's for a backend reached through it.
+_DATABASE_ERRORS = (sqlite3.Error, sa_exc.SQLAlchemyError)
 
 #: Every status a confirm row can carry.
 STATUSES = ("indexed", "not_indexed", "not_found", "malformed", "duplicate", "skipped")
@@ -66,29 +74,32 @@ _NOT_RETURNED = (
 
 def confirm_entries(
     index_mgr: IndexManager,
-    kb_name: str | None,
+    kb: ResolvedKB,
     names: list[str] | None,
     sync_result: dict[str, Any],
 ) -> dict[str, Any]:
     """The confirm block for one KB after a sync.
 
-    ``names`` are the ids or KB-relative paths the caller asked about, as
-    the surface received them: this function, not the surface, decides what
-    they mean. A blank name names nothing; no name left (an empty list, or
-    only blanks) confirms every entry ``sync_result`` added or updated in that
-    KB. Returns ``kb``, ``named`` (whether the caller named the entries),
-    ``entries`` (one row per name, in order), the ``confirmed`` and
-    ``not_confirmed`` counts, and ``outcome`` (``done`` when every row is
-    confirmed, else ``partial``) for a caller that sees no exit code.
+    ``kb`` is the KB the entry point resolved (``services.kb_resolver``, once,
+    at the boundary: T3-1, #1530); this function looks no name up. ``names``
+    are the ids or KB-relative paths the caller asked about, as the surface
+    received them: this function, not the surface, decides what they mean. A
+    blank name names nothing; no name left (an empty list, or only blanks)
+    confirms every entry ``sync_result`` added or updated in that KB. Returns
+    ``kb``, ``named`` (whether the caller named the entries), ``entries`` (one
+    row per name, in order), the ``confirmed`` and ``not_confirmed`` counts,
+    and ``outcome`` (``done`` when every row is confirmed, else ``partial``)
+    for a caller that sees no exit code.
 
-    Raises ``KBNotFoundError`` when ``kb_name`` is not a KB this process has
-    loaded: the sync read the same configuration, so it synced nothing there,
-    and nothing confirmed must not read as ``done``. (MCP and REST resolve a
-    KB name through the registry as well; the CLI merges the registry first.)
+    Raises ``KBNotFoundError`` when the sync did not reach ``kb``
+    (``sync_result["synced_kbs"]``): MCP and REST resolve a KB through the
+    registry as well as the loaded configuration, the sync reads the
+    configuration, and nothing synced must not read as ``done``. A fault
+    reading the index (the embedding state included) raises ``StorageError``.
     """
     config, db = index_mgr.config, index_mgr.db
-    kb = config.get_kb(kb_name) if kb_name else None
-    if kb is None:
+    kb_name = kb.name
+    if kb_name not in sync_result.get("synced_kbs", []):
         raise KBNotFoundError(
             f"KB '{kb_name}' is not loaded here, so nothing was synced or confirmed in it",
             suggestion="Reload the configuration (restart the server), then sync again.",
@@ -224,6 +235,12 @@ class _EmbeddingStates:
         if semantic_unavailable_for(self._db) is not None:
             self._unavailable = True
             return
+        # A fault reading either is the database's (the SQLite driver's, or
+        # SQLAlchemy's for another backend), and it is raised as the one
+        # StorageError (``storage_error_from``), never swallowed: an empty
+        # set here would report a fault as ``queued`` (T4-1, #1531).
+        from ..storage.errors import storage_error_from
+
         backend = self._db.backend
         try:
             rowids = backend.get_embedded_rowids()
@@ -232,16 +249,16 @@ class _EmbeddingStates:
                 for r in backend.get_entries_for_embedding(self._kb_name)
                 if r.get("rowid") in rowids
             }
-        except Exception:
-            logger.debug("Could not read the embedded entries", exc_info=True)
+        except _DATABASE_ERRORS as e:
+            raise storage_error_from(e, "Could not read which entries are embedded") from e
         from .embedding_worker import EmbeddingWorker
 
         try:
             self._queued = EmbeddingWorker(self._db, model_name=self._model_name).queued_ids(
                 self._kb_name
             )
-        except Exception:
-            logger.debug("Could not read the embed queue", exc_info=True)
+        except _DATABASE_ERRORS as e:
+            raise storage_error_from(e, "Could not read the embed queue") from e
 
     def state(self, entry_id: str) -> str:
         if not self._loaded:

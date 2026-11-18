@@ -370,7 +370,8 @@ def index_sync(
     # The combinations of options it refuses are refused while click parses
     # (`_SyncCommand`), a usage error, exit 2.
     config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db)
+    # The KB is resolved once, here (T3-1, #1530); the confirm takes the handle.
+    resolved = require_kb(config, kb_name, db=db)
 
     if background:
         from ..services.index_worker import IndexWorker
@@ -418,7 +419,9 @@ def index_sync(
         # After the embed, so each row's embedding state is what it now is.
         from ..services.index_confirm import confirm_entries
 
-        results["confirm"] = confirm_entries(index_mgr, kb_name, names, results)
+        # `--confirm` needs `-k` (refused while click parses), so `resolved` is a KB.
+        assert resolved is not None
+        results["confirm"] = confirm_entries(index_mgr, resolved, names, results)
 
     # A KB whose files could not be read was not synced and kept its rows
     # (#1542); a folder it could not list, or a file it could not read, kept

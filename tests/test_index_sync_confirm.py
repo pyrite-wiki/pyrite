@@ -732,16 +732,29 @@ def test_the_service_refuses_a_kb_this_process_has_not_loaded(world):
 # --------------------------------------------------------------------------
 
 
-def _break_the_vector_table(world, monkeypatch):
-    """A real database fault, no mock: the vector table is gone, so reading
-    which entries are embedded fails in the database itself."""
+#: Each read of the embedding state, and the SQL that breaks it for real (no
+#: mock): a view takes the table's name, so `CREATE ... IF NOT EXISTS` on
+#: open leaves it in place, and the read fails in SQLite itself.
+EMBEDDING_READS = {
+    "which entries are embedded": ("vec_entry", "CREATE VIEW vec_entry AS SELECT 1 AS x"),
+    "the embed queue": ("embed_queue", "CREATE VIEW embed_queue AS SELECT 1 AS x"),
+}
+
+
+def _break(world, monkeypatch, read: str) -> None:
     _with_a_model(world, monkeypatch)
-    world.db._raw_conn.execute("DROP TABLE vec_entry")
-    world.db._raw_conn.commit()
+    table, view = EMBEDDING_READS[read]
+    con = world.db._raw_conn
+    con.execute(f"DROP TABLE IF EXISTS {table}")
+    con.execute(view)
+    con.commit()
 
 
-def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_on_the_cli(world, monkeypatch):
-    _break_the_vector_table(world, monkeypatch)
+@pytest.mark.parametrize("read", list(EMBEDDING_READS))
+def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_on_the_cli(
+    world, monkeypatch, read
+):
+    _break(world, monkeypatch, read)
 
     result = _sync(world, "--confirm", "unchanged")
 
@@ -751,8 +764,11 @@ def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_on_the_cli(wor
     assert "confirm" not in payload
 
 
-def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_over_mcp(world, monkeypatch):
-    _break_the_vector_table(world, monkeypatch)
+@pytest.mark.parametrize("read", list(EMBEDDING_READS))
+def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_over_mcp(
+    world, monkeypatch, read
+):
+    _break(world, monkeypatch, read)
 
     res = _mcp_answer(world, {"confirm": ["unchanged"]})
 
