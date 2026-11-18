@@ -28,6 +28,7 @@ mocks stand between the name and the file.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,19 +57,26 @@ EXISTING = {
     "relationship": ("relationships/r1.md", "r1", REL_FILE),
 }
 
-# (entry type, published or old name, value as a client sends it, comma form for -f).
+# (entry type, published or old name, value as a client sends it, its form for -f:
+# several items as a JSON array, since the CLI never splits on commas, #1502).
 # Expected: the file keys that must hold, as literals. `forbidden` keys must be absent.
 CREATE_ROWS = [
-    ("event", "actors", ["x", "y"], "x,y", {"actors": ["x", "y"]}),
-    ("event", "participants", ["x", "y"], "x,y", {"actors": ["x", "y"]}),
+    ("event", "actors", ["x", "y"], '["x", "y"]', {"actors": ["x", "y"]}),
+    ("event", "participants", ["x", "y"], '["x", "y"]', {"actors": ["x", "y"]}),
     ("relationship", "source_entity", "x", "x", {"source_entity": "x", "target_entity": ""}),
     ("relationship", "target_entity", "x", "x", {"source_entity": "", "target_entity": "x"}),
     ("relationship", "source", "x", "x", {"source_entity": "x", "target_entity": ""}),
     ("relationship", "target", "x", "x", {"source_entity": "", "target_entity": "x"}),
 ]
 UPDATE_ROWS = [
-    ("event", "actors", ["x", "y"], "x,y", {"actors": ["x", "y"], "date": "2025-01-01"}),
-    ("event", "participants", ["x", "y"], "x,y", {"actors": ["x", "y"], "date": "2025-01-01"}),
+    ("event", "actors", ["x", "y"], '["x", "y"]', {"actors": ["x", "y"], "date": "2025-01-01"}),
+    (
+        "event",
+        "participants",
+        ["x", "y"],
+        '["x", "y"]',
+        {"actors": ["x", "y"], "date": "2025-01-01"},
+    ),
     ("relationship", "source_entity", "x", "x", {"source_entity": "x", "target_entity": "b"}),
     ("relationship", "target_entity", "x", "x", {"source_entity": "a", "target_entity": "x"}),
     ("relationship", "source", "x", "x", {"source_entity": "x", "target_entity": "b"}),
@@ -288,6 +296,16 @@ def test_create_lands_the_name_in_its_file_key(
     _assert_lands(fm, expected, f"{surface}:{name}")
 
 
+@pytest.mark.parametrize("name", ["actors", "participants"])
+def test_cli_create_keeps_a_comma_value_as_one_item(tmp_path, name):
+    """`-f actors=x,y` is the one item `x,y`, at either spelling: the CLI never
+    splits on commas (#1502); several items go as a JSON array (the rows above)."""
+    config, kb = _env(tmp_path, {})
+    _cli(config, "create", "-k", KB, "-t", "event", "--title", "N", "-f", f"{name}=x,y",
+         "-f", "date=2025-01-02")  # fmt: skip
+    _assert_lands(_written(kb), {"actors": ["x,y"]}, f"cli:{name}")
+
+
 # ---------------------------------------------------------------------------
 # Update
 # ---------------------------------------------------------------------------
@@ -429,7 +447,9 @@ def _update_cells():
 
 
 def _comma(v) -> str:
-    return ",".join(v) if isinstance(v, list) else v
+    """``v`` as `-f` spells it: several items as a JSON array (the CLI never
+    splits on commas, #1502)."""
+    return json.dumps(v) if isinstance(v, list) else v
 
 
 def _assert_refused_naming(text: str, alias: str, target: str, where: str) -> None:

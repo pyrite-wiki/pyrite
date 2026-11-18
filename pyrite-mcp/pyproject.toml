@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyrite-mcp"
-version = "0.20.0"
+version = "0.26.4"
 description = "Standalone MCP server for Pyrite knowledge bases"
 readme = "README.md"
 license = {text = "MIT"}
@@ -23,7 +23,7 @@ keywords = ["mcp", "knowledge-base", "ai", "agent"]
 # direct reference, so this package is installed from the tag, not from PyPI
 # (tests/test_pyrite_mcp_install.py keeps the tag in step with the README).
 dependencies = [
-    "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.26.3",
+    "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4",
 ]
 
 [project.scripts]
