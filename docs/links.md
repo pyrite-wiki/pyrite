@@ -42,7 +42,7 @@ These are not entry links: a URL, a `#fragment` alone, an image, a link inside
 code, a link to the file itself, a root-relative `/x.md` (the site's root may
 not be the KB's), a path that leaves the KB, and a file the index does not
 read as an entry (`README.md`, `_templates/`, hidden folders, other suffixes).
-A link without `.md` (`[Beta](beta)`) counts only when `beta.md` exists when
+A link whose path has no suffix (`beta`, not `beta.md`) counts only when `beta.md` exists when
 the linking file is indexed; a target created later is seen the next time the
 linking file is read. A `.md` link with nothing at its path is a broken link,
 which `links check` reports under the path.

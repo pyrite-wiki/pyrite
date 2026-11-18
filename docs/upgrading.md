@@ -10,7 +10,8 @@ repeat.
 
 ## Upgrading from 0.26.4 to 0.26.5
 
-- **Markdown links to entry files are links now** (`[text](other.md)`, see
+- **Markdown links to entry files are links now**: an ordinary Markdown link
+  to another entry's `.md` file (see
   [links](links.md#markdown-links-to-entry-files)). Run `pyrite index sync`
   once after upgrading. The first open of the index marks every entry to be
   read again, so that sync reads every file (it takes about as long as an
