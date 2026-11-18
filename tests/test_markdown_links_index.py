@@ -521,3 +521,57 @@ def test_the_cli_shows_a_markdown_link_in_backlinks_and_links_check(cli_world):
     found = json.loads(check.stdout)
     # The note is written under notes/, so the broken path is notes/nope.md.
     assert [t["target_id"] for t in found["targets"]] == ["notes/nope.md"]
+
+
+# ---------------------------------------------------------------------------
+# Bare links: KBFiles.resolved decides before KBFiles.present does
+# ---------------------------------------------------------------------------
+
+
+@needs_symlinks
+@pytest.mark.control(
+    reason="no build before #1723 makes a Markdown link row; guards that present(), "
+    "which answers True for a link out, never decides a bare link before resolved()"
+)
+def test_a_bare_link_whose_md_file_links_out_of_the_kb_is_no_row(world):
+    _targets(world)
+    os.symlink(world.tmp / "outside.md", world.root / "out.md")
+    world.write("src.md", _note("src", "[t](out) and [u](a)"))
+    world.im.index_all()
+    assert world.db.get_entry("src", KB) is not None
+    # Only the in-KB bare link is a row; `out.md` leads outside.
+    assert [
+        r["target_id"]
+        for r in world.db.execute_sql(
+            "SELECT target_id FROM link WHERE relation = 'markdown_link' AND source_id = 'src'"
+        )
+    ] == ["alpha"]
+
+
+def test_a_bare_link_that_cannot_be_checked_drops_only_that_link(world, monkeypatch):
+    """Where the OS will not say whether `<path>.md` is there
+    (`KBPresenceUnknownError`), that one link gives no row: the sync goes on,
+    and the entry's other rows are written as usual."""
+    from pyrite.utils.kb_files import KBFiles, KBPresenceUnknownError
+
+    real_present = KBFiles.present
+
+    def present(self, path):
+        if Path(path).name == "a.md":
+            raise KBPresenceUnknownError()
+        return real_present(self, path)
+
+    monkeypatch.setattr(KBFiles, "present", present)
+    _targets(world)
+    world.write("src.md", _note("src", "[t](a) [u](notes/b.md) [v](missing.md) [[alpha]]"))
+    world.write("other.md", _note("other", "[w](notes/b.md)"))
+    world.im.index_all()
+    assert world.md_rows() == [
+        ("other", "beta", "notes/b.md", ""),
+        ("src", "beta", "notes/b.md", ""),
+        ("src", "missing.md", "missing.md", ""),
+    ]
+    wikilinks = world.db.execute_sql(
+        "SELECT target_id FROM link WHERE source_id = 'src' AND relation = 'wikilink'"
+    )
+    assert [r["target_id"] for r in wikilinks] == ["alpha"]

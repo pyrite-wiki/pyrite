@@ -22,9 +22,13 @@ repo's ``kb/``):
 * a link inside an *indented* code block: only fenced blocks and inline spans
   are blanked, the same limit wikilinks have.
 
-A bare destination (``[t](other)``) is a link only when ``other.md`` is a file
-when the source is read; a target created later appears when the source is
-next read (groom question 2).
+A bare destination (``[t](other)``) is a link only when ``other.md`` is
+present (``KBFiles.present``, inside the KB) when the source is read; a target
+created later appears when the source is next read (groom question 2). Where
+the OS cannot say whether ``other.md`` is there (``KBPresenceUnknownError``: a
+folder this process cannot search), that one link gives no row; the entry and
+its other links are indexed as usual. A folder named ``other.md`` is
+"present", so such a link is a row, broken since no entry is at that path.
 
 A broken link's ``target_id`` is its path text (``notes/a.md``, decision D1).
 An entry whose id is literally that text would make the broken row read as
@@ -39,7 +43,7 @@ import re
 from pathlib import Path
 from urllib.parse import unquote
 
-from ..utils.kb_files import KBFiles
+from ..utils.kb_files import KBFiles, KBPresenceUnknownError
 from . import entry_paths
 
 #: The link text: any run without brackets, or one level of nested brackets
@@ -128,8 +132,18 @@ def markdown_link_targets(body: str, root: Path, source: Path) -> list[tuple[str
             continue
         suffix = Path(path_text).suffix
         if suffix == "":
+            # Where it leads first: a link out is None, no row. Only then
+            # `present`, which answers True for a link out (the read that
+            # follows refuses it), so it must never decide that case.
             candidate = files.resolved(source_dir / (path_text + ".md"))
-            if candidate is None or not candidate.is_file():
+            if candidate is None:
+                continue
+            try:
+                if not files.present(candidate):
+                    continue
+            except KBPresenceUnknownError:
+                # The OS will not say (a folder this process cannot search):
+                # no row for this link; the entry and its other links index.
                 continue
         elif suffix.lower() == ".md":
             candidate = files.resolved(source_dir / path_text)
