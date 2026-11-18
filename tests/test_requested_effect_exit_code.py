@@ -709,6 +709,18 @@ class TestTasks:
         lost = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", "json")
         assert json.loads(lost.stdout)["claimed"] is False
 
+    def test_a_refused_finish_exits_one_in_json_as_in_rich(self, cli):
+        cli.pyrite("task", "create", "F1", "-k", "demo")
+        cli.pyrite("task", "claim", "f1", "-k", "demo", "-a", "me")
+        # claimed -> done is two edges: without --walk it is refused, writing nothing.
+        for fmt in ("json", "rich"):
+            out = cli.pyrite("task", "finish", "f1", "-k", "demo", "--format", fmt)
+            assert out.returncode == REFUSED, (fmt, out.stdout + out.stderr)
+        refused = cli.pyrite("task", "finish", "f1", "-k", "demo", "--format", "json")
+        assert json.loads(refused.stdout)["error_code"] == "VALIDATION_FAILED"
+        walked = cli.pyrite("task", "finish", "f1", "-k", "demo", "--walk", "--format", "json")
+        assert walked.returncode == 0, walked.stdout + walked.stderr
+
     def test_children_that_failed_to_create_are_partial(self, cli):
         cli.pyrite("task", "create", "Parent", "-k", "demo")
         # The second child has the first one's title, hence its id: refused.
@@ -977,6 +989,7 @@ GUARDED = {
     "pyrite sw migrate-standards": "TestJournalismAndSoftwareResults",
     "pyrite sw prioritize": "TestJournalismAndSoftwareResults",
     "pyrite task claim": "TestTasks",
+    "pyrite task finish": "TestTasks",
     "pyrite task start": "TestTasks",
     "pyrite task decompose": "TestTasks",
     "pyrite-admin index embed": "TestEmbed",
@@ -1047,7 +1060,6 @@ SAFE = {
     "pyrite task create": "one entry",
     "pyrite task migrate-relaxed-mode": "idempotent backfill; 'skipped' means not applicable, not "
     "failed",
-    "pyrite task finish": "one write; a refused walk exits 1 and writes nothing",
     "pyrite task reset": "one transition",
     "pyrite task update": "one entry",
     "pyrite update": "one entry; a refusal exits 1",
