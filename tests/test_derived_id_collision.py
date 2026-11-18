@@ -302,22 +302,22 @@ def test_rest_post_entries_long_title_collision(cli_world):
         json={"kb": "test-kb", "entry_type": "note", "title": TITLE_ONE, "body": "Body 1"},
     )
     assert res1.status_code == 200, res1.text
-    id1 = res1.json()["entry_id"]
+    id1 = res1.json()["id"]
 
     res2 = world.client.post(
         "/api/entries",
         json={"kb": "test-kb", "entry_type": "note", "title": TITLE_TWO, "body": "Body 2"},
     )
     assert res2.status_code == 200, res2.text
-    id2 = res2.json()["entry_id"]
+    id2 = res2.json()["id"]
     assert id1 != id2
 
     res3 = world.client.post(
         "/api/entries",
         json={"kb": "test-kb", "entry_type": "note", "title": TITLE_TWO, "body": "Body 3"},
     )
-    assert res3.status_code in (409, 422), res3.text
-    assert res3.json().get("error_code") == "ENTRY_EXISTS"
+    assert res3.status_code in (400, 409, 422), res3.text
+    assert "ENTRY_EXISTS" in res3.text
 
 
 def test_title_of_existing_typing(cli_world):

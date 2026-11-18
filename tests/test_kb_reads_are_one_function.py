@@ -138,6 +138,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.read_bytes": 1},
         "KBFiles.read_bytes of a worktree overlay's file",
     ),
+    ("pyrite/services/kb_service.py", "KBService._title_of_existing"): (
+        {"repo._inside_bytes": 1, "repo.exists": 1},
+        "repo.exists, then repo._inside_bytes of frontmatter to check title for ID disambiguation (#1682)",
+    ),
     ("pyrite/services/kb_service.py", "KBService.get_pending_changes"): (
         {"KBFiles.present": 2},
         "KBFiles.present, bound once",
@@ -723,7 +727,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 56,
+    "DECIDED_INSIDE": 57,
     "SAME_ANSWER": 20,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

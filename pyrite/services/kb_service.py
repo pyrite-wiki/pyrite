@@ -1642,10 +1642,6 @@ class KBService:
             raise ValidationError(
                 "title is required", errors=rows, suggestion=_validation_suggestion(rows)
             )
-        if isinstance(title, bool):
-            title = "true" if title else "false"
-        elif not isinstance(title, str):
-            title = str(title)
         # A declared mapping, if any (#468); otherwise the named type. Only the
         # type that will be stored is checked (#1526, option (a)): a mapping
         # applies where the KB declares its target, even if the named type is
@@ -1667,13 +1663,14 @@ class KBService:
         else:
             base_id = generate_entry_id(title)
             entry_id = base_id
+            title_str = "true" if title is True else ("false" if title is False else str(title))
             existing_title = self._title_of_existing(entry_id, repo, pending_ids)
-            if existing_title is not None and existing_title != title:
-                h = hashlib.sha256(title.encode("utf-8")).hexdigest()
+            if existing_title is not None and existing_title != title_str:
+                h = hashlib.sha256(title_str.encode("utf-8")).hexdigest()
                 for length in (4, 6, 8, 12):
                     candidate = f"{base_id}-{h[:length]}"
                     cand_title = self._title_of_existing(candidate, repo, pending_ids)
-                    if cand_title is None or cand_title == title:
+                    if cand_title is None or cand_title == title_str:
                         entry_id = candidate
                         break
                 else:
