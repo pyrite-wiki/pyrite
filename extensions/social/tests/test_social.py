@@ -5,15 +5,18 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pyrite_social.cli import social_app
 from pyrite_social.entry_types import WRITEUP_TYPES, UserProfileEntry, WriteupEntry
 from pyrite_social.hooks import before_save_author_check
 from pyrite_social.plugin import SocialPlugin
 from pyrite_social.preset import SOCIAL_PRESET
 from pyrite_social.tables import SOCIAL_TABLES
 from pyrite_social.validators import validate_social
+from typer.testing import CliRunner
 
 from pyrite.plugins.registry import PluginRegistry
 from pyrite.services.hook_runner import HookRunner
+from tests.cli_help import plain
 
 # =========================================================================
 # Plugin registration
@@ -690,3 +693,29 @@ class TestMcpPostGoesThroughPipeline:
         assert result.get("created") is not True, result
         assert result.get("error_code") == "ENTRY_EXISTS", result
         assert self._file(env, "same-title").read_bytes() == original
+
+
+# CLI numeric limit regression tests (#1561)
+
+
+@pytest.mark.parametrize("command", ["newest", "top"])
+@pytest.mark.parametrize("limit", ["0", "-1"])
+def test_social_limit_rejects_nonpositive_values(command, limit):
+    result = CliRunner().invoke(
+        social_app,
+        [command, "--limit", limit],
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "--limit" in plain(result.output)
+
+
+@pytest.mark.control(reason="Positive limits already work before the fix; preserve valid input.")
+@pytest.mark.parametrize("command", ["newest", "top"])
+def test_social_limit_accepts_one(command):
+    result = CliRunner().invoke(
+        social_app,
+        [command, "--limit", "1"],
+    )
+
+    assert result.exit_code == 0, result.output
