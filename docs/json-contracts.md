@@ -1626,17 +1626,34 @@ return one dict, `TaskService.start_task`'s (#1685). A start that won:
 budget and are bounded as in [Body truncation](#body-truncation). A lost start
 is a lost claim's dict unchanged: `{"claimed": false, "error": "...",
 "current_status": "in_progress"}`, CLI outcome `nothing` and exit 1, MCP and
-REST a result (not an error). The file write records two `status_change_log`
-items, `{date, from, to, by}`: open → claimed and claimed → in_progress.
+REST a result (not an error); an id the index does not hold is answered the
+same way (`claimed: false`, `error`, no `current_status`), as claim answers it.
+Refusals that are errors, not results: an entry that is not a task
+(`VALIDATION_FAILED`), a task held by another account (`FORBIDDEN`, claim's
+holder rule), a file its type cannot load (`ENTRY_UNREADABLE`) and an unknown
+KB (`KB_NOT_FOUND`). The file write records two `status_change_log` items,
+`{date, from, to, by}`: open → claimed and claimed → in_progress, `by` the
+assignee.
 
 `task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
 dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
 "in_progress", "done"], "status_reason"}`, with one `status_change_log` item
-per edge of `path` (`comment` is the reason, when one was given). A refusal is
-`VALIDATION_FAILED` (CLI exit 1): a status with no path to `done`, a task
-nothing holds (`open`), a path of more than one edge without `--walk` (`walk:
-true`; the message names the path), or an edge the workflow refuses. REST has
-no finish route; a REST client uses `PATCH /api/entries/{id}`.
+per edge of `path` (`comment` is the reason, when one was given; `by` is
+`--by`, else the signed-in MCP caller, else `operator`, never the assignee by
+default). A refusal writes nothing and is (CLI exit 1):
+
+- `VALIDATION_FAILED`: the task is already `done`; a status with no path to
+  `done`; a task nothing holds (`open`, or a path through it, as from
+  `failed`); a path of more than one edge without `--walk` (`walk: true`; the
+  message names the path); an edge the workflow refuses (the core table
+  judges, also where a KB declares a `state_machine`: #1709); an entry that is
+  not a task; and a stale read: the task's status changed between the read and
+  the write ("the file's status is ...; read the task again and retry").
+  Retry after a stale read; the others need a different request.
+- `ENTRY_NOT_FOUND`: no task with that id in the KB.
+- `ENTRY_UNREADABLE`: a file its type cannot load.
+
+REST has no finish route; a REST client uses `PATCH /api/entries/{id}`.
 
 ## Entry row shape
 

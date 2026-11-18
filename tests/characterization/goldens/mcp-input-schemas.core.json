@@ -1550,7 +1550,7 @@
       "inputSchema": {
         "properties": {
           "by": {
-            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out); default the task's assignee",
+            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out: you are recorded); with no signed-in user, default operator",
             "type": "string"
           },
           "kb_name": {
@@ -1558,7 +1558,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "Reason for the change: set as status_reason and on each log item (required by a relaxed workflow)",
+            "description": "Reason for the change: set as status_reason and on each log item",
             "type": "string"
           },
           "task_id": {
@@ -1566,7 +1566,7 @@
             "type": "string"
           },
           "walk": {
-            "description": "Pass through every declared intermediate state to done",
+            "description": "Pass through every intermediate state of the task workflow to done (the core table judges each edge, also where a KB declares its own state_machine: #1709)",
             "type": "boolean"
           }
         },
@@ -3972,7 +3972,7 @@
       "inputSchema": {
         "properties": {
           "by": {
-            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out); default the task's assignee",
+            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out: you are recorded); with no signed-in user, default operator",
             "type": "string"
           },
           "kb_name": {
@@ -3980,7 +3980,7 @@
             "type": "string"
           },
           "reason": {
-            "description": "Reason for the change: set as status_reason and on each log item (required by a relaxed workflow)",
+            "description": "Reason for the change: set as status_reason and on each log item",
             "type": "string"
           },
           "task_id": {
@@ -3988,7 +3988,7 @@
             "type": "string"
           },
           "walk": {
-            "description": "Pass through every declared intermediate state to done",
+            "description": "Pass through every intermediate state of the task workflow to done (the core table judges each edge, also where a KB declares its own state_machine: #1709)",
             "type": "boolean"
           }
         },

@@ -92,8 +92,10 @@ def start_task(
 ):
     """Claim and start an open task in one write (#1685): the same
     compare-and-set as claim, open -> claimed -> in_progress recorded in the
-    task's status_change_log. A lost start is claimed=False with
-    current_status (not an HTTP error), as a lost claim is. The body and the
+    task's status_change_log. A lost compare-and-set (and an id the index does
+    not hold) is claimed=False with current_status, not an HTTP error, as a
+    lost claim is. An entry that is not a task, a task held by another
+    account and a file its type cannot load are errors. The body and the
     assignee rule are claim's."""
     resolved = resolve_person_arguments(
         {"assignee": req.assignee}, {"assignee": CALLER}, get_principal(request)

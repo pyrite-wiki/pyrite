@@ -1091,7 +1091,7 @@ WRITE_TOOLS = {
         "description": (
             "Move a held task to done in one write, recording one status_change_log item per "
             "edge. Without walk only a direct edge (in_progress -> done, review -> done); with "
-            "walk=true it passes through every declared intermediate state (claimed -> "
+            "walk=true it passes through every intermediate state of the task workflow (claimed -> "
             "in_progress -> done, blocked -> in_progress -> done). A refusal names the path."
         ),
         "inputSchema": {
@@ -1101,15 +1101,15 @@ WRITE_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name"},
                 "walk": {
                     "type": "boolean",
-                    "description": "Pass through every declared intermediate state to done",
+                    "description": "Pass through every intermediate state of the task workflow to done (the core table judges each edge, also where a KB declares its own state_machine: #1709)",
                 },
                 "reason": {
                     "type": "string",
-                    "description": "Reason for the change: set as status_reason and on each log item (required by a relaxed workflow)",
+                    "description": "Reason for the change: set as status_reason and on each log item",
                 },
                 "by": {
                     "type": "string",
-                    "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out); default the task's assignee",
+                    "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out: you are recorded); with no signed-in user, default operator",
                 },
             },
             "required": ["task_id", "kb_name"],

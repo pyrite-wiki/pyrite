@@ -38,9 +38,17 @@ Retrying `start` on a task you already claimed moves it on to in_progress.
 
 `task finish` moves a held task to `done` in one write. Without `--walk` it
 takes only a direct edge (in_progress → done, review → done); with `--walk` it
-passes through every declared intermediate state and records each edge, so no
-state is skipped. A refusal names the path `--walk` would take. A task nothing
-holds (open) is not finished; cancel it instead.
+passes through every intermediate state of the task workflow and records each
+edge, so no state is skipped. A refusal names the path `--walk` would take. A
+task nothing holds (open) is not finished; cancel it instead. Each log item
+records who made the change: `--by`, or `operator` (MCP: the signed-in caller),
+never the assignee by default.
+
+Every edge is judged by the core task workflow, also in a KB whose `kb.yaml`
+declares its own `state_machine` for tasks: updates do not apply a declared
+state machine yet (#1709), so neither do `start` and `finish`. Where the
+declared table and the core one disagree, the write is refused and nothing is
+written.
 
 ```bash
 pyrite task create "Fix typo" -k test-kb
