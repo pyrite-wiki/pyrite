@@ -264,10 +264,9 @@ def test_the_audit_comment_route_applies_the_declared_table(world_for):
     assert _file_status(world) == "review"  # declared table: open -> review
 
 
-# -- scope and consequences, pinned as built (maintainer questions Q1, Q2) ----
+# -- scope and consequences, as decided on #1709 (Q1 = c, Q2 = keep) ----
 #
-# These cells record what the code does TODAY so a later decision shows up as
-# a test change, not a silent one. They are not the maintainer's answers.
+# Each cell records a consequence the maintainer decided on #1709.
 
 EVENT_YAML = """\
 name: work
@@ -318,13 +317,12 @@ def _move_event(world, surface: str, status: str, reason: str | None = None) -> 
 
 @pytest.mark.parametrize("surface", ["cli_update", "mcp_kb_update"])
 def test_q2_a_non_task_type_with_a_declared_machine_is_judged_by_it(world_for, surface):
-    """Q2 (open): the hook applies to ANY type whose kb.yaml declares a
+    """Maintainer decision on #1709 (Q2 = keep, 2026-11-18): the hook applies to ANY type whose kb.yaml declares a
     `state_machine` and whose entry class carries a `status` (`event` does; a
     generic custom type does not, so its old status is missing and the hook
     fails open). It is not limited to `task` (`is_task_or_opted_in` in
-    `_task_validate_transition`); the #1709 decision says "task". Before the
-    fix the declared machine was never read, so an event moved freely. Pinned
-    as built; narrowing to `task` would change this cell, not the others."""
+    `_task_validate_transition`): one rule for every declared machine. Before
+    the fix the declared machine was never read, so an event moved freely."""
     world = world_for(EVENT_YAML)
     world.add_entry(KB, EVENT_FILE, filename="events/e1.md")
     _move_event(world, surface, "proven")  # declared table: confirmed -> proven is absent
@@ -334,7 +332,7 @@ def test_q2_a_non_task_type_with_a_declared_machine_is_judged_by_it(world_for, s
 
 
 def test_q2_a_reason_never_reaches_a_non_task_type_whose_class_has_no_status_reason(world_for):
-    """Q2 (open), a consequence: the hook reads `status_reason` from the entry
+    """Q2 = keep, a consequence: the hook reads `status_reason` from the entry
     CLASS. `event` has no such attribute, so a relaxed reasons-required machine
     declared on it refuses every move, a reason given or not. Pinned as built."""
     world = world_for(EVENT_RELAXED_YAML)

@@ -51,9 +51,11 @@ For code-defined types, protocols and plugins see
    applies to EVERY update of a task in that KB (CLI `task update` and
    `pyrite update`, MCP, REST, and `task claim` / `task reset`, which write
    through the same update), exactly as the core `TASK_WORKFLOW` applies where
-   none is declared (#1709). As built: `task claim` passes no reason, so a
-   relaxed KB with `require_reason_on_transition: true` refuses
-   `open -> claimed`; the hook judges any type whose kb.yaml declares a
+   none is declared (#1709). As built: `open -> claimed` is exempt from
+   `require_reason_on_transition` (maintainer decision on #1709), so
+   `task claim`, which passes no reason, and a plain update from `open` to
+   `claimed` work in a relaxed reasons-required KB while every other move there
+   still needs its reason; the hook judges any type whose kb.yaml declares a
    `state_machine` and whose entry class carries a `status` (a generic custom
    type has none, so it is not judged), not only `task`, and reads
    `status_reason` from the entry class; and where a declared machine omits a
