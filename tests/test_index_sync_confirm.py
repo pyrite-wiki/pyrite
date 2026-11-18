@@ -658,6 +658,7 @@ def test_a_refusal_with_no_format_asked_is_the_json_error_shape(corrupt_index):
     assert (payload["error_code"], payload["outcome"]) == ("STORAGE_ERROR", "error")
 
 
+@pytest.mark.control(reason="dev already refuses as JSON under PYRITE_FORMAT=json: kept, not added")
 def test_a_refusal_under_pyrite_format_json_is_json(corrupt_index):
     result = _invoke("index", "sync", env={"PYRITE_FORMAT": "json"})
     assert _json(result)["error_code"] == "STORAGE_ERROR"
