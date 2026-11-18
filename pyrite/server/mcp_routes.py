@@ -98,7 +98,7 @@ def _resolve_credential(
         policy = AccessPolicy(config, db)
     resolution = resolve_credential(request, config, policy)
     if resolution.outcome is Outcome.VERIFIED:
-        return resolution.ctx
+        return resolution.principal
     # A credential that does not verify, or none (there is no anonymous
     # principal on `/mcp`, ADR-0043 decision 9): both are 401 here.
     raise HTTPException(status_code=401, detail=_REFUSED)
@@ -358,7 +358,7 @@ def mount_mcp_routes(
                 await refused(scope, receive, send)
                 return
             if resolution.outcome is Outcome.VERIFIED:
-                scope["user"] = _session_owner(resolution.ctx)
+                scope["user"] = _session_owner(resolution.principal)
         await sse_transport.handle_post_message(scope, receive, send)
 
     # -----------------------------------------------------------------

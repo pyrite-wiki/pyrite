@@ -197,7 +197,7 @@ def resolve_socket_scope(conn: HTTPConnection, config: PyriteConfig, db: PyriteD
     resolution = resolve_credential(conn, config, policy, query_key=True)
 
     if resolution.outcome is Outcome.VERIFIED:
-        ctx = resolution.ctx
+        ctx = resolution.principal
         if ctx.get("user_id") is not None:
             return SocketScope(
                 readable=policy.read_scope(Principal.user(ctx["user_id"], ctx["role"])).as_set(),

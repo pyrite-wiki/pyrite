@@ -616,7 +616,7 @@ async def verify_api_key(
         resolution = _resolve()
 
     if resolution.outcome is Outcome.VERIFIED:
-        ctx = resolution.ctx
+        ctx = resolution.principal
         request.state.api_role = ctx["role"]
         if ctx.get("user") is not None:
             request.state.auth_user = ctx["user"]

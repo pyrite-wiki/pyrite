@@ -79,6 +79,13 @@ class Resolution:
     presented: Presented | None = None
 
     @property
+    def principal(self) -> dict[str, Any]:
+        """The verified ctx; only meaningful when ``outcome`` is ``VERIFIED``."""
+        if self.ctx is None:
+            raise ValueError(f"no verified principal: the credential resolved {self.outcome.value}")
+        return self.ctx
+
+    @property
     def failed_cookie(self) -> bool:
         """The session cookie was presented and did not verify: the caller
         should clear it, since the web client cannot (it is ``httponly``)."""
