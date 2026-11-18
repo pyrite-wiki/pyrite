@@ -1849,6 +1849,8 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
     (every child refused is `1`, `"outcome": "nothing"`),
     `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
+  - `pyrite qa duplicates` that left a KB out of the scan and named it in
+    `unreadable_kbs` (#1547);
   - `pyrite index sync`, `pyrite index build` and `pyrite kb reindex`
     count each KB, folder and file they could not reach as failed (done =
     KBs synced): a KB with one folder it could not list exits `3`, and so
@@ -2408,7 +2410,7 @@ writes nothing.
 
 `pyrite qa duplicates -t <type>` reports live entries that may describe the
 same thing, scanning every KB the caller may read. It is a **report**, not a
-merge: finding candidates is not a failure, so the exit code is `0` when the scan ran; an unknown
+merge: finding candidates is not a failure, so the exit code is `0` when the scan covered every readable KB and `3` when a KB was left out and named in `unreadable_kbs`; an unknown
 `--format` or an out-of-range `--threshold` is a usage error (`2`). Empty
 `--type` or empty/comma-only `--status` values are structured
 `VALIDATION_FAILED` refusals (`1`).

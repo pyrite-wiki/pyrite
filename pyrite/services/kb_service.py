@@ -1697,7 +1697,9 @@ class KBService:
         The declaration is ``KBSchema.type_fields`` (core < plugin < kb.yaml),
         never the class's dataclass fields (the maintainer on #86, 2026-10-20).
         A field the caller sent, at any spelling and empty or not, is the
-        caller's (ADR-0042 #720). One not sent is added before the entry is
+        caller's (ADR-0042 #720), as the declared type stores it
+        (``FieldSchema.coerce``: a scalar sent to a list is ``[scalar]``,
+        #1502). One not sent is added before the entry is
         built, so the entry that is validated, given to the hooks, indexed,
         returned and written is one entry:
 
@@ -1721,7 +1723,8 @@ class KBService:
         model = {f.name for f in dataclasses.fields(cls) if f.init and not f.name.startswith("_")}
         aliases = class_field_aliases(cls, entry_type)
         envelope = fields.get("metadata")
-        envelope = envelope if isinstance(envelope, Mapping) else {}
+        envelope = dict(envelope) if isinstance(envelope, Mapping) else {}
+        fields = dict(fields)
         added: dict[str, Any] = {}
         attributes: dict[str, str | None] = {}
         for name, schema in kb_config.kb_schema.type_fields(entry_type).items():
@@ -1730,10 +1733,14 @@ class KBService:
             field, _rest = field_at(cls, entry_type, (name,))
             if field in skip or field in added or field in attributes:
                 continue
-            sent = any(
-                path[-1] in (envelope if len(path) > 1 else fields)
-                for path in spellings_of(cls, entry_type, field)
-            )
+            sent = False
+            for path in spellings_of(cls, entry_type, field):
+                where = envelope if len(path) > 1 else fields
+                if path[-1] in where:
+                    sent = True
+                    # A value sent for a declared list is stored as a list,
+                    # at the spelling it was sent at (#1502).
+                    where[path[-1]] = schema.coerce(where[path[-1]])
             attribute = field if field in model else None
             if attribute is None:
                 attribute = next((a for a, t in aliases.items() if t == field and a in model), None)
@@ -1745,6 +1752,8 @@ class KBService:
                 added[field] = schema.empty_value()
             if attribute is None:
                 attributes[field] = None
+        if envelope:
+            fields["metadata"] = envelope
         return {**fields, **added}, attributes
 
     def _prepare_and_save(
@@ -2781,9 +2790,15 @@ class KBService:
         # `status_change_log[0]` re-read as a list index).
         path: tuple[Any, ...] = (*head, *rest)
         if isinstance(op, Set):
-            value = (
-                self._value_for_file(entry, field, op.value) if not rest else _plain_value(op.value)
-            )
+            sent = op.value
+            if not rest:
+                # A value set on a declared list field is stored as a list
+                # (#1502): the same coercion a create makes, on the resolved
+                # field (an alias or `metadata.k` is its target here).
+                declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+                if declared is not None:
+                    sent = declared.coerce(sent)
+            value = self._value_for_file(entry, field, sent) if not rest else _plain_value(sent)
             spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
             if _same_instant_as_file(file_values, spelled, value):
                 return Set(path, file_values[spelled])  # the same instant: no change
