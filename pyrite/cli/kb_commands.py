@@ -346,13 +346,10 @@ def kb_validate(
         errors = kb.validate()
 
         ignored_decls = []
-        try:
-            if kb.path.is_dir():
-                schema = kb.kb_schema
-                if schema and getattr(schema, "ignored_declarations", None):
-                    ignored_decls = schema.ignored_declarations
-        except (PyriteError, OSError, ValueError):
-            pass
+        if kb.path.is_dir():
+            schema = kb.kb_schema
+            if schema and getattr(schema, "ignored_declarations", None):
+                ignored_decls = schema.ignored_declarations
 
         if ignored_decls:
             for decl in ignored_decls:
