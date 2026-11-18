@@ -73,11 +73,10 @@ CLI, stdio MCP, an operator key) can finish a task it does not hold with
 `--operator-override` (MCP `operator_override: true`); its log items record
 `by: operator` and `override: true`.
 
-Every edge is judged by the core task workflow, also in a KB whose `kb.yaml`
-declares its own `state_machine` for tasks: updates do not apply a declared
-state machine yet (#1709), so neither do `start` and `finish`. Where the
-declared table and the core one disagree, the write is refused and nothing is
-written.
+Every edge is judged by the task workflow that applies to every update: the
+KB's own `state_machine` where its `kb.yaml` declares one for tasks, else the
+core table. `--walk` follows that same workflow, so a declared table's
+intermediate states are walked and recorded too.
 
 ```bash
 pyrite task create "Fix typo" -k test-kb

@@ -27,12 +27,6 @@ from pyrite.config import KBConfig, PyriteConfig, Settings
 from tests._world import build_world
 
 KB = "work"
-#: #1709: the before_save hook is never given the KB's schema, so a task
-#: `state_machine` a KB declares is ignored by every update; start and finish
-#: are judged as `task update` is (the core table) until that is decided.
-_HOOK_IGNORES_KB_SCHEMA = (
-    "#1709: the update hook is never given kb_schema; a KB's task state_machine is ignored"
-)
 WHO = "agent:a"
 
 
@@ -253,7 +247,6 @@ def test_start_under_a_kb_strict_state_machine_walks_its_declared_edges(world):
     assert _edges(_front(path)) == [("open", "claimed", WHO), ("claimed", "in_progress", WHO)]
 
 
-@pytest.mark.xfail(strict=True, reason=_HOOK_IGNORES_KB_SCHEMA)
 def test_start_under_a_state_machine_without_claimed_is_refused_and_rolled_back(world):
     (world.kb_path(KB) / "kb.yaml").write_text(
         "name: work\nkb_type: generic\ntypes:\n  task:\n    state_machine:\n"

@@ -619,7 +619,7 @@ def task_finish(
     walk: bool = typer.Option(
         False,
         "--walk",
-        help="Pass through every intermediate state of the task workflow to done, recording each edge (the core table judges, #1709)",
+        help="Pass through every intermediate state of the task workflow to done, recording each edge",
     ),
     reason: str | None = typer.Option(
         None,

@@ -1116,7 +1116,7 @@ WRITE_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name"},
                 "walk": {
                     "type": "boolean",
-                    "description": "Pass through every intermediate state of the task workflow to done (the core table judges each edge, also where a KB declares its own state_machine: #1709)",
+                    "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
                 },
                 "reason": {
                     "type": "string",

@@ -26,12 +26,6 @@ from pyrite.models.task import TASK_WORKFLOW
 from tests._world import build_world
 
 KB = "work"
-#: #1709: the before_save hook is never given the KB's schema, so a task
-#: `state_machine` a KB declares is ignored by every update; start and finish
-#: are judged as `task update` is (the core table) until that is decided.
-_HOOK_IGNORES_KB_SCHEMA = (
-    "#1709: the update hook is never given kb_schema; a KB's task state_machine is ignored"
-)
 WHO = "agent:w"
 REFUSED = None
 
@@ -211,7 +205,6 @@ def _schema(world, state_machine: str) -> None:
     )
 
 
-@pytest.mark.xfail(strict=True, reason=_HOOK_IGNORES_KB_SCHEMA)
 def test_finish_walk_follows_a_kb_strict_state_machine(world):
     _schema(
         world,
@@ -238,7 +231,6 @@ _RELAXED = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=_HOOK_IGNORES_KB_SCHEMA)
 def test_finish_walk_under_a_relaxed_workflow_takes_one_edge_with_its_reason(world):
     _schema(world, _RELAXED)
     path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))
@@ -252,7 +244,6 @@ def test_finish_walk_under_a_relaxed_workflow_takes_one_edge_with_its_reason(wor
     assert _edges(front) == [("claimed", "done")]
 
 
-@pytest.mark.xfail(strict=True, reason=_HOOK_IGNORES_KB_SCHEMA)
 def test_finish_under_a_relaxed_workflow_without_a_reason_is_refused(world):
     _schema(world, _RELAXED)
     path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))

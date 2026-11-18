@@ -14,7 +14,7 @@
   each item as `by: operator`, `override: true`. A caller who does not hold the task, or no
   caller, is refused (`FORBIDDEN`) and nothing is written. Finish is guarded on the CLI and
   MCP; REST has no finish route yet (see #1745). Edges are
-  judged by the core task workflow even where a KB declares its own task `state_machine`
-  (#1709). A start whose file write is refused puts the index row back as it was,
+  judged by the workflow every update uses: a KB's declared task `state_machine`, else the
+  core table. A start whose file write is refused puts the index row back as it was,
   holder included; a plain `task claim`'s rollback is unchanged. MCP adds `task_start`
   and `task_finish` (write tier); REST adds `POST /api/tasks/{id}/start`.

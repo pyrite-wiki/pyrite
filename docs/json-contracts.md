@@ -1769,8 +1769,8 @@ A refusal writes nothing and is (CLI exit 1):
 - `VALIDATION_FAILED`: the task is already `done`; a status with no path to
   `done`; a task nothing holds (`open`, or a path through it, as from
   `failed`); a path of more than one edge without `--walk` (`walk: true`; the
-  message names the path); an edge the workflow refuses (the core table
-  judges, also where a KB declares a `state_machine`: #1709); an entry that is
+  message names the path); an edge the workflow refuses (the KB's declared
+  `state_machine` where it has one, else the core table); an entry that is
   not a task; and a stale read: the task's status changed between the read and
   the write ("the file's status is ...; read the task again and retry").
   Retry after a stale read; the others need a different request.
