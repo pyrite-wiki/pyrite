@@ -100,5 +100,5 @@ The workflow suggested running `pyrite links suggest` on high-importance entries
 These are pyrite core issues that affect the workflow but haven't been fixed yet:
 
 1. **`list-entries` may have a default limit** that silently drops entries. Use `--limit 500` or count files on disk directly to verify totals.
-2. **`--field` values may not persist to frontmatter** when using `pyrite create --field`. Workaround: write complete markdown files and use `pyrite add` instead.
+2. **Resolved: custom-field persistence.** `pyrite create` persists declared custom fields supplied with `--field`; use schema-valid names and values. Importing a complete Markdown file with `pyrite add` remains an alternative.
 3. **`qa gaps` may report core types instead of custom types** defined in kb.yaml, making the gaps report confusing.

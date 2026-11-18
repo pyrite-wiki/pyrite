@@ -33,7 +33,17 @@ These rules exist because violating them caused real problems across multiple KB
 
 5. **Cross-KB linking is a thinking task.** The intellectual work of identifying how concepts in one KB relate to concepts in another requires reading entries in both KBs and understanding the relationship. `pyrite links suggest` can provide leads but cannot judge intellectual connections.
 
-6. **A KB needs 30-50+ entries to justify its existence.** Below 30, the knowledge graph lacks density and the entries might as well live in a parent KB. Target 30-50 for focused/secondary subjects, 60-120 for major thinkers with large bodies of work. These are guidelines — quality matters more than count — but they help calibrate when to stop researching.
+6. **Calibrate finished coverage to the subject.** See Coverage Expectations for finished-KB sizes; quality matters more than count. A bounded first pass is not a finished KB.
+
+## First pass
+
+For a bounded first pass, aim for **10-15 entries**. Research first (Phase 2,
+Stage 1), tie every factual claim to a `source` entry, and keep entries at
+`research_status: draft`. Keep the verified ID list and facts sheet in
+`<kb>/.research/`; dot-folders are not indexed as entries. Run all three QA
+layers on this small slice, report gaps, and stop at the agreed bound rather
+than implying that population is complete. Continue the same phases when
+expanding toward the finished coverage below.
 
 ## Core Principle: Phases Are Not a Waterfall
 
@@ -83,8 +93,8 @@ LLMs trained with RLHF have a strong bias toward producing complete, confident-s
 1. If working from a spec file, read it and extract: Subject, Scope, Connections, kb_type
 2. If working from a freeform description, discuss with the user to establish: the subject, what the KB should cover, and whether it's an `intellectual-biography` or `movement` type
 3. Determine the KB path. Use `pyrite config` to find the configured data directory, or ask the user where KBs live.
-4. Run `pyrite init --template <kb_type> --path ./<short-name> --name <short-name> --no-examples`
-5. Read the generated `kb.yaml` — it will have bare types with optional fields
+4. When a sibling KB exists in the same collection, start from its `kb.yaml` and rewrite every subject-specific line: name, description, type instructions (`ai_instructions`), guidelines, goals, and evaluation rubric. Set the new KB path and name; do not copy the sibling's entries. Otherwise run `pyrite init --template <kb_type> --path ./<short-name> --name <short-name> --no-examples`
+5. Read the starting `kb.yaml` — the template has bare types with optional fields; a sibling schema still needs the subject-specific rewrite
 6. **Rewrite kb.yaml** to match the quality of existing KBs. For detailed guidance, read `references/kb-yaml-exemplar.md`. Key requirements:
    - Promote key optional fields to required (writing_type, date on writings; date_range on eras; source_type, date on sources; role on people; org_type on organizations)
    - Add a `concept` type if the subject includes distinct frameworks or theories
@@ -96,7 +106,7 @@ LLMs trained with RLHF have a strong bias toward producing complete, confident-s
    - Add `relationship_types` appropriate to the domain
    - Set `policies: qa_on_write: true`
 7. Register the KB if not auto-discovered: `pyrite kb add ./<short-name> --name <short-name> --type <kb_type>`
-8. Run `pyrite index build <kb-name>` to initialize the index
+8. Run `pyrite index build -k <kb-name>` to initialize the index
 
 ### Phase 2: Populate KB
 
@@ -174,8 +184,8 @@ With research complete, create the entries that are primarily factual — where 
    - Instruction: reference concept entries via `[[wikilink]]` but do NOT expand or define the concepts — those entries don't exist yet, and the wikilinks will be filled later
 4. **When evaluating subagent output**, check for the gap inventory at the end of each batch. A subagent that reports "3 claims marked approximate, 2 wanted wikilinks created, uncertain about X" has done better work than one that reports nothing — the latter almost certainly fabricated to fill gaps silently. If a subagent returns no gap inventory, treat its output as higher risk during QA.
 5. **Collect gap signals** from all subagent batches into a running list. These feed directly into Stage 3 (concept entries need to address them) and Phase 4 (gap research).
-6. After batches complete, run `pyrite index build <kb-name>` and `pyrite qa validate <kb-name>`
-7. Apply safe fixes with `pyrite qa fix <kb-name>`
+6. After batches complete, run `pyrite index build -k <kb-name>` and `pyrite qa validate <kb-name>`
+7. Apply safe fixes with `pyrite qa fix -k <kb-name>`
 
 #### Stage 3: Concept Entries (Last, Not First)
 
@@ -185,8 +195,8 @@ Concept entries are the **capstone**, not the foundation. They require the deepe
 2. Create concept entries directly (Opus, not subagent delegation) — these are the intellectual core and the most important entries to get right.
 3. **For every named formula or framework**, define the canonical expansion in exactly one concept entry, verified against the research from Stage 1. This concept entry becomes the single source of truth.
 4. Write concept entries as synthesis: they should draw on and connect the factual entries, not duplicate them. A good concept entry references the writing where the concept first appeared, the people who developed it, and the events where it was presented.
-5. Run `pyrite index build <kb-name>` and `pyrite qa validate <kb-name>`
-6. Rebuild index: `pyrite index build <kb-name> --force --no-embed`
+5. Run `pyrite index build -k <kb-name>` and `pyrite qa validate <kb-name>`
+6. Rebuild index: `pyrite index build -k <kb-name> --force --no-embed`
 
 **Why concepts last:** Concept entries synthesize understanding — they are the last thing you can write well, not the first. The FOCCCUS formula fabrication incident happened precisely because the concept entry was written before the research that would have provided the correct expansion. Factual entries (writings, events) can reference `[[focccus-formula]]` as a wikilink before the concept entry exists; the wikilink becomes a wanted page that signals "this needs to be defined" rather than a prompt to guess.
 
@@ -208,18 +218,18 @@ QA has three layers: **structural** (automated), **judgment** (LLM-reviewed), an
 | Category | Example | Action |
 |---|---|---|
 | **Typo / wrong ID** | `[[herzogwilliam]]` when entry is `herzog-william` | Fix the ID |
-| **Cross-KB reference** | `[[caiaphas]]` in a KB where it belongs to another KB | Convert to plain text or add to cross-kb-links.yaml |
+| **Cross-KB reference** | `[[caiaphas]]` in a KB where it belongs to another KB | Convert to plain text or apply a cross-KB link using Phase 5 |
 | **Wanted page** | `[[sanctuary-movement-precedent]]` — entry should exist but doesn't yet | **Leave it as a wikilink.** It is a gap signal. Add to the gap research list (Phase 4). |
 | **Subagent-invented nonsense** | `[[pattern-commons-layer]]` when no such concept exists | Remove brackets, convert to plain text |
 
 Wanted-page wikilinks are valuable gap signals — they map conceptual territory the KB should cover. Do NOT remove them or convert to plain text. They feed directly into Phase 4 gap research. When an entry IS created to fill the wanted page, the wikilink resolves automatically.
 
 3. **Fix wikilink alias mismatches.** Parallel subagents often create variant IDs for the same entity (e.g., `walter-shewhart` vs `walter-a-shewhart`). Grep all entry files for `\[\[` patterns, compare against actual entry IDs (`pyrite list-entries --kb <kb-name>`), and do global search-replace to normalize aliases.
-4. Run `pyrite qa fix <kb-name> --dry-run` — review proposed fixes
-5. Apply: `pyrite qa fix <kb-name>`
+4. Run `pyrite qa fix -k <kb-name> --dry-run` — review proposed fixes
+5. Apply: `pyrite qa fix -k <kb-name>`
 6. Run `pyrite qa validate <kb-name>` — note: wanted-page wikilinks will still show as broken links. This is expected. The target for structural QA is 0 issues EXCEPT for documented wanted pages.
 7. **Verify index completeness:** Compare `pyrite list-entries --kb <kb-name>` count against the number of markdown files on disk. If they differ, some entries are not indexed — investigate and rebuild with `--force`.
-8. Run an **inbound link audit**: use `pyrite qa gaps` to find entries with 0 inbound links. These are either isolated or under-connected — add references from appropriate entries.
+8. Run an **inbound link audit**: use `pyrite qa gaps -k <kb-name>` to find entries with 0 inbound links. These are either isolated or under-connected — add references from appropriate entries.
 
 **Note on `list-entries` limits:** The `list-entries` command may have a default limit (e.g., 50 entries). Use `--limit 500` or count files on disk directly to verify totals.
 
@@ -285,7 +295,7 @@ This layer catches claims that slipped through the Phase 2 research pass — fac
 
 **Gap sources — combine all of these:**
 
-1. Run `pyrite qa gaps <kb-name> --format json` — structural gaps (sparse types, isolated entries)
+1. Run `pyrite qa gaps -k <kb-name> --format json` — structural gaps (sparse types, isolated entries)
 2. Read the gaps report — identify:
    - Types with few entries relative to scope
    - Missing topics from the original scope description
@@ -331,17 +341,26 @@ Cross-KB linking is primarily a **thinking task** — understanding how ideas in
 
 4. Draft a connection list: source entry -> target entry, relation type, one-line note
 
-#### Step 2: Create link files (tooling)
+#### Step 2: Record and apply links (tooling)
 
 Write `<kb>/cross-kb-links.yaml` with the connections identified in Step 1:
 
 ```yaml
-links:
-  - source: <source-entry-id>
-    target: <target-entry-id>
-    target_kb: <target-kb-name>
-    relation: <relation-type>
-    note: "<one-line description of the connection>"
+- source: <source-entry-id>
+  target: <target-entry-id>
+  target_kb: <target-kb-name>
+  relation: <relation-type>
+  note: "<one-line description of the connection>"
+```
+
+The YAML file is a record of intent; Pyrite does not read it automatically,
+and the applied links live in the entries' frontmatter.
+
+Review the proposed changes, then apply them:
+
+```bash
+pyrite links bulk-create <kb>/cross-kb-links.yaml -k <kb-name> --dry-run
+pyrite links bulk-create <kb>/cross-kb-links.yaml -k <kb-name>
 ```
 
 Create links in **both directions** — if KB-A -> KB-B has 11 links, KB-B -> KB-A should have reciprocal links (not necessarily 1:1, but the major connections should be represented from both sides).
@@ -350,7 +369,8 @@ Create links in **both directions** — if KB-A -> KB-B has 11 links, KB-B -> KB
 
 1. Run `pyrite qa validate <source-kb>` — check for broken links
 2. Verify that target entry IDs actually exist in the target KB
-3. Rebuild both KB indexes
+3. Verify the applied link from the target: `pyrite backlinks <target> -k <target-kb>`
+4. Rebuild both KB indexes
 
 **If cross-linking reveals conceptual gaps** (e.g., a concept in KB-A has no counterpart entry in KB-B, but should), **return to Phase 2 or Phase 4** for the target KB.
 
@@ -360,11 +380,13 @@ After all phases are complete, ensure the KB is accessible.
 
 1. Verify the KB is registered: `pyrite list` should show it with the correct entry count
 2. If the KB was created in a new directory, register it: `pyrite kb add ./<kb-path> --name <kb-name> --type <kb_type>`
-3. Rebuild the index: `pyrite index build <kb-name> --force`
+3. Rebuild the index: `pyrite index build -k <kb-name> --force`
 4. If cross-KB links were added to other KBs, rebuild those indexes too
 5. If using the MCP server (for Claude Desktop integration), rebuild the MCP index separately — the MCP server may use a different config directory than the CLI. Check with `pyrite config` and ensure the MCP server's config includes the new KB.
 
 ## Coverage Expectations
+
+These ranges describe a finished KB, not the bounded first pass.
 
 | Subject prominence | Expected range | Examples |
 |---|---|---|
@@ -410,3 +432,6 @@ Agents must NOT run `git add` or `git commit`. The orchestrator commits all chan
 - **`references/lessons-learned.md`** -- Case studies from real KB builds documenting problems encountered and solutions
 
 ### Related Skills
+
+- [`kb`](../kb/SKILL.md): entry operations, schema inspection, and KB navigation.
+- Research worker skill: planned in tutorial slice 4 (#1665); add its link once available.

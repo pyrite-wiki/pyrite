@@ -13,9 +13,13 @@ Entry type for this batch: <type>
 Topics to cover: <specific list from scope>
 
 IMPORTANT -- Entry creation method:
-Write each entry as a complete markdown file with ALL fields in the YAML
-frontmatter, then add it with `pyrite add`. Do NOT use `pyrite create --field`
-as custom fields may not persist to frontmatter via --field.
+Use `pyrite create` with `--field` for declared custom fields and `--body-file`
+for a body stored in a file, or write a complete Markdown file with ALL fields
+in YAML frontmatter and import it with `pyrite add`. Both methods persist
+custom fields; use the KB schema's declared names and allowed values.
+
+Example create (supply this entry type's other required fields too):
+  pyrite create -k <kb-name> -t <entry-type> --title "<Title>" --body-file <body-path> --field research_status=draft
 
 File format:
 ---
