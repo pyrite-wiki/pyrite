@@ -284,7 +284,7 @@ DECIDED_INSIDE: dict[Site, Entry] = {
     ),
     ("pyrite/storage/repository.py", "KBRepository.list_collection_files"): (
         {"repo._named": 1},
-        "_named (fixed here: as count; moved out of list_all_files by #1262)",
+        "_named (3.11's literal rglob listed a link only when its target existed; moved out of list_all_files by #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.present"): (
         {"KBFiles.present": 1},
@@ -1200,7 +1200,7 @@ MUTATIONS = [
     (
         "pyrite/storage/repository.py",
         'for yaml_file in self._named("__collection.yaml", unreadable):',
-        'for f in self.path.rglob("__collection.yaml"):',
+        'for yaml_file in self.path.rglob("__collection.yaml"):',
     ),
     (
         "pyrite/storage/repository.py",

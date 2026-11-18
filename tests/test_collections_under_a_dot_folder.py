@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from pyrite.config import KBConfig
 from pyrite.storage.repository import KBRepository
 
@@ -20,6 +22,12 @@ def _populate_kb(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     (root / "kb.yaml").write_text("name: test\n")
     (root / "note.md").write_text("---\nid: note-1\ntitle: Note 1\ntype: note\n---\nHello.\n")
+
+    # An in-KB link (alias): should not be counted in file_count
+    try:
+        (root / "alias.md").symlink_to("note.md")
+    except (OSError, NotImplementedError):
+        pass
 
     # Regular collection
     (root / "topic").mkdir(parents=True, exist_ok=True)
@@ -45,9 +53,6 @@ def _populate_kb(root: Path) -> Path:
     )
 
     return root
-
-
-import pytest
 
 
 @pytest.mark.parametrize(

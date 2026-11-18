@@ -684,10 +684,11 @@ class KBRegistryService:
         path_exists = kb_path.exists()
 
         kb_config = self.get_kb_config(name)
-        if kb_config is None and path_exists:
-            kb_config = KBConfig(name=name, path=kb_path)
-
-        file_count = self.count_entry_files(kb_config) if (kb_config and path_exists) else 0
+        file_count = (
+            self.count_entry_files(kb_config or KBConfig(name=name, path=kb_path))
+            if path_exists
+            else 0
+        )
 
         from .index_health import health_verdict, network_shape
 
