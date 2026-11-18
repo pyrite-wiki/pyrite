@@ -1302,6 +1302,13 @@
             "description": "Run in background (returns job_id for polling). Default: false",
             "type": "boolean"
           },
+          "confirm": {
+            "description": "After the sync, say for each entry id or KB-relative path whether it is indexed and searchable: a `confirm` block with one row per name (status indexed, not_indexed, not_found, malformed, duplicate or skipped; schema findings; embedding embedded, queued or unavailable) and `outcome` done or partial. An empty list confirms every entry the sync added or changed. Needs kb_name; refused with background.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "Sync specific KB (optional - syncs all if not provided)",
             "type": "string"
@@ -2478,6 +2485,13 @@
             ],
             "type": "string"
           },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "title": {
             "description": "ADR title",
             "type": "string"
@@ -3223,6 +3237,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
@@ -5237,6 +5262,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
@@ -7675,6 +7711,13 @@
             ],
             "type": "string"
           },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "title": {
             "description": "ADR title",
             "type": "string"
@@ -8420,6 +8463,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",

@@ -112,6 +112,7 @@ def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
     Uses the same value parser as `create -f`/`update -f`
     (`_parse_field_value`), and refuses:
 
+    - a key named twice (#1726);
     - a key that already has its own option;
     - `status` (task lifecycle is `task update --status`, not a free-form
       field);
@@ -135,19 +136,28 @@ def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
                 message, errors=[{"field": "--field", "rule": "format", "message": message}]
             )
         k, v = fv.split("=", 1)
+        if k in fields:
+            message = (
+                f"--field {k} is given more than once; send several values as one "
+                f'JSON array: --field \'{k}=["a", "b"]\''
+            )
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "repeated", "message": message}]
+            )
         if k in _FIELD_OWN_OPTION:
             message = f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
             raise ValidationError(
                 message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
         if k == "status":
-            message = (
-                "--field status=... is refused: a new task is always created open; "
-                "use `task update --status` to change it."
-            )
-            raise ValidationError(
-                message, errors=[{"field": k, "rule": "managed", "message": message}]
-            )
+            if v != "open":
+                message = (
+                    "--field status=... is refused: a new task is always created open; "
+                    "use `task claim` or `task update --status` to change it."
+                )
+                raise ValidationError(
+                    message, errors=[{"field": k, "rule": "managed", "message": message}]
+                )
         if k in _FIELD_CREATE_OWNED:
             message = f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k]
             raise ValidationError(
@@ -328,20 +338,62 @@ def task_list(
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
     priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
+    dispatchable: bool = typer.Option(
+        False,
+        "--dispatchable",
+        help="Only tasks a worker can take now (for a caller who may claim, each one is a "
+        "task claim accepts): open, unassigned, unparked, unblocked, no children; "
+        "highest priority first. Adds counts and excluded.",
+    ),
+    fields: str | None = typer.Option(
+        None,
+        "--fields",
+        help="Comma-separated fields per task (id and kb_name are always kept); * for all",
+    ),
 ) -> Outcome:
     """List tasks with optional filters."""
+    from ..services.read_shaping import parse_cli_fields
+
+    fields_list = parse_cli_fields(fields)
     svc, db = _get_service(kb_name)
     try:
-        items = svc.list_tasks(
+        data = svc.task_listing(
             kb_name=kb_name,
             status=status,
             assignee=assignee,
             parent=parent,
             priority=priority,
+            dispatchable=dispatchable,
+            fields=fields_list,
         )
     finally:
         db.close()
-    return Outcome.done({"count": len(items), "tasks": items}, rich=_render_list)
+    if fields_list:
+        from ..services.task_service import TaskService
+
+        unmatched = [
+            f
+            for f in fields_list
+            if f not in TaskService.TASK_ROW_FIELDS and not any(f in t for t in data["tasks"])
+        ]
+        if unmatched:
+            typer.echo(
+                f"warning: no task carries: {', '.join(unmatched)} "
+                "(field names are case-sensitive; '*' returns every field)",
+                err=True,
+            )
+
+    def rich(console, data: dict) -> None:
+        if fields_list:
+            from ..formats.tabular import projected_rich_table
+
+            console.print(projected_rich_table(data["tasks"], fields_list, "Tasks"))
+        else:
+            _render_list(console, data)
+        if "counts" in data:
+            console.print(", ".join(f"{k}: {v}" for k, v in data["counts"].items()), markup=False)
+
+    return Outcome.done(data, rich=rich)
 
 
 @task_app.command("get")
@@ -394,51 +446,24 @@ def _render_task(console, result: dict) -> None:
         console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
         for c in children:
             console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
+    body = result.get("body", "")
+    if body:
+        console.print()
+        console.print(body, markup=False, highlight=False)
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
     svc, db = _get_service(kb_name)
     try:
-        task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
-        if not task:
+        task_detail = svc.get_task_detail(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not task_detail:
             missing = EntryNotFoundError(f"Task '{task_id}' not found")
             missing.suggestion = f"run `pyrite task list -k {kb_name or '<kb>'}` to find task IDs"
             raise missing
-
-        meta = task.get("metadata", {})
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-
-        children_list = svc.list_tasks(kb_name=kb_name, parent=task_id)
-        children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
-            for c in children_list
-        ]
-        task_kb = task.get("kb_name", kb_name or "")
-
-        result = {
-            "id": task["id"],
-            "title": task["title"],
-            "status": task.get("status") or meta.get("status", "open"),
-            "assignee": task.get("assignee") or meta.get("assignee", ""),
-            "priority": task.get("priority") or meta.get("priority", 5),
-            "parent": meta.get("parent", ""),
-            "dependencies": meta.get("dependencies", []),
-            "evidence": meta.get("evidence", []),
-            "due_date": task.get("due_date") or meta.get("due_date", ""),
-            "agent_context": meta.get("agent_context", {}),
-            "children": children,
-            "kb_name": task_kb,
-            # Computed from the children, never read from or written to the file.
-            "derived": svc.derived_for(task_kb, task["id"]),
-        }
     finally:
         db.close()
-    return Outcome.done(result, rich=_render_task)
+    return Outcome.done(task_detail, rich=_render_task)
 
 
 @task_app.command("update")

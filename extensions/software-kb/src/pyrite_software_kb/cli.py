@@ -187,6 +187,7 @@ def sw_new_adr(
     title: str = typer.Argument(..., help="ADR title"),
     status: str = typer.Option("proposed", "--status", "-s", help="Initial status"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
+    tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
 ):
     """Create a new ADR with the next sequential number, through the write
     pipeline."""
@@ -250,6 +251,7 @@ def sw_new_adr(
                 body,
                 owns=frozenset({"adr_number"}),  # the owner sets its own number
                 adr_number=next_num,
+                tags=[tag.strip() for tag in tags.split(",")] if tags else None,
                 status=status,
                 date=today,
             )
@@ -267,7 +269,7 @@ def sw_new_adr(
         repo = KBRepository(kb_conf)
         file_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
 
-        console.print(f"[green]Created ADR-{next_num:04d}:[/green] {title}")
+        console.print(f"[green]Created {entry.id} (ADR-{next_num:04d}):[/green] {title}")
         console.print(path_line("  File: ", file_path, path_style="cyan"))
         console.print(f"  Status: [yellow]{status}[/yellow]")
     finally:
@@ -746,7 +748,7 @@ def sw_migrate_standards(
     """Migrate type:standard entries to programmatic_validation or development_convention."""
     from pathlib import Path
 
-    from pyrite.exceptions import EntryLoadError, KBReadOnlyError
+    from pyrite.exceptions import EntryLoadError, KBReadOnlyError, ValidationError
     from pyrite.storage.database import PyriteDB
     from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
     from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
@@ -885,6 +887,10 @@ def sw_migrate_standards(
                             f"  [red]Skip[/red] {row['title']}: ", path, " changed; run again"
                         )
                     )
+                    skipped += 1
+                    continue
+                except ValidationError as e:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {e}", markup=False)
                     skipped += 1
                     continue
                 console.print(path_line(f"  [green]Migrated[/green] {row['title']} -> ", new_path))

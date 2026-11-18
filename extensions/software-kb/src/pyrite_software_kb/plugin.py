@@ -505,6 +505,11 @@ class SoftwareKBPlugin:
                     "properties": {
                         "kb_name": {"type": "string", "description": "KB name"},
                         "title": {"type": "string", "description": "ADR title"},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tags for the ADR",
+                        },
                         "context": {"type": "string", "description": "Context section"},
                         "decision": {"type": "string", "description": "Decision section"},
                         "consequences": {"type": "string", "description": "Consequences section"},
@@ -1843,6 +1848,7 @@ class SoftwareKBPlugin:
                 body,
                 owns=frozenset({"adr_number"}),
                 adr_number=next_num,
+                tags=args.get("tags", []),
                 status=status,
                 date=date.today().isoformat(),
                 deciders=args.get("deciders", []),

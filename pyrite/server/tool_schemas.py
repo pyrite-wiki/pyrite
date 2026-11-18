@@ -628,6 +628,20 @@ READ_TOOLS = {
                     "type": "string",
                     "description": "Filter by parent task ID",
                 },
+                "dispatchable": {
+                    "type": "boolean",
+                    "description": "Only tasks a worker can take now (for a caller who may claim, "
+                    "each one is a task_claim accepts): open, unassigned, unparked, "
+                    "dependencies resolved, no children; highest priority first, then oldest. "
+                    "Adds `counts` (per reason) and `excluded` (each open task left out, with "
+                    "its reason).",
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Return only these fields per task. `id` and `kb_name` are "
+                    "always included.",
+                },
             },
             "required": [],
         },
@@ -1222,6 +1236,18 @@ ADMIN_TOOLS = {
                     "type": "boolean",
                     "description": "Run in background (returns job_id for polling). Default: false",
                     "default": False,
+                },
+                "confirm": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "After the sync, say for each entry id or KB-relative path whether it is "
+                        "indexed and searchable: a `confirm` block with one row per name (status "
+                        "indexed, not_indexed, not_found, malformed, duplicate or skipped; schema "
+                        "findings; embedding embedded, queued or unavailable) and `outcome` done "
+                        "or partial. An empty list confirms every entry the sync added or changed. "
+                        "Needs kb_name; refused with background."
+                    ),
                 },
             },
             "required": [],

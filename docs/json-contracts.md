@@ -384,7 +384,7 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Only the type a create would store is checked (#1526). A declared mapping (`type_mappings` in `kb_schema`/`orient`, e.g. `event` → `investigation_event`) applies when the KB declares its target, or declares no types; the named type need not be declared. So in a KB made from the journalism-investigation preset, which declares `investigation_event` but not `event`, `create -t event` stores `investigation_event`. When no mapping applies, the named type is checked: a KB that declares neither `event` nor its target refuses `create -t event`. `allow_undeclared` never changes which mapping applies; it only lets an undeclared named type with no applicable mapping be stored as named. The write path also has a check that refuses, naming it, a mapped type the KB does not declare; no create reaches it today (the resolver never offers such a pair), and it guards a later `kb.yaml` `type_map:` override (#468). Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>` prints the KB's `kb.yaml`; the types and the `type_mappings` a create applies are in `pyrite orient -k <kb> --format json` under `schema`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
-| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), the ADR-0034 truncated-body refusal below, and a create whose path, chosen by `kb.yaml` (a static `subdirectory`, a `file_pattern`) or by a field value (a templated `subdirectory`), is one the index walk does not list: a dot-prefixed folder or file, a folder named `_templates` in any letter case, a file named `README.md` in any case, or a name not ending in `.md` (#1552; a field value adds an `errors` row `{field, rule: "entry_path", got, message}`; nothing is written; a dry run, `validate_only` and bulk validate answer the same, counting the paths earlier items of the batch would take; the answer, not the path: no dry run reports the file name the write will use; on a case-insensitive disk two such paths that differ only in case are still compared as different names). Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
+| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), the ADR-0034 truncated-body refusal below, and a create whose path, chosen by `kb.yaml` (a static `subdirectory`, a `file_pattern`) or by a field value (a templated `subdirectory`), is one the index walk does not list: a dot-prefixed folder or file, a folder named `_templates` in any letter case, a file named `README.md` in any case, or a name not ending in `.md` (#1552; a field value adds an `errors` row `{field, rule: "entry_path", got, message}`; nothing is written; a dry run, `validate_only` and bulk validate answer the same, counting the paths earlier items of the batch would take; the answer, not the path: no dry run reports the file name the write will use; batch taken paths are compared ignoring letter case and Unicode normalisation on every disk, so two such paths that differ only in case step the second to `-2` or refuse a colliding `file_pattern`; #1623). Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
 | `CONFLICT` | the file kept changing between the update's read and its replace, five tries in a row; nothing was written. REST answers `409`; MCP and the CLI use the shape above. | Re-read the entry, then repeat the update. |
 | `STORAGE_ERROR` | a storage fault on the write (REST `500`). The message is fixed text; the cause is in the server log. One exception: an index Pyrite cannot bring to its schema when it opens it (a column that cannot be added in place, a migration that failed) is refused with a message naming only schema versions and `table.column`, plus a `suggestion` (#1260); a lock met while opening, upgrading or writing the index is the retryable one. | Read `retryable`: `true` only for a locked database, so wait and repeat; `false` needs an administrator. |
 | `OUTSIDE_KB_ROOT` | a write to a KB entry whose path leaves the KB root: the entry file, or a folder on its path, is a symbolic link to somewhere outside the KB's folder, or a configured path (a type's `subdirectory`, a `file_pattern`) leads outside it. The writer opens each folder beneath the KB root without following a link, so a folder swapped for a link while the write runs is refused the same way. Every write refuses it before anything is written: `create`, `update` (including `qa fix`'s), `rename`, `delete`, `schema migrate`, the reconcile move, software-kb's `migrate-standards`. A write **by id** (`update`, `rename`, `delete`) never reaches such a file: a file that is a link out of the KB, or has a second hard link, is not the KB's, so an id it holds matches nothing and the answer is `NOT_FOUND`, the same as for an id nothing holds, whatever that file holds. `OUTSIDE_KB_ROOT` is the answer where the path itself is the KB's name for the file (a `create` at that path, a folder on the way swapped for a link while the write runs). An update used to write through such a link to its target. A link whose target is inside the KB is still written through, and stays a link. The message names no path; the server log does. One neighbour keeps its code: a write whose own path is a file with more than one hard link (a write that does not look the file up by id) is `STORAGE_ERROR` (its other name may be outside the KB; the message names the KB-relative path only), in a KB under git or not; and `migrate-standards`, which moves the file, refuses an entry whose file is a symbolic link with `VALIDATION_FAILED` and the reason (the link's target is never removed). A `rename` moves nothing, so it is written through a link whose target is inside the KB, as an update is. | Replace the link with the file or folder it points to, inside the KB, then retry. |
@@ -559,7 +559,7 @@ a row here (a test compares this table with the command's output).
 | `malformed_frontmatter` | Files that read but whose frontmatter does not parse. | Warning | Hand edit the YAML, then `pyrite index sync`. |
 | `unreadable_files` | Files that exist but whose bytes cannot be read or decoded. | Failure | Fix permissions or encoding, then `pyrite index sync`. |
 | `unreadable_kbs` | KBs whose `kb.yaml` Pyrite could not check or read (for example, a KB folder it may not search), as `{kb, error}`; every other KB is still checked. | Failure | Fix the folder's permissions, then `pyrite index sync`. |
-| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). A symbolic link is never named, whatever its target. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
+| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). A symbolic link the OS reports as one is never named, whatever its target. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
 | `orphaned_entries` | Indexed IDs absent from the readable files although the recorded path exists. | Failure | `pyrite index sync` (or hand edit the ID). |
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
@@ -1171,6 +1171,51 @@ when no link is broken, and `1` with `"outcome": "nothing"` when any is, with
 the findings still in the document (`missing_targets`, `total_references`,
 `targets`, each target with its `references`).
 
+## Task list: `task list`, `task_list`, `GET /tasks`
+
+The three return one body, built by `TaskService.task_listing`:
+`{"count", "tasks"}` (the CLI adds `outcome`), newest task first. A zero-row
+list is `done` (ADR-0046). Two optional arguments, each absent by default, and
+without them the body is unchanged:
+
+- **`--fields a,b`** (MCP `fields: ["a","b"]`, REST `?fields=a,b`) projects
+  each `tasks` row through `project_fields`: the named keys plus `id` and
+  `kb_name`, never a key the row lacks. CLI `*` means every field.
+- **`--dispatchable`** (MCP `dispatchable: true`, REST `?dispatchable=true`)
+  keeps only the tasks a worker can take now, and orders them by priority
+  highest first, then oldest `created_at`, then KB, then id. One classifier
+  decides it (`pyrite/models/task_queue.py`), over the effective status
+  (ADR-0045 decision 7), and it writes nothing. The body gains:
+
+  ```json
+  {"count": 2, "tasks": [...],
+   "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
+              "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
+              "unreadable": 0},
+   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}]}
+  ```
+
+  `counts` has every key, even at zero, and sums to the tasks the other
+  filters matched. `excluded` lists each **open** task that was left out,
+  with its one reason, in the same order; tasks that are not open are only
+  counted. For a caller who may claim, every listed task is one `task claim`
+  accepts now: a row the claim would refuse is left out with its reason. A
+  task gets the first reason that applies:
+
+  | Reason | The task |
+  |---|---|
+  | `not_open` | effective status is not `open` (a parent done by its children is `not_open`) |
+  | `empty_status` | its file says `status: ""`: read as open, but the claim takes only `open` or an unset status |
+  | `orphaned` | its index row's file is gone |
+  | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
+  | `assigned` | names any assignee |
+  | `parked` | `parked_awaiting` says why it waits; empty, whitespace, `''` and `null` do not park, and the body is never read |
+  | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
+  | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
+
+  With `--fields`, the CLI names on stderr any field no task carries (as
+  `search` does); nothing is refused.
+
 ## Link discovery: what is left out
 
 `pyrite links discover`, `pyrite links batch-suggest`, MCP `kb_discover_neighbors`
@@ -1305,6 +1350,61 @@ columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
 whole row.
 
+### `search --batch`: many searches in one process (CLI only)
+
+`pyrite search --batch queries.json` (`-` reads stdin) takes the place of
+`QUERY` and runs a JSON list of query objects in one process: one config load,
+one index, one embedding-model load. `QUERY` and `--batch` together, `--files`
+or `--expand` with `--batch`, and `--format csv|markdown` with `--batch` are
+usage errors (exit 2). MCP clients issue parallel `kb_search` calls instead;
+there is no MCP or REST batch search.
+
+```json
+[
+  {"query": "falcon", "kb": "birds"},
+  {"query": "marsh", "kb": "birds", "type": ["note"], "mode": "semantic", "limit": 5, "fields": "id,title"}
+]
+```
+
+A query object has `query` (required) and may have `kb`, `type` (a list, as
+`--type` repeats), `mode`, `limit`, `fields` (a string, or a list joined by
+commas), `status` and `tag`. The command-line options are the defaults for
+every query and a key in the object overrides them; options with no key
+(`--exclude-type`, `--from`, `--to`, `--fips`, `--state`, `--include-archived`,
+`--include-body`) apply to all of them. Any other key, `expand` included, is
+refused in its slot.
+
+```json
+{
+  "count": 2,
+  "searches": [
+    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "keyword_match": "strong"},
+    {"query": "falcon AND", "count": 0, "results": [], "error": "...", "error_code": "QUERY_SYNTAX", "retryable": false, "suggestion": "..."}
+  ]
+}
+```
+
+`searches` has one slot per query, in input order. A slot that ran is the
+document a single `pyrite search` prints for the same arguments: same rows,
+same `match`, `match_basis`, `legs_run` and `warnings`, same `--fields`
+projection (`test_a_slot_equals_the_single_search` compares them). A slot that was refused (a syntax error, a
+query over the length cap, an unknown KB, an unknown key, a bad value) has
+`query`, `count: 0`, `results: []` and the canonical error shape
+(`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
+siblings. Text that is not valid UTF-8 (a lone surrogate) is such a refusal,
+`VALIDATION_FAILED`. Only a refusal (a `PyriteError`) fills a slot; an unexpected
+fault is not caught per slot and ends the command. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
+(`partial`) when some were refused, 1 (`nothing`) when all were. A batch of
+none is `{"count": 0, "searches": []}`, exit 0.
+
+The batch as a whole is refused, exit 1 with the error shape and no `searches`,
+when the file is missing (`NOT_FOUND`), is not UTF-8, cannot be read (an
+`OSError`), is not JSON, is not a list, or holds more than 50 queries
+(`VALIDATION_FAILED`; the cap `batch-read` has); stdin (`-`) is refused the
+same way, never with a traceback. Warnings and the trace go to stderr,
+prefixed with the query's position. The stale-index warning appears once for
+the whole batch and covers every KB, not only the ones the queries name.
+
 ### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
 
 Every search response, on the CLI (`pyrite search`, `pyrite-read search`),
@@ -1437,6 +1537,10 @@ Source of truth: `pyrite/server/mcp_server.py` (`_kb_search`,
 A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
+
+A single task (`pyrite task get`, MCP `task_status`) returns the task
+detail dictionary with `body` included directly from the file. Over the
+MCP chunk default, MCP returns ADR-0034 truncation markers as `kb_get` does.
 
 A single entry is read from its file as the file is now, so an edit made
 since the last `index sync` is in it; `content_hash` is the SHA-256 of the
@@ -2003,6 +2107,13 @@ checked against each command's Typer signature by
 | `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
 | `task create` | yes (shared; `-f` deprecated) | `json` |
+| `task get` | yes (shared; `-f` deprecated) | `json` |
+
+`index sync` takes the shared option with no default (#1691): asked for
+nothing (no `--format`, no `PYRITE_FORMAT`), it answers as it did before it
+joined the contract: its result as text, a refusal as one `ERROR [CODE]` line,
+and a storage fault (`STORAGE_ERROR`) as the JSON error shape. An asked-for
+format applies to the whole answer.
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
@@ -2190,8 +2301,9 @@ not parse still loses its row, as before.
   tried to list and could not (its listing failed, or failed part way), and
   a name whose own type the operating system will not give (in a folder
   Pyrite may not search, on a filesystem that does not say a name's type),
-  unless its name ends in `.md` or is `__collection.yaml` (then it is that
-  file's own stat that names it). A symbolic link is never one: the walk
+  whatever its name; when that name is really a file (`*.md`,
+  `__collection.yaml`), the file's own stat also names it under
+  `unreadable_files`. A symbolic link the OS reports as one is never one: the walk
   never enters a link, so a link whose target cannot be reached (a link to
   itself, a link into a folder Pyrite may not search, a link through a
   file) is not named, and a sync that meets one still exits `0` and health
@@ -2226,6 +2338,92 @@ not parse still loses its row, as before.
   named. A background sync job keeps the rows but does not yet name the
   folders in its job result (#1548); `pyrite index health` does.
 
+## `index sync --confirm`: is each named entry indexed and searchable?
+
+After writing entry files directly, an agent can ask the sync to confirm its
+entries (#1691): `pyrite index sync -k KB --confirm NAME...`, MCP
+`kb_index_sync` with `confirm: [names]`, REST `POST /api/index/sync?wait=true&kb=KB&confirm=a&confirm=b`
+(admin tier, unchanged). A name is an entry id, or a path relative to the KB's
+folder (`notes/a.md`), so a file with no `id:` can be confirmed too. With no
+names (`--confirm` alone, `confirm: []`, a single empty `confirm=`) it confirms
+every entry this sync added or changed; a blank name names nothing, on every
+surface. One place decides the block (`pyrite/services/index_confirm.py`), and
+a KB the process has not loaded is refused (`KB_NOT_FOUND`), never answered
+`done`. The local CLI gets the rows whole; MCP and REST get them as index
+health shapes answers for network callers (#1552; `network_shape` in
+`pyrite/services/index_health.py`): a `skipped` name reads `not_found` with no
+path or reason, a `duplicate` row has no `paths`, and a file that could not be
+read is not named:
+
+```json
+{
+  "kb": "notes",
+  "named": true,
+  "entries": [
+    {"name": "a", "id": "a", "path": "a.md", "status": "indexed", "reason": null,
+     "searchable": true, "findings": [], "embedding": "queued", "confirmed": true},
+    {"name": "b", "id": "b", "path": "b.md", "status": "indexed", "reason": null,
+     "searchable": true,
+     "findings": [{"rule": "schema_violation", "severity": "error", "field": "severity",
+                   "message": "Schema error on 'b': ..."}],
+     "embedding": "queued", "confirmed": false},
+    {"name": "missing", "id": "missing", "path": null, "status": "not_found",
+     "reason": null, "searchable": null, "findings": [], "embedding": null,
+     "confirmed": false}
+  ],
+  "confirmed": 1,
+  "not_confirmed": 2,
+  "outcome": "partial"
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `indexed` | One parseable file holds the id, its index row points at that file with the file's content hash, and a keyword search returns it. |
+| `not_indexed` | A file holds the id, but the row is missing, points at another file, has another hash, was kept unread (a file it could not read, #1546), or a keyword search does not return it; `reason` says which. Run `pyrite index sync` again, then `pyrite index health`. **Limit:** the keyword lookup reads the first 1,000 results for the id, then for the title; past that, a real entry with a common id and a common title in a large KB reads `not_indexed` (the confirm fails safe: exit 3, never a false `indexed`). |
+| `not_found` | No file holds the id, or nothing is at the path. |
+| `malformed` | The file does not parse, or could not be read (`reason`, fixed words; the local sync's own list names the parser's error). A malformed file named by id is matched on its file name (`b.md` for the id `b`); name it by its path otherwise. |
+| `duplicate` | More than one file claims the id; `paths` lists them, the indexed one first (ADR-0038). Local CLI only; a network row has no `paths`. |
+| `skipped` | The walk passes the file by: a dot-prefixed folder, `_templates/`, a README, a file that is not a regular file, an in-KB link (`reason`). Local CLI only; a network caller gets `not_found`. |
+
+- **`searchable`**: whether the keyword lookup returned the entry (by its id,
+  then by its title), or `null` when there is no row to look for.
+- **`findings`**: the schema findings `qa validate` reports for the entry
+  (`schema_violation`, `frontmatter_unmodellable`; the same validator `qa
+  validate` and `index health` share), `{rule, severity, field, message}`.
+- **`embedding`**: `embedded`, `queued` (owed: not embedded yet, or changed
+  since it was; ADR-0035, never waited on) or `unavailable` (no embedding
+  provider here); `null` for a name with no row. It never decides `confirmed`.
+- **`confirmed`**: `status` is `indexed` and, for a NAMED entry, no finding
+  has severity `error`. With no names the findings are reported only.
+
+**Exit and outcome.** `done`, exit `0`, when every row is confirmed (and the
+sync itself was whole); `partial`, exit `3`, when any row is not. The block's
+own `outcome`, for an MCP or REST caller, covers the rows only: a folder or
+file the sync could not reach, and that no name pointed at, makes the CLI
+exit `3` without changing the block's `outcome` (follow-up #1747). A sync that did not run
+(a KB whose files cannot be read, `KB_UNREADABLE`; a `kb.yaml` that does not
+load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
+
+**Refused before anything runs.** `--confirm` with `--background` and
+`--confirm` without `-k` are usage errors (exit `2`); names without
+`--confirm` too. MCP refuses `confirm` with `background: true` or without
+`kb_name`, REST `confirm` without `wait=true` or `kb`, as `VALIDATION_FAILED`
+(REST 422).
+
+**Plain `index sync`** is on the outcome contract too (maintainer, 2026-11-17):
+its `--format` is the shared option with no default, so with no format asked
+for it answers exactly as before: the text a person always saw, a refusal as
+one `ERROR [CODE]` line, a storage fault as the JSON error shape (plus the
+`outcome` key every refusal on the contract carries). `--format rich` prints
+every refusal as the one line;
+`PYRITE_FORMAT=json` or `--format json` prints the sync result (`added`, `updated`, `removed`, `malformed`,
+`skipped`, `duplicates`, `aliases`, `dangling_links`, `unreadable_kbs`,
+`unreadable_folders`, `unreadable_files`, `changed`, `synced_kbs` (the KBs it
+reconciled), and `embedded` when the sync embedded any) plus `outcome`. `changed` lists `{kb, id, path, change}`
+for each row added, updated or removed (`IndexManager.sync_incremental` and
+`reconcile_kb` return it too). The exit codes are unchanged.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"
@@ -2237,7 +2435,7 @@ is the error shape above in one line.
 <!-- orient-operational-contracts -->
 ```json
 {
-  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
   "error_contract": {
     "shape": "{error, error_code, suggestion?, errors?, retryable}",
     "error": "human-readable message",

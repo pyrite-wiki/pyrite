@@ -245,6 +245,24 @@ def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool
     return None
 
 
+def _confirm_names(value: Any, *, kb_name: Any, background: Any) -> list[str] | None:
+    """``kb_index_sync``'s ``confirm``: None when not asked, else the names as
+    given (``confirm_entries`` decides what they mean). Refused with a
+    background sync or without ``kb_name``, as ``index sync --confirm``
+    refuses them (#1691)."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValidationError("confirm must be a list of entry ids or KB-relative paths")
+    if background:
+        raise ValidationError(
+            "confirm cannot be combined with background: a confirm reads the sync"
+        )
+    if not kb_name:
+        raise ValidationError("confirm needs kb_name: the KB the entries are in")
+    return list(value)
+
+
 def _error(
     code: str,
     message: str,
@@ -1913,15 +1931,19 @@ class PyriteMCPServer:
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
         """List tasks with filters."""
+        from ..services.read_shaping import parse_fields_param
+
         kb_name = args.get("kb_name")
-        tasks = self.task_svc.list_tasks(
+        listing: dict[str, Any] = self.task_svc.task_listing(
             kb_name=kb_name,
             kb_names=None if kb_name else readable_kbs,
             status=args.get("status"),
             assignee=args.get("assignee"),
             parent=args.get("parent"),
+            dispatchable=bool(args.get("dispatchable")),
+            fields=parse_fields_param(args.get("fields")),
         )
-        return {"count": len(tasks), "tasks": tasks}
+        return listing
 
     def _resolve_task_kb(
         self, task_id: str, kb_name: str | None, *, readable_kbs: set[str] | None
@@ -2006,58 +2028,17 @@ class PyriteMCPServer:
     def _task_status(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
-        """Get task details with children, deps, evidence."""
-        import json as _json
-
+        """Get task details with children, deps, evidence and body."""
         task_id = args.get("task_id")
         kb_name = args.get("kb_name")
+        body_offset = args.get("body_offset", 0)
+        body_limit = args.get("body_limit")
 
-        task = self.task_svc.get_task(task_id, kb_name, readable_kbs=readable_kbs)
-        if not task:
+        result = self.task_svc.get_task_detail(task_id, kb_name, readable_kbs=readable_kbs)
+        if not result:
             return _error("NOT_FOUND", f"Task '{task_id}' not found")
 
-        meta = task.get("metadata", {})
-        if isinstance(meta, str):
-            try:
-                meta = _json.loads(meta)
-            except (ValueError, TypeError):
-                meta = {}
-
-        children_list = self.task_svc.list_tasks(
-            kb_name=kb_name,
-            kb_names=None if kb_name else readable_kbs,
-            parent=task_id,
-        )
-        children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
-            for c in children_list
-        ]
-        task_kb = task.get("kb_name", kb_name or "")
-        from ..models.task import coerce_task_priority as _coerce_task_priority
-
-        return {
-            "id": task["id"],
-            "title": task["title"],
-            # The index row's columns, as `task get` reads them: `status`
-            # is a column, never in `metadata`, so meta.get("status") said
-            # "open" for every task, whatever its file said.
-            "status": task.get("status") or meta.get("status", "open"),
-            "assignee": task.get("assignee") or meta.get("assignee", ""),
-            # The model's reading, as list_tasks gives it (#554): an index row
-            # may still hold a word such as `medium`.
-            "priority": _coerce_task_priority(
-                task.get("priority") or meta.get("priority", 5), task["id"]
-            ),
-            "parent": meta.get("parent", ""),
-            "dependencies": meta.get("dependencies", []),
-            "evidence": meta.get("evidence", []),
-            "due_date": task.get("due_date") or meta.get("due_date", ""),
-            "agent_context": meta.get("agent_context", {}),
-            "children": children,
-            "kb_name": task_kb,
-            # Computed from the children; never a field of the file.
-            "derived": self.task_svc.derived_for(task_kb, task["id"]),
-        }
+        return self.body_bounds.chunk_body(result, offset=body_offset, limit=body_limit)
 
     def _kb_batch_suggest(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
@@ -2241,9 +2222,14 @@ class PyriteMCPServer:
     # =========================================================================
 
     def _kb_index_sync(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Sync index with file changes. Set background=true for async execution."""
+        """Sync index with file changes. Set background=true for async execution.
+
+        ``confirm`` (a list of ids or KB-relative paths; empty: every entry the
+        sync added or changed) adds the ``confirm`` block ``index sync
+        --confirm`` prints (``services.index_confirm``, #1691)."""
         kb_name = args.get("kb_name")
         background = args.get("background", False)
+        confirm = _confirm_names(args.get("confirm"), kb_name=kb_name, background=background)
 
         if background:
             worker = self._get_index_worker()
@@ -2253,7 +2239,22 @@ class PyriteMCPServer:
         results = self.index_mgr.sync_incremental(kb_name)
         from ..services.index_health import network_shape
 
-        return {
+        if confirm is not None:
+            from ..services.index_confirm import confirm_entries
+
+            # The KB is resolved here, at the entry point, through the one
+            # resolver (T3-1, #1530); the confirm takes the handle. The caller
+            # is unscoped: a scoped caller is refused this tool before the
+            # handler runs (fail closed; tests/test_mcp_tool_registry_is_scoped.py,
+            # OPTIONAL_KB_TOOLS), and declaring a readable set here would turn
+            # that refusal off. `_confirm_names` has refused an absent name;
+            # a blank one resolves to None, which the confirm refuses.
+            resolved = self.svc.resolve_kb(kb_name, readable_kbs=None)
+            results["confirm"] = confirm_entries(self.index_mgr, resolved, confirm, results)
+        # What a network caller gets of the result (#1546, #1552), the confirm
+        # block included: one place decides it.
+        shaped = network_shape(results)
+        answer = {
             "synced": True,
             "added": results["added"],
             "updated": results["updated"],
@@ -2264,8 +2265,11 @@ class PyriteMCPServer:
             "unreadable_kbs": results.get("unreadable_kbs", []),
             # Folders it could not list, rows kept (#1546): a count, never a
             # path, over the network (``network_shape``).
-            "unreadable_folders": network_shape(results)["unreadable_folders"],
+            "unreadable_folders": shaped["unreadable_folders"],
         }
+        if confirm is not None:
+            answer["confirm"] = shaped["confirm"]
+        return answer
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:
         """Check status of a background index job."""

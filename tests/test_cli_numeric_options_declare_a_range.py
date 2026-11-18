@@ -310,7 +310,6 @@ NOT_YET: set[tuple[str, str]] = {
     #
     #
     # pyrite/cli/collection_commands.py
-    ("pyrite collections query", "limit"),
     #
     #
     # pyrite/cli/link_commands.py
@@ -319,31 +318,6 @@ NOT_YET: set[tuple[str, str]] = {
     #
     # pyrite/cli/task_commands.py
     ("pyrite task list", "priority"),
-    #
-    # pyrite/read_cli.py
-    ("pyrite-read timeline", "min_importance"),
-    ("pyrite-read timeline", "limit"),
-    #
-    #
-    # extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py
-    ("pyrite investigation timeline", "min_importance"),
-    ("pyrite investigation timeline", "limit"),
-    ("pyrite investigation entities", "min_importance"),
-    ("pyrite investigation entities", "limit"),
-    ("pyrite investigation sources", "limit"),
-    ("pyrite investigation claims", "min_importance"),
-    ("pyrite investigation claims", "limit"),
-    ("pyrite investigation qa", "stale_days"),
-    ("pyrite investigation search", "limit"),
-    ("pyrite investigation ownership", "depth"),
-    ("pyrite investigation money-flow", "hops"),
-    ("pyrite investigation export", "min_importance"),
-    ("pyrite investigation dedup", "threshold"),
-    #
-    #
-    # extensions/social/src/pyrite_social/cli.py
-    ("pyrite social newest", "limit"),
-    ("pyrite social top", "limit"),
 }
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"

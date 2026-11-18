@@ -18,7 +18,23 @@ def _blocks(page):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="The documented entry writes require POSIX publication")
-@pytest.mark.parametrize("page", ["tasks.md", "links.md"])
+@pytest.mark.parametrize(
+    "page",
+    [
+        pytest.param(
+            "tasks.md",
+            marks=pytest.mark.control(
+                reason="verify-red reverts docs/tasks.md with the code, so its --dispatchable "
+                "example is not there to run; with the page and without the feature that "
+                "line exits 2"
+            ),
+        ),
+        pytest.param(
+            "links.md",
+            marks=pytest.mark.control(reason="links.md is not part of the #1686 change"),
+        ),
+    ],
+)
 def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
     world = cli_world()
     monkeypatch.chdir(tmp_path)
@@ -38,6 +54,11 @@ def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
                 assert last["claimed"] is False
             if args[:2] == ["links", "bulk-create"] and expected == 3:
                 assert last["outcome"] == "partial"
+            if "--dispatchable" in args:
+                # write-intro is claimed by now; only write-outro is free.
+                assert last["tasks"] == [{"id": "write-outro", "kb_name": "test-kb", "priority": 8}]
+                assert last["excluded"] == []
+                assert last["counts"]["not_open"] == 1
             if args[0] == "backlinks":
                 assert any(row["id"] == "alpha" for row in last["entries"])
     if page == "tasks.md":

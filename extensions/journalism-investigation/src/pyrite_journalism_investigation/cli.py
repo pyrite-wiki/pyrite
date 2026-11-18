@@ -66,8 +66,10 @@ def timeline(
     event_type: str = typer.Option(
         "", "--type", help="Filter by type: investigation_event, transaction, legal_action"
     ),
-    min_importance: int = typer.Option(0, "--min-importance", help="Minimum importance (1-10)"),
-    limit: int = typer.Option(50, "--limit", help="Max results"),
+    min_importance: int = typer.Option(
+        0, "--min-importance", min=0, max=10, help="Minimum importance (1-10)"
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, help="Max results"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query investigation events by date range, actor, and type."""
@@ -122,8 +124,10 @@ def entities(
         "", "--type", help="Filter by type: person, organization, asset, account"
     ),
     jurisdiction: str = typer.Option("", "--jurisdiction", help="Filter by jurisdiction"),
-    min_importance: int = typer.Option(0, "--min-importance", help="Minimum importance (1-10)"),
-    limit: int = typer.Option(50, "--limit", help="Max results"),
+    min_importance: int = typer.Option(
+        0, "--min-importance", min=0, max=10, help="Minimum importance (1-10)"
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, help="Max results"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query investigation entities by type, importance, and jurisdiction."""
@@ -169,7 +173,7 @@ def sources(
     ),
     from_date: str = typer.Option("", "--from", help="Start date (YYYY-MM-DD)"),
     to_date: str = typer.Option("", "--to", help="End date (YYYY-MM-DD)"),
-    limit: int = typer.Option(50, "--limit", help="Max results"),
+    limit: int = typer.Option(50, "--limit", min=1, help="Max results"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query source documents by reliability and classification."""
@@ -224,8 +228,10 @@ def claims(
         help="Filter: unverified, partially_verified, corroborated, disputed, retracted",
     ),
     confidence: str = typer.Option("", "--confidence", help="Filter: high, medium, low"),
-    min_importance: int = typer.Option(0, "--min-importance", help="Minimum importance (1-10)"),
-    limit: int = typer.Option(50, "--limit", help="Max results"),
+    min_importance: int = typer.Option(
+        0, "--min-importance", min=0, max=10, help="Minimum importance (1-10)"
+    ),
+    limit: int = typer.Option(50, "--limit", min=1, help="Max results"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Query claims by status and confidence level."""
@@ -366,7 +372,7 @@ def evidence_chain(
 def qa_report(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB name"),
     stale_days: int = typer.Option(
-        30, "--stale-days", help="Days before unverified claims are stale"
+        30, "--stale-days", min=0, help="Days before unverified claims are stale"
     ),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
@@ -415,6 +421,9 @@ def qa_report(
         )
         console.print(f"  Orphans (no evidence): {claims['orphans']}")
         console.print(f"  Disputed/retracted: {claims['disputed_ratio']}%")
+        console.print(
+            f"  Unverified, not updated in {stale_days} days: {claims['stale_unverified']}"
+        )
         console.print()
 
         if claims["confidence"]:
@@ -445,7 +454,7 @@ def search_all(
         False, "--correlate", "-c", help="Correlate results by entity identity across KBs"
     ),
     entry_type: str = typer.Option("", "--type", help="Filter by entry type"),
-    limit: int = typer.Option(50, "--limit", help="Max results"),
+    limit: int = typer.Option(50, "--limit", min=1, help="Max results"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Search across all KBs with optional entity correlation."""
@@ -638,7 +647,7 @@ def investigation_status(
 def ownership_chain(
     entity_id: str = typer.Argument(..., help="Entity entry ID to trace ownership for"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB name"),
-    depth: int = typer.Option(5, "--depth", help="Maximum chain depth (default 5)"),
+    depth: int = typer.Option(5, "--depth", min=1, help="Maximum chain depth (default 5)"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
 ):
     """Trace ownership chains to find beneficial owners and shell companies."""
@@ -696,7 +705,7 @@ def money_flow(
     direction: str = typer.Option(
         "both", "--direction", "-d", help="Flow direction: outbound, inbound, or both"
     ),
-    hops: int = typer.Option(3, "--hops", help="Max transaction hops to follow"),
+    hops: int = typer.Option(3, "--hops", min=1, help="Max transaction hops to follow"),
     from_date: str = typer.Option("", "--from", help="Start date (YYYY-MM-DD)"),
     to_date: str = typer.Option("", "--to", help="End date (YYYY-MM-DD)"),
     output_json: bool = typer.Option(False, "--json", help="Output as JSON"),
@@ -791,7 +800,7 @@ def export_pack(
         False, "--redact-sources", help="Redact source URLs and titles"
     ),
     min_importance: int = typer.Option(
-        0, "--min-importance", help="Minimum importance filter (1-10)"
+        0, "--min-importance", min=0, max=10, help="Minimum importance filter (1-10)"
     ),
 ):
     """Export investigation as a self-contained pack."""
@@ -1154,7 +1163,7 @@ def dedup(
         [], "--kb", "-k", help="KB names to scan (repeat for multiple; omit for all)"
     ),
     threshold: float = typer.Option(
-        0.85, "--threshold", help="Minimum fuzzy match ratio (0.0-1.0)"
+        0.85, "--threshold", min=0.0, max=1.0, help="Minimum fuzzy match ratio (0.0-1.0)"
     ),
     link: bool = typer.Option(
         False, "--link", help="Auto-link high-confidence matches (confidence >= 0.95)"

@@ -1,1 +1,0 @@
-- **`pyrite kb health` says where to look for entry files the index does not list (#1626).** Its text output now prints "N entry files the index does not list; `pyrite index health` names them" beside the count, where it printed the count alone. The JSON output is unchanged.

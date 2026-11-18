@@ -47,7 +47,22 @@ For code-defined types, protocols and plugins see
    [[adr-0026]].
 8. A type may carry its own `state_machine` (strict or relaxed transitions;
    membership of the state list is always enforced); the question is type-level,
-   not a KB toggle. **decided** [[adr-0027]].
+   not a KB toggle. A `state_machine` a KB declares for `task` in `kb.yaml`
+   applies to EVERY update of a task in that KB (CLI `task update` and
+   `pyrite update`, MCP, REST, and `task claim` / `task reset`, which write
+   through the same update), exactly as the core `TASK_WORKFLOW` applies where
+   none is declared (#1709). As built: `open -> claimed` is exempt from
+   `require_reason_on_transition` (maintainer decision on #1709), so
+   `task claim`, which passes no reason, and a plain update from `open` to
+   `claimed` work in a relaxed reasons-required KB while every other move there
+   still needs its reason; the hook judges any type whose kb.yaml declares a
+   `state_machine` and whose entry class carries a `status` (a generic custom
+   type has none, so it is not judged), not only `task`, and reads
+   `status_reason` from the entry class; and where a declared machine omits a
+   status already in use, a strict table leaves a task in it with no way out
+   and a relaxed machine refuses a move to it but lets a task in it move to a
+   declared state. **decided**
+   [[adr-0027]].
 9. A relationship that carries data is an edge type: declared endpoints,
    optional `accepts`, all endpoints required, derived backlinks in the index
    only, a deleted endpoint leaves a broken reference and a QA warning.
@@ -68,6 +83,9 @@ For code-defined types, protocols and plugins see
   ([[adr-0008]] point 6).
 - A state outside a type's `states` fails in both strict and relaxed mode
   ([[adr-0027]]).
+- A KB's declared task `state_machine` judges every update of its tasks; no
+  surface falls back to the core table (`tests/test_declared_task_state_machine_applies.py`,
+  #1709).
 - An edge-type entry with a missing or wrong-typed endpoint is rejected
   ([[adr-0022]]).
 - Only `enforce_enums: false` (a YAML boolean) turns enum enforcement off
