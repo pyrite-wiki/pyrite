@@ -303,11 +303,11 @@ def kb_validate(
     frontmatter, undeclared types, missing required fields and subdirectory
     mismatches. A KB name limits the report to that KB.
 
-    Exit code: 0 clean, 1 if any KB has structural errors or the index is
-    corrupt (STORAGE_ERROR: the check cannot be made), 2 if only
-    content-drift warnings. Suitable for CI gating — `pyrite kb validate
-    && deploy` blocks on structural errors; scripts that want to gate on
-    drift too can check for exit code 2.
+    Exit code: 0 clean, 1 if any KB has structural errors, ignored field
+    declarations (reserved names), or the index is corrupt (STORAGE_ERROR:
+    the check cannot be made), 2 if only content-drift warnings. Suitable
+    for CI gating — `pyrite kb validate && deploy` blocks on structural
+    errors; scripts that want to gate on drift too can check for exit code 2.
     """
     config = load_config()
     require_kb(config, name, output_format=output_format)
@@ -344,6 +344,20 @@ def kb_validate(
     any_drift = False
     for kb in kbs:
         errors = kb.validate()
+
+        ignored_decls = []
+        try:
+            if kb.path.is_dir():
+                schema = kb.kb_schema
+                if schema and getattr(schema, "ignored_declarations", None):
+                    ignored_decls = schema.ignored_declarations
+        except Exception:
+            pass
+
+        if ignored_decls:
+            for decl in ignored_decls:
+                errors.append(decl["reason"])
+
         if errors:
             any_structural_errors = True
 
@@ -362,6 +376,7 @@ def kb_validate(
                 "name": kb.name,
                 "valid": len(errors) == 0,
                 "errors": errors,
+                "ignored_declarations": ignored_decls,
                 "undeclared_types": undeclared,
                 "missing_required_fields": missing_req,
                 "subdirectory_mismatches": sub_mismatch,
@@ -893,6 +908,11 @@ def schema_set(
         result = svc.set_schema(kb_name, schema)
     except (PyriteError, ValueError) as e:
         _kb_error(e, output_format)
+
+    if "error" in result:
+        from ..utils.errors import cli_error
+
+        cli_error(result["error"], output_format, error_code="VALIDATION_FAILED")
 
     formatted = _format_output(result, output_format)
     if formatted is not None:

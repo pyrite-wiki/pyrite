@@ -5,6 +5,7 @@ from typing import Any
 
 from pyrite.config import KBConfig, PyriteConfig
 from pyrite.exceptions import KBNotFoundError, ValidationError, outside_text
+from pyrite.schema.reserved import RESERVED_FIELD_NAMES, reserved_field_error_message
 from pyrite.utils.yaml import read_kb_yaml
 
 
@@ -104,6 +105,13 @@ class SchemaService:
         if type_name in types:
             return {"error": f"Type '{type_name}' already exists in KB '{kb_name}'"}
 
+        fields = type_def.get("fields", {})
+        if isinstance(fields, dict):
+            collisions = set(fields.keys()) & RESERVED_FIELD_NAMES
+            if collisions:
+                first_col = sorted(collisions)[0]
+                return {"error": reserved_field_error_message(type_name, first_col)}
+
         types[type_name] = type_def
         data["types"] = types
         self._save_kb_yaml(kb, data)
@@ -151,6 +159,17 @@ class SchemaService:
         data = self._load_kb_yaml(kb)
 
         if "types" in schema:
+            types_map = schema["types"]
+            if isinstance(types_map, dict):
+                for type_name, type_def in types_map.items():
+                    if isinstance(type_def, dict):
+                        fields = type_def.get("fields", {})
+                        if isinstance(fields, dict):
+                            collisions = set(fields.keys()) & RESERVED_FIELD_NAMES
+                            if collisions:
+                                first_col = sorted(collisions)[0]
+                                return {"error": reserved_field_error_message(type_name, first_col)}
+
             data["types"] = schema["types"]
         if "policies" in schema:
             data["policies"] = schema["policies"]
