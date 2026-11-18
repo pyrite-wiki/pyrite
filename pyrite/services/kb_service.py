@@ -603,6 +603,13 @@ def _refusal_result(exc: Exception) -> dict[str, Any]:
     }
 
 
+def _same_title(a: str | None, b: str | None) -> bool:
+    """True when two titles are identical after stripping whitespace and casefolding (#1682)."""
+    if a is None or b is None:
+        return a == b
+    return a.strip().casefold() == b.strip().casefold()
+
+
 class KBService:
     """
     Service for KB operations.
@@ -1544,28 +1551,15 @@ class KBService:
             if isinstance(val, bool):
                 return "true" if val else "false"
             return str(val) if val is not None else None
-        if repo.exists(entry_id):
-            try:
-                if hasattr(self, "db") and self.db is not None:
-                    row = self.db.get_entry(entry_id, repo.name)
-                    if row and row.get("title") is not None:
-                        val = row["title"]
-                        if isinstance(val, bool):
-                            return "true" if val else "false"
-                        return str(val)
-                path = repo.find_file(entry_id)
-                if path:
-                    raw = repo._inside_bytes(path)
-                    if raw is not None:
-                        from ..storage.repository import _text_of
-
-                        fm, _ = repo._frontmatter_of(_text_of(raw))
-                        title = fm.get("title")
-                        if isinstance(title, bool):
-                            return "true" if title else "false"
-                        return str(title) if title is not None else None
-            except Exception:
-                return None
+        try:
+            entry = self.get_entry(entry_id, kb_name=repo.name, readable_kbs=None)
+            if entry and entry.get("title") is not None:
+                val = entry["title"]
+                if isinstance(val, bool):
+                    return "true" if val else "false"
+                return str(val)
+        except Exception:
+            return None
         return None
 
     def _prepare(
@@ -1665,12 +1659,12 @@ class KBService:
             entry_id = base_id
             title_str = "true" if title is True else ("false" if title is False else str(title))
             existing_title = self._title_of_existing(entry_id, repo, pending_ids)
-            if existing_title is not None and existing_title != title_str:
+            if existing_title is not None and not _same_title(existing_title, title_str):
                 h = hashlib.sha256(title_str.encode("utf-8")).hexdigest()
                 for length in (4, 6, 8, 12):
                     candidate = f"{base_id}-{h[:length]}"
                     cand_title = self._title_of_existing(candidate, repo, pending_ids)
-                    if cand_title is None or cand_title == title_str:
+                    if cand_title is None or _same_title(cand_title, title_str):
                         entry_id = candidate
                         break
                 else:
@@ -1709,7 +1703,7 @@ class KBService:
         # reporting "Created". Callers that mean to replace use update_entry.
         if (
             (existing_title is not None and entry.id == base_id)
-            or repo.exists(entry.id)
+            or (entry.id != base_id and repo.exists(entry.id))
             or entry.id in (pending_ids or ())
         ):
             raise EntryExistsError(

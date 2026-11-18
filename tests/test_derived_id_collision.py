@@ -311,13 +311,44 @@ def test_rest_post_entries_long_title_collision(cli_world):
     assert res2.status_code == 200, res2.text
     id2 = res2.json()["id"]
     assert id1 != id2
+    base_id = generate_entry_id(TITLE_TWO)
+    assert id2 == f"{base_id}-{hashlib.sha256(TITLE_TWO.encode('utf-8')).hexdigest()[:4]}"
 
     res3 = world.client.post(
         "/api/entries",
         json={"kb": "test-kb", "entry_type": "note", "title": TITLE_TWO, "body": "Body 3"},
     )
-    assert res3.status_code in (400, 409, 422), res3.text
-    assert "ENTRY_EXISTS" in res3.text
+    assert res3.status_code == 409, res3.text
+    assert res3.json().get("detail", {}).get("code") == "ENTRY_EXISTS"
+
+
+def test_title_case_and_whitespace_variants_are_refused_entry_exists(cli_world):
+    """Titles differing only in case or surrounding whitespace answer ENTRY_EXISTS."""
+    world = cli_world()
+    world._start_app()
+
+    # 1. Base entry
+    res1 = world.client.post(
+        "/api/entries",
+        json={"kb": "test-kb", "entry_type": "note", "title": "My Note", "body": "First"},
+    )
+    assert res1.status_code == 200, res1.text
+
+    # 2. Case-only variant
+    res2 = world.client.post(
+        "/api/entries",
+        json={"kb": "test-kb", "entry_type": "note", "title": "my note", "body": "Second"},
+    )
+    assert res2.status_code == 409, res2.text
+    assert res2.json().get("detail", {}).get("code") == "ENTRY_EXISTS"
+
+    # 3. Surrounding whitespace variant
+    res3 = world.client.post(
+        "/api/entries",
+        json={"kb": "test-kb", "entry_type": "note", "title": "  My Note  ", "body": "Third"},
+    )
+    assert res3.status_code == 409, res3.text
+    assert res3.json().get("detail", {}).get("code") == "ENTRY_EXISTS"
 
 
 def test_title_of_existing_typing(cli_world):
