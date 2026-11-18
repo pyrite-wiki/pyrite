@@ -402,7 +402,7 @@ class TaskService:
         task_id: str,
         kb_name: str | None = None,
         *,
-        readable_kbs: set[str] | None = None,
+        readable_kbs: set[str] | None,
     ) -> dict[str, Any] | None:
         """Get full task details including body, children and derived completion.
 

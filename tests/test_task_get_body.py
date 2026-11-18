@@ -220,9 +220,13 @@ def test_task_get_and_mcp_status_refuse_when_file_missing_behind_index_row(task_
 
 @pytest.mark.cli
 def test_task_get_rich_prints_body_under_fields(task_body_world):
-    """Rich output of task get prints the body under the metadata fields (#1681)."""
+    """Rich output of task get prints the body verbatim under the metadata fields (#1681)."""
     world, _ = task_body_world
-    agent_instruction = "Crucial autonomous instructions for the agent."
+    agent_instruction = (
+        "Crucial autonomous instructions for the agent.\n"
+        "- [x] done\n"
+        "See [docs](http://example.com) and use [/path] here."
+    )
     res = world.cli(
         "task",
         "create",
@@ -244,9 +248,11 @@ def test_task_get_rich_prints_body_under_fields(task_body_world):
             env={"COLUMNS": "120"},
         )
     assert rich_res.exit_code == 0, rich_res.output
+    assert "- [x] done" in rich_res.output
+    assert "[/path]" in rich_res.output
     assert agent_instruction in rich_res.output
     # Body appears after metadata fields
     status_pos = rich_res.output.find("Status: open")
-    body_pos = rich_res.output.find(agent_instruction)
+    body_pos = rich_res.output.find("Crucial autonomous")
     assert status_pos != -1
     assert body_pos > status_pos

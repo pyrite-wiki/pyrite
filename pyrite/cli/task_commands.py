@@ -398,7 +398,8 @@ def _render_task(console, result: dict) -> None:
             console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
     body = result.get("body", "")
     if body:
-        console.print(f"\n{body}")
+        console.print()
+        console.print(body, markup=False, highlight=False)
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
