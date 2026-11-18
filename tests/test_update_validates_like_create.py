@@ -76,7 +76,13 @@ def test_unrelated_edits_warn_about_a_handwritten_date_and_allow_repair(world, s
 
     succeeded, body = update(world, surface, "title", "Renamed")
     assert succeeded, body
-    assert any(w["rule"] == "model_validation" for w in body["warnings"]), body
+    # the kept row carries the model's own rule for the date row (#1588 acceptance 5)
+    assert any(
+        w["field"] == "date"
+        and w["rule"] == "format"
+        and w.get("note") == "violation already on disk; kept"
+        for w in body["warnings"]
+    ), body
     assert "date: June 1990" in path.read_text()
 
     before = path.read_bytes()
@@ -88,7 +94,9 @@ def test_unrelated_edits_warn_about_a_handwritten_date_and_allow_repair(world, s
 
     succeeded, body = update(world, surface, "date", "1990-06-01")
     assert succeeded, body
-    assert not any(w["rule"] == "model_validation" for w in body.get("warnings", [])), body
+    assert not any(
+        w.get("note") == "violation already on disk; kept" for w in body.get("warnings", [])
+    ), body
     fields = load_yaml(path.read_text().split("---", 2)[1])
     assert str(fields["date"]) == "1990-06-01"
 

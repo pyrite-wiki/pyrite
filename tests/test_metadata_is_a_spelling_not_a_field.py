@@ -787,9 +787,14 @@ def test_two_spellings_of_one_field_in_one_request_are_refused(
     before = path.read_bytes()
     with pytest.raises(PyriteError) as info:
         _send_request(surface, config, "t1", updates)
-    assert "two different values" in str(info.value) or "one field" in str(info.value), str(
-        info.value
-    )
+    if surface == "cli" and "tags" in updates:
+        # `-f tags=...` is a usage error pointing at `--tags` (#1502, the
+        # maintainer's item B): refused at parse time, before this rule.
+        assert "USAGE_ERROR" in str(info.value) and "--tags" in str(info.value), str(info.value)
+    else:
+        assert "two different values" in str(info.value) or "one field" in str(info.value), str(
+            info.value
+        )
     assert path.read_bytes() == before
 
 

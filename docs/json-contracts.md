@@ -428,7 +428,19 @@ contributes a row without `rule`. A row from the entry model also carries
 `message` — the sentence that reaches `error`, so a caller never has to parse
 it — and `expected` when the fix is mechanical; a row from the KB schema or a
 plugin validator carries `expected` and, where the rule knows it, `got`: the
-allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried. A row from
+allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried.
+`importance` has one rule on every type, write and surface (#1588): a whole
+number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as
+plain ASCII digits (`"05"`), and every create and update stores it as that number
+(`5.0` and `"05"` are written as `5`; `pyrite add` leaves a file's own `'05'` as
+written, and every reader sees `5`); anything else (`5.5`, `true`, `" 5 "`,
+`"+5"`, `"１０"`, `high`) is refused with the model row `{"field": "importance",
+"rule": "range", ...}` (over REST, HTTP 400 `VALIDATION_FAILED`, where `99` and
+`10.7` used to get pydantic's 422; the OpenAPI schema names the integer to send).
+A value already in a file, at the top level or under `metadata:`, is never
+rewritten by a write that does not set it, and is kept with a warning carrying
+that `rule` only while the write leaves it as it is or sends that same value in
+the same YAML type (`"10.7"` over `10.7` is a new value, judged and refused). A row from
 the KB schema's enum pass also names `origin` (`field` for a field's own
 `options:`/`values:` list, `rule` for a `validation.rules` entry), `severity`
 (`error`, or `warning` when the field has `allow_other: true`), and
@@ -547,6 +559,7 @@ a row here (a test compares this table with the command's output).
 | `malformed_frontmatter` | Files that read but whose frontmatter does not parse. | Warning | Hand edit the YAML, then `pyrite index sync`. |
 | `unreadable_files` | Files that exist but whose bytes cannot be read or decoded. | Failure | Fix permissions or encoding, then `pyrite index sync`. |
 | `unreadable_kbs` | KBs whose `kb.yaml` Pyrite could not check or read (for example, a KB folder it may not search), as `{kb, error}`; every other KB is still checked. | Failure | Fix the folder's permissions, then `pyrite index sync`. |
+| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). A symbolic link is never named, whatever its target. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
 | `orphaned_entries` | Indexed IDs absent from the readable files although the recorded path exists. | Failure | `pyrite index sync` (or hand edit the ID). |
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
@@ -844,7 +857,8 @@ what the read returned is not a change: it is not written, and is listed
 in the result's `unchanged` field (apart from `ignored`, which names keys no
 update writes), so the file keeps `importance: high` rather than Pyrite's
 reading `5` (#561). A request that names fields on its own writes each one
-as sent, even a value equal to the reading.
+as sent, even a value equal to the reading (`importance` is written as the int
+the rule reads: `"05"` and `5.0` as `5`).
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 
@@ -1646,6 +1660,74 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
 
+## Entry row shape
+
+These readers return entry rows from the index in one shape, whatever the
+surface (MCP, `--format json`, REST) and the backend (SQLite, Postgres): the
+list and find tools (`kb_list_entries`, `kb_recent`, `kb_batch_read`,
+`kb_find_by_status`, `kb_find_by_assignee`, `kb_find_overdue`,
+`kb_find_by_location`), search (`kb_search`, keyword and semantic legs),
+folder collections, and the single read (`kb_get`). Each reader keeps its
+own set of keys: shaping adds none. Where a row carries one of these, it has
+this type:
+
+| Key | JSON type |
+|---|---|
+| `metadata` | an object; `{}` when the entry has none |
+| `aliases` | a list; `[]` when the entry has none |
+| `importance` | an integer (or `null`) |
+| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | at its own name too on the list readers (`kb_list_entries`, `kb_recent`, `kb_batch_read`) and the single read; search and the finds return only the columns they select, so there it is in `metadata` alone (the keyword search row's `rank` is its score) |
+| a column field (`priority`, `status`, `assignee`, `due_date` ...) | by the type's declaration (`KBSchema.type_fields`: kb.yaml, plugins, and a task's own `priority`, a number); see below |
+
+How a column field reads. A field declared a `number` reads as a number when
+the stored text is a plain ASCII whole number or decimal, with an optional
+leading minus (`7`, `2.5`, `-7`, `-1.5`): no plus sign, no surrounding space,
+no leading zero, no exponent, no digits from other scripts. Any other text
+(`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
+the task model's integer (`coerce_task_priority`: a word on the 1 to 10
+scale, any other non-integer the default 5), so every spelling of it reads
+as that integer and `task_list` and `kb_get` agree. A field declared a
+`checkbox` reads the stored `1`, `0`, `true` or `false` as a boolean. Every
+other field, and one the type does not declare, reads as text. A
+whole-valued decimal (`7.0`) reads as `7.0` on SQLite and as `7` on
+Postgres.
+
+What a caller reads, sent back as that one field (MCP `kb_update`,
+`pyrite update -f`, REST PATCH), leaves the file as it was, except in
+these cases. REST PUT takes no column field, so it has none. A read never
+writes anything.
+
+- A quoted plain number in a field declared a number: `priority: "7"`
+  reads 7 (and `"-7"` reads -7), and writing that number back stores it
+  without the quotes (`priority: 7`). `qa validate` reports the text (`number_as_text`), saying what
+  Pyrite reads it as.
+- A task's `priority` spelled as anything but a plain whole number
+  (`high`, `P1`, `"007"`, `"+7"`, `"1e1"`): it reads as the model's integer
+  (7, 5, 7, 7, 10), and writing that back stores the integer in place of
+  the file's spelling. `qa validate` reports the file's value
+  (`task_priority`, or `number_as_text` for numeric text).
+- A quoted `"true"`, `"false"`, `"1"` or `"0"` in a field declared a
+  checkbox: it reads as a boolean, and writing that back stores `true` or
+  `false`.
+- An unquoted `1` or `0` in a field declared a checkbox: it reads as a
+  boolean, and writing that back stores `true` or `false` (on earlier
+  releases it was stored as the quoted text `"1"` or `"0"`).
+- A YAML boolean in a field declared a number: `priority: true` reads 1
+  (and `false` reads 0), and writing that back stores the number
+  (`priority: 1`; earlier releases stored the quoted text `"1"`).
+- A number the index spells with an exponent, in a field declared a number:
+  `priority: 0.00001` reads as the index's text for it, which the strict
+  rule keeps as text, and writing that back stores that text quoted. The
+  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
+  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
+  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
+  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
+
+`kb_timeline` returns `date` and `location` as stored text: its rows carry
+no `entry_type`, so no declaration applies. The type-specific tools
+(`task_*`, `sw_*` and the other plugin tools) return their own dicts, not
+index rows. (#1503)
+
 ## Body truncation
 
 Entries with large bodies may come back chunked. When truncated, the
@@ -1820,6 +1902,13 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
     (every child refused is `1`, `"outcome": "nothing"`),
     `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
+  - `pyrite qa duplicates` that left a KB out of the scan and named it in
+    `unreadable_kbs` (#1547);
+  - `pyrite index sync`, `pyrite index build` and `pyrite kb reindex`
+    count each KB, folder and file they could not reach as failed (done =
+    KBs synced): a KB with one folder it could not list exits `3`, and so
+    does `kb reindex` of that KB (#1546; see "A folder or file Pyrite cannot
+    reach");
   - `pyrite init` that created the KB but could not index it, and
     `pyrite extension install --verify` that installed a plugin that would not
     load (always `3`: the install happened);
@@ -2055,6 +2144,71 @@ What `kb.yaml` is decides, at the moment of the read, in every process:
   (measured: 64 MB of one scalar takes about 24 seconds to load; two million
   short keys, more than a minute).
 
+## A folder or file Pyrite cannot reach
+
+The same rule one level down (#1546): a folder below a KB's root that the
+index walk could not list, and a file it could not stat or read (an `OSError`
+other than "absent"), say nothing about the entries in them, so nothing is
+retired or called missing on their evidence. A file that was read and does
+not parse still loses its row, as before.
+
+- **The rows are kept.** Every reconcile (`pyrite index sync`, `index build`,
+  `index build --with-attribution`, `kb reindex`, `pyrite init`, the
+  background jobs, REST and MCP sync and reindex) keeps the row of every
+  path under such a folder and of every such file, neither rewritten nor
+  removed. Every row kept this way is named in that reconcile's own
+  result (its folder under `unreadable_folders`, or the file under
+  `unreadable_files`) and counts for its exit code. A row kept this way
+  never wins its id over a file read now: the file read now takes the id's
+  row, and the kept path is not a duplicate (its folder or file is still
+  named). When the folder or file can be read again, the next sync reports
+  `added`, `updated` and `removed` as `0` for them.
+- **The rows are retired exactly when the files say so.** A file missing
+  from a folder whose listing worked (a mode-`600` folder can be listed) is
+  gone, and its row is retired, as before. So is a path that
+  `KBFiles.present` answers absent: a link loop, or a file removed while the
+  walk ran; a loop stays reported under `malformed` and in health's
+  `unreadable_files`, as before, and does not count for the exit code.
+- **What counts as a folder it could not list.** Only a folder the walk
+  tried to list and could not (its listing failed, or failed part way), and
+  a name whose own type the operating system will not give (in a folder
+  Pyrite may not search, on a filesystem that does not say a name's type),
+  unless its name ends in `.md` or is `__collection.yaml` (then it is that
+  file's own stat that names it). A symbolic link is never one: the walk
+  never enters a link, so a link whose target cannot be reached (a link to
+  itself, a link into a folder Pyrite may not search, a link through a
+  file) is not named, and a sync that meets one still exits `0` and health
+  stays healthy, as before.
+- **What a reconcile reports.** Its result carries `unreadable_folders`,
+  `{kb, path, error}` (`path` KB-relative, `error` the fixed `KB_UNREADABLE`
+  message), and `unreadable_files`, `{kb, path, error}` (the absolute path
+  and the exception, as in `index health`); each such file is also under
+  `malformed`, as before. `pyrite index sync` prints `Unreadable folders: N`
+  with each folder and lists the files under `Malformed`; `pyrite index
+  build` prints both lists; `pyrite kb reindex --format json` carries both
+  keys. Each counts as failed for `exit_unless_whole`: `3` when a KB synced,
+  `1` when none did.
+- **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
+  /api/kbs/{name}/reindex`, MCP `kb_index_sync`, MCP `kb_registry_reindex`,
+  REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
+  `unreadable_folders` as a count (an integer), never a path and never the
+  OS's words, and do not carry `unreadable_files` (following the
+  maintainer's 2026-11-17 decision for `unlisted_entry_files`;
+  `pyrite.services.index_health.network_shape` is the one place that decides
+  it). Network health's `healthy` is `false`.
+- **Health.** `pyrite index health` names each folder in
+  `unreadable_folders` and each file in `unreadable_files`, and is
+  `unhealthy`, exit `1`.
+- **An in-KB link into such a folder** is reported as an unreadable file
+  (under `malformed` and `unreadable_files`), never as a dangling link to a
+  missing file.
+- **Not reported:** a folder under a dot-prefixed folder or `_templates/` (the
+  walk lists nothing there), and the KB's root, which is "A KB whose files
+  cannot be read".
+- **Limit:** only the outermost of nested folders it could not list can be
+  named. A background sync job keeps the rows but does not yet name the
+  folders in its job result (#1548); `pyrite index health` does.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"
@@ -2095,7 +2249,7 @@ that write returned (#795). This applies to `pyrite qa assess`, `pyrite ci`,
 
 **Tiers.** QA runs tier 1 (structural and deterministic rubric checks) and
 tier 2 (tier 1 plus the judgment-only rubric items, judged by the configured
-model). Any other tier is refused with `INVALID_TIER` (on CLI `qa assess`,
+model). Any other tier is refused with `INVALID_TIER` (on CLI `ci` and `qa assess`,
 Typer refuses out-of-range values as `USAGE_ERROR`, exit 2). Tier 2 with no model
 configured is refused with `AI_NOT_CONFIGURED`. Both refusals come before
 anything is checked or written, on every surface. `ci` refuses them even when
@@ -2103,7 +2257,7 @@ no KB is configured.
 
 The codes:
 
-- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `qa assess`
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `ci` and `qa assess`
   an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2) before this
   check runs). `pyrite mcp --tier` uses the same code for an unknown server tier.
   Use 1 or 2.
@@ -2228,7 +2382,7 @@ writes nothing.
 
 `pyrite qa duplicates -t <type>` reports live entries that may describe the
 same thing, scanning every KB the caller may read. It is a **report**, not a
-merge: finding candidates is not a failure, so the exit code is `0` when the scan ran; an unknown
+merge: finding candidates is not a failure, so the exit code is `0` when the scan covered every readable KB and `3` when a KB was left out and named in `unreadable_kbs`; an unknown
 `--format` or an out-of-range `--threshold` is a usage error (`2`). Empty
 `--type` or empty/comma-only `--status` values are structured
 `VALIDATION_FAILED` refusals (`1`).

@@ -1,1 +1,0 @@
-- **GET and POST `/api/daily/{date}` leave a refused column out of the reply (#1490).** A daily note whose type refuses a column (`tags`, `metadata`) used to come back with the column as `[]` or `{}`, where `GET /api/entries/{id}` leaves it out. Both routes now follow the same never-a-placeholder rule, shared through one helper.

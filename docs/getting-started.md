@@ -40,7 +40,7 @@ git add -A
 git commit -m "Initial KB"
 ```
 
-Templates available: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`.
+Templates in core: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`, `task` and `research-queue`; installed plugins add theirs (`pyrite init --help` lists every one).
 
 Your knowledge base is just a directory of markdown files. You can open them in any editor.
 
@@ -327,7 +327,7 @@ See also: [Gemini MCP integration](gemini-mcp-integration.md) | [OpenAI MCP inte
 
 ## Use Templates for Domain-Specific KBs
 
-The templates `pyrite init` accepts are the six listed above. Each works with nothing extra installed:
+The core templates listed above each work with nothing extra installed; a plugin's preset (for example `journalism-investigation`) is available once that extension is installed:
 
 ```bash
 cd ..

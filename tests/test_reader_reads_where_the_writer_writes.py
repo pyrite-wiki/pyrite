@@ -256,10 +256,6 @@ UNREAD: frozenset[tuple[str, str]] = frozenset(
         ("adr", "start_date"),
         ("adr", "end_date"),
         ("adr", "due_date"),
-        ("task", "date"),
-        ("task", "start_date"),
-        ("task", "end_date"),
-        ("task", "assigned_at"),
         ("backlog_item", "assigned_at"),
     }
 )

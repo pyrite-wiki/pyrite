@@ -10,7 +10,13 @@ from typing import Any
 
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
 from .enum_check import enum_findings, is_empty
-from .field_schema import EndpointSpec, FieldSchema, TypeSchema, _validate_field_value
+from .field_schema import (
+    LIST_FIELD_TYPES,
+    EndpointSpec,
+    FieldSchema,
+    TypeSchema,
+    _validate_field_value,
+)
 from .provenance import get_all_relationship_types
 from .reserved import RESERVED_FIELD_NAMES
 from .validators import validate_date
@@ -154,7 +160,8 @@ class KBSchema:
         core < plugin < kb.yaml (#86, #232).
 
         The declaration is the schema, never the model class: ``CORE_TYPES``'s
-        ``fields``, the plugins' ``get_field_schemas()``, then this KB's
+        ``fields`` (a task's from ``TASK_TYPE_METADATA``), the plugins'
+        ``get_field_schemas()``, then this KB's
         ``fields``, each layer replacing a name the one below declared. A name
         kb.yaml lists in ``optional`` or ``required`` without a definition adds
         a text field, unless a lower layer already typed it. A reserved name
@@ -163,9 +170,19 @@ class KBSchema:
         a field a type declares. A type's managed fields are not removed here;
         the create leaves them out itself (``KBService._with_declared_fields``).
         """
+        core = dict(CORE_TYPES.get(entry_type, {}).get("fields", {}))
+        if entry_type == "task":
+            # A built-in type that is not one of the core types: `task`
+            # declares its fields beside its model, as `resolve_type_metadata`
+            # reads its settled statuses (lazy import: models import this
+            # package). Without it a task's `priority` had no declared type
+            # and read as text on every index reader (#1503).
+            from ..models.task import TASK_TYPE_METADATA
+
+            core.update(TASK_TYPE_METADATA.get("fields", {}))
         fields: dict[str, FieldSchema] = {
             name: FieldSchema(name=name, field_type=_core_field_type(spelled))
-            for name, spelled in CORE_TYPES.get(entry_type, {}).get("fields", {}).items()
+            for name, spelled in core.items()
         }
         try:
             from ..plugins import get_registry
@@ -494,6 +511,25 @@ class KBSchema:
                                 "got": ep_value,
                             }
                         )
+
+        # A list field declared at any layer (`type_fields`: core < plugin <
+        # kb.yaml) holds a list (#1502). The loop above type-checks kb.yaml's
+        # own `fields` only; the list-typed fields it did not see (core's
+        # `person.affiliations`, a plugin's) get the same check here, with the
+        # same `enforce` severity. Widened for list types only: core- and
+        # plugin-declared numbers and selects stay unchecked, as before.
+        seen = set(type_schema.fields) if type_schema else set()
+        list_enforce = self.validation.get("enforce", False)
+        for field_name, declared in self.type_fields(entry_type).items():
+            if field_name in seen or declared.field_type not in LIST_FIELD_TYPES:
+                continue
+            if field_name not in fields or is_empty(fields[field_name]):
+                continue
+            for item in _validate_field_value(field_name, fields[field_name], declared):
+                if list_enforce:
+                    errors.append(item)
+                else:
+                    warnings.append({**item, "severity": "warning"})
 
         # Declared enums (field options/values/items and rule `enum:`), one
         # function for every reader; severity is `validation.enforce_enums`'s,
