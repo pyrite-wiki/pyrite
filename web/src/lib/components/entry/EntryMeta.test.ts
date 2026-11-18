@@ -62,6 +62,13 @@ describe('EntryMeta scalar fields', () => {
 		expect(container.textContent).toContain('Date: 0');
 		expect(container.textContent).toContain('Status: false');
 	});
+
+	it('hides empty date and status strings', () => {
+		const entry = baseEntry({ date: '', status: '' });
+		const { container } = render(EntryMeta, { entry });
+		expect(container.textContent).not.toContain('Date:');
+		expect(container.textContent).not.toContain('Status:');
+	});
 });
 
 describe('EntryMeta on a partial read (ADR-0042 8a)', () => {

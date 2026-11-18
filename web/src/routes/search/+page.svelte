@@ -13,6 +13,7 @@
 	import { savedSearches, type SavedSearch } from '$lib/stores/saved-searches.svelte';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
 	import { escapeHtml } from '$lib/utils/sanitize';
+	import { isPresent } from '$lib/utils/is-present';
 
 	let searchInput = $state<HTMLInputElement | null>(null);
 	let selectedKb = $state('');
@@ -407,7 +408,7 @@
 							</span>
 
 							<!-- Date -->
-							{#if result.date != null}
+							{#if isPresent(result.date)}
 								<span class="ml-auto text-xs text-zinc-400">{formatRelativeDate(result.date)}</span>
 							{/if}
 						</div>

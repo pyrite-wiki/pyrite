@@ -3,6 +3,7 @@
 	import type { EntryResponse } from '$lib/api/types';
 	import { goto } from '$app/navigation';
 	import { typeBgColor } from '$lib/constants';
+	import { isPresent } from '$lib/utils/is-present';
 
 	interface Props {
 		entries: EntryResponse[];
@@ -18,7 +19,7 @@
 	}
 
 	function formatDate(value?: string | number | boolean): string {
-		if (value == null) return '';
+		if (!isPresent(value)) return '';
 		if (typeof value !== 'string') return String(value);
 		const dateStr = value;
 		try {
@@ -61,9 +62,9 @@
 							{entry.entry_type}
 						</span>
 					{/if}
-					{#if cardFields.includes('date') && (entry.date != null || entry.updated_at)}
+					{#if cardFields.includes('date') && (isPresent(entry.date) || isPresent(entry.updated_at))}
 						<span class="text-xs text-zinc-400 dark:text-zinc-500">
-							{formatDate(entry.date ?? entry.updated_at)}
+							{formatDate(isPresent(entry.date) ? entry.date : entry.updated_at)}
 						</span>
 					{/if}
 				</div>

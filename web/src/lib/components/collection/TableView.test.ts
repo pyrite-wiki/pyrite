@@ -103,4 +103,10 @@ describe('TableView', () => {
 		render(TableView, { props: { entries: [entry], columns: ['date'] } });
 		expect(screen.getByText('2025')).toBeInTheDocument();
 	});
+
+	it('renders an empty date as empty instead of Invalid Date', () => {
+		const entry = { ...sampleEntry, date: '' };
+		render(TableView, { props: { entries: [entry], columns: ['date'] } });
+		expect(screen.queryByText('Invalid Date')).not.toBeInTheDocument();
+	});
 });

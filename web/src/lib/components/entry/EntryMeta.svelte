@@ -3,6 +3,7 @@
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
 	import type { EntryResponse } from '$lib/api/types';
 	import { isSafeLinkUrl } from '$lib/utils/safe-url';
+	import { isPresent } from '$lib/utils/is-present';
 
 	interface Props {
 		entry: EntryResponse;
@@ -20,13 +21,13 @@
 		<span class="text-zinc-500">KB:</span>
 		<span class="ml-2">{entry.kb_name}</span>
 	</div>
-	{#if entry.date != null}
+	{#if isPresent(entry.date)}
 		<div>
 			<span class="text-zinc-500">Date:</span>
 			<span class="ml-2">{entry.date}</span>
 		</div>
 	{/if}
-	{#if entry.status != null}
+	{#if isPresent(entry.status)}
 		<div>
 			<span class="text-zinc-500">Status:</span>
 			<span class="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
