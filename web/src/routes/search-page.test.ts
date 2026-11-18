@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/svelte';
 
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
-vi.mock('$app/stores', async () => {
-	const { writable } = await import('svelte/store');
-	return { page: writable({ url: new URL('http://localhost/search'), params: {} }) };
+vi.mock('$app/state', async () => {
+	const { createPageState } = await import('$lib/test-utils/page-state.svelte');
+	return { page: createPageState({ url: new URL('http://localhost/search'), params: {} }) };
 });
 vi.mock('$lib/api/client', () => ({ api: { getEntryTypes: vi.fn().mockResolvedValue({ types: [] }) } }));
 vi.mock('$lib/components/layout/Topbar.svelte', async () => ({
