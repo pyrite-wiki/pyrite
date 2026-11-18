@@ -489,3 +489,35 @@ def test_an_index_from_v0_26_0_gains_the_rows_from_one_plain_sync(tmp_path):
     assert stale == ["alpha", "beta"] and stale_after == []
     # Nothing changed in the files, and the sync says so.
     assert (result["added"], result["updated"], result["removed"]) == (0, 0, 0)
+
+
+# ---------------------------------------------------------------------------
+# The surfaces users read: the CLI, as docs/links.md shows it
+# ---------------------------------------------------------------------------
+
+
+def test_the_cli_shows_a_markdown_link_in_backlinks_and_links_check(cli_world):
+    """`pyrite create` with a Markdown link, then `backlinks` and `links check`:
+    the docs/links.md walkthrough, through the real CLI."""
+    import json
+
+    world = cli_world()
+    for title, body in (
+        ("Beta", "A claim"),
+        ("Gamma", "See [Beta](beta.md#Claim) and [x](nope.md)"),
+    ):
+        result = world.cli(
+            "create", "-k", "test-kb", "-t", "note", "--title", title, "--body", body
+        )
+        assert result.exit_code == 0, result.output
+
+    backlinks = world.cli("backlinks", "beta", "-k", "test-kb")
+    assert backlinks.exit_code == 0, backlinks.output
+    rows = [(r["id"], r["forward_relation"]) for r in json.loads(backlinks.stdout)["entries"]]
+    assert rows == [("gamma", "markdown_link")]
+
+    check = world.cli("links", "check", "-k", "test-kb")
+    assert check.exit_code == 1, check.output  # a broken link is a finding (D1)
+    found = json.loads(check.stdout)
+    # The note is written under notes/, so the broken path is notes/nope.md.
+    assert [t["target_id"] for t in found["targets"]] == ["notes/nope.md"]
