@@ -2226,6 +2226,8 @@ class PyriteMCPServer:
             return {"submitted": True, "job_id": job_id}
 
         results = self.index_mgr.sync_incremental(kb_name)
+        from ..services.index_health import network_shape
+
         return {
             "synced": True,
             "added": results["added"],
@@ -2235,6 +2237,9 @@ class PyriteMCPServer:
             # Not synced, rows kept (#1542); a sync of one named KB that
             # cannot be read is a KB_UNREADABLE refusal instead.
             "unreadable_kbs": results.get("unreadable_kbs", []),
+            # Folders it could not list, rows kept (#1546): a count, never a
+            # path, over the network (``network_shape``).
+            "unreadable_folders": network_shape(results)["unreadable_folders"],
         }
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -2426,7 +2431,10 @@ class PyriteMCPServer:
             return _error("MISSING_PARAM", "'name' is required")
         try:
             result = self.registry.reindex_kb(name)
-            return {"reindexed": True, "name": name, **result}
+            from ..services.index_health import network_shape
+
+            # Folders it could not list as a count, never a path (#1546).
+            return {"reindexed": True, "name": name, **network_shape(result)}
         except KBNotFoundError as e:
             return _error("NOT_FOUND", str(e))
 

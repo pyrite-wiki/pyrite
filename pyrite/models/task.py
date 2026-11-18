@@ -46,6 +46,10 @@ _TASK_KNOWN_KEYS = {
     "evidence",
     "priority",
     "due_date",
+    "date",
+    "start_date",
+    "end_date",
+    "assigned_at",
     "agent_context",
     "status_change_log",
 }
@@ -538,6 +542,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             meta["parked_awaiting"] = self.parked_awaiting
         if self.assignee:
             meta["assignee"] = self.assignee
+        if self.assigned_at:
+            meta["assigned_at"] = self.assigned_at
         if self.parent:
             meta["parent"] = self.parent
         if self.dependencies:
@@ -545,6 +551,12 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         if self.evidence:
             meta["evidence"] = self.evidence
         meta["priority"] = self.priority
+        if self.date:
+            meta["date"] = self.date
+        if self.start_date:
+            meta["start_date"] = self.start_date
+        if self.end_date:
+            meta["end_date"] = self.end_date
         if self.due_date:
             meta["due_date"] = self.due_date
         if self.agent_context:
@@ -592,10 +604,14 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             status_reason=meta.get("status_reason", "") or "",
             parked_awaiting=meta.get("parked_awaiting", "") or "",
             assignee=meta.get("assignee", ""),
+            assigned_at=meta.get("assigned_at", "") or "",
             parent=parent,
             dependencies=meta.get("dependencies", []) or [],
             evidence=meta.get("evidence", []) or [],
             priority=coerce_task_priority(meta.get("priority"), kwargs["id"]),
+            date=meta.get("date", "") or "",
+            start_date=meta.get("start_date", "") or "",
+            end_date=meta.get("end_date", "") or "",
             due_date=meta.get("due_date", ""),
             agent_context=meta.get("agent_context", {}) or {},
             status_change_log=meta.get("status_change_log", []) or [],

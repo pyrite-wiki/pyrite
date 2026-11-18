@@ -559,6 +559,7 @@ a row here (a test compares this table with the command's output).
 | `malformed_frontmatter` | Files that read but whose frontmatter does not parse. | Warning | Hand edit the YAML, then `pyrite index sync`. |
 | `unreadable_files` | Files that exist but whose bytes cannot be read or decoded. | Failure | Fix permissions or encoding, then `pyrite index sync`. |
 | `unreadable_kbs` | KBs whose `kb.yaml` Pyrite could not check or read (for example, a KB folder it may not search), as `{kb, error}`; every other KB is still checked. | Failure | Fix the folder's permissions, then `pyrite index sync`. |
+| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). A symbolic link is never named, whatever its target. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
 | `orphaned_entries` | Indexed IDs absent from the readable files although the recorded path exists. | Failure | `pyrite index sync` (or hand edit the ID). |
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
@@ -1885,6 +1886,11 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
     (every child refused is `1`, `"outcome": "nothing"`),
     `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
+  - `pyrite index sync`, `pyrite index build` and `pyrite kb reindex`
+    count each KB, folder and file they could not reach as failed (done =
+    KBs synced): a KB with one folder it could not list exits `3`, and so
+    does `kb reindex` of that KB (#1546; see "A folder or file Pyrite cannot
+    reach");
   - `pyrite init` that created the KB but could not index it, and
     `pyrite extension install --verify` that installed a plugin that would not
     load (always `3`: the install happened);
@@ -2119,6 +2125,71 @@ What `kb.yaml` is decides, at the moment of the read, in every process:
   loads every `kb.yaml`, so a file of tens of megabytes slows every command
   (measured: 64 MB of one scalar takes about 24 seconds to load; two million
   short keys, more than a minute).
+
+## A folder or file Pyrite cannot reach
+
+The same rule one level down (#1546): a folder below a KB's root that the
+index walk could not list, and a file it could not stat or read (an `OSError`
+other than "absent"), say nothing about the entries in them, so nothing is
+retired or called missing on their evidence. A file that was read and does
+not parse still loses its row, as before.
+
+- **The rows are kept.** Every reconcile (`pyrite index sync`, `index build`,
+  `index build --with-attribution`, `kb reindex`, `pyrite init`, the
+  background jobs, REST and MCP sync and reindex) keeps the row of every
+  path under such a folder and of every such file, neither rewritten nor
+  removed. Every row kept this way is named in that reconcile's own
+  result (its folder under `unreadable_folders`, or the file under
+  `unreadable_files`) and counts for its exit code. A row kept this way
+  never wins its id over a file read now: the file read now takes the id's
+  row, and the kept path is not a duplicate (its folder or file is still
+  named). When the folder or file can be read again, the next sync reports
+  `added`, `updated` and `removed` as `0` for them.
+- **The rows are retired exactly when the files say so.** A file missing
+  from a folder whose listing worked (a mode-`600` folder can be listed) is
+  gone, and its row is retired, as before. So is a path that
+  `KBFiles.present` answers absent: a link loop, or a file removed while the
+  walk ran; a loop stays reported under `malformed` and in health's
+  `unreadable_files`, as before, and does not count for the exit code.
+- **What counts as a folder it could not list.** Only a folder the walk
+  tried to list and could not (its listing failed, or failed part way), and
+  a name whose own type the operating system will not give (in a folder
+  Pyrite may not search, on a filesystem that does not say a name's type),
+  unless its name ends in `.md` or is `__collection.yaml` (then it is that
+  file's own stat that names it). A symbolic link is never one: the walk
+  never enters a link, so a link whose target cannot be reached (a link to
+  itself, a link into a folder Pyrite may not search, a link through a
+  file) is not named, and a sync that meets one still exits `0` and health
+  stays healthy, as before.
+- **What a reconcile reports.** Its result carries `unreadable_folders`,
+  `{kb, path, error}` (`path` KB-relative, `error` the fixed `KB_UNREADABLE`
+  message), and `unreadable_files`, `{kb, path, error}` (the absolute path
+  and the exception, as in `index health`); each such file is also under
+  `malformed`, as before. `pyrite index sync` prints `Unreadable folders: N`
+  with each folder and lists the files under `Malformed`; `pyrite index
+  build` prints both lists; `pyrite kb reindex --format json` carries both
+  keys. Each counts as failed for `exit_unless_whole`: `3` when a KB synced,
+  `1` when none did.
+- **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
+  /api/kbs/{name}/reindex`, MCP `kb_index_sync`, MCP `kb_registry_reindex`,
+  REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
+  `unreadable_folders` as a count (an integer), never a path and never the
+  OS's words, and do not carry `unreadable_files` (following the
+  maintainer's 2026-11-17 decision for `unlisted_entry_files`;
+  `pyrite.services.index_health.network_shape` is the one place that decides
+  it). Network health's `healthy` is `false`.
+- **Health.** `pyrite index health` names each folder in
+  `unreadable_folders` and each file in `unreadable_files`, and is
+  `unhealthy`, exit `1`.
+- **An in-KB link into such a folder** is reported as an unreadable file
+  (under `malformed` and `unreadable_files`), never as a dangling link to a
+  missing file.
+- **Not reported:** a folder under a dot-prefixed folder or `_templates/` (the
+  walk lists nothing there), and the KB's root, which is "A KB whose files
+  cannot be read".
+- **Limit:** only the outermost of nested folders it could not list can be
+  named. A background sync job keeps the rows but does not yet name the
+  folders in its job result (#1548); `pyrite index health` does.
 
 ## Operational contracts
 
