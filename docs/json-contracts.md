@@ -1197,16 +1197,23 @@ without them the body is unchanged:
   `counts` has every key, even at zero, and sums to the tasks the other
   filters matched. `excluded` lists each **open** task that was left out,
   with its one reason, in the same order; tasks that are not open are only
-  counted. A task gets the first reason that applies:
+  counted. Every listed task is one `task claim` accepts now: a row the claim
+  would refuse is left out with its reason. A task gets the first reason that
+  applies:
 
   | Reason | The task |
   |---|---|
   | `not_open` | effective status is not `open` (a parent done by its children is `not_open`) |
+  | `empty_status` | its file says `status: ""`: read as open, but the claim takes only `open` or an unset status |
   | `orphaned` | its index row's file is gone |
   | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
   | `assigned` | names any assignee |
   | `parked` | `parked_awaiting` says why it waits; empty, whitespace, `''` and `null` do not park, and the body is never read |
   | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
+  | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
+
+  With `--fields`, the CLI names on stderr any field no task carries (as
+  `search` does); nothing is refused.
 
 ## Link discovery: what is left out
 

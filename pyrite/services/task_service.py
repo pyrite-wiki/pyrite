@@ -532,6 +532,14 @@ class TaskService:
 
         return tasks
 
+    #: Every key a `list_tasks` row carries. `task list --fields` names on
+    #: stderr a requested field that is none of these and that no returned row
+    #: carries, as search does with its own row's keys; nothing is refused.
+    TASK_ROW_FIELDS: tuple[str, ...] = (
+        "id", "title", "status", "assignee", "priority", "parent", "kb_name",
+        "parked_awaiting", "updated_at", "derived",
+    )  # fmt: skip
+
     def task_listing(
         self,
         kb_name: str | None = None,
@@ -551,7 +559,8 @@ class TaskService:
         ``fields`` it is exactly :meth:`list_tasks` under ``tasks``, as before
         #1686.
 
-        ``dispatchable`` keeps only the tasks a worker can take now, as
+        ``dispatchable`` keeps only the tasks a worker can take now -- each
+        one a task ``claim_task`` accepts now -- as
         :func:`~pyrite.models.task_queue.classify_tasks` decides (the one
         place that is decided), in its order: priority highest first, then
         oldest. It adds ``counts`` (every task the other filters matched, per
@@ -594,7 +603,8 @@ class TaskService:
 
         The I/O is here, so the classifier stays pure: one index read for
         each row's ``created_at``, ``file_path`` and ``dependencies``, a
-        stat of the file of each task whose effective status is open, and
+        stat of the file of each task whose effective status is open, a load
+        through the claim's loader of each task every other check lists, and
         the derived completion of a KB a ``kb:id`` dependency names -- only
         when this listing reads that KB, so a dependency on a KB the caller
         may not read stays unresolved (blocked) and reveals nothing.
@@ -611,7 +621,7 @@ class TaskService:
         params: dict[str, Any] = {}
         in_listed = kb_names_clause("kb_name", listed_kbs, params)
         extra_rows = self._query(
-            "SELECT kb_name, id, created_at, file_path, metadata FROM entry "
+            "SELECT kb_name, id, status, created_at, file_path, metadata FROM entry "
             f"WHERE entry_type = 'task' AND {in_listed}",
             params,
         )
@@ -626,6 +636,9 @@ class TaskService:
             inputs.append(
                 {
                     **task,
+                    # The column the claim's compare-and-swap reads, not the
+                    # row's `status` (which reads an empty one as `open`).
+                    "index_status": row.get("status"),
                     "created_at": row.get("created_at") or "",
                     "dependencies": deps,
                     "file_present": not open_now or self._file_present(task, row),
@@ -636,11 +649,35 @@ class TaskService:
                 if sep and other in scope and other not in derived:
                     derived[other] = self.derived_completion(other)
 
+        # The one check that reads a file runs last and only on the rows every
+        # other check lists, so its cost is the listed set: does the claim's
+        # own loader load the file? A row it does not is `unreadable`.
+        for row, reason in classify_tasks(inputs, derived):
+            if reason is None:
+                row["file_loads"] = self._claim_can_load(row)
+
         by_key = {(t["kb_name"], t["id"]): t for t in tasks}
         return [
             (by_key[(row["kb_name"], row["id"])], reason)
             for row, reason in classify_tasks(inputs, derived)
         ]
+
+    def _claim_can_load(self, task: dict[str, Any]) -> bool:
+        """Whether ``KBService.claim_entry``'s load of this task succeeds: the
+        same call (``KBRepository(kb).load``), so the list never promises a
+        task the claim then refuses at its load. No entry (the file's YAML
+        broke, or no file holds the id) and a load error (its type refuses
+        it) are both false. A KB no longer configured is not loaded by the
+        claim either, so it is not judged here."""
+        from ..storage.repository import KBRepository
+
+        kb = self.config.get_kb(task["kb_name"])
+        if kb is None:
+            return True
+        try:
+            return KBRepository(kb).load(task["id"]) is not None
+        except Exception:  # noqa: BLE001 - any refusal of the load leaves the task out
+            return False
 
     def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
         """Whether the task's file is still there, as its KB answers it

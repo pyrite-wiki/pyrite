@@ -3,11 +3,15 @@
 The property (the groom of #1686, section 3): a task is dispatchable if and
 only if its effective status (ADR-0045 decision 7) is ``open``, its index row
 still has a file, it has no children, no assignee, is not parked, and every
-dependency exists and is resolved. Each excluded open task carries exactly
-one reason from ``DISPATCH_REASONS``. Every surface (CLI, MCP, REST) asks
-``TaskService.list_tasks``, so all three return the same tasks in the same
-order -- priority highest first, then oldest ``created_at``, then KB, then
-id -- with the same reason for each excluded task.
+dependency exists and is resolved. And the property that ties the list to the
+write (cold read of PR #1712): a task the list gives is one ``task claim``
+accepts now, so a status the claim's compare-and-swap refuses (``""``) and a
+file the claim's loader cannot load are left out too. Each excluded open task
+carries exactly one reason from ``DISPATCH_REASONS``. Every surface (CLI,
+MCP, REST) returns ``TaskService.task_listing``, so all three return the same
+tasks in the same order -- priority highest first, then oldest
+``created_at``, then KB, then id -- with the same reason for each excluded
+task.
 
 The fixture is the groom's Shapes list, one file per shape, and every
 expected value below is written by hand from the property, never computed
@@ -117,7 +121,16 @@ WORK_FILES = {
     "as-person": _task("as-person", extra="assignee: mark\n"),
     # -- an index row whose file is gone (deleted after indexing) -----------
     "orph": _task("orph", priority=10),
+    # -- what the claim refuses although the index reads it as open ----------
+    # `status: ""` indexes as '', which derive_completion reads as open but
+    # the claim's compare-and-swap (status = 'open' OR NULL) refuses.
+    "empty-status": _task("empty-status", status='""', priority=10),
+    # Valid when indexed; its YAML breaks afterwards (see BROKEN), so the
+    # claim's load finds no entry.
+    "breaks-later": _task("breaks-later", priority=10),
 }
+#: What `breaks-later.md` holds after indexing: YAML that does not parse.
+BROKEN = "---\nid: breaks-later\ntitle: [unclosed\ntype: task\nstatus: open\n---\n\nWork.\n"
 OTHER_FILES = {
     "o-done": _task("o-done", status="done"),
     "o-open": _task("o-open", priority=1, created=_t(1)),
@@ -155,6 +168,8 @@ DISPATCHABLE_ORDER = [
 #: Literal: each open task that is not dispatchable, and its one reason.
 EXCLUDED = {
     "orph": "orphaned",
+    "empty-status": "empty_status",
+    "breaks-later": "unreadable",
     "hp-parent": "has_children",
     "lg-parent": "has_children",
     "as-agent": "assigned",
@@ -192,6 +207,8 @@ COUNTS = {
     "assigned": 2,
     "parked": 2,
     "blocked": 6,
+    "empty_status": 1,
+    "unreadable": 1,
 }
 
 #: The reason each shape is expected to produce (None = dispatchable).
@@ -202,9 +219,7 @@ EXPECTED_REASON: dict[str, str | None] = {
 }
 
 
-@pytest.fixture(scope="module")
-def world(tmp_path_factory):
-    root = tmp_path_factory.mktemp("dispatch")
+def _build_world(root):
     seeds = {WORK: WORK_FILES, OTHER: OTHER_FILES, PARKED_ONLY: PARKED_FILES, EMPTY: {}}
     kbs = []
     for name, files in seeds.items():
@@ -215,11 +230,36 @@ def world(tmp_path_factory):
             (path / f"{tid}.md").write_text(text, encoding="utf-8")
         kbs.append(KBConfig(name=name, path=path, kb_type=KBType.GENERIC))
     w = build_world(root, kbs=kbs)
-    (root / WORK / "orph.md").unlink()  # the index row stays; the file is gone
+    # The index rows stay; one file is gone, one no longer loads.
+    (root / WORK / "orph.md").unlink()
+    (root / WORK / "breaks-later.md").write_text(BROKEN, encoding="utf-8")
+    return w
+
+
+@pytest.fixture(scope="module")
+def world(tmp_path_factory):
+    w = _build_world(tmp_path_factory.mktemp("dispatch"))
     try:
         yield w
     finally:
         w.close()
+
+
+@pytest.fixture(scope="module")
+def claim_world(tmp_path_factory):
+    """A copy of the fixture of its own: the claims below write."""
+    w = _build_world(tmp_path_factory.mktemp("claim"))
+    try:
+        yield w
+    finally:
+        w.close()
+
+
+def claim(world, tid, kb):
+    result = world.cli(
+        "task", "claim", tid, "-k", kb, "--assignee", "agent:probe", "--format", "json"
+    )
+    return result.exit_code, json.loads(result.stdout)
 
 
 # -- Surfaces -----------------------------------------------------------------
@@ -298,6 +338,27 @@ def test_the_three_surfaces_agree_row_for_row(answers):
         assert cli_out[key] == mcp_out[key] == rest_out[key], key
 
 
+def test_every_listed_task_is_one_claim_accepts_now(claim_world):
+    """The list and the claim judge "open" and "the file loads" separately;
+    this cell keeps them from drifting. Every task the list gives is claimed
+    (each claim touches only its own task, so one copy serves them all)."""
+    tasks, _ = _scoped(cli(claim_world, "--dispatchable"))
+    refused = {}
+    for task in tasks:
+        code, out = claim(claim_world, task["id"], task["kb_name"])
+        if code != 0 or out.get("claimed") is not True:
+            refused[task["id"]] = out.get("error")
+    assert refused == {}
+    assert [t["id"] for t in tasks] == DISPATCHABLE_ORDER
+
+
+@pytest.mark.control(reason="the claim path is unchanged by #1686; pins what it refuses")
+@pytest.mark.parametrize("tid", ["empty-status", "breaks-later"])
+def test_the_claim_refuses_what_the_list_leaves_out(claim_world, tid):
+    code, out = claim(claim_world, tid, WORK)
+    assert code != 0 and out.get("claimed") is False, out
+
+
 def test_counts_cover_every_task_in_scope(world):
     out = cli(world, "--dispatchable", "-k", WORK)
     # `-k work`: o-open and o-done are not listed; `other:` dependencies are no
@@ -349,6 +410,22 @@ def test_fields_without_dispatchable_projects_the_plain_listing(world):
     out = cli(world, "--fields", "id,status", "-k", WORK)
     assert {frozenset(t) for t in out["tasks"]} == {frozenset({"id", "kb_name", "status"})}
     assert "counts" not in out and "excluded" not in out
+
+
+def test_unknown_fields_are_named_on_stderr(world):
+    """As search does: a name no task carries is named on stderr, nothing is
+    refused, and stdout stays the JSON document."""
+    result = world.cli(
+        "task", "list", "-k", WORK, "--fields", "id,Priority,nope", "--format", "json"
+    )
+    assert result.exit_code == 0, result.output
+    assert {frozenset(t) for t in json.loads(result.stdout)["tasks"]} == {
+        frozenset({"id", "kb_name"})
+    }
+    assert "Priority" in result.stderr and "nope" in result.stderr
+    assert "case-sensitive" in result.stderr
+    known = world.cli("task", "list", "-k", WORK, "--fields", "id,priority,parked_awaiting")
+    assert known.exit_code == 0 and known.stderr == ""
 
 
 def test_rich_fields_table_shows_the_named_columns(world):
@@ -409,6 +486,10 @@ def test_without_the_flag_the_listing_is_todays(world, surface):
         out = rest(world, kb=WORK)
         assert set(out) == {"count", "tasks"}
     assert all(set(t) == TODAYS_ROW_KEYS for t in out["tasks"])
+    # The keys the unknown-name warning knows are the keys a row has.
+    from pyrite.services.task_service import TaskService
+
+    assert set(TaskService.TASK_ROW_FIELDS) == TODAYS_ROW_KEYS
     # Every task in the index, newest first, orphan included.
     assert out["count"] == len(WORK_FILES)
     assert out["tasks"][-1]["id"] == "lg-child"  # created 00:00, the oldest

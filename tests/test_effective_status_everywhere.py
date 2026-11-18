@@ -409,7 +409,7 @@ def cli_task_list_dispatchable(cfg):
 
 
 #: Every filter named `dispatchable`: one derived view (`classify_tasks`,
-#: through `TaskService.list_tasks`), filtering on the effective status.
+#: which `TaskService.task_listing` asks for every surface), filtering on the effective status.
 DISPATCHABLE_SURFACES = {
     "mcp:task_list": mcp_task_list_dispatchable,
     "rest:GET /api/tasks": rest_tasks_dispatchable,

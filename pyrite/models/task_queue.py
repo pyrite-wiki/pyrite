@@ -3,13 +3,21 @@
 A pure function over index rows, beside ``task_completion.py`` and built on
 it: kb/design.md principle 4 (dispatchability is derived, never stored) and
 principle 8 (one classifier; the park and stale-claim views of #1680 extend
-it rather than copy it). ``TaskService.list_tasks(dispatchable=True)`` is
+it rather than copy it). ``TaskService.task_listing(dispatchable=True)`` is
 the only caller, and the CLI ``task list``, the MCP ``task_list`` tool and
-REST ``GET /tasks`` all ask it, so the three return the same tasks in the
-same order with the same reason for each one left out.
+REST ``GET /tasks`` all return what it builds, so the three return the same
+tasks in the same order with the same reason for each one left out.
+
+A task this view lists is one ``task claim`` accepts now: the claim's
+compare-and-swap takes only ``open`` or an unset status, and the claim loads
+the file through ``KBRepository.load`` before it. So a row the index reads as
+open but the claim would refuse -- an empty-string status, a file that no
+longer loads -- is left out with its own reason
+(``tests/test_task_dispatchable.py`` claims every listed task).
 
 Nothing here reads a file or the database. The service supplies whether a
-row's file is still there (``file_present``).
+row's file is still there (``file_present``) and, for a row that passes every
+other check, whether the claim's loader loads it (``file_loads``).
 """
 
 from __future__ import annotations
@@ -24,6 +32,9 @@ from .task import TASK_RESOLVED_STATUSES
 #: - ``not_open``: its effective status (ADR-0045 decision 7) is not ``open``,
 #:   so a parent done by its children is ``not_open`` even if its file says
 #:   ``open``.
+#: - ``empty_status``: the file says ``status: ""``. The index and
+#:   ``derive_completion`` read it as open; the claim's compare-and-swap
+#:   (``status = 'open' OR status IS NULL``) refuses it.
 #: - ``orphaned``: the index holds the row but the file is gone; a claim would
 #:   fail at the file load.
 #: - ``has_children``: its work is in its children (``parent`` or the legacy
@@ -32,13 +43,19 @@ from .task import TASK_RESOLVED_STATUSES
 #: - ``parked``: ``parked_awaiting`` says why it waits (:func:`is_parked`).
 #: - ``blocked``: a dependency is unresolved, or names no task this listing
 #:   can read.
+#: - ``unreadable``: everything else says dispatchable, but the claim's loader
+#:   (``KBRepository.load``) does not load the file: its YAML broke after it
+#:   was indexed, or its type refuses it. Checked last, because it is the one
+#:   reason that reads a file, so only the rows that would be listed are read.
 DISPATCH_REASONS: tuple[str, ...] = (
     "not_open",
+    "empty_status",
     "orphaned",
     "has_children",
     "assigned",
     "parked",
     "blocked",
+    "unreadable",
 )
 
 #: Characters that, alone, do not say why a task waits: a value of only
@@ -98,14 +115,17 @@ def classify_task(row: dict[str, Any], derived: dict[str, dict[str, dict[str, An
     """``None`` when ``row`` is dispatchable, else its one reason.
 
     ``row`` is a ``list_tasks`` row (``id``, ``kb_name``, ``assignee``,
-    ``parked_awaiting``, ``derived``) plus ``dependencies`` and
-    ``file_present``. ``derived`` maps each KB this listing reads to its
+    ``parked_awaiting``, ``derived``) plus ``index_status`` (the index's
+    own status column, which the claim compares), ``dependencies``,
+    ``file_present`` and ``file_loads`` (both default true). ``derived`` maps each KB this listing reads to its
     :func:`~pyrite.models.task_completion.derive_completion` result, which
     is how dependencies are resolved.
     """
     own = row["derived"]
     if own["effective_status"] != "open":
         return "not_open"
+    if row.get("index_status") == "":
+        return "empty_status"
     if not row.get("file_present", True):
         return "orphaned"
     if own["completion"]["children"]:
@@ -119,6 +139,8 @@ def classify_task(row: dict[str, Any], derived: dict[str, dict[str, dict[str, An
         _dependency_resolved(d, kb, derived) for d in dependency_ids(row.get("dependencies"))
     ):
         return "blocked"
+    if not row.get("file_loads", True):
+        return "unreadable"
     return None
 
 

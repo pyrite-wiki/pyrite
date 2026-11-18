@@ -359,6 +359,20 @@ def task_list(
         )
     finally:
         db.close()
+    if fields_list:
+        from ..services.task_service import TaskService
+
+        unmatched = [
+            f
+            for f in fields_list
+            if f not in TaskService.TASK_ROW_FIELDS and not any(f in t for t in data["tasks"])
+        ]
+        if unmatched:
+            typer.echo(
+                f"warning: no task carries: {', '.join(unmatched)} "
+                "(field names are case-sensitive; '*' returns every field)",
+                err=True,
+            )
 
     def rich(console, data: dict) -> None:
         if fields_list:
