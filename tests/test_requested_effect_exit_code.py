@@ -1675,6 +1675,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "documented fallback to YAML config",
     ),
+    ("pyrite/cli/entry_commands.py", "_field_flag"): (
+        "safe",
+        "a key no parser can read is not tags, and the service refuses it later as VALIDATION_FAILED (#1725)",
+    ),
     ("pyrite/cli/entry_commands.py", "_parse_field_value"): ("safe", "tries the next parser"),
     ("pyrite/cli/entry_commands.py", "create_entry"): ("fixed", "TestCreateWithFailedLink"),
     (
@@ -1684,6 +1688,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
+    ),
+    ("pyrite/cli/entry_commands.py", "parse"): (
+        "safe",
+        "a key no parser can read is not tags, and the service refuses it later as VALIDATION_FAILED (#1725)",
     ),
     # A linked entry that cannot be loaded is returned as left out; the command
     # names it and exits through exit_unless_whole.

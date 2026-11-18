@@ -1,0 +1,1 @@
+- Reject zero and negative `--limit` values in `pyrite social newest` and `pyrite social top` (#1561).
