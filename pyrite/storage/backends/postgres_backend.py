@@ -168,6 +168,11 @@ def ensure_schema(engine) -> None:
         # The link's `kb:` prefix as written (#980): create_all never alters an
         # existing table, so a database from before it gets the column here.
         conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_prefix TEXT"))
+        # The path a Markdown link names (#1723), the same way.
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_path TEXT"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)")
+        )
         # GIN index for FTS
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")
@@ -315,11 +320,21 @@ class PostgresBackend(BaseBackend):
     # _sync_links (delete-all-reinsert — Postgres-specific)
     # =====================================================================
 
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
         # The same rows as SQLite's diff, one per written link (`_link_rows`,
         # #1009), written by delete and re-insert.
-        self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).delete()
-        for (target_id, target_kb, relation, target_prefix), attrs in _link_rows(
+        query = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name)
+        if keep_path_rows:
+            query = query.filter(Link.target_path.is_(None))
+        query.delete()
+        for (target_id, target_kb, relation, target_prefix, target_path), attrs in _link_rows(
             kb_name, links
         ).items():
             self._session.add(
@@ -332,6 +347,7 @@ class PostgresBackend(BaseBackend):
                     inverse_relation=attrs["inverse_relation"],
                     note=attrs["note"],
                     target_prefix=target_prefix,
+                    target_path=target_path,
                 )
             )
 

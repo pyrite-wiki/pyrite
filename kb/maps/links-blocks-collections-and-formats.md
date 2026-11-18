@@ -27,6 +27,16 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    with `![[...]]`; the syntax is Obsidian-compatible and cross-KB with a
    `kb:` prefix. A derived `block` table indexes blocks per entry. **decided**
    [[adr-0012]].
+   An ordinary Markdown link to an entry file in the same KB
+   (`[text](other.md)`, relative to the linking file, with or without a
+   `#fragment`) is a link as well: one row with relation `markdown_link`
+   that keeps the path it names (`link.target_path`, symbolic links followed)
+   and whose `target_id` is the id of the entry indexed at that path now, or
+   the path text when nothing is there (a broken link). One backend resolver
+   re-derives those rows on every write and delete, so the order of writes
+   does not matter. A URL, an image, a link in code, a self-link, a path that
+   leaves the KB, a root-relative `/x.md` and a file the walk does not list
+   are not links (#1723).
 2. Backlinks, outlinks and edge endpoints are index rows rebuilt from the
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by

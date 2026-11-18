@@ -161,6 +161,12 @@ class Link(Base):
     #: beside the KB name it resolved to; NULL when the file named no KB or
     #: the row predates v28. A row can be checked against the file (#980).
     target_prefix = Column(String)
+    #: The KB-relative path a Markdown link names (#1723), symbolic links
+    #: followed; NULL for a link that names an id. The row's identity is this
+    #: path, and ``target_id`` is the id of the entry indexed at it now, or the
+    #: path text when nothing is (a broken link). One resolver keeps it so
+    #: (``BaseBackend._resolve_path_links``).
+    target_path = Column(String)
     relation = Column(String, nullable=False)
     inverse_relation = Column(String, nullable=False)
     note = Column(Text)
@@ -175,6 +181,7 @@ class Link(Base):
         Index("idx_link_source", "source_id", "source_kb"),
         Index("idx_link_target", "target_id", "target_kb"),
         Index("idx_link_relation", "relation"),
+        Index("idx_link_target_path", "target_kb", "target_path"),
     )
 
     source_entry = relationship("Entry", back_populates="outgoing_links")

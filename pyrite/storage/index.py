@@ -60,6 +60,7 @@ from ..utils.metadata import parse_metadata
 from . import entry_paths
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
+from .markdown_links import markdown_link_targets
 from .repository import KBRepository
 
 logger = logging.getLogger(__name__)
@@ -881,6 +882,26 @@ class IndexManager:
                             "note": note,
                         }
                     )
+
+        # Markdown links to entry files in this KB (#1723): the row keeps the
+        # path (`path`, the `link.target_path` column) and the backend's
+        # resolver gives it the id of the entry indexed there now, whatever
+        # order the files are written in. The root goes with the row so the
+        # resolver can name this entry's own path (`_resolve_path_links`).
+        root = self._root_of(kb_name, file_path)
+        data["_kb_root"] = str(root)
+        if scannable_body:
+            for path, note in markdown_link_targets(scannable_body, root, file_path):
+                data["links"].append(
+                    {
+                        "target": path,
+                        "kb": kb_name,
+                        "prefix": None,
+                        "relation": "markdown_link",
+                        "note": note,
+                        "path": path,
+                    }
+                )
 
         # Extract object-ref fields for entry_ref table
         refs = []

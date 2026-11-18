@@ -8,6 +8,20 @@ to tell you are done. The reasons and the full detail are in the
 [JSON contracts](json-contracts.md), which this page links and does not
 repeat.
 
+## Upgrading from 0.26.4 to 0.26.5
+
+- **Markdown links to entry files are links now** (`[text](other.md)`, see
+  [links](links.md#markdown-links-to-entry-files)). Run `pyrite index sync`
+  once after upgrading. The first open of the index marks every entry to be
+  read again, so that sync reads every file (it takes about as long as an
+  `index build`) and reports nothing changed. Until it has run, `index
+  health` shows every entry as stale. You are done when `index health` shows
+  no stale entries.
+- **`pyrite links check` may newly exit 1**, and `backlinks`, the graph and
+  `index health`'s `broken_links` may grow, after that sync: a `.md` link
+  with nothing at its path is a broken link, reported under the path. Fix the
+  path, or make it a URL if the page is generated elsewhere.
+
 ## Upgrading from 0.26.3 to 0.26.4
 
 - **A software KB's `board.yaml`** that 0.26.3 read with an extra or misspelt

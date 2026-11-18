@@ -27,6 +27,7 @@ def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
         yaml = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
         (tmp_path / "links.yaml").write_text(yaml, encoding="utf-8")
     last = None
+    markdown_linker = None
     for expected, block in _blocks(page):
         for line in block.strip().splitlines():
             args = shlex.split(line)
@@ -38,8 +39,16 @@ def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
                 assert last["claimed"] is False
             if args[:2] == ["links", "bulk-create"] and expected == 3:
                 assert last["outcome"] == "partial"
+            if args[0] == "create" and "--body" in args and "](" in args[args.index("--body") + 1]:
+                markdown_linker = last["entry_id"]
             if args[0] == "backlinks":
                 assert any(row["id"] == "alpha" for row in last["entries"])
+                if markdown_linker:
+                    # A Markdown link to the file is a backlink too (#1723).
+                    assert any(
+                        row["id"] == markdown_linker and row["forward_relation"] == "markdown_link"
+                        for row in last["entries"]
+                    ), last
     if page == "tasks.md":
         assert last["status"] != "done"
         assert last["derived"]["completion"]["complete"] is True

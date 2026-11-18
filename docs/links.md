@@ -19,6 +19,34 @@ second written link. In entry bodies, `[[id]]` is a wikilink and `![[id]]`
 is a transclusion. A relation's meaning is separate from whether the target
 currently exists.
 
+## Markdown links to entry files
+
+An ordinary Markdown link to another entry's file is a link too, so a KB
+written by hand or by another editor needs no wikilinks:
+
+```bash
+pyrite create -k test-kb -t note --title Gamma --body "See [Beta](beta.md#Claim)"
+pyrite backlinks beta -k test-kb
+```
+
+Beta's backlinks now list Gamma with relation `markdown_link` (the reverse,
+`markdown_linked_by`). The path is relative to the linking file's folder, as
+a Markdown viewer reads it. It may carry a `#fragment`, `<angle brackets>`, a
+title or `%20`, or be a reference-style link (`[Beta][b]` with `[b]: beta.md`).
+The link follows the file, not its name: if Beta's id changes while the file
+stays, the link names the new id; if the file moves or is deleted, the link is
+broken. A path through a symbolic link inside the KB names the file it leads
+to.
+
+These are not entry links: a URL, a `#fragment` alone, an image, a link inside
+code, a link to the file itself, a root-relative `/x.md` (the site's root may
+not be the KB's), a path that leaves the KB, and a file the index does not
+read as an entry (`README.md`, `_templates/`, hidden folders, other suffixes).
+A link without `.md` (`[Beta](beta)`) counts only when `beta.md` exists when
+the linking file is indexed; a target created later is seen the next time the
+linking file is read. A `.md` link with nothing at its path is a broken link,
+which `links check` reports under the path.
+
 ## Check broken targets
 
 Alpha's example body deliberately names a missing entry. The check below
