@@ -180,6 +180,9 @@ def ensure_schema(engine) -> None:
             )
         ).first()
         conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_path TEXT"))
+        # Whether a Markdown link row's path matched an entry file; added with
+        # target_path (one release), so the re-read below covers both.
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_resolved INTEGER"))
         if had_target_path is None:
             conn.execute(text("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL"))
         conn.execute(

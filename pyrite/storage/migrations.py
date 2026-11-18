@@ -549,7 +549,7 @@ MIGRATIONS: list[Migration] = [
     ),
     Migration(
         version=30,
-        description="Add link.target_path: Markdown links to entry files are link rows (#1723)",
+        description="Add link.target_path and link.target_resolved: Markdown links to entry files are link rows (#1723)",
         # ALTER handled conditionally in _apply_v30() since the column may
         # already exist from ORM create_all. The recorded file stat is nulled
         # so the next sync re-reads every file once and writes its Markdown
@@ -979,6 +979,8 @@ class MigrationManager:
             existing = {row[1] for row in self.conn.execute("PRAGMA table_info(link)").fetchall()}
             if "target_path" not in existing:
                 self.conn.execute("ALTER TABLE link ADD COLUMN target_path TEXT")
+            if "target_resolved" not in existing:
+                self.conn.execute("ALTER TABLE link ADD COLUMN target_resolved INTEGER")
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)"
             )

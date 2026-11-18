@@ -667,8 +667,8 @@ class BaseBackend(ABC):
             self._resolve_rows(rows, kb_name, lambda path: str(Path(root) / path))
 
     def _resolve_rows(self, rows: list, kb_name: str, file_of: Callable[[str], str]) -> None:
-        """Set each path row's ``target_id`` to the entry at ``file_of(path)``,
-        or to the path text. Two entries at one file (a duplicate id's winner
+        """Set each path row's ``target_id`` to the entry at ``file_of(path)``
+        and ``target_resolved`` to 1, or to the path text and 0 (broken). Two entries at one file (a duplicate id's winner
         and a row a rename has not removed yet) resolve to the smaller id; the
         write that removes the other resolves the row again."""
         if not rows:
@@ -684,9 +684,12 @@ class BaseBackend(ABC):
             if file_path not in at_file or entry_id < at_file[file_path]:
                 at_file[file_path] = entry_id
         for row in rows:
-            target = at_file.get(files[row.target_path], row.target_path)
+            hit = at_file.get(files[row.target_path])
+            target, resolved = (hit, 1) if hit is not None else (row.target_path, 0)
             if row.target_id != target:
                 row.target_id = target
+            if row.target_resolved != resolved:
+                row.target_resolved = resolved
 
     def delete_entry(self, entry_id: str, kb_name: str) -> bool:
         gone = self._session.get(Entry, (entry_id, kb_name))
@@ -1121,6 +1124,7 @@ class BaseBackend(ABC):
             FROM link l
             JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
             WHERE l.target_id = :entry_id AND l.target_kb = :kb_name
+              AND COALESCE(l.target_resolved, 1) = 1
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
         scope = kb_names_clause("e.kb_name", readable_kbs, params)
@@ -1159,6 +1163,7 @@ class BaseBackend(ABC):
                    e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
                 {f"AND {scope}" if scope else ""}
             WHERE l.source_id = :entry_id AND l.source_kb = :kb_name
             """,
@@ -1202,7 +1207,7 @@ class BaseBackend(ABC):
                    l.target_prefix as prefix, l.note
             FROM link l
             JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
-            WHERE l.target_kb = :kb_name
+            WHERE l.target_kb = :kb_name AND COALESCE(l.target_resolved, 1) = 1
             """,
             {"kb_name": kb_name},
         )
@@ -1222,6 +1227,7 @@ class BaseBackend(ABC):
                    e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE l.source_kb = :kb_name
             """,
             {"kb_name": kb_name},
@@ -1306,6 +1312,7 @@ class BaseBackend(ABC):
                                   e.title, e.entry_type
                            FROM link l
                            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                               AND COALESCE(l.target_resolved, 1) = 1
                                {f"AND {entry_clause}" if entry_clause else ""}
                            WHERE l.source_id = :eid AND l.source_kb = :ekb
                                {f"AND {source_clause}" if source_clause else ""}""",
@@ -1346,6 +1353,7 @@ class BaseBackend(ABC):
                            FROM link l
                            JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
                            WHERE l.target_id = :eid AND l.target_kb = :ekb
+                               AND COALESCE(l.target_resolved, 1) = 1
                                {f"AND {entry_clause}" if entry_clause else ""}""",
                         {"eid": eid, "ekb": ekb, **scope},
                     )
@@ -1396,6 +1404,7 @@ class BaseBackend(ABC):
                                WHERE l.source_id = e.id AND l.source_kb = e.kb_name)
                    OR EXISTS (SELECT 1 FROM link l
                               WHERE l.target_id = e.id AND l.target_kb = e.kb_name
+                                AND COALESCE(l.target_resolved, 1) = 1
                                 {f"AND {inbound}" if inbound else ""}))
                   {f"AND {entry_scope}" if entry_scope else ""}
             """
@@ -1412,6 +1421,7 @@ class BaseBackend(ABC):
             if nodes:
                 link_rows = self._exec(
                     "SELECT source_id, source_kb, target_id, target_kb, relation FROM link"
+                    " WHERE COALESCE(target_resolved, 1) = 1"
                 )
                 for r in link_rows:
                     src = (r["source_id"], r["source_kb"])
@@ -1441,6 +1451,7 @@ class BaseBackend(ABC):
                    COUNT(l.id) as link_count
             FROM entry e
             LEFT JOIN link l ON e.id = l.target_id AND e.kb_name = l.target_kb
+                AND COALESCE(l.target_resolved, 1) = 1
         """
         params: dict[str, Any] = {}
         if kb_name:
@@ -1471,6 +1482,7 @@ class BaseBackend(ABC):
             )
             AND e.id NOT IN (
                 SELECT target_id FROM link WHERE target_kb = e.kb_name
+                AND COALESCE(target_resolved, 1) = 1
                 {f"AND {inbound}" if inbound else ""}
             )
         """

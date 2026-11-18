@@ -2048,6 +2048,7 @@ class IndexManager:
         broken_sql = """
             SELECT COUNT(*) as cnt FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE e.id IS NULL
         """
         broken_params: dict[str, Any] = {}

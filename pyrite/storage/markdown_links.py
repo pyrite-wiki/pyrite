@@ -40,9 +40,10 @@ normalising filesystem ``[t](A.md)`` to the file ``a.md`` is a broken link
 (case-folding is a follow-up).
 
 A broken link's ``target_id`` is its path text (``notes/a.md``, decision D1).
-An entry whose id is literally that text would make the broken row read as
-resolved to every reader. Ids made from titles cannot contain the dot, so only
-a hand-set id can collide; it is not guarded.
+A hand-set id may equal that text, so the row also carries
+``link.target_resolved`` (0 for broken), and every reader that joins
+``target_id`` to an entry honours it: the broken row never reads as a link to
+that entry (``tests/test_broken_path_link_is_never_resolved.py``).
 """
 
 from __future__ import annotations

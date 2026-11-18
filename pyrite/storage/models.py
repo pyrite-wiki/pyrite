@@ -173,6 +173,12 @@ class Link(Base):
     #: path text when nothing is (a broken link). One resolver keeps it so
     #: (``BaseBackend._resolve_path_links``).
     target_path = Column(String)
+    #: For a Markdown link row: 1 when an entry file was at ``target_path``,
+    #: 0 when none was (a broken link). NULL for every row that names an id.
+    #: Every reader that joins ``target_id`` to an entry honours it
+    #: (``COALESCE(target_resolved, 1) = 1``): a broken row's ``target_id`` is
+    #: its path text, which a hand-set id may equal (#1723).
+    target_resolved = Column(Integer)
     relation = Column(String, nullable=False)
     inverse_relation = Column(String, nullable=False)
     note = Column(Text)
