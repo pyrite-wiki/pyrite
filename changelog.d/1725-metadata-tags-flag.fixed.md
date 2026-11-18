@@ -1,0 +1,1 @@
+- `-f metadata.tags=...` on entry create and update is now refused as a usage error pointing at `--tags`, matching `-f tags=...` (#1725).
