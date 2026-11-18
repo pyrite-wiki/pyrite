@@ -328,6 +328,9 @@ def test_each_surface_carries_rows_or_a_count_as_decided(tmp_path, cli_world, su
         assert body.get("healthy", True) is True  # a warning, never unhealthy
 
 
+@pytest.mark.control(
+    reason="a structural guard: dev makes no such call either; it goes red when a server module reads the health report itself"
+)
 def test_no_network_surface_reads_the_health_report_directly():
     """REST and MCP reach index health only through
     `KBRegistryService.health_kb`, the one place that turns
