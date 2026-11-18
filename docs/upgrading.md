@@ -39,14 +39,19 @@ repeat.
   `POST` and `PUT` answered 422. A value already in a file is kept, with a
   warning. In a journalism-investigation KB the refusal is
   `VALIDATION_FAILED`, no longer `SCHEMA_VIOLATION`.
-- **Numbers read as numbers, and `metadata` as an object (#1503).** A field
-  declared `number` or `checkbox` reads as a number or a boolean on every
-  reader, where it read as text before. A task's `priority` is a number on
-  `kb_get`. MCP `kb_find_*` and `kb_search`, `search --fields '*'` and REST
-  search return `metadata` as an object, not JSON text, and `aliases` as a
-  list: a client that ran `json.loads` on `metadata` must stop. A write-back
-  unquotes `"7"` in a number field and rewrites `1`/`0` as `true`/`false` in a
-  checkbox field. `pyrite qa validate` reports `number_as_text` for the rest.
+- **Numbers read as numbers, and `metadata` as an object (#1503).** From
+  0.26.4 a field declared `number` reads as a number, and one declared
+  `checkbox` as a boolean, on every reader, for values written from then on;
+  a task's `priority` reads as a number on `kb_get` for old files too. A value
+  already in a file is not re-read: a quoted `"7"` in a number field still
+  reads as text, and `1` in a checkbox field still reads as an integer, after
+  `index sync` and `index build`, until you write that field yourself (an
+  update of another field leaves it as written). `pyrite qa validate` reports
+  the quoted number as `number_as_text` and the `1`/`0` in a checkbox field as
+  a `schema_violation` ("expected boolean, got int"). MCP `kb_find_*` and
+  `kb_search`, `search --fields '*'` and REST search return `metadata` as an
+  object, not JSON text, and `aliases` as a list: a client that ran
+  `json.loads` on `metadata` must stop.
 - **REST `PATCH` and `PUT` answer 422, not 400,** when an update would produce
   an entry that cannot be loaded (#1472); the message says the file is
   unchanged.
@@ -54,7 +59,9 @@ repeat.
   (#1552).** Its entries lose their index rows at the next sync, and `pyrite
   index health` names its files that state an `id:` under
   `unlisted_entry_files`. Rename the folder, or move the entries out, before
-  you sync.
+  you sync. After a rename, `pyrite index health` reports the moved entries
+  under `subdirectory_mismatches` (a warning): run `pyrite index reconcile
+  <kb> --apply` to move them into their type's subdirectory.
 - **A create stores the type you named (#468).** In software, zettelkasten,
   encyclopedia and social KBs, `-t note`, `document` and `person` are no
   longer stored as `adr`, `literature_note`, `article`, `writeup`,
