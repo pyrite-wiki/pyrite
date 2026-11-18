@@ -395,6 +395,51 @@ def test_a_kb_argument_is_the_dispatchers_on_every_tool(server, key):
     assert "ignored_arguments" not in read, read
 
 
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("sw_claim", {"kb_name": KB, "item_id": "probe-1758", "assignee": "me"}),
+        (
+            "investigation_create_entity",
+            {"kb_name": KB, "title": "Kb 1758", "entity_type": "person"},
+        ),
+        ("task_create", {"kb_name": KB, "title": "Kb task 1758"}),
+    ],
+)
+def test_a_kb_argument_a_write_tool_does_not_take_is_refused(server, tool, args):
+    """A write tool that declares a KB argument of its own works in that one:
+    an extra `kb` would be access-checked and then dropped, so it is refused
+    and nothing is written (round 1 on #1774)."""
+    before = _files(server)
+    result = _call(server, tool, {**args, "kb": KB})
+    _assert_refused_naming(result, "kb")
+    assert _files(server) == before
+
+
+def test_every_write_tool_with_its_own_kb_argument_refuses_another(server):
+    """By iteration: a write tool that declares a KB argument refuses a KB
+    argument name it does not declare; one that declares none (the
+    `kb_registry_*` tools) takes any, since the dispatcher's write check needs
+    one named."""
+    kb_names = {"kb_name", "kb", "source_kb", "target_kb", "center_kb", "kb_names", "kb_a", "kb_b"}
+    wrong = []
+    for name, meta in sorted(server.tools.items()):
+        if not _is_write(server, name) or name in FREE_FORM:
+            continue
+        props = set(meta["inputSchema"].get("properties") or {})
+        own = props & kb_names
+        extra = sorted(kb_names - props - {"kb_name"})[0]  # never kb_name: the dispatcher's
+        value = [KB] if extra == "kb_names" else KB
+        args = {**_minimal_arguments(meta["inputSchema"]), extra: value}
+        result = _call(server, name, args)
+        refused = [r.get("field") for r in result.get("errors", [])] == [extra]
+        if own and not refused:
+            wrong.append(f"{name} (declares {sorted(own)}): {extra} not refused: {result}")
+        if not own and refused:
+            wrong.append(f"{name} (declares no KB argument): {extra} refused")
+    assert not wrong, "\n  ".join(wrong)
+
+
 @pytest.mark.control(reason="ADR-0034 marker; must keep its own refusal")
 def test_a_truncation_marker_on_a_write_meets_the_truncation_refusal(server):
     """ADR-0034 markers are read by the dispatcher's truncation guard, not unknown."""
@@ -424,6 +469,7 @@ def test_the_server_instructions_state_the_rule():
     text = MCP_SERVER_INSTRUCTIONS.format(tier="write")
     assert "refused on a write tool" in text
     assert "ignored_arguments" in text
+    assert "kb_create" in text and "kb_update" in text  # the two free-form exceptions
 
 
 # ---------------------------------------------------------------------------

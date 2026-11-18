@@ -276,7 +276,9 @@ def test_a_default_the_caller_cannot_write_is_refused_by_the_write_check(world):
     before = _tree(paths["inv"])
     result = server._dispatch_tool(
         "investigation_create_entity",
-        {"entity_type": "person", "title": f"made {next(_SERIAL)}", "kb": MINE},
+        # No `kb`: the tool works in kb_name, so a write tool refuses another
+        # KB argument before any check (#1758, round 1 on #1774).
+        {"entity_type": "person", "title": f"made {next(_SERIAL)}"},
         client_kind="user",
         client_id="1",
         readable_kbs={MINE, *OTHERS},

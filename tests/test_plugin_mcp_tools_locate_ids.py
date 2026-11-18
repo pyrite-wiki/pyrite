@@ -810,6 +810,17 @@ def test_a_write_that_succeeds_lands_in_the_checked_kb(server, monkeypatch, tool
     args = case.args(ids["one"]) if arg is None else {**case.args(ids["one"]), arg: KB_B}
     result = _call(server, tool, args, readable={KB_A, KB_B}, writable={KB_B})
 
+    if arg is not None and arg not in srv.tools[tool]["inputSchema"].get("properties", {}):
+        # A KB named under an argument this write tool does not declare is
+        # never the handler's KB (it works in kb_name), so the call would
+        # succeed with it dropped: it is refused before any lookup or write
+        # instead (#1758, round 1 on #1774).
+        assert result.get("error_code") == "VALIDATION_FAILED", result
+        assert [row["field"] for row in result["errors"]] == [arg], result
+        assert _files(server) == before, result
+        if case.table:
+            assert _rows(server, case.table) == [], result
+        return
     assert _resolved(result), result
     assert KB_B in checked, checked
     if case.table:
