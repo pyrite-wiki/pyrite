@@ -335,6 +335,68 @@ def test_a_file_replaced_by_a_link_loop_is_retired(kb, name):
     assert str(inner) in {row["path"] for row in result["malformed"]}
 
 
+# A link whose TARGET cannot be stat-ed is a link the walk never enters, not a
+# folder it could not list: no row can lie under it, so it is never named and
+# never makes a sync incomplete. Dev answered exit 0 / healthy for each
+# (round 3 of #1647, from the delta cold read of 75dcd447).
+
+
+def _self_link(root: Path, shut: list[Path], outside: Path) -> None:
+    (root / "loop").symlink_to("loop")
+
+
+def _link_into_a_folder_it_cannot_search(root: Path, shut: list[Path], outside: Path) -> None:
+    (outside / "x").mkdir(parents=True)
+    (root / "ext").symlink_to(outside / "x")
+    _shut(shut, outside, 0o000)
+
+
+def _link_through_a_file(root: Path, shut: list[Path], outside: Path) -> None:
+    (root / "thru").symlink_to("top.md/x")
+
+
+LINKS = {
+    "self-link": _self_link,
+    "link-into-an-unsearchable-folder": _link_into_a_folder_it_cannot_search,
+    "link-through-a-file": _link_through_a_file,
+}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+@pytest.mark.parametrize("name", RECONCILES)
+@pytest.mark.parametrize("link", LINKS)
+def test_a_link_whose_target_cannot_be_stat_ed_is_not_an_unreadable_folder(
+    kb, tmp_path, link, name
+):
+    from pyrite.services.index_health import health_verdict
+
+    RECONCILES[name](kb)
+    LINKS[link](kb.root, kb.shut, tmp_path / "outside")
+    result = _reported(kb, name)
+    assert result["unreadable_folders"] == []
+    assert result["unreadable_files"] == []
+    assert set(_rows(kb)) == SEEDED_IDS
+    health = kb.im.check_health(KB)
+    assert health["unreadable_folders"] == []
+    assert health_verdict(health)["is_unhealthy"] is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+@pytest.mark.parametrize("link", LINKS)
+def test_a_link_whose_target_cannot_be_stat_ed_syncs_whole_and_healthy(world, tmp_path, link):
+    """Through the CLI: ``index sync`` exits 0 and ``index health`` is not
+    unhealthy (exit 0), with ``unreadable_folders`` empty, as on dev."""
+    LINKS[link](world.root_kb, world.shut, tmp_path / "outside")
+    sync = world.cli("index", "sync", "-k", KB, "--no-embed")
+    assert sync.exit_code == 0, sync.output
+    assert "Unreadable folders" not in sync.output
+    health = world.cli("index", "health", "-k", KB, "--format", "json")
+    assert health.exit_code == 0, health.output
+    body = json.loads(health.output)
+    body = body.get("data", body)
+    assert body["unreadable_folders"] == []
+
+
 def test_a_name_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
     """A folder whose listing gives no type, and whose type the OS will not
     tell (DT_UNKNOWN in a folder this process may not search): the walk

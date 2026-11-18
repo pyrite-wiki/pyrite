@@ -246,6 +246,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.present": 1},
         "KBFiles.present, the one presence answer, for a walked path whose stat, read or hash failed: absent (a loop, a file removed meanwhile) retires its row; there or could not tell keeps it (#1546)",
     ),
+    ("pyrite/storage/repository.py", "_type_unknown"): (
+        {"path.is_dir": 1},
+        "is_dir(follow_symlinks=False) of a DirEntry _folders listed under the root: what the name itself is, a link never followed, so no answer depends on a link's target, inside the KB or out (#1546 round 3)",
+    ),
     ("pyrite/storage/repository.py", "KBRepository._folders"): (
         {"os.scandir": 1, "path.is_dir": 1, "path.is_symlink": 1},
         "names under the root, os.walk's walk written out: scandir lists a folder the walk reached from the root, and is_dir / is_symlink are the DirEntry's own answers about a name in it (a link is listed as its name, never followed or checked, and a folder link is not walked into, on every Python). The one walk behind _named and walk_files since #1546 (it replaced _named's os.walk and walk_files' rglob('*.md')), so a folder it could not list is recorded by the path it asked for, never read as empty",
@@ -723,7 +727,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 57,
+    "DECIDED_INSIDE": 58,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

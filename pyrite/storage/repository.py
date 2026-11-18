@@ -216,6 +216,17 @@ def _rewrite_as_values(
     return new_text, total
 
 
+def _type_unknown(item: os.DirEntry) -> bool:
+    """Whether the OS will not say what the name ``item`` itself is, a link
+    not followed (``is_dir(follow_symlinks=False)`` raises): the walk's one
+    sign that a name may be a folder it could not list (#1546)."""
+    try:
+        item.is_dir(follow_symlinks=False)
+    except OSError:
+        return True
+    return False
+
+
 def _is_regular_file(path: Path) -> bool:
     """``path`` (symlinks followed) is a regular file that can be opened
     without blocking; False for a FIFO, a directory, a socket or a path that
@@ -948,14 +959,23 @@ class KBRepository:
                             is_dir = item.is_dir()
                         except OSError:
                             is_dir = False
-                            # The OS would not say what it is (a folder that
-                            # gives no type, in one this process may not
-                            # search): it may be a folder, so the rows under
-                            # it are kept and it is named (#1546). Not a name
-                            # the walk lists as a file (``*.md``, a
-                            # ``__collection.yaml``): that file's own stat
-                            # names it.
-                            if not item.name.endswith(".md") and item.name != "__collection.yaml":
+                            # ``is_dir`` follows a link, so it raises for a
+                            # link whose TARGET cannot be stat-ed (a loop, a
+                            # link into a folder this process may not search,
+                            # one through a file). That is a link the walk
+                            # never enters, so nothing lies under it: not
+                            # named. Only when the OS will not say what the
+                            # name ITSELF is (a folder that gives no type,
+                            # in one this process may not search) may it be
+                            # a folder: the rows under it are kept and it is
+                            # named (#1546). Not a name the walk lists as a
+                            # file (``*.md``, a ``__collection.yaml``): that
+                            # file's own stat names it.
+                            if (
+                                not item.name.endswith(".md")
+                                and item.name != "__collection.yaml"
+                                and _type_unknown(item)
+                            ):
                                 could_not_list(os.path.join(top, item.name))
                         if not is_dir:
                             filenames.append(item.name)
