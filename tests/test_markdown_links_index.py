@@ -575,3 +575,83 @@ def test_a_bare_link_that_cannot_be_checked_drops_only_that_link(world, monkeypa
         "SELECT target_id FROM link WHERE source_id = 'src' AND relation = 'wikilink'"
     )
     assert [r["target_id"] for r in wikilinks] == ["alpha"]
+
+
+# ---------------------------------------------------------------------------
+# Cost: one write is bounded by its own links, not by the KB's size
+# ---------------------------------------------------------------------------
+
+
+def _resolver_statements(world: World, act) -> list[tuple[str, tuple]]:
+    """The SELECTs the resolver runs while ``act`` writes: every statement
+    that names ``target_path`` or looks an entry up by ``file_path``."""
+    from sqlalchemy import event
+
+    seen: list[tuple[str, tuple]] = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        text = " ".join(statement.split())
+        if text.upper().startswith("SELECT") and (
+            "target_path" in text or "entry.file_path =" in text or "entry.file_path IN" in text
+        ):
+            seen.append((text, tuple(parameters) if not executemany else ()))
+
+    event.listen(world.db.engine, "before_cursor_execute", capture)
+    try:
+        act()
+    finally:
+        event.remove(world.db.engine, "before_cursor_execute", capture)
+    return seen
+
+
+def test_the_resolver_looks_rows_up_by_index_not_by_scan(world):
+    """`EXPLAIN QUERY PLAN` of every lookup the resolver makes on a write and
+    a delete uses an index: no full scan of `link` or `entry`, so writing one
+    entry costs time bounded by its own links, not by the size of the KB."""
+    _targets(world)
+    for n in range(20):
+        world.write(f"many/n{n}.md", _note(f"n{n}", f"[a](../a.md) [m](../missing{n}.md)"))
+    world.write("src.md", _note("src", "[t](a.md) [u](notes/b.md) [v](gone.md)"))
+    world.im.index_all()
+
+    def write_and_delete():
+        world.write("src.md", _note("src", "[t](a.md) [u](notes/b.md) [w](other.md)"))
+        world.im.sync_incremental(KB)
+        (world.root / "a.md").unlink()
+        world.im.sync_incremental(KB)
+
+    statements = _resolver_statements(world, write_and_delete)
+    assert statements, "the resolver ran no lookup"
+    raw = sqlite3.connect(world.path)
+    try:
+        for sql, params in statements:
+            plan = [row[3] for row in raw.execute("EXPLAIN QUERY PLAN " + sql, params)]
+            # A full scan, or a range over an index (`target_path>?`, what an
+            # IS NOT NULL becomes), reads rows in proportion to the KB.
+            scans = [
+                step for step in plan if step.startswith("SCAN") or ">?" in step or "<?" in step
+            ]
+            assert not scans, (sql, plan)
+    finally:
+        raw.close()
+
+
+def test_a_root_relative_or_absolute_path_is_no_row_in_any_spelling(world):
+    """`/x.md` names the site's root, not the KB's: no row, whether the slash
+    is written or percent-encoded, even when the absolute path is the KB's own
+    file."""
+    from urllib.parse import quote
+
+    _targets(world)
+    absolute = str(world.root / "a.md")
+    body = " ".join(
+        [
+            f"[t]({quote(absolute, safe='')})",  # %2F...%2Fa.md
+            "[u](%2Fa.md)",
+            f"[v](<{absolute}>)",
+            "[w](notes/b.md)",  # the one in-KB link
+        ]
+    )
+    world.write("src.md", _note("src", body))
+    world.im.index_all()
+    assert world.md_rows("src") == [("src", "beta", "notes/b.md", "")]

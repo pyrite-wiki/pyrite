@@ -30,6 +30,15 @@ folder this process cannot search), that one link gives no row; the entry and
 its other links are indexed as usual. A folder named ``other.md`` is
 "present", so such a link is a row, broken since no entry is at that path.
 
+Whether a path is a link is decided lexically (``entry_paths.is_listed``),
+not by what the file holds: a listed ``.md`` file that is not indexed as an
+entry (its frontmatter does not load, or it loses a duplicate-id contest) is a
+row naming nothing, a broken link. A symbolic link is followed when the source
+is read: pointing it elsewhere leaves the row naming the old file until the
+source is read again. Paths are compared as written: on a case-insensitive or
+normalising filesystem ``[t](A.md)`` to the file ``a.md`` is a broken link
+(case-folding is a follow-up).
+
 A broken link's ``target_id`` is its path text (``notes/a.md``, decision D1).
 An entry whose id is literally that text would make the broken row read as
 resolved to every reader. Ids made from titles cannot contain the dot, so only
@@ -129,6 +138,14 @@ def markdown_link_targets(body: str, root: Path, source: Path) -> list[tuple[str
         path_part = path_part.partition("?")[0]
         path_text = unquote(path_part)
         if not path_text or path_text.endswith(("/", os.sep)):
+            continue
+        # Root-relative or absolute in any spelling: the check above saw the
+        # text as written, and `%2F` decodes to `/` only here.
+        if (
+            path_text.startswith(("/", "\\"))
+            or os.path.isabs(path_text)
+            or _SCHEME_RE.match(path_text)
+        ):
             continue
         suffix = Path(path_text).suffix
         if suffix == "":

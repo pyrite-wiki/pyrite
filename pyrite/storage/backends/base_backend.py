@@ -640,37 +640,53 @@ class BaseBackend(ABC):
         root = entry_data["_kb_root"]
         self._session.flush()
         own_path = _kb_relative(entry_data.get("file_path"), root)
-        conditions = [(Link.source_id == entry_id) & (Link.source_kb == kb_name)]
+        # One query per set, each naming only the columns of its own index
+        # (`idx_link_source`, `idx_link_target`, `idx_link_target_path`), and
+        # the path-row test made here: an OR of the three, or a
+        # `target_path IS NOT NULL` in SQL, lets SQLite range over every path
+        # row in the KB, and a write must cost its own links, not the KB.
+        queries = [
+            self._session.query(Link).filter(Link.source_id == entry_id, Link.source_kb == kb_name),
+            self._session.query(Link).filter(Link.target_id == entry_id, Link.target_kb == kb_name),
+        ]
         if own_path is not None:
-            conditions.append(Link.target_path == own_path)
-        conditions.append(Link.target_id == entry_id)
-        from sqlalchemy import or_
-
-        rows = (
-            self._session.query(Link)
-            .filter(Link.target_kb == kb_name, Link.target_path.isnot(None), or_(*conditions))
-            .all()
-        )
-        self._resolve_rows(rows, kb_name, lambda path: str(Path(root) / path))
+            queries.append(
+                self._session.query(Link).filter(
+                    Link.target_kb == kb_name, Link.target_path == own_path
+                )
+            )
+        with self._session.no_autoflush:  # flushed once, above
+            rows = list(
+                {
+                    row.id: row
+                    for query in queries
+                    for row in query.all()
+                    if row.target_path is not None and row.target_kb == kb_name
+                }.values()
+            )
+            self._resolve_rows(rows, kb_name, lambda path: str(Path(root) / path))
 
     def _resolve_rows(self, rows: list, kb_name: str, file_of: Callable[[str], str]) -> None:
         """Set each path row's ``target_id`` to the entry at ``file_of(path)``,
         or to the path text. Two entries at one file (a duplicate id's winner
         and a row a rename has not removed yet) resolve to the smaller id; the
         write that removes the other resolves the row again."""
-        cache: dict[str, str] = {}
+        if not rows:
+            return
+        files = {row.target_path: file_of(row.target_path) for row in rows}
+        # One lookup for every file, on `idx_entry_kb_file_path`.
+        at_file: dict[str, str] = {}
+        for entry_id, file_path in (
+            self._session.query(Entry.id, Entry.file_path)
+            .filter(Entry.kb_name == kb_name, Entry.file_path.in_(set(files.values())))
+            .all()
+        ):
+            if file_path not in at_file or entry_id < at_file[file_path]:
+                at_file[file_path] = entry_id
         for row in rows:
-            path = row.target_path
-            if path not in cache:
-                hit = (
-                    self._session.query(Entry.id)
-                    .filter(Entry.kb_name == kb_name, Entry.file_path == file_of(path))
-                    .order_by(Entry.id)
-                    .first()
-                )
-                cache[path] = hit[0] if hit else path
-            if row.target_id != cache[path]:
-                row.target_id = cache[path]
+            target = at_file.get(files[row.target_path], row.target_path)
+            if row.target_id != target:
+                row.target_id = target
 
     def delete_entry(self, entry_id: str, kb_name: str) -> bool:
         gone = self._session.get(Entry, (entry_id, kb_name))
@@ -681,15 +697,13 @@ class BaseBackend(ABC):
             # still be at that file (a rename writes the new id first), else
             # the row is broken and holds its path again (#1723).
             self._session.flush()
-            rows = (
-                self._session.query(Link)
-                .filter(
-                    Link.target_kb == kb_name,
-                    Link.target_id == entry_id,
-                    Link.target_path.isnot(None),
-                )
+            rows = [
+                row
+                for row in self._session.query(Link)
+                .filter(Link.target_id == entry_id, Link.target_kb == kb_name)
                 .all()
-            )
+                if row.target_path is not None
+            ]
             self._resolve_rows(rows, kb_name, lambda _path: file_path)
         self._session.commit()
         return count > 0

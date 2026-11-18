@@ -987,6 +987,10 @@ class MigrationManager:
         ).fetchone()
         if entry_exists:
             columns = {row[1] for row in self.conn.execute("PRAGMA table_info(entry)").fetchall()}
+            # The resolver looks the entry at a file up on every write.
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)"
+            )
             if {"file_mtime_ns", "file_size"} <= columns:
                 self.conn.execute("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL")
         self.conn.commit()

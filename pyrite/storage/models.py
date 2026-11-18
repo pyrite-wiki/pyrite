@@ -116,6 +116,12 @@ class Entry(Base):
     reviews = relationship("Review", back_populates="entry", cascade="all, delete-orphan")
     blocks = relationship("Block", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        # The entry at a file: what a Markdown link row resolves to (#1723),
+        # looked up on every write, so it must not scan the KB.
+        Index("idx_entry_kb_file_path", "kb_name", "file_path"),
+    )
+
 
 class Tag(Base):
     __tablename__ = "tag"
