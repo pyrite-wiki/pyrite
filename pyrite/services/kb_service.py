@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import hashlib
 import logging
 import re
 import shlex
@@ -1538,17 +1539,20 @@ class KBService:
         pending_ids: Any,
     ) -> str | None:
         """Return the title of an existing entry with this id, if known (#1682)."""
-        from collections.abc import Mapping
-
         if isinstance(pending_ids, Mapping) and entry_id in pending_ids:
             val = pending_ids[entry_id]
-            return str(val) if isinstance(val, str) else None
+            if isinstance(val, bool):
+                return "true" if val else "false"
+            return str(val) if val is not None else None
         if repo.exists(entry_id):
             try:
                 if hasattr(self, "db") and self.db is not None:
                     row = self.db.get_entry(entry_id, repo.name)
-                    if row and row.get("title"):
-                        return str(row["title"])
+                    if row and row.get("title") is not None:
+                        val = row["title"]
+                        if isinstance(val, bool):
+                            return "true" if val else "false"
+                        return str(val)
                 path = repo.find_file(entry_id)
                 if path:
                     raw = repo._inside_bytes(path)
@@ -1557,7 +1561,9 @@ class KBService:
 
                         fm, _ = repo._frontmatter_of(_text_of(raw))
                         title = fm.get("title")
-                        return str(title) if isinstance(title, str) else None
+                        if isinstance(title, bool):
+                            return "true" if title else "false"
+                        return str(title) if title is not None else None
             except Exception:
                 return None
         return None
@@ -1636,6 +1642,10 @@ class KBService:
             raise ValidationError(
                 "title is required", errors=rows, suggestion=_validation_suggestion(rows)
             )
+        if isinstance(title, bool):
+            title = "true" if title else "false"
+        elif not isinstance(title, str):
+            title = str(title)
         # A declared mapping, if any (#468); otherwise the named type. Only the
         # type that will be stored is checked (#1526, option (a)): a mapping
         # applies where the KB declares its target, even if the named type is
@@ -1650,6 +1660,8 @@ class KBService:
 
         explicit_id = fields.pop("id", None)
         repo = KBRepository(kb_config)
+        existing_title: str | None = None
+        base_id: str | None = None
         if explicit_id is not None:
             entry_id = explicit_id
         else:
@@ -1657,8 +1669,6 @@ class KBService:
             entry_id = base_id
             existing_title = self._title_of_existing(entry_id, repo, pending_ids)
             if existing_title is not None and existing_title != title:
-                import hashlib
-
                 h = hashlib.sha256(title.encode("utf-8")).hexdigest()
                 for length in (4, 6, 8, 12):
                     candidate = f"{base_id}-{h[:length]}"
@@ -1700,7 +1710,11 @@ class KBService:
         # Create never replaces. Ids are derived from titles, so two entries
         # sharing a title is ordinary -- and used to destroy the first one while
         # reporting "Created". Callers that mean to replace use update_entry.
-        if repo.exists(entry.id) or entry.id in (pending_ids or ()):
+        if (
+            (existing_title is not None and entry.id == base_id)
+            or repo.exists(entry.id)
+            or entry.id in (pending_ids or ())
+        ):
             raise EntryExistsError(
                 f"Entry with ID '{entry.id}' already exists in KB '{kb_name}'. "
                 "Use update to change it, or choose a different title/id."

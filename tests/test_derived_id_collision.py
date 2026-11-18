@@ -6,9 +6,11 @@ characters at a word boundary), create derives a unique ID by appending a short
 hash suffix of the title. The same title still answers ENTRY_EXISTS.
 """
 
+import hashlib
 import json
 from pathlib import Path
 
+from pyrite.schema import generate_entry_id
 from pyrite.services.kb_service import KBService
 from pyrite.storage.repository import KBRepository
 from pyrite.utils.yaml import dump_yaml
@@ -35,7 +37,10 @@ def test_task_create_long_title_collision_both_succeed(cli_world):
     id2 = data2["entry_id"]
 
     assert id1 != id2
-    assert id1 in id2 or id2.startswith(id1[:50])
+    base_id = generate_entry_id(TITLE_ONE)
+    expected_suffix = hashlib.sha256(TITLE_TWO.encode("utf-8")).hexdigest()[:4]
+    assert id1 == base_id
+    assert id2 == f"{base_id}-{expected_suffix}"
 
 
 def test_task_create_same_long_title_refused_entry_exists(cli_world):
@@ -214,21 +219,105 @@ def test_bulk_create_validate_only_disambiguation(cli_world):
 
 
 def test_existing_idless_files_do_not_change_id(cli_world):
-    """Existing files without id in frontmatter index to the exact same IDs."""
+    """Existing legacy files without id in frontmatter keep base ID when colliding create arrives."""
     world = cli_world()
-    from pyrite.schema import generate_entry_id
+    base_id = generate_entry_id(TITLE_ONE)
 
-    expected_id = generate_entry_id(TITLE_ONE)
+    # Legacy id-less file stored under a custom filename (requiring scan)
     world.add_entry(
         "test-kb",
         f"---\ntitle: {TITLE_ONE}\ntype: note\n---\n\nLegacy content.\n",
-        filename=f"notes/{expected_id}.md",
+        filename="notes/legacy-scan-target.md",
     )
 
+    # Colliding create with distinct long title
+    res = world.cli(
+        "create",
+        "-k",
+        "test-kb",
+        "-t",
+        "note",
+        "--title",
+        TITLE_TWO,
+        "--body",
+        "Second",
+        "--format",
+        "json",
+    )
+    assert res.exit_code == 0, res.output
+    data = json.loads(res.stdout)
+    expected_new_id = f"{base_id}-{hashlib.sha256(TITLE_TWO.encode('utf-8')).hexdigest()[:4]}"
+    assert data["entry_id"] == expected_new_id
+
+    # The legacy file still loads at its base id and was not moved
     repo = KBRepository(world.config.get_kb("test-kb"))
-    entry = repo.load(expected_id)
+    entry = repo.load(base_id)
     assert entry is not None
     assert entry.title == TITLE_ONE
+    assert repo.load(expected_new_id).title == TITLE_TWO
+
+
+def test_add_numeric_title_twice_is_refused_entry_exists(cli_world, tmp_path):
+    """An entry file with a numeric title (e.g. 2024) added twice answers ENTRY_EXISTS."""
+    world = cli_world()
+    file_path = tmp_path / "item-2024.md"
+    file_path.write_text("---\ntitle: 2024\ntype: note\n---\n\nContent.\n", encoding="utf-8")
+
+    res1 = world.cli("add", "-k", "test-kb", str(file_path), "--format", "json")
+    assert res1.exit_code == 0, res1.output
+
+    res2 = world.cli("add", "-k", "test-kb", str(file_path), "--format", "json")
+    assert res2.exit_code == 1, res2.output
+    data2 = json.loads(res2.stdout)
+    assert data2.get("error_code") == "ENTRY_EXISTS"
+
+
+def test_bulk_create_real_run_disambiguates_distinct_titles(cli_world):
+    """Real kb_bulk_create (validate_only=False) creates entries with distinct IDs and writes files."""
+    world = cli_world()
+    kb_svc = KBService(world.config, world.db)
+    specs = [
+        {"title": TITLE_ONE, "entry_type": "note", "body": "1"},
+        {"title": TITLE_TWO, "entry_type": "note", "body": "2"},
+        {"title": TITLE_ONE, "entry_type": "note", "body": "duplicate"},
+    ]
+    results = kb_svc.bulk_create_entries("test-kb", specs, validate_only=False)
+    assert len(results) == 3
+    assert results[0].get("created") is True
+    assert results[1].get("created") is True
+    assert results[0]["entry_id"] != results[1]["entry_id"]
+    assert results[2].get("error_code") == "ENTRY_EXISTS"
+
+    repo = KBRepository(world.config.get_kb("test-kb"))
+    assert repo.exists(results[0]["entry_id"])
+    assert repo.exists(results[1]["entry_id"])
+
+
+def test_rest_post_entries_long_title_collision(cli_world):
+    """REST POST /api/entries disambiguates long title collisions and refuses duplicate titles."""
+    world = cli_world()
+    world._start_app()
+    res1 = world.client.post(
+        "/api/entries",
+        json={"kb": "test-kb", "entry_type": "note", "title": TITLE_ONE, "body": "Body 1"},
+    )
+    assert res1.status_code == 200, res1.text
+    id1 = res1.json()["entry_id"]
+
+    res2 = world.client.post(
+        "/api/entries",
+        json={"kb": "test-kb", "entry_type": "note", "title": TITLE_TWO, "body": "Body 2"},
+    )
+    assert res2.status_code == 200, res2.text
+    id2 = res2.json()["entry_id"]
+    assert id1 != id2
+
+    res3 = world.client.post(
+        "/api/entries",
+        json={"kb": "test-kb", "entry_type": "note", "title": TITLE_TWO, "body": "Body 3"},
+    )
+    assert res3.status_code in (409, 422), res3.text
+    assert res3.json().get("error_code") == "ENTRY_EXISTS"
 
 
 def test_title_of_existing_typing(cli_world):
