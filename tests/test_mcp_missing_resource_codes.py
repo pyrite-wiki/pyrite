@@ -87,11 +87,10 @@ def test_missing_entry_has_domain_code_and_legacy_code(mcp_server, tool):
 
 @pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 def test_missing_kb_has_domain_code(mcp_server, tool):
-    result = _call(
-        mcp_server,
-        tool,
-        {"kb_name": "missing", "entry_id": "missing", "title": "New title"},
-    )
+    args = {"kb_name": "missing", "entry_id": "missing"}
+    if tool == "kb_update":
+        args["title"] = "New title"
+    result = _call(mcp_server, tool, args)
     assert result["error_code"] == "KB_NOT_FOUND", result
     assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
     assert result["retryable"] is False

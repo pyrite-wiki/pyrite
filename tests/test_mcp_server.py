@@ -1120,7 +1120,7 @@ class TestPyriteMCPServer:
 
         deleted = server._dispatch_tool(
             "kb_delete",
-            {"entry_id": target["entry_id"], "kb_name": "test-events", "confirm": True},
+            {"entry_id": target["entry_id"], "kb_name": "test-events"},
         )
         assert "error" not in deleted, deleted
 
@@ -1171,7 +1171,7 @@ class TestPyriteMCPServer:
 
         deleted = server._dispatch_tool(
             "kb_delete",
-            {"entry_id": target["entry_id"], "kb_name": "test-events", "confirm": True},
+            {"entry_id": target["entry_id"], "kb_name": "test-events"},
         )
         assert "error" not in deleted, deleted
 

@@ -171,6 +171,59 @@ Source of truth: `pyrite/exceptions.py` (the codes), `pyrite/utils/errors.py`
 (REST's central handler), `pyrite/server/mcp_server.py` (`_refusal`). The CLI
 root's own codes, `USAGE_ERROR` and `ERROR`, are in `pyrite/utils/errors.py`.
 
+## Unknown MCP arguments
+
+An MCP call never succeeds with an argument key the tool does not read
+(#1758, maintainer decision 2026-11-18). A key is unknown when it is not in the
+tool's `inputSchema.properties` (the `tools/list` schema). The dispatcher also
+reads two kinds of key that a schema may leave out, and they are never unknown.
+The first is every KB argument name (`kb_name`, `kb`, `source_kb`, `target_kb`,
+`center_kb`, `kb_names`, `kb_a`, `kb_b`), on every tool: each KB named is
+resolved and access-checked, but the KB a handler works in is still its own
+argument's. The second is the ADR-0034 markers (`body_truncated`,
+`body_length`, `body_offset`, `body_chunk_size`), on a write tool. Only
+top-level keys are checked. A nested map such as `kb_create`'s
+`metadata` or an investigation tool's `fields` takes any key, as before.
+
+- **Write tool** (any tool above the read tier, core or plugin): refused before
+  any lookup or write, with `VALIDATION_FAILED`, `retryable: false`. `error`
+  names every unknown key. `errors` has one row per key,
+  `{"field": "<key>", "rule": "unknown_field", "message": "...",
+  "did_you_mean": ["<accepted key>"]}` (`did_you_mean` only when a key is a
+  near miss, e.g. `due` -> `due_date`; otherwise, on a tool with exactly one
+  map of the caller's own keys, that map, e.g. an investigation tool's
+  `fields`), the same rows REST's entry writes give.
+  `suggestion` lists the accepted keys.
+- **Read tool**: the call runs with its arguments as sent, and the result
+  (success or refusal) carries `"ignored_arguments": ["<key>", ...]`, sorted:
+  the keys the schema does not declare. The key is absent when there are none.
+  Known gap: `task_status` honours `body_limit`/`body_offset` although its
+  schema omits them, so they are listed there even though they take effect. It is not `kb_update`'s
+  `ignored`, which lists keys no update writes.
+- **Free-form tool**: a tool whose `inputSchema` sets `additionalProperties`
+  (anything but `false`) takes any top-level key. Today those tools are
+  `kb_create`, where a type's own fields are top-level arguments (`metadata.k`
+  is only a second spelling of `k`, #994 decision A), and `kb_update`, where an
+  undeclared field is stored as a custom field, as on the CLI and REST.
+  Refusing a key the entry *type* does not declare (#1522) belongs to the
+  write pipeline, not to this check.
+
+```json
+{
+  "error": "Unknown argument(s) for task_create: due. Nothing was written.",
+  "error_code": "VALIDATION_FAILED",
+  "retryable": false,
+  "suggestion": "Did you mean due_date for due? task_create accepts: assignee, body, ...",
+  "errors": [{"field": "due", "rule": "unknown_field",
+              "message": "'due' is not an argument of task_create",
+              "did_you_mean": ["due_date"]}]
+}
+```
+
+Source of truth: `pyrite/server/mcp_server.py` (`_unknown_arguments`,
+`_declared_arguments`, `_dispatch_tool`); tests in
+`tests/test_mcp_unknown_arguments.py`.
+
 ## Server and account codes
 
 These are the central REST mappings (`pyrite/server/errors.py`); an endpoint
