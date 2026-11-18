@@ -38,6 +38,9 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # A KB whose kb.yaml could not be checked or read: what the index
         # holds for it cannot be compared with its files (#1542).
         or health.get("unreadable_kbs")
+        # A folder the walk could not list (#1546): the rows under it are
+        # kept, but nothing can say whether its files still hold them.
+        or health.get("unreadable_folders")
         # A KB whose kb.yaml does not load (#1547): every operation that needs
         # its schema stops, so the KB is unusable, not merely warned about. A
         # key with the wrong shape (#1498's class) carries no code and stays
@@ -81,3 +84,20 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
     return {"status": status, "is_unhealthy": is_unhealthy, "has_warning": has_warning}
+
+
+def network_shape(result: dict[str, Any]) -> dict[str, Any]:
+    """What a network caller (REST, MCP) gets of a reconcile or health
+    result's could-not-reach keys: the one place that decides it (#1546).
+
+    ``unreadable_folders`` becomes a count, never a path (the maintainer's
+    2026-11-17 decision for #1552's ``unlisted_entry_files``, followed here
+    as the default); the local CLI names each folder. ``unreadable_files``
+    on a reconcile result is the local CLI's (each file is also under its
+    ``malformed``, and the exit code counts it), so it is not carried. To give
+    network callers rows instead, change only this function.
+    """
+    shaped = dict(result)
+    shaped["unreadable_folders"] = len(result.get("unreadable_folders") or [])
+    shaped.pop("unreadable_files", None)
+    return shaped
