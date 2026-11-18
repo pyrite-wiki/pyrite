@@ -1593,6 +1593,74 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
 
+## Entry row shape
+
+These readers return entry rows from the index in one shape, whatever the
+surface (MCP, `--format json`, REST) and the backend (SQLite, Postgres): the
+list and find tools (`kb_list_entries`, `kb_recent`, `kb_batch_read`,
+`kb_find_by_status`, `kb_find_by_assignee`, `kb_find_overdue`,
+`kb_find_by_location`), search (`kb_search`, keyword and semantic legs),
+folder collections, and the single read (`kb_get`). Each reader keeps its
+own set of keys: shaping adds none. Where a row carries one of these, it has
+this type:
+
+| Key | JSON type |
+|---|---|
+| `metadata` | an object; `{}` when the entry has none |
+| `aliases` | a list; `[]` when the entry has none |
+| `importance` | an integer (or `null`) |
+| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | at its own name too on the list readers (`kb_list_entries`, `kb_recent`, `kb_batch_read`) and the single read; search and the finds return only the columns they select, so there it is in `metadata` alone (the keyword search row's `rank` is its score) |
+| a column field (`priority`, `status`, `assignee`, `due_date` ...) | by the type's declaration (`KBSchema.type_fields`: kb.yaml, plugins, and a task's own `priority`, a number); see below |
+
+How a column field reads. A field declared a `number` reads as a number when
+the stored text is a plain ASCII whole number or decimal, with an optional
+leading minus (`7`, `2.5`, `-7`, `-1.5`): no plus sign, no surrounding space,
+no leading zero, no exponent, no digits from other scripts. Any other text
+(`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
+the task model's integer (`coerce_task_priority`: a word on the 1 to 10
+scale, any other non-integer the default 5), so every spelling of it reads
+as that integer and `task_list` and `kb_get` agree. A field declared a
+`checkbox` reads the stored `1`, `0`, `true` or `false` as a boolean. Every
+other field, and one the type does not declare, reads as text. A
+whole-valued decimal (`7.0`) reads as `7.0` on SQLite and as `7` on
+Postgres.
+
+What a caller reads, sent back as that one field (MCP `kb_update`,
+`pyrite update -f`, REST PATCH), leaves the file as it was, except in
+these cases. REST PUT takes no column field, so it has none. A read never
+writes anything.
+
+- A quoted plain number in a field declared a number: `priority: "7"`
+  reads 7 (and `"-7"` reads -7), and writing that number back stores it
+  without the quotes (`priority: 7`). `qa validate` reports the text (`number_as_text`), saying what
+  Pyrite reads it as.
+- A task's `priority` spelled as anything but a plain whole number
+  (`high`, `P1`, `"007"`, `"+7"`, `"1e1"`): it reads as the model's integer
+  (7, 5, 7, 7, 10), and writing that back stores the integer in place of
+  the file's spelling. `qa validate` reports the file's value
+  (`task_priority`, or `number_as_text` for numeric text).
+- A quoted `"true"`, `"false"`, `"1"` or `"0"` in a field declared a
+  checkbox: it reads as a boolean, and writing that back stores `true` or
+  `false`.
+- An unquoted `1` or `0` in a field declared a checkbox: it reads as a
+  boolean, and writing that back stores `true` or `false` (on earlier
+  releases it was stored as the quoted text `"1"` or `"0"`).
+- A YAML boolean in a field declared a number: `priority: true` reads 1
+  (and `false` reads 0), and writing that back stores the number
+  (`priority: 1`; earlier releases stored the quoted text `"1"`).
+- A number the index spells with an exponent, in a field declared a number:
+  `priority: 0.00001` reads as the index's text for it, which the strict
+  rule keeps as text, and writing that back stores that text quoted. The
+  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
+  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
+  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
+  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
+
+`kb_timeline` returns `date` and `location` as stored text: its rows carry
+no `entry_type`, so no declaration applies. The type-specific tools
+(`task_*`, `sw_*` and the other plugin tools) return their own dicts, not
+index rows. (#1503)
+
 ## Body truncation
 
 Entries with large bodies may come back chunked. When truncated, the

@@ -101,6 +101,13 @@ class KBReindexResponse(BaseModel):
 # =============================================================================
 
 
+#: A column field's value as an index reader returns it: text, or the
+#: number or boolean its declared type reads it as (#1503,
+#: ``docs/json-contracts.md``, "Entry row shape"). ``bool`` before the
+#: numbers, so pydantic's smart union keeps ``True`` a boolean.
+ColumnValue = str | bool | int | float | None
+
+
 class SearchResult(BaseModel):
     """Single search result."""
 
@@ -109,7 +116,7 @@ class SearchResult(BaseModel):
     entry_type: str
     title: str
     snippet: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
     tags: list[str] = []
     #: Cosine similarity to the query, 3 places, on a row the vector leg
@@ -184,9 +191,9 @@ class EntryResponse(BaseModel):
     title: str
     body: str | None = None
     summary: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
-    status: str | None = None
+    status: ColumnValue = None
     # A list is a list: a column a file's type refused is left out of the reply
     # (ADR-0042 8a, ``get_entry``), never sent as null.
     tags: list[str] = []
