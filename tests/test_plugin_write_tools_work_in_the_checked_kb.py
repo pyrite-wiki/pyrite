@@ -269,6 +269,9 @@ def test_a_write_naming_no_kb_lands_in_the_tools_default(world):
     assert _tree(paths["inv"]) != before, "the default investigation KB took the write"
 
 
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
 def test_a_default_the_caller_cannot_write_is_refused_by_the_write_check(world):
     """The default is checked like a named KB: a caller who may read the
     investigation KB but write only MINE is refused, and nothing is written."""

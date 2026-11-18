@@ -787,7 +787,19 @@ def _write_case_tools() -> list[str]:
     return sorted(t for t, c in CASES.items() if c.writes_file or c.table)
 
 
-@pytest.mark.parametrize("arg", ["kb", None], ids=["other-arg-named", "nothing-named"])
+@pytest.mark.parametrize(
+    "arg",
+    [
+        pytest.param("kb", id="other-arg-named"),
+        pytest.param(
+            None,
+            id="nothing-named",
+            marks=pytest.mark.control(
+                reason="unchanged by #1758: only the other-arg-named case asserts the refusal"
+            ),
+        ),
+    ],
+)
 @pytest.mark.parametrize("tool", _write_case_tools())
 def test_a_write_that_succeeds_lands_in_the_checked_kb(server, monkeypatch, tool, arg):
     """The success side of the property: a scoped caller who may read A and B
