@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..config import PyriteConfig
 from ..exceptions import (
@@ -1242,7 +1242,9 @@ def _finisher(task_id: str, holder: str, by: str, operator_override: bool) -> tu
         f"Task '{task_id}' is {held}: finish requires the caller to hold the task, "
         f"and {who} does not. Nothing was written."
     )
-    refusal.suggestion = (
+    # `suggestion` is a public attribute every refusal may carry
+    # (exceptions.PUBLIC_ATTRIBUTES); Forbidden does not declare it.
+    cast(Any, refusal).suggestion = (
         "Finish it as its holder (`--by <holder>`; MCP: sign in as the holder or pass `by`), "
         "or, as the operator, pass the explicit override (`--operator-override`; "
         "MCP `operator_override: true`)."
