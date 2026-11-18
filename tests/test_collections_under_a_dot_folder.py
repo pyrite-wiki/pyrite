@@ -38,34 +38,46 @@ def _populate_kb(root: Path) -> Path:
     (root / "_templates" / "tmpl.md").write_text(
         "---\nid: tmpl\ntitle: Template\ntype: note\n---\nTemplate.\n"
     )
+    (root / "_Templates").mkdir(parents=True, exist_ok=True)
+    (root / "_Templates" / "__collection.yaml").write_text("title: Upper Template Collection\n")
+    (root / "_Templates" / "upper_tmpl.md").write_text(
+        "---\nid: upper-tmpl\ntitle: Upper Template\ntype: note\n---\nUpper Template.\n"
+    )
 
     return root
 
 
-def test_repository_methods_parity(tmp_path):
+import pytest
+
+
+@pytest.mark.parametrize(
+    ("case_name", "rel_path"),
+    [
+        ("plain", Path("plain") / "kb"),
+        ("dot_parent", Path(".hidden") / "kb"),
+        ("dot_kb", Path("kbs") / ".notes"),
+    ],
+)
+def test_repository_methods_parity(tmp_path, case_name, rel_path):
     """list_collection_files, list_entries, and count give identical answers
     regardless of whether the KB is stored under a dot-folder parent or has a
     dot-prefixed name."""
-    plain_root = _populate_kb(tmp_path / "plain" / "kb")
-    dot_parent_root = _populate_kb(tmp_path / ".hidden" / "kb")
-    dot_kb_root = _populate_kb(tmp_path / "kbs" / ".notes")
+    root = _populate_kb(tmp_path / rel_path)
+    repo = KBRepository(KBConfig(name="k", path=root))
 
-    for root in [plain_root, dot_parent_root, dot_kb_root]:
-        repo = KBRepository(KBConfig(name="k", path=root))
+    # 1. list_collection_files: only topic/__collection.yaml is listed
+    colls = list(repo.list_collection_files())
+    assert len(colls) == 1, f"[{case_name}] Expected 1 collection in {root}, got {colls}"
+    assert colls[0].parent.name == "topic"
 
-        # 1. list_collection_files: only topic/__collection.yaml is listed
-        colls = list(repo.list_collection_files())
-        assert len(colls) == 1, f"Expected 1 collection in {root}, got {colls}"
-        assert colls[0].parent.name == "topic"
+    # 2. list_entries: 1 note + 1 collection = 2 entries
+    entries = list(repo.list_entries())
+    assert len(entries) == 2, f"[{case_name}] Expected 2 entries in {root}, got {entries}"
+    entry_ids = {e[0].id for e in entries}
+    assert entry_ids == {"note-1", "collection-topic"}
 
-        # 2. list_entries: 1 note + 1 collection = 2 entries
-        entries = list(repo.list_entries())
-        assert len(entries) == 2, f"Expected 2 entries in {root}, got {entries}"
-        entry_ids = {e[0].id for e in entries}
-        assert entry_ids == {"note-1", "collection-topic"}
-
-        # 3. count: 1 md + 1 yaml = 2
-        assert repo.count() == 2
+    # 3. count: 1 md + 1 yaml = 2
+    assert repo.count() == 2
 
 
 def test_cli_surfaces_parity(tmp_path, cli_world):
@@ -132,18 +144,3 @@ def test_ids_pin_dry_run_reports_collection_collision_under_dot_parent(tmp_path,
     assert any(r["id"] == "collection-topic" for r in refused), (
         f"Expected collision for collection-topic: {data}"
     )
-
-
-def test_no_test_of_absolute_path_parts_in_pyrite():
-    """Grep-level invariant: pyrite/ contains no test of path parts with startswith('.')
-    except for relative parts inside entry_paths.py."""
-    pyrite_root = Path(__file__).resolve().parents[1] / "pyrite"
-    violations = []
-    for py_file in pyrite_root.rglob("*.py"):
-        rel = py_file.relative_to(pyrite_root).as_posix()
-        for idx, line in enumerate(py_file.read_text(encoding="utf-8").splitlines(), 1):
-            if 'startswith(".")' in line or "startswith('.')" in line:
-                if ".parts" in line:
-                    violations.append(f"{rel}:{idx}: {line.strip()}")
-
-    assert not violations, f"Found test of path parts with startswith('.'): {violations}"

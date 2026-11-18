@@ -403,13 +403,9 @@ def kb_validate(
             # Count entries — find the matching KB config for path
             matching_kb = config.get_kb(kb_res["name"])
             if matching_kb and matching_kb.path.exists():
-                from ..storage import entry_paths
+                from ..services.kb_registry_service import KBRegistryService
 
-                count = sum(
-                    1
-                    for f in matching_kb.path.rglob("*.md")
-                    if entry_paths.is_listed(matching_kb.path, f)
-                )
+                count = KBRegistryService.count_entry_files(matching_kb)
                 console.print(f"  [green]✓[/green] {count} markdown files found")
 
         for row in kb_res["malformed_frontmatter"]:
