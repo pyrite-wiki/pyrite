@@ -217,6 +217,7 @@ def test_a_read_refusal_also_reports_the_ignored_key(server):
     assert result["ignored_arguments"] == ["stray"]
 
 
+@pytest.mark.control(reason="the report must never take a key from a read handler")
 def test_a_read_call_runs_with_its_arguments_as_sent(server):
     """The report never takes a key away from a read handler.
 
@@ -235,6 +236,7 @@ def test_a_read_call_runs_with_its_arguments_as_sent(server):
     assert status["body_truncated"] is True, status
 
 
+@pytest.mark.control(reason="known keys only behave as on dev")
 def test_known_keys_only_carry_no_report(server):
     read = _call(server, "kb_search", {"kb_name": KB, "query": "event"})
     assert "ignored_arguments" not in read
@@ -376,6 +378,7 @@ def test_kb_name_is_accepted_on_a_plugin_write_tool(server):
         server._tool_tiers.pop(name)
 
 
+@pytest.mark.control(reason="a key the dispatcher reads; must stay accepted (#1758)")
 @pytest.mark.parametrize(
     "key", ["kb_name", "kb", "source_kb", "target_kb", "center_kb", "kb_names", "kb_a", "kb_b"]
 )

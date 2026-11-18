@@ -85,6 +85,9 @@ def test_missing_entry_has_domain_code_and_legacy_code(mcp_server, tool):
     assert result["retryable"] is False
 
 
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
 @pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 def test_missing_kb_has_domain_code(mcp_server, tool):
     args = {"kb_name": "missing", "entry_id": "missing"}

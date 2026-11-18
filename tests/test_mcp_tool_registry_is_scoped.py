@@ -420,6 +420,9 @@ def test_the_cross_kb_filtering_handlers_actually_accept_the_readable_set(server
     )
 
 
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
 def test_tools_listed_as_refused_are_actually_refused(servers):
     """Fail closed, proven. A tool listed as refused for a scoped caller
     must really be refused -- otherwise the listing is a comment claiming
