@@ -145,7 +145,7 @@ def _hand_edit(root: Path) -> None:
     (root / "loose.md").write_text(
         "---\nid: loose\ntitle: Loose\nstatus: active\naliases: [Alt Name, Other]\n"
         "tags: [hand]\n---\nPoints at [[demo:renamed]] and [[renamed#Details]] "
-        "and [[source|the source]].\n",
+        "and [[source|the source]], and [the source](source.md#Top).\n",
         encoding="utf-8",
     )
     (root / "gone.md").write_text(
@@ -170,7 +170,10 @@ def test_incremental_session_equals_a_files_only_rebuild(tmp_path):
         "date: 2025-02-03\nimportance: 8\nrelated: source\n"
         "created_at: 2025-01-01T00:00:00+00:00\nupdated_at: 2025-01-02T00:00:00+00:00\n"
         "sources:\n  - title: Primary source\n    url: https://example.invalid/source\n"
-        "---\nSee [[target]]\n\nEvidence paragraph. ^evidence\n",
+        # A Markdown link to a file written later (the service writes a note
+        # under notes/), and one to a file that is never there (#1723).
+        "---\nSee [[target]], [the target](notes/target.md) and [gone](missing.md)\n\n"
+        "Evidence paragraph. ^evidence\n",
         encoding="utf-8",
     )
     path = tmp_path / "index.db"

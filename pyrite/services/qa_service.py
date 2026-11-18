@@ -1215,6 +1215,7 @@ class QAService:
         sql = (
             "SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation "
             "FROM link l LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name "
+            "AND COALESCE(l.target_resolved, 1) = 1 "
             + (f"AND {scope} " if scope else "")
             + "WHERE e.id IS NULL"
         )
