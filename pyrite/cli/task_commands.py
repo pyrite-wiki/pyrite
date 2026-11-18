@@ -106,9 +106,7 @@ _FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
 _FIELD_CREATE_NEVER_TAKES_EFFECT: frozenset[str] = frozenset({"type", "created_at", "updated_at"})
 
 
-def _parse_task_create_fields(
-    field: list[str] | None, *, config: Any, kb_name: str
-) -> dict[str, Any]:
+def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
     """Parse `--field key=value` pairs for `task create`.
 
     Uses the same value parser as `create -f`/`update -f`
@@ -127,7 +125,7 @@ def _parse_task_create_fields(
     not refused here: `KBService.create` refuses it for every surface
     (#1010), so the rule has one home.
     """
-    from .entry_commands import _field_type_for, _parse_field_value
+    from .entry_commands import _parse_field_value
 
     fields: dict[str, Any] = {}
     for fv in field or []:
@@ -171,7 +169,7 @@ def _parse_task_create_fields(
             raise ValidationError(
                 message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
-        fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
+        fields[k] = _parse_field_value(v)
     return fields
 
 
@@ -228,7 +226,7 @@ def task_create(
 
     svc, db = _get_service(kb_name)
     try:
-        fields = _parse_task_create_fields(field, config=svc.config, kb_name=kb_name)
+        fields = _parse_task_create_fields(field)
         result = svc.create_task(
             kb_name=kb_name,
             title=title,
@@ -302,21 +300,21 @@ def _status_cell(item: dict) -> str:
 
 def _render_list(console, data: dict) -> None:
     table = Table(title="Tasks")
-    table.add_column("ID", style="cyan", max_width=12)
+    table.add_column("ID", style="cyan", overflow="fold")
     table.add_column("Title")
     table.add_column("Status", style="green")
     table.add_column("Pri", justify="right")
     table.add_column("Assignee", style="yellow")
-    table.add_column("Parent", style="dim", max_width=12)
+    table.add_column("Parent", style="dim", overflow="fold")
 
     for item in data["tasks"]:
         table.add_row(
-            item["id"][:12],
+            item["id"],
             item["title"],
             _status_cell(item),
             str(item["priority"]),
             item["assignee"],
-            item["parent"][:12] if item["parent"] else "",
+            item["parent"] or "",
         )
     console.print(table)
 
@@ -395,7 +393,7 @@ def _render_task(console, result: dict) -> None:
     if children:
         console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
         for c in children:
-            console.print(f"    {c['id'][:12]}  {c['status']:12}  {c['title']}")
+            console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:

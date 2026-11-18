@@ -10,7 +10,7 @@ lines here if this PR is itself the claim).
 ## Testing
 - [ ] `pytest tests/ extensions/ -n auto` passes locally (or: the pre-push hook ran it)
 - [ ] `ruff check pyrite/ tests/ extensions/ && ruff format --check pyrite/ tests/ extensions/` is clean
-- [ ] A `fix:` change includes a test that fails without the fix (the `commit-msg` hook checks that a `fix:` commit touches `tests/`)
+- [ ] A `fix:` change includes a test that fails without the fix (the `commit-msg` hook and CI check that a fix touches `tests/`)
 - [ ] Frontend change: `cd web && npm run check && npm run test:unit`
 
 ## Notes for the reviewer
