@@ -3431,9 +3431,13 @@
         }
       ],
       "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
         "title",
+        "body",
         "summary",
-        "body"
+        "location"
       ]
     },
     "status": 200

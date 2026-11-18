@@ -2842,9 +2842,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_search | global_user | private-kb": {
@@ -2872,9 +2876,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_stats | global_user | missing-kb": {

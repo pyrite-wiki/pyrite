@@ -24,6 +24,7 @@ from ..exceptions import (
 )
 from ..storage.errors import storage_error_from
 from ..storage.virtual_tables import KEYWORD_SEARCHED_PARTS
+from .embedding_service import EMBEDDED_PARTS
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB
@@ -759,6 +760,21 @@ class SearchService:
            cut short makes the verdict ``weak`` at worst, and ``match_basis``
            says which. What ``none`` does not account for: entries still
            waiting in the embed queue are not seen by the vector leg.
+        11. ``searched`` (#1757) lists the entry parts the legs that ran read, so
+           a miss on something not listed is not an absence. It names only what
+           a leg read: ``[]`` when no leg ran (``legs_run`` is ``[]``). A keyword
+           leg ran: the parts the backend's keyword index reads
+           (``keyword_searched_parts``: on SQLite every ``entry_fts`` column,
+           ``id``, ``kb_name``, ``entry_type``, ``title``, ``body``,
+           ``summary``, ``location``, narrowed to the named columns when the
+           query carries an FTS5 column filter such as ``title:hawk``; on
+           Postgres ``title``, ``summary``, ``body``), the whole body included.
+           Only the vector leg ran (``semantic`` mode): ``title``, ``summary``
+           and ``body_prefix``, with ``body_prefix_chars`` giving the length the
+           body is cut to before it is embedded, so a word past that point is
+           not searched. Declared field values and tags are in no leg's index,
+           so they are never listed: a keyword search does not find a word that
+           appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
            similarity, 3 places, the same number on every backend. A hybrid
            row carries ``legs``, the legs that returned it. ``distance`` (the
@@ -770,7 +786,7 @@ class SearchService:
            is not judged: ``match_basis`` says ``uncalibrated model <name>``,
            and ``match`` is ``strong`` only from the keyword leg.
 
-        Items 4 to 10 are attached by ``search_response``, which the CLI, MCP
+        Items 4 to 11 are attached by ``search_response``, which the CLI, MCP
         and REST all return; this method returns the rows alone, for callers
         that gather context and show no page.
 
@@ -1052,16 +1068,43 @@ class SearchService:
             "match_basis": basis,
             # Not `legs`: that is the per-row key (which legs returned the row).
             "legs_run": legs_run,
-            # The entry parts searched, from the constant that builds the index
-            # (#1757). Tags and declared field values are not indexed, so a
-            # miss on one of them is not an absence.
-            "searched": list(KEYWORD_SEARCHED_PARTS),
         }
+        searched, body_chars = self._searched(query, kwargs, legs_run, signal)
+        response["searched"] = searched
+        if body_chars is not None:
+            response["body_prefix_chars"] = body_chars
         if "keyword_match" in signal:
             response["keyword_match"] = signal["keyword_match"]
         if warnings:
             response["warnings"] = warnings
         return response
+
+    def _searched(
+        self, query: str, kwargs: dict[str, Any], legs_run: list[str], signal: dict[str, Any]
+    ) -> tuple[list[str], int | None]:
+        """``(searched, body_prefix_chars)`` for a response whose legs were ``legs_run``.
+
+        Names an entry part only if a leg that ran read it, in full unless the
+        name says otherwise (#1757). No leg ran: nothing was searched. A
+        keyword leg ran: what the backend's keyword index reads for this query
+        (`keyword_searched_parts`), the whole body included. Only the vector
+        leg ran: the text it was built from, `title`, `summary` and a
+        ``body_prefix``, whose length is the second value (``None`` when the
+        vectors hold the whole body).
+        """
+        if "keyword" in legs_run:
+            query_as_matched = query
+            if kwargs.get("sanitize", True):
+                query_as_matched = self.sanitize_fts_query(query)
+            reader = getattr(self.db.backend, "keyword_searched_parts", None)
+            parts = reader(query_as_matched) if reader else list(KEYWORD_SEARCHED_PARTS)
+            return list(parts), None
+        if "semantic" in legs_run:
+            chars = signal.get("body_chars")
+            if chars:
+                return list(EMBEDDED_PARTS), chars
+            return [p.removesuffix("_prefix") for p in EMBEDDED_PARTS], None
+        return [], None
 
     @staticmethod
     def _skip_reason(mode: str, code: str | None) -> str:
@@ -1156,6 +1199,8 @@ class SearchService:
         svc = self._embedder()
         if signal is not None:
             signal["model"] = svc.model_name
+            # How much of a body the vectors were built from (0: all of it).
+            signal["body_chars"] = svc.max_body_chars
         # Asked of the KBs this search covers, not of the index (#668): whether
         # some other KB has vectors must not change what a scoped caller is
         # told, and a KB with none has not been searched by this leg even when

@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ...exceptions import StorageError
 from ..models import Link
-from ..virtual_tables import postgres_fts_vector_expression
+from ..virtual_tables import KEYWORD_SEARCHED_PARTS, postgres_fts_vector_expression
 from .base_backend import BaseBackend, _link_rows, shape_entry_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
@@ -371,6 +371,11 @@ class PostgresBackend(BaseBackend):
     # =====================================================================
     # Full-text search (PostgreSQL tsvector/tsquery)
     # =====================================================================
+
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search reads (#1757): the ``fts_vector``'s
+        parts, whatever ``query`` is (``plainto_tsquery`` has no column filters)."""
+        return list(KEYWORD_SEARCHED_PARTS)
 
     def search(
         self,

@@ -2850,9 +2850,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_search | granted_user | readable-kb": {
@@ -2872,9 +2876,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_stats | granted_user | missing-kb": {

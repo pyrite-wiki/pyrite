@@ -3631,9 +3631,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_search | read_key | private-kb": {
@@ -3653,9 +3657,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_search | read_key | readable-kb": {
@@ -3675,9 +3683,13 @@
       }
     ],
     "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
       "title",
+      "body",
       "summary",
-      "body"
+      "location"
     ]
   },
   "kb_stats | read_key | missing-kb": {

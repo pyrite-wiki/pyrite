@@ -126,14 +126,14 @@ pyrite search "algorithm" -k my-kb
 ```
 <!-- runner: expect-ids ada-lovelace -->
 
-Narrow it to one entry type. Search matches an entry's title, summary and body, not its tags, so this finds Ada by the word "Mathematician" in her body:
+Narrow it to one entry type. Search matches an entry's own text (title, summary, body), not its tags, so this finds Ada by the word "Mathematician" in her body:
 
 ```bash
 pyrite search "mathematician" -k my-kb --type person
 ```
 <!-- runner: expect-ids ada-lovelace -->
 
-A mention that exists only in a field value (say `vendor: Acme`) or a tag is not found by keyword search yet. Every search response lists what it searched in `searched` (`["title", "summary", "body"]`), so an empty result for such a word is a miss, not proof the KB lacks it.
+A mention that exists only in a field value (say `vendor: Acme`) or a tag is not found by keyword search yet. Every search response lists the entry parts its legs read in `searched`, so an empty result for such a word is a miss, not proof the KB lacks it. (Semantic search embeds only the start of a body: `searched` says `body_prefix` and `body_prefix_chars` gives the length.)
 
 Repeat `--type` to include several types and use `--exclude-type` to remove one: `pyrite search "mathematician" -k my-kb --type person --type event --exclude-type event`.
 
