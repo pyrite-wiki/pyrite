@@ -4705,6 +4705,32 @@
     "error_code": "OPERATION_FAILED",
     "retryable": false
   },
+  "task_finish | read_key | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | read_key | no-default-role-kb": {
+    "error": "Task 'characterization-placeholder-id-task_finish-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_finish | read_key | private-kb": {
+    "error": "Task 'characterization-placeholder-id-task_finish-read_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_finish | read_key | readable-kb": {
+    "error": "Task 'characterization-placeholder-id-task_finish-read_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
   "task_list | read_key | missing-kb": {
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
@@ -4724,6 +4750,26 @@
   "task_list | read_key | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
+  },
+  "task_start | read_key | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | read_key | no-default-role-kb": {
+    "claimed": false,
+    "error": "Entry 'characterization-placeholder-id-task_start-read_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+  },
+  "task_start | read_key | private-kb": {
+    "claimed": false,
+    "error": "Entry 'characterization-placeholder-id-task_start-read_key-private-kb' not found in KB 'private-kb'"
+  },
+  "task_start | read_key | readable-kb": {
+    "claimed": false,
+    "error": "Entry 'characterization-placeholder-id-task_start-read_key-readable-kb' not found in KB 'readable-kb'"
   },
   "task_status | read_key | missing-kb": {
     "did_you_mean": [],

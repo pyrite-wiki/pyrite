@@ -7765,6 +7765,39 @@
     },
     "status": 200
   },
+  "POST /api/tasks/{task_id}/start | admin_key | missing-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | no-default-role-kb": {
+    "body": {
+      "claimed": false,
+      "error": "Entry 'does-not-exist-task' not found in KB 'no-default-role-kb'"
+    },
+    "status": 200
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | private-kb": {
+    "body": {
+      "claimed": false,
+      "error": "Entry 'does-not-exist-task' not found in KB 'private-kb'"
+    },
+    "status": 200
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | readable-kb": {
+    "body": {
+      "claimed": false,
+      "error": "Entry 'does-not-exist-task' not found in KB 'readable-kb'"
+    },
+    "status": 200
+  },
   "POST /api/worktree/reset | admin_key | missing-kb": {
     "body": {
       "detail": {

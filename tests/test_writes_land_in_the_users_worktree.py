@@ -297,6 +297,11 @@ REST_CASES: dict[str, Case] = {
         },
         seeds=((NOTES, "task", "status: open\n"),),
     ),
+    "POST /api/tasks/{task_id}/start": Case(
+        WRITES,
+        lambda s: {"url": f"/api/tasks/{s[0]}/start", "params": {"kb": NOTES}, "json": {}},
+        seeds=((NOTES, "task", "status: open\n"),),
+    ),
     # -- reads by POST, and writes that are not KB files ---------------------
     "POST /api/entries/resolve-batch": Case(
         NO_KB_FILE, lambda s: {"json": {"targets": ["x"], "kb": NOTES}}, reason="a read"
@@ -431,6 +436,16 @@ MCP_CASES: dict[str, Case] = {
         WRITES,
         lambda s: {"kb_name": NOTES, "task_id": s[0]},
         seeds=((NOTES, "task", "status: open\n"),),
+    ),
+    "task_start": Case(
+        WRITES,
+        lambda s: {"kb_name": NOTES, "task_id": s[0]},
+        seeds=((NOTES, "task", "status: open\n"),),
+    ),
+    "task_finish": Case(
+        WRITES,
+        lambda s: {"kb_name": NOTES, "task_id": s[0], "reason": "shipped"},
+        seeds=((NOTES, "task", "status: in_progress\n"),),
     ),
     "task_decompose": Case(
         WRITES,

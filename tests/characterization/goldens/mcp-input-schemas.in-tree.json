@@ -3177,6 +3177,41 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out); default the task's assignee",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item (required by a relaxed workflow)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every declared intermediate state to done",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -3209,6 +3244,33 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },
@@ -8308,6 +8370,41 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out); default the task's assignee",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item (required by a relaxed workflow)",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every declared intermediate state to done",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -8340,6 +8437,33 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },

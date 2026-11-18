@@ -539,6 +539,15 @@ _register(
         "json": {"assignee": "characterization-bot"},
     },
 )
+_register(
+    "POST",
+    "/api/tasks/{task_id}/start",
+    lambda w, kb, ck: {
+        "url": _url("/api/tasks/{task_id}/start", task_id=FAKE_TASK_ID),
+        "params": {"kb": kb},
+        "json": {"assignee": "characterization-bot"},
+    },
+)
 
 # ---------------------------------------------------------------------------
 # JSON body carries the KB field

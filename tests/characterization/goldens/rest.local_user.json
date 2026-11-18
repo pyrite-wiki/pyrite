@@ -4530,6 +4530,48 @@
     },
     "status": 403
   },
+  "POST /api/tasks/{task_id}/start | local_user | missing-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | local_user | no-default-role-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | local_user | private-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'private-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | local_user | readable-kb": {
+    "body": {
+      "detail": "Insufficient permissions on KB 'readable-kb': requires 'write' tier"
+    },
+    "status": 403
+  },
   "POST /api/worktree/reset | local_user | missing-kb": {
     "body": {
       "detail": "Insufficient permissions: requires 'write' tier, your role is 'read'"
