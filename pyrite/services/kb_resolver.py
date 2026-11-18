@@ -38,12 +38,25 @@ from __future__ import annotations
 import difflib
 from typing import TYPE_CHECKING
 
+from ..config import KBConfig
 from ..exceptions import KBNotFoundError
 from .access_policy import named_kb
 
 if TYPE_CHECKING:
-    from ..config import KBConfig, PyriteConfig
+    from ..config import PyriteConfig
     from ..storage.database import PyriteDB
+
+#: The resolved KB: the one thing `resolve_kb` returns for a name, and the
+#: handle code behind the boundary takes instead of asking the name again
+#: (epic #1530, ``kb/design.md`` principle 8).
+#:
+#: It is the configured KB itself (`KBConfig`): "a resolved KB carries every
+#: attribute of the configured KB it names" (module docstring). This is a name
+#: for the type checker and the reader, not a new class: no behaviour. A
+#: function that has resolved its caller's name annotates what it passes down
+#: as `ResolvedKB`; ``tests/test_kb_names_resolve_once.py`` pins that this
+#: module is the only place the name is defined.
+ResolvedKB = KBConfig
 
 #: The way forward in every unknown-KB refusal, on every surface. Names no KB,
 #: and names the tool by the name each surface knows it by (MCP's is
@@ -90,7 +103,7 @@ def resolve_kb(
     *,
     readable_kbs: set[str] | None,
     db: PyriteDB | None = None,
-) -> KBConfig | None:
+) -> ResolvedKB | None:
     """The KB `name` means for a caller who may read `readable_kbs`.
 
     None when `name` names no KB (blank). The KB when `name` is its full name

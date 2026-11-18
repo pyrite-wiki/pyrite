@@ -19,7 +19,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 - **Git-native** — every change is a file you commit to git (`git commit` or `pyrite kb commit`), not a database mutation. Branch, diff, review, rollback. Your knowledge has a full audit trail. In 0.26, **Your files, exactly** means an edit changes only what you asked; hand-maintained comments, order and quoting survive. See [how Pyrite edits your files](docs/how-pyrite-edits-your-files.md).
 - **MCP server with three-tier access control** — read/write/admin tiers. Give untrusted agents read-only access. Give your own agents write access. Keep admin for yourself.
 - **Semantic + structured search** — find by meaning (vector embeddings) AND by type, tag, date range, or relationship. Both at once in hybrid mode.
-- **Plugin system with 19 extension points** — custom entry types, MCP tools, CLI commands, validators, lifecycle hooks, relationship semantics, schema migrations.
+- **Plugin system with 20 extension points** — custom entry types, MCP tools, CLI commands, validators, lifecycle hooks, relationship semantics, schema migrations.
 - **Zero running cost locally** — markdown files + SQLite index on your disk. No cloud dependency, no subscription, no vendor lock-in. Your data is plain text files you can read in any editor.
 
 > **Multi-user is experimental. Here be dragons.** Pyrite is solid for one person, their agents, and a team that trusts each other. Accounts and per-KB permissions work, and each release closes more gaps, but they have not had the review a system holding other people's private data needs. Don't put knowledge on a shared or internet-facing instance that you couldn't live with every user of that instance reading. See [SECURITY.md](SECURITY.md#multi-user-is-experimental).
@@ -195,6 +195,7 @@ Eleven built-in entry types: `note`, `person`, `organization`, `event`, `documen
 Extensions implement a Python protocol class with up to 20 methods:
 
 - `get_entry_types()` — custom entry types with serialization
+- [`get_type_mappings()`](kb/components/pyrite-plugin-protocol.md) — the core types a create stores as one of the plugin's own
 - `get_type_metadata()` — field definitions, AI instructions, presets
 - `get_collection_types()` — custom collection types
 - `get_mcp_tools(tier)` — per-tier MCP tools
@@ -262,7 +263,7 @@ pyrite/
 │   ├── database.py  # SQLite + FTS5 + sqlite-vec (SQLAlchemy ORM + raw SQL)
 │   ├── index.py     # Incremental indexing with wikilink/transclusion extraction
 │   └── repository.py # Markdown file I/O
-├── services/        # Business logic, ~40 services (kb, search, embedding, llm, git, task, qa, auth, worktree, export, ...)
+├── services/        # Business logic, ~50 services (kb, search, embedding, llm, git, task, qa, auth, worktree, export, ...)
 ├── plugins/         # Plugin discovery and protocol
 └── formats/         # Content negotiation (JSON, Markdown, CSV, YAML)
 
@@ -354,7 +355,7 @@ cd web && npm ci && npm run build && cd ..   # the web UI (optional)
 Or straight from a release tag, no clone:
 
 ```bash
-pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.3"
+pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4"
 ```
 
 That gives you the CLI, the REST API and the MCP server, but **not the web

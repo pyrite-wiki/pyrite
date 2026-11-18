@@ -66,14 +66,9 @@ class CheckerConfigError(ValidationError, ValueError):
     about the kb.yaml item, so every surface shows it (``public_text``)."""
 
 
-# =========================================================================
-# Helper: parse metadata from entry
-# =========================================================================
-
-
-def _parse_metadata(entry: dict[str, Any]) -> dict[str, Any]:
-    """Extract metadata dict from entry, handling JSON string or dict."""
-    return parse_metadata(entry.get("metadata"))
+# A checker's entry is either an index row (its `metadata` already an object,
+# #1503) or a row of `qa_service`'s own SQL (the column's JSON text);
+# `parse_metadata`, the one decoder, reads both.
 
 
 # =========================================================================
@@ -174,7 +169,7 @@ def check_priority_present(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that entry has a priority value."""
-    meta_dict = _parse_metadata(entry)
+    meta_dict = parse_metadata(entry.get("metadata"))
     if meta_dict.get("priority") is not None:
         return None
     return {
@@ -202,7 +197,7 @@ def check_has_field(
     if not params or not params.get("field"):
         raise CheckerConfigError("has_field requires a non-empty 'field' parameter")
     field_name = params["field"]
-    meta_dict = _parse_metadata(entry)
+    meta_dict = parse_metadata(entry.get("metadata"))
     if meta_dict.get(field_name):
         return None
     return {
@@ -225,7 +220,7 @@ def check_has_any_field(
     if not params or not params.get("fields"):
         raise CheckerConfigError("has_any_field requires a non-empty 'fields' parameter")
     field_names = params["fields"]
-    meta_dict = _parse_metadata(entry)
+    meta_dict = parse_metadata(entry.get("metadata"))
     for fn in field_names:
         if meta_dict.get(fn):
             return None
@@ -270,6 +265,25 @@ def check_body_has_pattern(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that body matches a regex pattern. Params: {pattern: "Sources?:"}."""
+    return _body_has_pattern(entry, params, skip_timed_out=True)
+
+
+def check_body_has_pattern_every_time(
+    entry: dict[str, Any],
+    schema: KBSchema | None,
+    params: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """``check_body_has_pattern`` for a quality gate (#1538): a pattern that
+    timed out before is matched again, within the same limit, rather than
+    skipped. A QA run skips it and answers no finding, which is right for a
+    sweep of a KB; a gate would read that answer as a pass. A timeout here
+    still raises and still marks the pattern for QA's skip."""
+    return _body_has_pattern(entry, params, skip_timed_out=False)
+
+
+def _body_has_pattern(
+    entry: dict[str, Any], params: dict[str, Any] | None, *, skip_timed_out: bool
+) -> dict[str, Any] | None:
     if not params or not params.get("pattern"):
         raise CheckerConfigError("body_has_pattern requires a non-empty 'pattern' parameter")
     body = entry.get("body", "") or ""
@@ -284,7 +298,7 @@ def check_body_has_pattern(
     # completion on a pattern with catastrophic backtracking. A pattern that
     # timed out is reported once and then skipped for the rest of the run.
     pattern = params["pattern"]
-    quarantined_at = _timed_out_patterns.get(pattern)
+    quarantined_at = _timed_out_patterns.get(pattern) if skip_timed_out else None
     if quarantined_at is not None:
         if time.monotonic() - quarantined_at < PATTERN_QUARANTINE_SECONDS:
             return None
@@ -316,7 +330,7 @@ def check_not_oversized(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Fail if effort is XL or larger and item has no subtask links."""
-    meta = _parse_metadata(entry)
+    meta = parse_metadata(entry.get("metadata"))
     effort = meta.get("effort", "")
     oversized = {"XL", "XXL", "xl", "xxl"}
     if effort in oversized:
@@ -345,7 +359,7 @@ def check_orphan_backlog_item(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Warn if a non-epic open backlog item has no subtask_of link."""
-    meta = _parse_metadata(entry)
+    meta = parse_metadata(entry.get("metadata"))
     kind = meta.get("kind", "")
     if kind == "epic":
         return None  # epics don't need parents

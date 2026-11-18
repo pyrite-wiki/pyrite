@@ -11,7 +11,7 @@ tags:
 - storage
 ---
 
-Sole source of truth for Pyrite's SQLite schema evolution. Tracks applied versions in a `schema_version` table and provides ordered, idempotent forward/rollback migrations, currently at version 29 (`entry.aliases`). `CURRENT_VERSION` in the module is the number to read; this page does not track it.
+Sole source of truth for Pyrite's SQLite schema evolution. Tracks applied versions in a `schema_version` table and provides ordered, idempotent forward/rollback migrations, currently at version 30 (`link.target_path`, #1723). `CURRENT_VERSION` in the module is the number to read; this page does not track it.
 
 ## Key Methods / Classes
 

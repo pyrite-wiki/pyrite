@@ -14,7 +14,7 @@ from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import cli_context, require_kb
-from .output import cli_console, validate_output_format
+from .output import cli_console, output_format_choice, validate_output_format
 
 console = cli_console()
 
@@ -33,6 +33,30 @@ def _cli_error(message: str, output_format: str = "rich", error_code: str | None
     cli_error(message, output_format, error_code=error_code or "ERROR")
 
 
+# Allowed sort columns for list-entries (#1387). Kept in sync with
+# storage SQLiteBackend._SORT_COLUMNS via tests/test_cli_sort_values.py.
+SORT_COLUMNS = ("created_at", "entry_type", "title", "updated_at")
+
+
+def validate_sort_by(value: str) -> str:
+    """Validate list-entries --sort-by column (#1387)."""
+    val = value.lower() if value else ""
+    if val in SORT_COLUMNS:
+        return val
+    raise typer.BadParameter(
+        f"unknown sort column '{value}'; choose one of: {', '.join(SORT_COLUMNS)}"
+    )
+
+
+def validate_sort_order(value: str) -> str:
+    """Validate sort order direction for list-entries and timeline (#1387)."""
+    allowed = ("asc", "desc")
+    val = value.lower() if value else ""
+    if val in allowed:
+        return val
+    raise typer.BadParameter(f"unknown sort order '{value}'; choose one of: {', '.join(allowed)}")
+
+
 def register_browse_commands(app: typer.Typer) -> None:
     """Register read-only browsing/discovery commands on the main app."""
 
@@ -44,9 +68,15 @@ def register_browse_commands(app: typer.Typer) -> None:
         sort_by: str = typer.Option(
             "updated_at",
             "--sort-by",
+            callback=validate_sort_by,
             help="Sort column: title, updated_at, created_at, entry_type",
         ),
-        sort_order: str = typer.Option("desc", "--sort-order", help="Sort direction: asc, desc"),
+        sort_order: str = typer.Option(
+            "desc",
+            "--sort-order",
+            callback=validate_sort_order,
+            help="Sort direction: asc, desc",
+        ),
         limit: int = typer.Option(50, "--limit", "-n", min=0, help="Max entries (max 200)"),
         offset: int = typer.Option(0, "--offset", min=0, help="Pagination offset"),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
@@ -219,8 +249,8 @@ def register_browse_commands(app: typer.Typer) -> None:
         output_format: str = typer.Option(
             "json",
             "--format",
-            callback=validate_output_format,
-            help="Output format: json, rich, markdown, csv, yaml",
+            callback=output_format_choice("json", "yaml", "rich"),
+            help="Output format: json, yaml, rich",
         ),
     ):
         """One-shot KB orientation summary — types, tags, recent changes, and schema.
@@ -321,6 +351,12 @@ def register_browse_commands(app: typer.Typer) -> None:
                     board_parts.append(part)
                 if board_parts:
                     console.print(f"\n[bold]Board:[/bold] {' | '.join(board_parts)}")
+                if sw.get("board_error"):
+                    # A plugin's board that could not be loaded: its refusal text,
+                    # in place of the lanes and the recommendation (#1538).
+                    from rich.markup import escape
+
+                    console.print(f"\n[bold]Board:[/bold] [red]{escape(sw['board_error'])}[/red]")
 
                 # In-progress table
                 ip_items = sw.get("in_progress", [])
@@ -456,7 +492,11 @@ def register_browse_commands(app: typer.Typer) -> None:
         ),
         limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results (1-500)"),
         sort: str = typer.Option(
-            "desc", "--sort", "-s", help="Sort order: asc or desc (default: desc)"
+            "desc",
+            "--sort",
+            "-s",
+            callback=validate_sort_order,
+            help="Sort order: asc or desc (default: desc)",
         ),
         output_format: str = typer.Option(
             "json",

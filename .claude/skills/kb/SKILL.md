@@ -116,6 +116,7 @@ pyrite delete <entry-id> --kb=pyrite --force     # Skip confirmation
 pyrite index build                              # Full rebuild (required before search works)
 pyrite index build --kb=pyrite                  # Rebuild single KB
 pyrite index sync                               # Incremental sync (fast)
+pyrite index sync -k <kb> --confirm <id> ...    # Sync, then confirm each entry is indexed and searchable (exit 3 if not)
 pyrite index stats                              # Entry/tag/link counts
 pyrite index health                             # Check for stale/missing/unindexed
 ```

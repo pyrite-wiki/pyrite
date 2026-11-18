@@ -1262,7 +1262,7 @@ LEGACY_DIR = Path(__file__).resolve().parent / "legacy_commands"
 # unnoticed. The files are the exact list, so a slice may leave this alone; a
 # reviewer lowers it when a slice migrates commands. Nothing enforces "only
 # goes down" but review.
-LEGACY_COMMANDS_CEILING = 173
+LEGACY_COMMANDS_CEILING = 167
 
 
 def _on_the_contract(cmd) -> bool:
@@ -1649,6 +1649,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "documented fallback to YAML config",
     ),
+    ("pyrite/cli/entry_commands.py", "_field_flag"): (
+        "safe",
+        "a key no parser can read is not tags, and the service refuses it later as VALIDATION_FAILED (#1725)",
+    ),
     ("pyrite/cli/entry_commands.py", "_parse_field_value"): ("safe", "tries the next parser"),
     ("pyrite/cli/entry_commands.py", "create_entry"): ("fixed", "TestCreateWithFailedLink"),
     (
@@ -1658,6 +1662,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
+    ),
+    ("pyrite/cli/entry_commands.py", "parse"): (
+        "safe",
+        "a key no parser can read is not tags, and the service refuses it later as VALIDATION_FAILED (#1725)",
     ),
     # A linked entry that cannot be loaded is returned as left out; the command
     # names it and exits through exit_unless_whole.
@@ -1679,11 +1687,23 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "embedding is owed, not failed (ADR-0035)",
     ),
     ("pyrite/cli/index_commands.py", "index_reconcile"): ("safe", "path display fallback"),
+    ("pyrite/cli/kb_commands.py", "kb_list"): (
+        "safe",
+        "a listing: a KB whose files or kb.yaml cannot be read or loaded is a row (#1542, #1547), not a lost effect",
+    ),
     ("pyrite/cli/index_commands.py", "index_sync"): (
         "safe",
         "embedding is owed, not failed (ADR-0035)",
     ),
+    ("pyrite/cli/init_command.py", "available_templates"): (
+        "safe",
+        "optional plugin preset discovery: built-in templates still resolve if plugin loading fails",
+    ),
     ("pyrite/cli/init_command.py", "init_kb"): ("fixed", "TestInitIndexing"),
+    ("pyrite/cli/init_command.py", "resolve_template"): (
+        "safe",
+        "optional plugin preset resolution: falls back to built-in templates if plugin loading fails",
+    ),
     ("pyrite/cli/kb_commands.py", "kb_discover"): ("safe", "already registered is not a failure"),
     ("pyrite/cli/mcp_setup_command.py", "_restore_unavailable_reason"): (
         "safe",
@@ -1757,10 +1777,17 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("pyrite/services/file_search.py", "search_kb_files"): ("fixed", "TestSearchFiles"),
     ("pyrite/cli/search_commands.py", "_warn_if_stale"): ("safe", "a probe for a warning"),
-    ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
+    ("pyrite/cli/search_commands.py", "_run_batch"): (
+        "safe",
+        "a refused query fills its own slot; exit_unless_whole exits 3 or 1 on any slot",
+    ),
 }
 
 PRINTS: dict[tuple[str, str], tuple[str, str]] = {
+    ("pyrite/cli/browse_commands.py", "orient_kb"): (
+        "safe",
+        "orient answers; a plugin's board_error in red is part of the report (#1538)",
+    ),
     (
         "extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py",
         "evidence_chain",
@@ -1794,10 +1821,18 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/admin_cli.py", "repo_sync"): ("fixed", "TestAdminRepo"),
     ("pyrite/cli/__init__.py", "import_entries"): ("fixed", "TestImportAndBulkLinks"),
     ("pyrite/cli/index_commands.py", "index_build"): ("fixed", "TestUnreadableKB"),
-    ("pyrite/cli/index_commands.py", "index_sync"): ("fixed", "TestUnreadableKB"),
+    # The text `index sync` prints moved into its renderer when the command
+    # moved onto the outcome contract (#1691); the exit is the Outcome's.
+    ("pyrite/cli/index_commands.py", "render_sync"): ("fixed", "TestUnreadableKB"),
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
         "index health exits 1 when unhealthy, in its caller",
+    ),
+    ("pyrite/cli/index_commands.py", "_print_unreadable_folders"): (
+        "safe",
+        "its callers (index sync, index build, kb reindex) count each folder as failed "
+        "through _could_not_reach and exit 3, or 1 when nothing synced (#1546; "
+        "tests/test_an_unlisted_folder_keeps_its_rows.py)",
     ),
     ("pyrite/cli/kb_commands.py", "kb_gc"): ("safe", "'red' is colour: each removal is reported"),
     ("pyrite/cli/kb_commands.py", "kb_health"): (
@@ -1827,6 +1862,10 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/cli/repo_commands.py", "repo_sync"): ("fixed", "TestRepoSync"),
     ("pyrite/cli/schema_commands.py", "schema_migrate"): ("fixed", "TestSchemaMigrate"),
     ("pyrite/cli/search_commands.py", "search"): ("fixed", "TestSearchFiles"),
+    ("pyrite/cli/search_commands.py", "_print_batch"): (
+        "safe",
+        "renders slots already counted by _run_batch, which exits 3 or 1 on a refused slot",
+    ),
     ("pyrite/read_cli.py", "_emit_error"): (
         "safe",
         "the helper that prints the error; its callers raise Exit(1)",

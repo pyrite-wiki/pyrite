@@ -628,6 +628,20 @@ READ_TOOLS = {
                     "type": "string",
                     "description": "Filter by parent task ID",
                 },
+                "dispatchable": {
+                    "type": "boolean",
+                    "description": "Only tasks a worker can take now (for a caller who may claim, "
+                    "each one is a task_claim accepts): open, unassigned, unparked, "
+                    "dependencies resolved, no children; highest priority first, then oldest. "
+                    "Adds `counts` (per reason) and `excluded` (each open task left out, with "
+                    "its reason).",
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Return only these fields per task. `id` and `kb_name` are "
+                    "always included.",
+                },
             },
             "required": [],
         },
@@ -793,7 +807,7 @@ WRITE_TOOLS = {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Participants involved (for events)",
+                    "description": "Participants involved (for events; written to the file as `actors`)",
                 },
                 "role": {
                     "type": "string",
@@ -809,7 +823,7 @@ WRITE_TOOLS = {
                 },
                 "allow_undeclared": {
                     "type": "boolean",
-                    "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+                    "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
                 },
             },
             "required": ["kb_name", "entry_type", "title"],
@@ -856,7 +870,7 @@ WRITE_TOOLS = {
                 },
                 "allow_undeclared": {
                     "type": "boolean",
-                    "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+                    "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
                 },
             },
             "required": ["kb_name", "entries"],
@@ -880,7 +894,7 @@ WRITE_TOOLS = {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Participants involved (for events)",
+                    "description": "Participants involved (for events; written to the file as `actors`)",
                 },
                 "metadata": {
                     "type": "object",
@@ -1168,6 +1182,18 @@ ADMIN_TOOLS = {
                     "type": "boolean",
                     "description": "Run in background (returns job_id for polling). Default: false",
                     "default": False,
+                },
+                "confirm": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "After the sync, say for each entry id or KB-relative path whether it is "
+                        "indexed and searchable: a `confirm` block with one row per name (status "
+                        "indexed, not_indexed, not_found, malformed, duplicate or skipped; schema "
+                        "findings; embedding embedded, queued or unavailable) and `outcome` done "
+                        "or partial. An empty list confirms every entry the sync added or changed. "
+                        "Needs kb_name; refused with background."
+                    ),
                 },
             },
             "required": [],

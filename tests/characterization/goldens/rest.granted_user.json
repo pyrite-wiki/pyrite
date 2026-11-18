@@ -2822,7 +2822,9 @@
       "source": "config",
       "type_name_drift": [],
       "type_name_drift_has_more": false,
-      "type_name_drift_total": 0
+      "type_name_drift_total": 0,
+      "unlisted_entry_files": 0,
+      "unreadable_folders": 0
     },
     "status": 200
   },
@@ -2839,7 +2841,9 @@
       "source": "config",
       "type_name_drift": [],
       "type_name_drift_has_more": false,
-      "type_name_drift_total": 0
+      "type_name_drift_total": 0,
+      "unlisted_entry_files": 0,
+      "unreadable_folders": 0
     },
     "status": 200
   },
@@ -2887,7 +2891,7 @@
           "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
-        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
         "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
         "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
       },
@@ -2993,6 +2997,8 @@
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
+          "markdown_link": "Markdown link to the entry's file",
+          "markdown_linked_by": "Linked to by a Markdown link",
           "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
@@ -3255,7 +3261,7 @@
           "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
-        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
         "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
         "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
       },
@@ -3361,6 +3367,8 @@
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
+          "markdown_link": "Markdown link to the entry's file",
+          "markdown_linked_by": "Linked to by a Markdown link",
           "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
@@ -3703,6 +3711,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -4017,6 +4027,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",

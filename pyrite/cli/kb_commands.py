@@ -45,14 +45,20 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         EntryNotFoundError,
         KBNotFoundError,
         KBProtectedError,
-        KBUnreadableError,
         ValidationError,
+        public_text,
     )
     from ..utils.errors import cli_error
 
     code = "ERROR"
-    if isinstance(exc, KBUnreadableError):
+    message = str(exc)
+    from ..utils.kb_files import KB_YAML_REFUSALS
+
+    if isinstance(exc, KB_YAML_REFUSALS):
         code = exc.error_code  # KB_UNREADABLE, as on every surface (#1542)
+        # KB_CONFIG_INVALID's text names the file and the parser's words; it
+        # shows its fixed public message, as on every surface (#1547).
+        message = public_text(exc)
     elif isinstance(exc, EntryNotFoundError):
         code = "NOT_FOUND"
     elif isinstance(exc, KBNotFoundError):
@@ -61,7 +67,7 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         code = "PERMISSION_DENIED"
     elif isinstance(exc, ValidationError):
         code = "VALIDATION_FAILED"
-    cli_error(str(exc), fmt, error_code=code)
+    cli_error(message, fmt, error_code=code)
 
 
 @kb_app.command("list")
@@ -79,13 +85,27 @@ def kb_list(
     """List all configured knowledge bases."""
     with cli_registry_context() as (config, db, svc, registry):
         kbs = registry.list_kbs(type_filter=kb_type)
-        # A KB whose kb.yaml could not be checked or read is listed, by name,
-        # with why (``KBConfig.unreadable``, set at config load): never
-        # dropped, and never the reason the list fails (#1542).
+        # A KB whose kb.yaml could not be checked or read (#1542), or loaded
+        # (#1547), is listed, by name, with why: never dropped, and never the
+        # reason the list fails. Asked now (``check_readable``), for a KB in
+        # config.yaml and one `pyrite kb add` registered alike (a registry
+        # KB never runs ``load_kb_yaml``).
+        from ..exceptions import KBConfigInvalidError, outside_text, public_text
+        from ..utils.kb_files import KB_YAML_REFUSALS
+
         for kb in kbs:
-            cfg = config.get_kb(kb["name"])
-            if cfg is not None and cfg.unreadable:
-                kb["unreadable"] = cfg.unreadable
+            cfg = registry.get_kb_config(kb["name"])
+            if cfg is None:
+                continue
+            try:
+                cfg.check_readable()
+            except KB_YAML_REFUSALS as exc:
+                kb["unreadable"] = public_text(exc)  # the code's fixed text
+                kb["error_code"] = exc.error_code
+                if isinstance(exc, KBConfigInvalidError) and exc.__cause__ is not None:
+                    # The parser's own words: `kb list` is the local CLI, the
+                    # operator's own process (ADR-0052 N3).
+                    kb["error_detail"] = outside_text(exc.__cause__)
 
         if not kbs:
             console.print("[yellow]No knowledge bases configured.[/yellow]")
@@ -383,11 +403,9 @@ def kb_validate(
             # Count entries — find the matching KB config for path
             matching_kb = config.get_kb(kb_res["name"])
             if matching_kb and matching_kb.path.exists():
-                count = sum(
-                    1
-                    for f in matching_kb.path.rglob("*.md")
-                    if not any(p.startswith(".") for p in f.parts)
-                )
+                from ..services.kb_registry_service import KBRegistryService
+
+                count = KBRegistryService.count_entry_files(matching_kb)
                 console.print(f"  [green]✓[/green] {count} markdown files found")
 
         for row in kb_res["malformed_frontmatter"]:
@@ -441,7 +459,7 @@ def kb_create(
         None, "--shortname", "-s", help="Short alias for cross-KB links"
     ),
     ephemeral: bool = typer.Option(False, "--ephemeral", help="Create as ephemeral KB"),
-    ttl: int = typer.Option(3600, "--ttl", help="TTL in seconds for ephemeral KBs"),
+    ttl: int = typer.Option(3600, "--ttl", min=0, help="TTL in seconds for ephemeral KBs"),
 ):
     """Create a new knowledge base."""
     with cli_registry_context() as (config, db, svc, registry):
@@ -505,16 +523,27 @@ def kb_reindex(
         registry,
     ):
         from ..exceptions import KBNotFoundError
+        from ..utils.kb_files import KB_YAML_REFUSALS
 
         try:
             result = registry.reindex_kb(kb_name)
         except KBNotFoundError as e:
             _kb_error(e, output_format)
+        except KB_YAML_REFUSALS as e:
+            # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
+            # (#1547); the reconcile refused before planning, rows kept.
+            _kb_error(e, output_format)
+
+        from ..utils.errors import exit_unless_whole
+        from .index_commands import _could_not_reach, _print_unreadable_folders
 
         data = {"name": kb_name, **result}
         formatted = _format_output(data, output_format)
         if formatted is not None:
             typer.echo(formatted)
+            # Folders or files it could not reach: rows kept, named in the
+            # output, and the exit says the reindex was not whole (#1546).
+            exit_unless_whole(_could_not_reach(result), 1)
             return
 
         console.print(f"[green]Reindexed:[/green] {kb_name}")
@@ -542,6 +571,8 @@ def kb_reindex(
         from .index_commands import _print_file_links
 
         _print_file_links(result)
+        _print_unreadable_folders(result)
+        exit_unless_whole(_could_not_reach(result), 1)
 
 
 @kb_app.command("health")
@@ -590,6 +621,12 @@ def kb_health(
         if result.get("type_name_drift_total"):
             console.print(
                 f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
+            )
+        if result.get("unlisted_entry_files"):
+            count = result["unlisted_entry_files"]
+            noun = "entry file" if count == 1 else "entry files"
+            console.print(
+                f"  [yellow]{count} {noun} the index does not list; `pyrite index health` names them[/yellow]"
             )
 
 

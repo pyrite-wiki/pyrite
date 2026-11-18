@@ -26,6 +26,7 @@ from ..exceptions import (
     EntryNotFoundError,
     EvaluationFailedError,
     InvalidQATierError,
+    KBConfigInvalidError,
     KBUnreadableError,
     PyriteError,
     ValidationError,
@@ -39,10 +40,21 @@ from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_st
 from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
-from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFilesUnreadableError
+from ..utils.kb_files import (
+    KB_YAML_REFUSALS,
+    KBFileOutsideRootError,
+    KBFileReadOutsideRootError,
+    KBFiles,
+    KBFilesUnreadableError,
+)
 from ..utils.metadata import parse_metadata
 
 logger = logging.getLogger(__name__)
+
+#: ``_kb_folder_problem``'s answer for a kb.yaml that does not load (#1547).
+_KB_CONFIG_INVALID_PROBLEM = "its kb.yaml could not be loaded (KB_CONFIG_INVALID)"
+#: ... and for a kb.yaml that leads outside the KB (#1547).
+_KB_YAML_OUTSIDE_PROBLEM = "its kb.yaml leads outside the KB (OUTSIDE_KB_ROOT)"
 
 #: The tiers QA runs: 1 = structural and deterministic rubric checks, 2 = tier
 #: 1 plus the model-judged rubric. Every surface that takes a tier refuses any
@@ -169,9 +181,11 @@ class QAService:
         """
         issues: list[dict[str, Any]] = []
 
+        # The whole row: the rubric's checkers see every field column
+        # (`checker_entry`, #1587); the other checks read the columns they
+        # always read (below).
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+            "SELECT * FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
             {"entry_id": entry_id, "kb_name": kb_name},
         )
 
@@ -193,7 +207,23 @@ class QAService:
                 self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
             return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
-        entry = rows[0]
+        row = rows[0]
+        # The columns the field and schema checks have always read: the
+        # schema check validates every key it is handed (`_validation_fields`).
+        entry = {
+            k: row[k]
+            for k in (
+                "id",
+                "kb_name",
+                "entry_type",
+                "title",
+                "date",
+                "importance",
+                "body",
+                "status",
+                "metadata",
+            )
+        }
         self._check_entry_fields(entry, issues)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         # The checks below read the KB's folder (its files, its kb.yaml).
@@ -201,7 +231,7 @@ class QAService:
             self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
             sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
             self._check_schema_validation(entry, issues, sources.get(entry_id))
-            self._check_rubric_evaluation(entry, issues)
+            self._check_rubric_evaluation(row, issues)
 
         return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
@@ -360,22 +390,36 @@ class QAService:
         # the set is empty: a report that lists more candidates, never fewer
         # pairs than exist, and it writes nothing.
         settled_by_kb: dict[str, frozenset[str]] = {}
+        # A KB whose kb.yaml does not load (#1547), or whose files cannot be
+        # read (#1542), has no answer for "settled": its entries are left out
+        # and it is named, as a sync names it; the other KBs are compared.
+        unreadable_kbs: dict[str, dict[str, str]] = {}
 
         entries: list[dict[str, Any]] = []
         for row in rows:
             status = (row["status"] or "").lower()
             lifecycle = (row["lifecycle"] or "active").lower()
+            if row["kb_name"] in unreadable_kbs:
+                continue
+            # Every KB's schema is read, with --status too: a KB whose
+            # kb.yaml is refused is left out and named either way (#1547).
+            if row["kb_name"] not in settled_by_kb:
+                kb_config = self.config.get_kb(row["kb_name"])
+                try:
+                    schema = kb_config.kb_schema if kb_config else None
+                except KB_YAML_REFUSALS as e:
+                    unreadable_kbs[row["kb_name"]] = {
+                        "kb": row["kb_name"],
+                        "error": public_text(e, already_logged=True),
+                        "error_code": e.error_code,
+                    }
+                    continue
+                settled_by_kb[row["kb_name"]] = settled_statuses(entry_type, schema)
             if statuses is not None:
                 if status not in statuses:
                     continue
-            else:
-                if row["kb_name"] not in settled_by_kb:
-                    kb_config = self.config.get_kb(row["kb_name"])
-                    settled_by_kb[row["kb_name"]] = settled_statuses(
-                        entry_type, kb_config.kb_schema if kb_config else None
-                    )
-                if lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
-                    continue
+            elif lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
+                continue
             entries.append(
                 {
                     "id": row["id"],
@@ -448,13 +492,18 @@ class QAService:
                 pair["b"]["id"],
             )
         )
-        return {
+        result: dict[str, Any] = {
             "entry_type": entry_type,
             "threshold": threshold,
             "skipped_tokens": skipped_tokens,
             "count": len(pairs),
             "pairs": pairs,
         }
+        if unreadable_kbs:
+            # Left out and named (#1547): ``{kb, error, error_code}`` each;
+            # present only then, so a whole report keeps its shape.
+            result["unreadable_kbs"] = sorted(unreadable_kbs.values(), key=lambda r: r["kb"])
+        return result
 
     def _report_unreadable_kb(
         self, issues: list[dict[str, Any]], kb_name: str, *, tier: int = 1
@@ -557,6 +606,11 @@ class QAService:
         recreate a missing folder (#950 round 2).
         """
         problem = self._kb_folder_problem(kb_name)
+        if problem == _KB_CONFIG_INVALID_PROBLEM:
+            # Its own code, the same as every other operation on this KB (#1547).
+            raise KBConfigInvalidError()
+        if problem == _KB_YAML_OUTSIDE_PROBLEM:
+            raise KBFileReadOutsideRootError()
         if problem is not None:
             raise KBUnreadableError(f"KB '{kb_name}': {problem}; nothing was assessed")
 
@@ -583,6 +637,14 @@ class QAService:
             kb_config.check_readable()
         except KBFilesUnreadableError:
             return "its files cannot be read (the operating system refused)"
+        except KBConfigInvalidError:
+            # Read, and not loadable as a mapping (#1547): reported, never
+            # the end of a QA run over every KB.
+            return _KB_CONFIG_INVALID_PROBLEM
+        except KBFileOutsideRootError:
+            # A kb.yaml that leads outside the KB (a link out, a second hard
+            # link): the same, with its own code (#1547).
+            return _KB_YAML_OUTSIDE_PROBLEM
         return None
 
     def validate_all(
@@ -1153,6 +1215,7 @@ class QAService:
         sql = (
             "SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation "
             "FROM link l LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name "
+            "AND COALESCE(l.target_resolved, 1) = 1 "
             + (f"AND {scope} " if scope else "")
             + "WHERE e.id IS NULL"
         )
@@ -1634,6 +1697,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
                 issues.append(
@@ -1745,6 +1809,74 @@ class QAService:
                 ),
             }
         )
+
+    def _check_number_as_text(
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str,
+        kb_config: Any,
+        entry: Any,
+        file_path: Path,
+        shown: Any,
+    ) -> None:
+        """Report a field the type declares a number whose file value is text.
+
+        The message says what a read returns for it, taken from the reader
+        itself (`IndexManager.read_fields`, the single read every surface
+        uses), never from a description of the rule: a kb.yaml number's
+        ``"7"`` reads 7 and ``"007"`` reads as text, but a task's ``"007"``
+        reads 7, because a task's priority is the model's integer
+        (`coerce_task_priority`). A write of a number read stores that number:
+        the file's text goes (the maintainer's decisions on #1628,
+        2026-11-17). Text that is no number at all (``high``) is the schema
+        pass's ``field_number`` and the task-priority check's, not reported
+        twice here.
+        """
+        from ..exceptions import KBConfigInvalidError
+
+        source = entry._source_frontmatter or {}
+        try:
+            declared = kb_config.kb_schema.type_fields(entry.entry_type)
+        except KBConfigInvalidError:
+            return
+        texts = {}
+        for name, field_schema in declared.items():
+            value = source.get(name)
+            if field_schema.field_type != "number" or not isinstance(value, str):
+                continue
+            try:
+                float(value)
+            except ValueError:
+                continue
+            texts[name] = value
+        if not texts:
+            return
+        from ..storage.index import IndexManager
+
+        read = IndexManager(self.db, self.config).read_fields(
+            entry, kb_name, file_path, content_hash="", row=None
+        )
+        for name, value in texts.items():
+            got = read.get(name)
+            reading = (
+                f"Pyrite reads it as the number {got}, and an update of the value read "
+                f"writes {got} without the quotes"
+                if isinstance(got, int | float) and not isinstance(got, bool)
+                else "Pyrite reads it as that text"
+            )
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "number_as_text",
+                    "severity": "warning",
+                    "field": name,
+                    "message": (
+                        f"{shown}: {name} is the text {value!r} in a field declared a "
+                        f"number; {reading}. Write it as a plain number to keep one form."
+                    ),
+                }
+            )
 
     @staticmethod
     def _check_non_string_titles(
@@ -1998,8 +2130,7 @@ class QAService:
             key = (issue.get("entry_id", ""), issue.get("kb_name", ""))
             by_entry.setdefault(key, []).append(issue)
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name ORDER BY id",
+            "SELECT * FROM entry WHERE kb_name = :kb_name ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -2105,7 +2236,9 @@ class QAService:
         return action if isinstance(action, str) and action in ("warn", "fail") else "fail"
 
     def _check_rubric_evaluation(self, entry: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-        """Run rubric checks on a single entry."""
+        """Run rubric checks on a single entry: ``entry`` is its whole index
+        row (``SELECT *``), from which ``checker_entry`` builds what the
+        checkers see, as a gate builds it (#1587)."""
         entry_id = entry["id"]
         kb_name = entry["kb_name"]
         entry_type = entry.get("entry_type", "")
@@ -2114,19 +2247,9 @@ class QAService:
         if not rubric_items:
             return
 
-        # Enrich entry with tag count and outlink count for checkers
-        enriched = dict(entry)
-        tag_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry_tag WHERE entry_id = :eid AND kb_name = :kb",
-            {"eid": entry_id, "kb": kb_name},
-        )
-        enriched["_tag_count"] = tag_rows[0]["cnt"] if tag_rows else 0
+        from .checker_entry import checker_entry
 
-        link_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM link WHERE source_id = :eid AND source_kb = :kb",
-            {"eid": entry_id, "kb": kb_name},
-        )
-        enriched["_outlink_count"] = link_rows[0]["cnt"] if link_rows else 0
+        enriched = checker_entry(self.db, entry)
 
         kb_config = self.config.get_kb(kb_name)
         kb_schema = kb_config.kb_schema if kb_config else None

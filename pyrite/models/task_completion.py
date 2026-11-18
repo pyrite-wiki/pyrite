@@ -51,10 +51,18 @@ def derive_completion(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
       set a terminal one: ``done``/``cancelled`` are complete even with open
       children (the counts show the disagreement), ``failed`` is not
       complete. ``basis`` is ``status``.
-    - Otherwise a task with children is complete when every child is, so a
-      grandparent is complete when its whole subtree is. ``basis`` is
-      ``children``. A task with no children and a non-terminal status is not
-      complete (``basis`` ``status``).
+    - Otherwise a task with children is complete by them when every child is
+      complete and at least one child counts as ``done``: its own status is
+      ``done``, or it is itself complete by its children. A ``cancelled``
+      child is resolved but does no work, so it never completes a parent on
+      its own: a parent whose remaining children are all cancelled keeps its
+      own status (#1683, option A, maintainer 2026-11-17, refining ADR-0045
+      decision 7). A grandparent applies the same rule to its children's
+      derived completion. ``basis`` is ``children``. A task with no children
+      and a non-terminal status is not complete (``basis`` ``status``).
+      ``children_complete`` counts the resolved children, cancelled ones
+      included, so ``2 of 2`` with ``complete: false`` reads "every child is
+      cancelled".
     - ``effective_status`` is what every status filter matches: the file's
       status, except that a task complete by its children counts as
       ``done``. An unset status is ``open``.
@@ -89,6 +97,12 @@ def derive_completion(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
             return False
         return None
 
+    def _counts_as_done(tid: str) -> bool:
+        # Complete and not by cancellation: its own `done`, or complete by
+        # its own children (which, by this rule, means some work below it
+        # was done). Read only after `tid` is decided (post-order).
+        return complete.get(tid, False) and status[tid] != "cancelled"
+
     # Post-order walk with an explicit stack: a node is decided after all of
     # its children. A child met while still on the path (a cycle) is left
     # undecided, and an undecided child counts as not complete.
@@ -108,7 +122,11 @@ def derive_completion(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
                 if own is not None:
                     complete[tid] = own
                 else:
-                    complete[tid] = bool(kids) and all(complete.get(k, False) for k in kids)
+                    complete[tid] = (
+                        bool(kids)
+                        and all(complete.get(k, False) for k in kids)
+                        and any(_counts_as_done(k) for k in kids)
+                    )
                 on_path.discard(tid)
                 continue
             if tid in on_path:

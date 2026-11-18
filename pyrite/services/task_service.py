@@ -9,17 +9,21 @@ from typing import TYPE_CHECKING, Any
 from ..config import PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
+    EntryLoadError,
     EntryNotFoundError,
+    KBNotFoundError,
     PyriteError,
     ValidationError,
     public_text,
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
+from ..models.task_queue import classify_tasks, count_reasons, dependency_ids
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 from .access_policy import UNSCOPED, named_kb
+from .read_shaping import project_fields
 
 if TYPE_CHECKING:
     from ..models import Entry
@@ -397,6 +401,59 @@ class TaskService:
             raise AmbiguousEntryError(task_id, candidates)
         return rows[0]
 
+    def get_task_detail(
+        self,
+        task_id: str,
+        kb_name: str | None = None,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> dict[str, Any] | None:
+        """Get full task details including body, children and derived completion.
+
+        The single builder for CLI `task get` and MCP `task_status` (#1681).
+        Reads fields from the fresh index row and body from the file on disk.
+        If either the index row or the underlying file is missing, returns None.
+        """
+        task = self.get_task(task_id, kb_name, readable_kbs=readable_kbs)
+        if not task:
+            return None
+
+        task_kb = task.get("kb_name", kb_name or "")
+        entry = self.kb_svc.get_entry(task_id, kb_name=task_kb, readable_kbs=readable_kbs)
+        if not entry:
+            return None
+
+        meta = parse_metadata(task.get("metadata"))
+
+        children_list = self.list_tasks(
+            kb_name=task_kb,
+            kb_names=None if kb_name else readable_kbs,
+            parent=task_id,
+        )
+        children = [
+            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
+            for c in children_list
+        ]
+
+        return {
+            "id": task["id"],
+            "title": task["title"],
+            "status": task.get("status") or meta.get("status", "open"),
+            "assignee": task.get("assignee") or meta.get("assignee", ""),
+            "priority": coerce_task_priority(
+                task.get("priority") or meta.get("priority", 5), task["id"]
+            ),
+            "parent": meta.get("parent", ""),
+            "dependencies": meta.get("dependencies", []),
+            "evidence": meta.get("evidence", []),
+            "due_date": task.get("due_date") or meta.get("due_date", ""),
+            "agent_context": meta.get("agent_context", {}),
+            "children": children,
+            "kb_name": task_kb,
+            "derived": self.derived_for(task_kb, task["id"]),
+            "body": entry.get("body", "") or "",
+        }
+
     def derived_completion(self, kb_name: str) -> dict[str, dict[str, Any]]:
         """Every task's derived completion in ``kb_name``, keyed by task id.
 
@@ -470,7 +527,7 @@ class TaskService:
         rows = self._query(query, params)
         tasks = []
         for row in rows:
-            meta = _parse_metadata(row.get("metadata"))
+            meta = parse_metadata(row.get("metadata"))
             tasks.append(
                 {
                     "id": row["id"],
@@ -529,6 +586,181 @@ class TaskService:
                     t["parked_awaiting"] = (entry.get("parked_awaiting") or "").strip()
 
         return tasks
+
+    #: Every key a `list_tasks` row carries. `task list --fields` names on
+    #: stderr a requested field that is none of these and that no returned row
+    #: carries, as search does with its own row's keys; nothing is refused.
+    TASK_ROW_FIELDS: tuple[str, ...] = (
+        "id", "title", "status", "assignee", "priority", "parent", "kb_name",
+        "parked_awaiting", "updated_at", "derived",
+    )  # fmt: skip
+
+    def task_listing(
+        self,
+        kb_name: str | None = None,
+        status: str | None = None,
+        assignee: str | None = None,
+        parent: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
+        priority: int | None = None,
+        *,
+        dispatchable: bool = False,
+        fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """The body of `task list` on every surface: ``{"count", "tasks"}``.
+
+        The CLI ``task list``, the MCP ``task_list`` tool and REST ``GET
+        /tasks`` return this and nothing else. Without ``dispatchable`` and
+        ``fields`` it is exactly :meth:`list_tasks` under ``tasks``, as before
+        #1686.
+
+        ``dispatchable`` keeps only the tasks a worker can take now -- each
+        one a task ``claim_task`` accepts now -- as
+        :func:`~pyrite.models.task_queue.classify_tasks` decides (the one
+        place that is decided), in its order: priority highest first, then
+        oldest. It adds ``counts`` (every task the other filters matched, per
+        reason, ``dispatchable`` included) and ``excluded`` (each open task
+        left out, with its one reason, in the same order). Nothing is written.
+
+        ``fields`` projects each ``tasks`` row through
+        :func:`~pyrite.services.read_shaping.project_fields`.
+        """
+        tasks = self.list_tasks(
+            kb_name=kb_name,
+            status=status,
+            assignee=assignee,
+            parent=parent,
+            kb_names=kb_names,
+            priority=priority,
+        )
+        out: dict[str, Any] = {}
+        if dispatchable:
+            classified = self._classify_for_dispatch(tasks, kb_name, kb_names)
+            tasks = [row for row, reason in classified if reason is None]
+            out["counts"] = count_reasons(classified)
+            out["excluded"] = [
+                {"id": row["id"], "kb_name": row["kb_name"], "reason": reason}
+                for row, reason in classified
+                if reason not in (None, "not_open")
+            ]
+        if fields:
+            tasks = [project_fields(row, fields) for row in tasks]
+        return {"count": len(tasks), "tasks": tasks, **out}
+
+    def _classify_for_dispatch(
+        self,
+        tasks: list[dict[str, Any]],
+        kb_name: str | None,
+        kb_names: set[str] | list[str] | None,
+    ) -> list[tuple[dict[str, Any], str | None]]:
+        """Gather what :func:`classify_tasks` reads beyond a ``list_tasks``
+        row, ask it, and hand back the rows as ``list_tasks`` shaped them.
+
+        The I/O is here, so the classifier stays pure: one index read for
+        each row's ``created_at``, ``file_path`` and ``dependencies``, a
+        stat of the file of each task whose effective status is open, a load
+        through the claim's loader of each task every other check lists, and
+        the derived completion of a KB a ``kb:id`` dependency names -- only
+        when this listing reads that KB, so a dependency on a KB the caller
+        may not read stays unresolved (blocked) and reveals nothing.
+        """
+        if not tasks:
+            return []
+        if kb_name:
+            scope = {kb_name}
+        elif kb_names is not None:
+            scope = set(kb_names)
+        else:
+            scope = {kb.name for kb in self.config.all_kbs()}
+        listed_kbs = sorted({t["kb_name"] for t in tasks})
+        params: dict[str, Any] = {}
+        in_listed = kb_names_clause("kb_name", listed_kbs, params)
+        extra_rows = self._query(
+            "SELECT kb_name, id, status, created_at, file_path, metadata FROM entry "
+            f"WHERE entry_type = 'task' AND {in_listed}",
+            params,
+        )
+        extra = {(r["kb_name"], r["id"]): r for r in extra_rows}
+
+        derived = {kb: self.derived_completion(kb) for kb in listed_kbs}
+        inputs = []
+        for task in tasks:
+            row = extra.get((task["kb_name"], task["id"]), {})
+            deps = parse_metadata(row.get("metadata")).get("dependencies")
+            open_now = task["derived"]["effective_status"] == "open"
+            inputs.append(
+                {
+                    **task,
+                    # The column the claim's compare-and-swap reads, not the
+                    # row's `status` (which reads an empty one as `open`).
+                    "index_status": row.get("status"),
+                    "created_at": row.get("created_at") or "",
+                    "dependencies": deps,
+                    "file_present": not open_now or self._file_present(task, row),
+                }
+            )
+            for dep in dependency_ids(deps):
+                other, sep, _ = dep.partition(":")
+                if sep and other in scope and other not in derived:
+                    derived[other] = self.derived_completion(other)
+
+        # The one check that reads a file runs last and only on the rows every
+        # other check lists, so its cost is the listed set: does the claim's
+        # own loader load the file? A row it does not is `unreadable`.
+        for row, reason in classify_tasks(inputs, derived):
+            if reason is None:
+                row["file_loads"] = self._claim_can_load(row)
+
+        by_key = {(t["kb_name"], t["id"]): t for t in tasks}
+        return [
+            (by_key[(row["kb_name"], row["id"])], reason)
+            for row, reason in classify_tasks(inputs, derived)
+        ]
+
+    def _row_kb(self, kb_name: str):
+        """The configured KB an index row names, through the one resolver
+        (``kb_resolver.resolve_kb``, #1530), or None when no configured KB
+        has that name any more: a row's KB is not a caller's request, so a
+        KB no longer configured is skipped by the listing, never refused."""
+        from .kb_resolver import resolve_kb
+
+        try:
+            return resolve_kb(self.config, kb_name, readable_kbs=None)
+        except KBNotFoundError:
+            return None
+
+    def _claim_can_load(self, task: dict[str, Any]) -> bool:
+        """Whether ``KBService.claim_entry``'s load of this task succeeds: the
+        same call (``KBRepository(kb).load``), so the list never promises a
+        task the claim then refuses at its load. No entry (the file's YAML
+        broke, or no file holds the id) and a load error (its type refuses
+        it) are both false. A KB no longer configured is not loaded by the
+        claim either, so it is not judged here."""
+        from ..storage.repository import KBRepository
+
+        kb = self._row_kb(task["kb_name"])
+        if kb is None:
+            return True
+        try:
+            return KBRepository(kb).load(task["id"]) is not None
+        except EntryLoadError:  # the claim's load refuses this file's type: leave it out
+            return False
+
+    def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
+        """Whether the task's file is still there, as its KB answers it
+        (``KBFiles.present``). A row that records no path, a KB no longer
+        configured, or a folder the OS will not answer for cannot be checked,
+        and such a task is not called orphaned: a listing never fails on it."""
+        from ..utils.kb_files import KBFiles, KBPresenceUnknownError
+
+        file_path = row.get("file_path")
+        kb = self._row_kb(task["kb_name"])
+        if not file_path or kb is None:
+            return True
+        try:
+            return KBFiles(kb.path).present(file_path)
+        except KBPresenceUnknownError:
+            return True
 
     # -- Protocol finders (ADR-0017) -------------------------------------
     # Cross-type queries over the protocol columns. The MCP `kb_find_*`
@@ -759,7 +991,7 @@ class TaskService:
 
         unblocked = []
         for row in rows:
-            meta = _parse_metadata(row.get("metadata"))
+            meta = parse_metadata(row.get("metadata"))
             deps = meta.get("dependencies", [])
             if not deps or task_id not in deps:
                 continue
@@ -791,7 +1023,7 @@ class TaskService:
         if not task:
             return None
 
-        meta = _parse_metadata(task.get("metadata") or {})
+        meta = parse_metadata(task.get("metadata") or {})
         parent_id = meta.get("parent") or task.get("parent", "")
         if not parent_id:
             return None
@@ -804,7 +1036,7 @@ class TaskService:
         if not parent:
             return None
 
-        parent_meta = _parse_metadata(parent.get("metadata") or {})
+        parent_meta = parse_metadata(parent.get("metadata") or {})
         parent_evidence = parent_meta.get("evidence", []) or parent.get("evidence", []) or []
 
         # Only what the parent lacks, each appended as one item in the
@@ -858,7 +1090,7 @@ class TaskService:
         if not task:
             return {"linked": False, "error": "Task not found"}
 
-        meta = _parse_metadata(task.get("metadata") or {})
+        meta = parse_metadata(task.get("metadata") or {})
         evidence = meta.get("evidence", []) or task.get("evidence", []) or []
 
         if assessment_id not in evidence:
@@ -926,7 +1158,7 @@ class TaskService:
             if not task:
                 break
 
-            meta = _parse_metadata(task.get("metadata") or {})
+            meta = parse_metadata(task.get("metadata") or {})
             parent_id = meta.get("parent") or task.get("parent", "")
             if not parent_id:
                 break
@@ -1050,7 +1282,7 @@ class TaskService:
 
 def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
     """Return a task's dependency IDs in their stored order."""
-    metadata = _parse_metadata(task.get("metadata") or {})
+    metadata = parse_metadata(task.get("metadata") or {})
     dependencies = metadata.get("dependencies") or task.get("dependencies") or []
     if isinstance(dependencies, str):
         return [dependencies] if dependencies else []
@@ -1076,11 +1308,6 @@ def _task_dependency_summary(
         "entry_type": task.get("entry_type", "task"),
         "derived": derived.get(task_id) or no_derived(),
     }
-
-
-def _parse_metadata(raw) -> dict[str, Any]:
-    """Parse metadata JSON from a DB row."""
-    return parse_metadata(raw)
 
 
 # =============================================================================

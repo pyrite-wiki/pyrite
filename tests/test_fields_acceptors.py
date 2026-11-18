@@ -31,6 +31,7 @@ from typer.testing import CliRunner
 
 from pyrite.cli import app
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.storage.database import PyriteDB
 from tests.search_verdict_seed import cli_world, make_cli_world, seed_entry_world
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +59,18 @@ ACCEPTORS = {
     ("pyrite/services/read_shaping.py", "parse_cli_fields"): ("helper", None),
     # File search names the ignored `--fields` / PYRITE_SEARCH_FIELDS on stderr.
     ("pyrite/cli/search_commands.py", "_warn_fields_not_applied"): ("helper", None),
+    # `task list` / `GET /api/tasks` (#1686): JSON-shaped commands (the task
+    # group has no csv or markdown), projected through the shared rule in the
+    # service that builds their body; pinned by the TASK_LIST tests below.
+    ("pyrite/cli/task_commands.py", "task_list"): ("cli-json", "task list"),
+    ("pyrite/server/endpoints/tasks.py", "list_tasks"): ("rest-json", "GET /api/tasks"),
+    ("pyrite/server/mcp_server.py", "_task_list"): ("mcp", None),
+    ("pyrite/services/task_service.py", "task_listing"): ("helper", None),
+    # `search --batch` (#1692) prints json/yaml/rich only (csv and markdown are usage
+    # errors), so it has no per-format case here; `_shape_rows` is the row rule it
+    # shares with `search`, and tests/test_search_batch.py pins `fields` per slot.
+    ("pyrite/cli/search_commands.py", "_shape_rows"): ("helper", None),
+    ("pyrite/cli/search_commands.py", "_run_batch"): ("helper", None),
 }
 #: Not acceptors, by design, and pinned below: `GET /api/entries` takes no `fields`.
 
@@ -127,6 +140,8 @@ def test_every_listed_acceptor_has_a_case():
     rest = {case for kind, case in ACCEPTORS.values() if kind == "rest"}
     assert cli == set(CLI_ACCEPTORS)
     assert rest == set(REST_ACCEPTORS)
+    json_only = {(kind, case) for kind, case in ACCEPTORS.values() if kind.endswith("-json")}
+    assert json_only == {("cli-json", "task list"), ("rest-json", "GET /api/tasks")}
 
 
 @pytest.mark.control(reason="MCP was JSON only on dev; this pins the claim in the docs table")
@@ -433,3 +448,75 @@ def test_batch_fields_are_not_split_on_commas_in_the_json_body(rest_client):
         "/api/entries/batch", json={"entries": entries, "fields": ["status,title"]}
     ).json()["entries"][0]
     assert joined == {"id": "entry-1", "kb_name": "kb"}
+
+
+# ---------------------------------------------------- task list (JSON-shaped)
+
+
+@pytest.fixture
+def task_world(tmp_path):
+    """A real KB and index holding one open task, `task-1`, whose body is
+    "excluded secret"."""
+    from pyrite.services.kb_service import KBService
+
+    config = make_cli_world(tmp_path, entries=0)
+    db = PyriteDB(tmp_path / "index.db")
+    try:
+        KBService(config, db).create_entry(
+            "kb", "task-1", "T", "task", "excluded secret", metadata={"status": "open"}
+        )
+    finally:
+        db.close()
+    return config
+
+
+@pytest.mark.parametrize("fmt", ["json", "yaml", "rich"])
+def test_task_list_projects_in_every_format_it_has(fmt, console_width, task_world):
+    console_width(200)
+    args = ["task", "list", "-k", "kb", "--fields", ",".join(FIELDS), "--format", fmt]
+    with cli_world(task_world):
+        result = CliRunner().invoke(app, args)
+    assert result.exit_code == 0, result.exception or result.output
+    out = result.stdout
+    assert "excluded secret" not in out and "task-1" in out
+    if fmt == "rich":
+        positions = [out.index(name) for name in COLUMNS]
+        assert positions == sorted(positions)
+        assert "title" not in out.lower().split("tasks", 1)[1]  # an unasked column is absent
+    else:
+        data = json.loads(out) if fmt == "json" else yaml.safe_load(out)
+        assert list(data["tasks"][0]) == ["id", "kb_name", "status"]
+
+
+@pytest.mark.control(reason="the task group never had csv or markdown; --fields changes nothing")
+@pytest.mark.parametrize("fmt", ["csv", "markdown"])
+def test_task_list_has_no_tabular_format(fmt, task_world):
+    with cli_world(task_world):
+        plain = CliRunner().invoke(app, ["task", "list", "-k", "kb", "--format", fmt])
+        fielded = CliRunner().invoke(
+            app, ["task", "list", "-k", "kb", "--fields", "status", "--format", fmt]
+        )
+    assert plain.exit_code == fielded.exit_code == 2
+    assert "unknown format" in fielded.output
+
+
+@pytest.fixture
+def task_rest_client(make_client):
+    client, config, db = make_client(kb_name="kb")
+    from pyrite.services.kb_service import KBService
+
+    KBService(config, db).create_entry(
+        "kb", "task-1", "T", "task", "excluded secret", metadata={"status": "open"}
+    )
+    return client
+
+
+@pytest.mark.parametrize("accept", ["application/json", "text/csv", "text/markdown"])
+def test_get_tasks_projects_and_answers_json(task_rest_client, accept):
+    """`GET /api/tasks` returns its JSON body whatever Accept says, as before
+    `fields`; the projection applies to that body."""
+    response = task_rest_client.get(
+        "/api/tasks", params={"kb": "kb", "fields": "status,missing"}, headers={"Accept": accept}
+    )
+    assert response.status_code == 200, response.text
+    assert [list(t) for t in response.json()["tasks"]] == [["id", "kb_name", "status"]]

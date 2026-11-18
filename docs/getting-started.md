@@ -40,7 +40,7 @@ git add -A
 git commit -m "Initial KB"
 ```
 
-Templates available: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`.
+Templates in core: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`, `task` and `research-queue`; installed plugins add theirs (`pyrite init --help` lists every one).
 
 Your knowledge base is just a directory of markdown files. You can open them in any editor.
 
@@ -134,6 +134,8 @@ pyrite search "mathematician" -k my-kb --type person
 <!-- runner: expect-ids ada-lovelace -->
 
 Repeat `--type` to include several types and use `--exclude-type` to remove one: `pyrite search "mathematician" -k my-kb --type person --type event --exclude-type event`.
+
+To run many searches at once (for example, checking twenty candidates for duplicates before filing), put them in a JSON list and use `--batch`; it runs in one process and loads the embedding model once: `pyrite search --batch queries.json -k my-kb`, with `[{"query": "algorithm"}, {"query": "turing", "type": ["person"]}]` in the file. Each slot of the answer is what the single search prints, in input order; a query that is refused fills its own slot, and the exit code is 3 if some were refused. See [the batch contract](json-contracts.md#search---batch-many-searches-in-one-process-cli-only).
 
 **Semantic search** finds conceptually related content, not just keyword matches. It needs the `semantic` extra (in `[all]`; a [release-tag install](../README.md#install) adds it by name) and uses a local embedding model (`all-MiniLM-L6-v2`, ~90 MB) that is downloaded the first time it is needed — expect that one download to take a minute, once.
 
@@ -325,7 +327,7 @@ See also: [Gemini MCP integration](gemini-mcp-integration.md) | [OpenAI MCP inte
 
 ## Use Templates for Domain-Specific KBs
 
-The templates `pyrite init` accepts are the six listed above. Each works with nothing extra installed:
+The core templates listed above each work with nothing extra installed; a plugin's preset (for example `journalism-investigation`) is available once that extension is installed:
 
 ```bash
 cd ..

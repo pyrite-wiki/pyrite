@@ -133,7 +133,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -232,7 +232,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -260,7 +260,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -542,6 +542,13 @@
             "default": false,
             "description": "Run in background (returns job_id for polling). Default: false",
             "type": "boolean"
+          },
+          "confirm": {
+            "description": "After the sync, say for each entry id or KB-relative path whether it is indexed and searchable: a `confirm` block with one row per name (status indexed, not_indexed, not_found, malformed, duplicate or skipped; schema findings; embedding embedded, queued or unavailable) and `outcome` done or partial. An empty list confirms every entry the sync added or changed. Needs kb_name; refused with background.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "Sync specific KB (optional - syncs all if not provided)",
@@ -1216,7 +1223,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -1549,6 +1556,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
@@ -2489,6 +2507,17 @@
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "KB name (optional)",
             "type": "string"
@@ -2693,7 +2722,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -2758,7 +2787,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -2786,7 +2815,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -3576,7 +3605,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -3909,6 +3938,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",

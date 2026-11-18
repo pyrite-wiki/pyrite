@@ -60,6 +60,9 @@ EXTRA_ARGS: dict[str, list[str]] = {
     "pyrite delete": ["--force"],
     "pyrite links bulk-create": ["{links}"],
     "pyrite import": ["--format", "markdown"],
+    # QUERY is optional (`--batch` replaces it), so the walk must fill it.
+    "pyrite search": ["x"],
+    "pyrite-read search": ["x"],
 }
 #: A positional argument that must be one of a command's own words.
 POSITIONAL: dict[tuple[str, str], str] = {("pyrite wiki review", "action"): "approve"}

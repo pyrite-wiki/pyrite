@@ -6,13 +6,20 @@ Commands: search (with file-based fallback)
 
 import logging
 import os
+import re
 
 import typer
 from rich.markup import escape
 from rich.table import Table
 
 from ..config import load_config
-from ..exceptions import QuerySyntaxError, QueryTooLongError, StorageError, ValidationError
+from ..exceptions import (
+    PyriteError,
+    QuerySyntaxError,
+    QueryTooLongError,
+    StorageError,
+    ValidationError,
+)
 from ..services.read_shaping import (
     IDENTITY_FIELDS,
     SEARCH_FIELDS_ENV,
@@ -61,7 +68,9 @@ def register_search_command(app: typer.Typer):
 
     @app.command("search")
     def search(
-        query: str = typer.Argument(..., help="Search query (FTS5 syntax supported)"),
+        query: str | None = typer.Argument(
+            None, help="Search query (FTS5 syntax supported); omit with --batch"
+        ),
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Search specific KB"),
         entry_types: list[str] | None = typer.Option(
             None,
@@ -116,6 +125,19 @@ def register_search_command(app: typer.Typer):
                 "the score. Overrides PYRITE_SEARCH_FIELDS."
             ),
         ),
+        batch: str | None = typer.Option(
+            None,
+            "--batch",
+            help=(
+                "Run many searches in one process: a JSON file (or '-' for stdin) "
+                'holding a list of {"query": ..., "kb", "type", "mode", "limit", '
+                '"fields", "status", "tag"} objects, at most 50. The command-line '
+                "options are the defaults; a key in a query overrides them. Each "
+                "result equals the single search's, in input order; a refused query "
+                "fills its own slot with the error shape (exit 3 if some were refused, "
+                "1 if all). Instead of QUERY."
+            ),
+        ),
         output_format: str = typer.Option(
             "json",
             "--format",
@@ -164,6 +186,35 @@ def register_search_command(app: typer.Typer):
         for flag, values in (("--type", entry_types), ("--exclude-type", exclude_types)):
             if any(not value.strip() for value in (values or [])):
                 raise typer.BadParameter("value must not be blank", param_hint=flag)
+
+        if batch is not None:
+            _refuse_batch_usage(query, use_files, expand, output_format)
+            _run_batch(
+                batch,
+                output_format=output_format,
+                debug=debug,
+                include_body=include_body,
+                defaults={
+                    "kb": kb_name,
+                    "type": entry_types,
+                    "tag": tag,
+                    "status": status,
+                    "limit": limit,
+                    "mode": mode,
+                    "fields": fields,
+                },
+                shared={
+                    "exclude_types": exclude_types or None,
+                    "date_from": date_from,
+                    "date_to": date_to,
+                    "fips": fips,
+                    "state": state_filter,
+                    "include_archived": include_archived,
+                },
+            )
+            return
+        if query is None:
+            raise typer.BadParameter("Missing argument 'QUERY' (or use --batch FILE).")
 
         asked = bool(
             parse_fields_param(fields) or parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV))
@@ -295,18 +346,9 @@ def register_search_command(app: typer.Typer):
                 return
 
             # Apply field projection. One rule for every read surface (#193).
-            if row_fields:
-                missing = unmatched_search_fields(results, row_fields) if asked else []
-                if missing:
-                    typer.echo(
-                        f"warning: no result carries: {', '.join(missing)} "
-                        "(field names are case-sensitive; '*' returns every field)",
-                        err=True,
-                    )
-                results = [project_fields(record, row_fields) for record in results]
-            elif not include_body:
-                for r in results:
-                    r.pop("body", None)
+            results, missing = _shape_rows(results, row_fields, asked, include_body)
+            if missing:
+                typer.echo(_missing_fields_warning(missing), err=True)
 
             if output_format != "rich":
                 from ..formats import format_response
@@ -332,21 +374,33 @@ def register_search_command(app: typer.Typer):
                 return
 
             table = Table(title=f"Search Results ({len(results)})")
-            table.add_column("KB", style="cyan", width=12)
-            table.add_column("Type", style="green", width=10)
-            table.add_column("Title", width=40)
+            table.add_column("KB", style="cyan")
+            table.add_column("ID", style="dim", no_wrap=True, overflow="fold")
+            table.add_column("Type", style="green")
+            table.add_column("Title")
             show_date = any(r.get("date") for r in results)
             if show_date:
-                table.add_column("Date", width=10)
-            table.add_column("Snippet", width=50)
+                table.add_column("Date")
+            table.add_column("Snippet")
 
             for r in results:
                 date = r.get("date", "")[:10] if r.get("date") else ""
                 raw_snippet = r.get("snippet", "") or ""
                 snippet = (raw_snippet[:97] + "...") if len(raw_snippet) > 100 else raw_snippet
+                parts = re.split(r"(</?mark>)", snippet)
+                snippet = "".join(
+                    "[bold]" if p == "<mark>" else "[/bold]" if p == "</mark>" else escape(p)
+                    for p in parts
+                )
                 raw_title = r.get("title", "") or ""
                 title = (raw_title[:37] + "...") if len(raw_title) > 40 else raw_title
-                cells = [r.get("kb_name", ""), r.get("entry_type", ""), title]
+                title = escape(title)
+                cells = [
+                    r.get("kb_name", ""),
+                    r.get("id", ""),
+                    r.get("entry_type", ""),
+                    title,
+                ]
                 table.add_row(*cells, *([date] if show_date else []), snippet)
 
             console.print(table)
@@ -408,6 +462,329 @@ def register_search_command(app: typer.Typer):
         finally:
             if db is not None:
                 db.close()
+
+
+def _shape_rows(results, row_fields, asked: bool, include_body: bool):
+    """The rows as a single search prints them, and the requested fields no row carries.
+
+    One rule for the single search and every slot of ``--batch``: a projection
+    when there is one (#193), else the snippet-only default.
+    """
+    if row_fields:
+        missing = unmatched_search_fields(results, row_fields) if asked else []
+        return [project_fields(record, row_fields) for record in results], missing
+    if not include_body:
+        for r in results:
+            r.pop("body", None)
+    return results, []
+
+
+def _missing_fields_warning(missing: list[str]) -> str:
+    return (
+        f"warning: no result carries: {', '.join(missing)} "
+        "(field names are case-sensitive; '*' returns every field)"
+    )
+
+
+# --- search --batch (#1692) ---------------------------------------------------
+
+#: The most queries one batch runs; the same cap as `batch-read` (#1692).
+MAX_BATCH_QUERIES = 50
+
+#: What a query object may carry. Everything else is refused in its slot.
+_BATCH_KEYS = ("query", "kb", "type", "mode", "limit", "fields", "status", "tag")
+
+
+def _refuse_batch_usage(query, use_files: bool, expand: bool, output_format: str) -> None:
+    """Usage errors (exit 2): options that cannot go with ``--batch``."""
+    if query is not None:
+        raise typer.BadParameter(
+            "QUERY and --batch are exclusive; put the query in the batch file."
+        )
+    if use_files:
+        raise typer.BadParameter("--files cannot be combined with --batch.", param_hint="--files")
+    if expand:
+        raise typer.BadParameter(
+            "--expand is not available with --batch: it makes one LLM call per query, "
+            "the cost a batch exists to avoid.",
+            param_hint="--expand",
+        )
+    if output_format not in ("json", "yaml", "rich"):
+        raise typer.BadParameter(
+            f"--batch prints json, yaml or rich, not {output_format}.", param_hint="--format"
+        )
+
+
+def _error_fields(exc: PyriteError) -> dict:
+    """A refusal as the canonical error shape, the one a single search prints."""
+    from ..exceptions import public_text, refusal_fields
+    from ..utils.errors import build_error
+
+    if isinstance(exc, QuerySyntaxError):
+        return build_error(
+            str(exc),
+            exc.error_code,
+            suggestion=(
+                "quote tokens containing - : . yourself when your query "
+                "uses AND/OR/NOT or phrase quotes"
+            ),
+        )
+    if isinstance(exc, QueryTooLongError):
+        return build_error(str(exc), exc.error_code, suggestion="shorten the query")
+    return {
+        **refusal_fields(exc),
+        **build_error(
+            public_text(exc, log=logger),
+            exc.error_code,
+            suggestion=getattr(exc, "suggestion", None),
+            retryable=bool(getattr(exc, "retryable", False)),
+        ),
+    }
+
+
+def _slot_spec(raw, defaults: dict) -> dict:
+    """One query object merged over the command-line defaults, or a ValidationError."""
+    if not isinstance(raw, dict):
+        raise ValidationError(
+            f'each batch item is an object like {{"query": "..."}}, not {type(raw).__name__}'
+        )
+    import json
+
+    try:  # a lone surrogate ("\ud800", or stdin bytes under LC_ALL=C) reaches no search (#1728)
+        json.dumps(raw, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValidationError(
+            "a batch query holds text that is not valid UTF-8 (a lone surrogate, or "
+            "bytes that were not UTF-8)"
+        ) from None
+    unknown = sorted(set(raw) - set(_BATCH_KEYS))
+    if unknown:
+        hint = (
+            " (--expand is not available in a batch: it makes one LLM call per query)"
+            if "expand" in unknown
+            else ""
+        )
+        raise ValidationError(
+            f"unknown key(s) in a batch query: {', '.join(unknown)}{hint}; "
+            f"the keys are {', '.join(_BATCH_KEYS)}"
+        )
+    query = raw.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ValidationError('each batch query needs a non-blank string "query"')
+    for key in ("kb", "mode", "status", "tag"):
+        if key in raw and not (raw[key] is None or isinstance(raw[key], str)):
+            raise ValidationError(f'"{key}" must be a string')
+    types = raw.get("type")
+    if "type" in raw and not (
+        types is None
+        or (isinstance(types, list) and all(isinstance(t, str) and t.strip() for t in types))
+    ):
+        raise ValidationError('"type" must be a list of non-blank strings, like repeated --type')
+    limit = raw.get("limit")
+    if "limit" in raw and (isinstance(limit, bool) or not isinstance(limit, int) or limit < 1):
+        raise ValidationError('"limit" must be an integer of 1 or more')
+    fields = raw.get("fields")
+    if isinstance(fields, list) and all(isinstance(f, str) for f in fields):
+        fields = ",".join(fields)
+    if "fields" in raw and not (fields is None or isinstance(fields, str)):
+        raise ValidationError('"fields" must be a comma-separated string or a list of strings')
+    merged = {**defaults, **{k: v for k, v in raw.items() if k in defaults}}
+    if "fields" in raw:
+        merged["fields"] = fields
+    merged["query"] = query
+    return merged
+
+
+def _read_batch(source: str, output_format: str) -> list:
+    """The batch file's list of query objects; a whole-batch refusal exits 1."""
+    import json
+    import sys
+
+    from ..exceptions import outside_text
+    from ..utils.errors import cli_error
+    from .context import input_file_or_exit
+
+    try:
+        if source == "-":
+            text = sys.stdin.read()
+        else:
+            path = input_file_or_exit(source, "Batch file", output_format)
+            text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        cli_error(
+            "--batch input is not valid UTF-8 text",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion="save the file as UTF-8 JSON",
+        )
+    except OSError as e:
+        cli_error(
+            f"--batch input could not be read: {outside_text(e)}",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion="check the path and its permissions",
+        )
+    try:
+        items = json.loads(text)
+    except ValueError as e:
+        cli_error(
+            f"--batch input is not valid JSON: {e}",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion='a JSON list like [{"query": "falcon"}, {"query": "heron", "kb": "birds"}]',
+        )
+    if not isinstance(items, list):
+        cli_error(
+            f"--batch input must be a JSON list of query objects, not {type(items).__name__}",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion='a JSON list like [{"query": "falcon"}]',
+        )
+    if len(items) > MAX_BATCH_QUERIES:
+        cli_error(
+            f"--batch takes at most {MAX_BATCH_QUERIES} queries, got {len(items)}",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion=f"split the file into batches of {MAX_BATCH_QUERIES} or fewer, as batch-read does",
+        )
+    return list(items)
+
+
+def _run_batch(
+    source: str,
+    *,
+    output_format: str,
+    debug: bool,
+    include_body: bool,
+    defaults: dict,
+    shared: dict,
+) -> None:
+    """``pyrite search --batch``: one config load, one index, one SearchService.
+
+    Each query goes through the same ``search_response`` and the same row
+    shaping as a single search; a refusal fills its own slot (#1692).
+    """
+    from ..utils.errors import exit_unless_whole
+
+    items = _read_batch(source, output_format)
+    # The base settings are the ones a single search uses: with `-k`, it reads
+    # them from get_config_with_registered_kbs, which returns this same config
+    # (it only merges registered KBs into it), so `settings` and `search_mode`
+    # do not differ per slot.
+    config = load_config()
+    env_fields = os.environ.get(SEARCH_FIELDS_ENV)
+
+    from ..services.kb_service import KBService
+    from ..services.search_service import SearchService, check_query_length
+    from .context import open_index_db
+
+    searches: list[dict] = []
+    db = None
+    try:
+        db = open_index_db(config) if items else None
+        if db is not None:
+            kb_svc = KBService(config, db)
+            if kb_svc.index_is_empty():
+                err_console.print("[yellow]Index is empty. Building index...[/yellow]")
+                kb_svc.build_index()
+            else:
+                # Once for the whole batch, over every KB: slots name different
+                # KBs, so there is no single scope to narrow it to.
+                _warn_if_stale(config, db, None)
+            search_svc = SearchService(db, settings=config.settings)
+
+        for position, raw in enumerate(items, start=1):
+            echoed = raw.get("query") if isinstance(raw, dict) else None
+            slot: dict = {"query": echoed if isinstance(echoed, str) else None}
+            try:
+                spec = _slot_spec(raw, defaults)
+                kb_name = spec["kb"]
+                slot_config = (
+                    get_config_with_registered_kbs(config, name=kb_name) if kb_name else config
+                )
+                require_kb(slot_config, kb_name)
+                check_query_length(spec["query"])
+
+                asked = bool(parse_fields_param(spec["fields"]) or parse_fields_param(env_fields))
+                row_fields = resolve_search_fields(
+                    spec["fields"], env_fields, include_body=include_body
+                )
+                trace: dict | None = {} if debug else None
+                warnings: list[str] = []
+                response = search_svc.search_response(
+                    query=spec["query"],
+                    caller_wrote_query=True,
+                    kb_name=kb_name,
+                    entry_types=spec["type"] or None,
+                    exclude_types=shared["exclude_types"],
+                    tags=[spec["tag"]] if spec["tag"] else None,
+                    date_from=shared["date_from"],
+                    date_to=shared["date_to"],
+                    limit=spec["limit"],
+                    mode=spec["mode"] or config.settings.search_mode or "keyword",
+                    expand=False,
+                    include_archived=shared["include_archived"],
+                    fips=shared["fips"],
+                    state=shared["state"],
+                    status=spec["status"],
+                    trace=trace,
+                    warnings=warnings,
+                )
+                results = response.pop("results")
+                for warning in warnings:
+                    err_console.print(
+                        f"[yellow]warning:[/yellow] query {position}: {escape(warning)}",
+                        soft_wrap=True,
+                    )
+                if trace is not None:
+                    err_console.print(
+                        f"[dim]trace:[/dim] query {position}: "
+                        f"mode={trace.get('requested_mode')} actual={trace.get('actual_mode')} "
+                        f"reason={trace.get('reason') or '-'} results={trace.get('result_count')} "
+                        f"latency_ms={trace.get('latency_ms')} relaxed={trace.get('relaxed')}"
+                    )
+                results, missing = _shape_rows(results, row_fields, asked, include_body)
+                if missing:
+                    typer.echo(f"query {position}: {_missing_fields_warning(missing)}", err=True)
+                slot = {
+                    "query": spec["query"],
+                    "count": len(results),
+                    "results": results,
+                    **response,
+                }
+            except PyriteError as e:
+                # A refusal (syntax, length, unknown KB, a bad value) is its own
+                # slot. Anything that is not a PyriteError is a fault, not a
+                # refusal: it is not caught here and ends the command.
+                slot = {**slot, "count": 0, "results": [], **_error_fields(e)}
+            searches.append(slot)
+    finally:
+        if db is not None:
+            db.close()
+
+    failed = sum(1 for slot in searches if "error" in slot)
+    _print_batch({"count": len(searches), "searches": searches}, output_format)
+    exit_unless_whole(failed, len(searches) - failed)
+
+
+def _print_batch(data: dict, output_format: str) -> None:
+    if output_format != "rich":
+        from ..formats import format_response
+
+        typer.echo(format_response(data, output_format)[0])
+        return
+    for position, slot in enumerate(data["searches"], start=1):
+        console.print(f"[bold]{position}. {escape(str(slot['query']))}[/bold]")
+        if "error" in slot:
+            console.print(f"  [red]{escape(slot['error_code'])}:[/red] {escape(slot['error'])}")
+            continue
+        if not slot["results"]:
+            console.print("  [yellow]No results found.[/yellow]")
+        for r in slot["results"]:
+            console.print(
+                f"  [cyan]{escape(str(r.get('kb_name', '')))}[/cyan] "
+                f"[dim]{escape(str(r.get('id', '')))}[/dim] {escape(str(r.get('title', '')))}"
+            )
 
 
 def _warn_fields_not_applied(fields):
@@ -480,12 +857,12 @@ def _search_files(
 
     table = Table(title=f"Search Results ({len(results)})")
     table.add_column("KB", style="cyan")
+    table.add_column("ID", style="dim", no_wrap=True, overflow="fold")
     table.add_column("Type", style="green")
     table.add_column("Title")
-    table.add_column("ID", style="dim")
 
     for kb_name, entry, _path in results:
-        table.add_row(kb_name, entry.entry_type, entry.title, entry.id)
+        table.add_row(kb_name, entry.id, entry.entry_type, entry.title)
 
     console.print(table)
     exit_unless_whole(unreadable, scanned)

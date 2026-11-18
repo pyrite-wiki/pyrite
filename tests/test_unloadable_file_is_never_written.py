@@ -714,6 +714,10 @@ CALL_SITES: dict[str, tuple[str, object]] = {
         "qa validation reports the file",
     ),
     "pyrite/services/file_search.py::search_kb_files": (READER, "search skips the file"),
+    "pyrite/services/task_service.py::TaskService._claim_can_load": (
+        READER,
+        "task list --dispatchable leaves the task out as `unreadable`, writes nothing (#1686)",
+    ),
     "pyrite/cli/export_commands.py::_load_entry_with_reason": (
         READER,
         "export: left out with the loader's reason (#1325)",

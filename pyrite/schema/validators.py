@@ -100,13 +100,55 @@ def _updated_at_instant(value: Any) -> datetime | None:
     return parsed.replace(tzinfo=UTC) if parsed.tzinfo is None else parsed.astimezone(UTC)
 
 
+_YAML_STR_TAG = "tag:yaml.org,2002:str"
+
+
+def importance_value(importance: Any) -> int | None:
+    """The whole number in 1-10 that ``importance`` is, or ``None``; never raises.
+
+    The one importance rule (#1537, #1588). It is asked about the value as
+    given, whatever a file, JSON or ``-f`` text puts there (the model keeps it,
+    ``Entry._importance_given``), and what it returns is the value stored: a
+    create and an update both write this int, so ``5.0``, ``1e1``, ``"7"`` and
+    ``"05"`` are stored as ``5``, ``10``, ``7`` and ``5`` (maintainer decisions
+    of 2026-11-17: a whole number only; a whole float is accepted and stored as
+    its int).
+
+    A number is compared as it is, never truncated first, and must be whole:
+    ``5.5`` and ``10.7`` are refused, as are ``.inf`` and ``.nan``. A string is
+    a number only as plain ASCII digits; ``" 5 "``, ``"+5"``, ``"1_0"`` and
+    fullwidth ``"１０"`` are text, refused rather than written to a file as a
+    string. A YAML ``!!str`` scalar is text and is judged as its text. A bool
+    is not a number (``true`` would otherwise pass as 1), and neither are
+    bytes, whatever they spell. A blank or null value is absent, which the
+    caller decides (``None`` gives ``None`` here).
+    """
+    if isinstance(importance, bool):
+        return None
+    if isinstance(importance, int):
+        value = int(importance)
+    elif isinstance(importance, float):
+        if not importance.is_integer():
+            return None
+        value = int(importance)
+    else:
+        if str(getattr(importance, "tag", "")) == _YAML_STR_TAG:
+            # ruamel's TaggedScalar for `!!str 7`; duck-typed so this layer imports no YAML library.
+            importance = getattr(importance, "value", None)
+        if not (isinstance(importance, str) and importance.isascii() and importance.isdigit()):
+            return None
+        # More than two significant digits is never 1-10; judging the length first keeps
+        # int() off digit text longer than Python's conversion limit, which raises.
+        significant = importance.lstrip("0")
+        if len(significant) > 2:
+            return None
+        value = int(significant or "0")
+    return value if 1 <= value <= 10 else None
+
+
 def validate_importance(importance: Any) -> bool:
-    """Validate importance is 1-10."""
-    try:
-        val = int(importance)
-        return 1 <= val <= 10
-    except (ValueError, TypeError):
-        return False
+    """True when the one importance rule accepts ``importance`` (:func:`importance_value`)."""
+    return importance_value(importance) is not None
 
 
 def validate_event_id(event_id: str) -> bool:

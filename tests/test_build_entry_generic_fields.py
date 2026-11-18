@@ -266,30 +266,24 @@ class TestCLICreateSurface:
         fm = _parse_frontmatter((kb_config.path / "comma.md").read_text(encoding="utf-8"))
         assert fm["remark"] == "one, two"
 
-    def test_cli_create_dash_f_splits_a_schema_declared_list_field(self, tmp_path):
+    def test_cli_create_dash_f_sends_several_list_items_as_a_json_array(self, tmp_path):
+        """Several items for a schema-declared list go as a JSON array; a comma
+        value is the one item it spells: the CLI never splits (#1502)."""
         from pyrite.cli import app
 
         config, kb_config = _make_kb(tmp_path)
+        base = ["create", "-k", "t", "-t", "finding", "-b", "body"]
         with patch("pyrite.cli.context.load_config", return_value=config):
-            result = self.runner.invoke(
-                app,
-                [
-                    "create",
-                    "-k",
-                    "t",
-                    "-t",
-                    "finding",
-                    "--title",
-                    "Labels",
-                    "-b",
-                    "body",
-                    "-f",
-                    "labels=one,two",
-                ],
+            several = self.runner.invoke(
+                app, [*base, "--title", "Labels", "-f", 'labels=["one", "two"]']
             )
-        assert result.exit_code == 0, result.output
+            one = self.runner.invoke(app, [*base, "--title", "Comma List", "-f", "labels=one,two"])
+        assert several.exit_code == 0, several.output
+        assert one.exit_code == 0, one.output
         fm = _parse_frontmatter((kb_config.path / "labels.md").read_text(encoding="utf-8"))
         assert fm["labels"] == ["one", "two"]
+        fm = _parse_frontmatter((kb_config.path / "comma-list.md").read_text(encoding="utf-8"))
+        assert fm["labels"] == ["one,two"]
 
     def test_cli_create_dash_f_refuses_off_enum(self, tmp_path):
         from pyrite.cli import app
