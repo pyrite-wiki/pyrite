@@ -461,7 +461,7 @@ def kb_create(
         None, "--shortname", "-s", help="Short alias for cross-KB links"
     ),
     ephemeral: bool = typer.Option(False, "--ephemeral", help="Create as ephemeral KB"),
-    ttl: int = typer.Option(3600, "--ttl", help="TTL in seconds for ephemeral KBs"),
+    ttl: int = typer.Option(3600, "--ttl", min=0, help="TTL in seconds for ephemeral KBs"),
 ):
     """Create a new knowledge base."""
     with cli_registry_context() as (config, db, svc, registry):
@@ -615,6 +615,12 @@ def kb_health(
         if result.get("type_name_drift_total"):
             console.print(
                 f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
+            )
+        if result.get("unlisted_entry_files"):
+            count = result["unlisted_entry_files"]
+            noun = "entry file" if count == 1 else "entry files"
+            console.print(
+                f"  [yellow]{count} {noun} the index does not list; `pyrite index health` names them[/yellow]"
             )
 
 

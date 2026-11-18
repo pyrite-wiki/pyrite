@@ -2796,7 +2796,7 @@ class TestContextPreviewParity:
         world.add_entry("proj", "---\n" + yaml.safe_dump(front) + "---\nContext body.\n")
 
     @staticmethod
-    def _read(world, surface):
+    def _read(world, surface, named_kb=True):
         before = {p: p.read_bytes() for p in world.kb_path("proj").rglob("*.md")}
         if surface == "cli":
 
@@ -2806,12 +2806,12 @@ class TestContextPreviewParity:
                 return json.loads(result.stdout)
 
             call("orient", "-k", "proj", "--format", "json")
-            pull = call("sw", "pull-next", "-k", "proj")
+            pull = call("sw", "pull-next", *(("-k", "proj") if named_kb else ()))
             context = call("sw", "context-for-item", "item", "-k", "proj")
         else:
             server = world.mcp("read")
             server._dispatch_tool("kb_orient", {"kb_name": "proj"})
-            pull = server._dispatch_tool("sw_pull_next", {"kb_name": "proj"})
+            pull = server._dispatch_tool("sw_pull_next", {"kb_name": "proj"} if named_kb else {})
             context = server._dispatch_tool(
                 "sw_context_for_item", {"item_id": "item", "kb_name": "proj"}
             )
@@ -2819,16 +2819,8 @@ class TestContextPreviewParity:
         return pull, context
 
     @pytest.mark.parametrize("surface", ["cli", "mcp"])
-    @pytest.mark.parametrize(
-        "direction",
-        [
-            pytest.param(
-                "outgoing",
-                marks=pytest.mark.control(reason="outgoing context was already counted"),
-            ),
-            "incoming",
-        ],
-    )
+    @pytest.mark.parametrize("direction", ["outgoing", "incoming"])
+    @pytest.mark.parametrize("named_kb", [True, False], ids=["named", "unnamed"])
     @pytest.mark.parametrize("relation", ["related_to", "affects", "explains"])
     @pytest.mark.parametrize(
         "entry_type,bucket,expected",
@@ -2847,7 +2839,7 @@ class TestContextPreviewParity:
         ],
     )
     def test_counts_both_link_directions(
-        self, world, surface, direction, relation, entry_type, bucket, expected
+        self, world, surface, direction, named_kb, relation, entry_type, bucket, expected
     ):
         item_links = (
             [{"target": "context", "relation": relation}] if direction == "outgoing" else []
@@ -2860,10 +2852,12 @@ class TestContextPreviewParity:
         )
         self._entry(world, "context", entry_type, links=context_links)
 
-        pull, context = self._read(world, surface)
+        pull, context = self._read(world, surface, named_kb)
 
         assert pull["recommendation"]["id"] == "item"
+        assert pull["recommendation"]["kb_name"] == "proj"
         assert [entry["id"] for entry in context[bucket]] == ["context"]
+        assert context[bucket][0]["body_preview"] == "Context body."
         assert pull["context_preview"] == expected
         assert pull["context_preview"] == {
             "adr_count": len(context["adrs"]),
@@ -2947,6 +2941,44 @@ class TestContextPreviewParity:
         assert pull["recommendation"] is None
         assert pull["reason"] == reason
         assert "context_preview" not in pull
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_unnamed_kb_still_checks_blockers(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "unfinished", "relation": "blocked_by"}],
+        )
+        self._entry(world, "unfinished", "backlog_item", kind="feature", status="proposed")
+
+        named, _ = self._read(world, surface)
+        unnamed, _ = self._read(world, surface, named_kb=False)
+
+        assert unnamed == named
+        assert unnamed["recommendation"] is None
+        assert unnamed["blocked_items"][0]["blocked_by"] == ["unfinished"]
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_context_preview_truncates_the_linked_body(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "context", "relation": "related_to"}],
+        )
+        body = "Context detail. " * 30
+        world.add_entry(
+            "proj", "---\nid: context\ntype: component\ntitle: Context\n---\n" + body + "\n"
+        )
+
+        _, context = self._read(world, surface, named_kb=False)
+
+        assert context["components"][0]["body_preview"] == body[:200]
 
 
 # =========================================================================

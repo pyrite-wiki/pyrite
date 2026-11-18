@@ -1,0 +1,1 @@
+- `pyrite orient` now refuses `--format markdown` and `--format csv` with a usage error (exit 2) instead of printing a Python dictionary representation, and its `--help` lists only supported formats (`json`, `yaml`, `rich`) (#1501).

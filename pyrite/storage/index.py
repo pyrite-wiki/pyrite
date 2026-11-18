@@ -431,6 +431,11 @@ class ReconcilePlan:
     # (``KBRepository.dangling_target``): ``{"kb", "path", "target"}``,
     # KB-relative, in walk order. They hold no entry (#1262).
     dangling: list[dict[str, str]] = field(default_factory=list)
+    # ``(path, reason)`` for each ``*.md`` path the same walk met and skipped
+    # (a README, a hidden part, ``_templates``), unread. ``check_health`` asks
+    # which state an ``id:`` (``unlisted_entry_files``, #1552); a sync's result
+    # does not carry them.
+    unlisted: list[tuple[Path, str]] = field(default_factory=list)
     holders: dict[str, list[_Claim]] = field(default_factory=dict)
     # path -> "ExcType: detail" for the ``malformed`` files whose bytes could not
     # be read or decoded (OSError, UnicodeError), whatever the file's kind:
@@ -1008,6 +1013,17 @@ class IndexManager:
             file_values=source,
             agrees=_read_value_is_the_bags,
         )
+        # A column field read by its declared type, as every reader of index
+        # rows reads it (`shape_entry_row`, #1503): the single read and the
+        # rows agree, and `priority: 7` declared a number reads 7, so a value
+        # read and written back leaves the file as it is. After
+        # `read_metadata`, which compares the read's values as the TEXT
+        # column holds them.
+        from .backends.base_backend import DeclaredFieldTypes, cast_declared_columns
+
+        cast_declared_columns(
+            result, DeclaredFieldTypes(self.db.session)(kb_name, entry.entry_type)
+        )
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
         result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
@@ -1059,7 +1075,10 @@ class IndexManager:
         plan = ReconcilePlan(kb_name=kb_config.name)
 
         files = []
-        walk = itertools.chain(repo.walk_files(), ((y, None) for y in repo.list_collection_files()))
+        walk = itertools.chain(
+            repo.walk_files(unlisted=plan.unlisted),
+            ((y, None) for y in repo.list_collection_files()),
+        )
         for file_path, alias_of in walk:
             try:
                 rel = file_path.relative_to(kb_config.path).as_posix()
@@ -1622,6 +1641,11 @@ class IndexManager:
           ``{"kb", "path", "target"}``; a warning (they hold no entry, so no
           read answers from anything but the files), never an unreadable
           file (#1262).
+        - unlisted_entry_files: ``*.md`` files the walk skips (a README, a
+          hidden part, ``_templates``) whose frontmatter states an ``id:``,
+          ``{"kb", "path", "reason"}``: an entry an earlier version wrote where
+          the walk does not list it. A warning; never indexed or repaired
+          (#1552).
         """
         health: dict[str, Any] = {
             "missing_files": [],
@@ -1641,6 +1665,7 @@ class IndexManager:
             "duplicates": [],
             "aliases": [],
             "dangling_links": [],
+            "unlisted_entry_files": [],
             "removed_extensions": [],
             # Files whose frontmatter Pyrite cannot model (#760 (b)): a
             # tagged, complex or duplicate key. No write reaches them, so
@@ -1742,6 +1767,10 @@ class IndexManager:
             health["aliases"].extend(plan.aliases)
             # A warning, not unreadable: no entry is there to miss (#1262).
             health["dangling_links"].extend(plan.dangling)
+            # Read now, and only these: the walk skipped them unread (#1552).
+            health["unlisted_entry_files"].extend(
+                KBRepository(kb).unlisted_entry_rows(plan.unlisted)
+            )
             # A path sync lists and skips because it is not a regular file
             # (a directory named `x.md`, a FIFO) used to vanish from health
             # while sync reported it in `skipped` (#1119).

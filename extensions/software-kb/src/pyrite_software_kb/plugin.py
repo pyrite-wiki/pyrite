@@ -2202,10 +2202,13 @@ class SoftwareKBPlugin:
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                with evaluating(where):
-                    failure = self._check_no_open_blockers(
-                        db, item_id, kb_name, readable_kbs=readable_kbs
-                    )
+                # Not inside `evaluating`: the lookup reads the KB's index, not
+                # board.yaml, so a failure of it keeps its own error and
+                # `retryable` (as `sw_claim`'s earlier lookup does) and is never
+                # reported as a problem in the file (#1585).
+                failure = self._check_no_open_blockers(
+                    db, item_id, kb_name, readable_kbs=readable_kbs
+                )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
@@ -2462,7 +2465,10 @@ class SoftwareKBPlugin:
                 continue
             entry_type = link.get("entry_type", "")
             bucket = type_to_bucket.get(entry_type, "related")
-            body = link.get("body", "") or ""
+            entry = SoftwareKBPlugin._readable_entry(
+                db, link["id"], link["kb_name"], readable_kbs=readable_kbs
+            )
+            body = (entry.get("body", "") or "") if entry else ""
             buckets[bucket].append(
                 {
                     "id": link.get("id", ""),
@@ -2618,6 +2624,7 @@ class SoftwareKBPlugin:
                 candidates.append(
                     {
                         "id": row["id"],
+                        "kb_name": row["kb_name"],
                         "title": row["title"],
                         "kind": meta.get("kind", ""),
                         "priority": priority,
@@ -2650,7 +2657,7 @@ class SoftwareKBPlugin:
             top = None
             for candidate in candidates:
                 dep = self._get_dependency_status(
-                    db, candidate["id"], kb_name or "", readable_kbs=readable_kbs
+                    db, candidate["id"], candidate["kb_name"], readable_kbs=readable_kbs
                 )
                 if dep["is_blocked"]:
                     blocked_items.append(
@@ -2673,12 +2680,13 @@ class SoftwareKBPlugin:
                 }
 
             buckets = self._context_buckets(
-                db, top["id"], kb_name or "", top_dependencies, readable_kbs=readable_kbs
+                db, top["id"], top["kb_name"], top_dependencies, readable_kbs=readable_kbs
             )
 
             result = {
                 "recommendation": {
                     "id": top["id"],
+                    "kb_name": top["kb_name"],
                     "title": top["title"],
                     "kind": top["kind"],
                     "priority": top["priority"],

@@ -11,7 +11,6 @@ import dataclasses
 import logging
 import re
 import shlex
-from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -38,6 +37,7 @@ from ..exceptions import (
     StorageBusyError,
     StorageError,
     UndeclaredTypeError,
+    UpdateWouldNotLoadError,
     ValidationError,
     kb_origin,
     outside_text,
@@ -53,6 +53,7 @@ from ..plugins.context import PluginContext
 from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..schema.reserved import RESERVED_FIELD_NAMES
+from ..storage import entry_paths
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
 from ..storage.entry_writer import (
@@ -813,26 +814,42 @@ class KBService:
         refusal (:meth:`_keep_on_disk_enum_values`). Create passes none and
         is always strict.
         """
-        # Keep the full message so another invalid value remains a new error.
-        prior_model_errors = Counter(
-            existing_entry.validate()
+        # A model row is the file's ("kept") only when the loaded entry has the
+        # same row (field, rule, message) AND the value the rule judged is the
+        # same YAML value, type included (#1588 fix round 1). Pairing by the
+        # message alone let a different value whose row prints the same pass
+        # as kept and be written: `importance: 5.5` updated with "5.5".
+        prior_rows = (
+            [
+                (row, existing_entry.rule_input(row.get("field", "")))
+                for row in existing_entry.validation_errors()
+            ]
             if existing_entry is not None and type(existing_entry) is type(entry)
             else []
         )
         model_errors = []
         model_warnings = []
         # The structured rows (#1284) are what a refusal carries: one per
-        # refused field, so REST, MCP and the CLI name the field. The message
-        # stays the same sentence `validate()` produces, which is what the
-        # on-disk comparison below keys on.
+        # refused field, so REST, MCP and the CLI name the field.
         for row in entry.validation_errors():
             message = row["message"]
-            if prior_model_errors[message]:
-                prior_model_errors[message] -= 1
+            judged = entry.rule_input(row.get("field", ""))
+            match = next(
+                (
+                    i
+                    for i, (prior, value) in enumerate(prior_rows)
+                    if (prior.get("field"), prior.get("rule"), prior["message"])
+                    == (row.get("field"), row.get("rule"), message)
+                    and _same_yaml_value(value, judged)
+                ),
+                None,
+            )
+            if match is not None:
+                del prior_rows[match]
                 model_warnings.append(
                     {
                         "field": row.get("field", ""),
-                        "rule": "model_validation",
+                        "rule": row.get("rule", "model_validation"),
                         "severity": "warning",
                         "message": message,
                         "note": "violation already on disk; kept",
@@ -1648,7 +1665,9 @@ class KBService:
         # itself as its key so a dry-run batch catches an in-batch collision
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
-        resolved_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
+        resolved_path = repo._resolve_file_path(
+            entry, repo._infer_subdir(entry), taken=frozenset(pending_paths or ())
+        )
         # A path that leads out of the KB gets the write's own refusal here,
         # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
         # neither depends on what lies outside.
@@ -1913,7 +1932,9 @@ class KBService:
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
                     would_create_paths.add(
-                        repo._resolve_file_path(entry, repo._infer_subdir(entry))
+                        repo._resolve_file_path(
+                            entry, repo._infer_subdir(entry), taken=frozenset(would_create_paths)
+                        )
                     )
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
@@ -2133,7 +2154,8 @@ class KBService:
         ``importance: high`` read as 5 became ``importance: 5``, and a task
         grew the ``importance``/``priority`` defaults it never had. A request
         naming fields on its own (``{importance: 5}``) is the caller's values,
-        each written as sent; the CLI's ``-f`` never passes through here.
+        each written as sent (an accepted ``importance`` as its int,
+        ``Entry.file_value``); the CLI's ``-f`` never passes through here.
         """
         # `kb_get` answers `{"entry": {...}}`; sent back whole, that is one
         # undeclared key holding the read, which an update would write into
@@ -2172,7 +2194,9 @@ class KBService:
         for key, value in fields.items():
             if key in not_written or (value is None and key not in updatable):
                 ignored.append(key)
-            elif key in reading and reading[key] == value:
+            elif key in reading and _same_yaml_value(reading[key], value):
+                # The same YAML value, type included (#1588 fix round 1):
+                # `true` is not an echo of a reading of 1, so it is judged.
                 unchanged.append(key)
             else:
                 updates[key] = value
@@ -2368,6 +2392,8 @@ class KBService:
             new_bytes = new_text.encode("utf-8")
             try:
                 new_entry = repo.load_entry_from_bytes(path, new_bytes)
+            except EntryLoadError as e:
+                raise UpdateWouldNotLoadError(entry_id, e) from e
             except Exception as e:
                 raise ValidationError(
                     f"Cannot update '{entry_id}': the result would not load ({outside_text(e)})"
@@ -2644,7 +2670,9 @@ class KBService:
         An appended link or source item is checked as one before anything is
         written (``check_link_target``: what the index could not store).
         Values are validated as the field's type (``_value_for_file``) and
-        written as the caller sent them, never as the model's reading.
+        written as the caller sent them, never as the model's reading,
+        except where the model names a storage form (``Entry.file_value``:
+        an accepted ``importance`` is written as its int).
         """
         from ..schema.field_aliases import (
             NotAFieldError,
@@ -2813,6 +2841,9 @@ class KBService:
                     ],
                 )
             value = TimestampText(spelled)
+        # The model says what form a field's accepted value is stored in
+        # (`importance`: the int the one rule reads, #1588); this path adds none.
+        value = entry.file_value(key, value)
         if hasattr(entry, key):
             _as_field_type(entry, key, value)  # validation only: refuses before any write
         return _plain_value(value)
@@ -2832,12 +2863,24 @@ class KBService:
         why. Returns ``(path, not_moved)``."""
         if not self._doc_mgr._uses_templated_subdir(repo, entry):
             return path, None
-        subdir = repo._infer_subdir(entry)
-        target = repo._contained(
-            kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
-        )
+        # The update is already published: a refusal from here on is the
+        # move that did not happen, said in ``not_moved``, never a failed
+        # update (#1552). That includes working out the target: a templated
+        # folder that is a link out of the KB is refused by ``_contained``.
+        try:
+            subdir = repo._infer_subdir(entry)
+            target = repo._contained(
+                kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
+            )
+        except PyriteError as e:
+            return path, f"the file keeps its place: {public_text(e, log=logger)}"
         if target.resolve() == path.resolve():
             return path, None
+        # A folder the index walk skips (`.archived`, `_templates`): moving
+        # there would hide the entry from the next sync (#1552).
+        kept = entry_paths.kept_in_place(kb_config.path, target)
+        if kept:
+            return path, kept
         if "id" not in file_values:
             return path, "no id pin: the file keeps its place; add an `id:` line to let it move"
         held = _links_naming(repo, path)
@@ -4328,6 +4371,11 @@ class KBService:
                 expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
                 target_path = repo._contained(expected_dir / current_path.name)
                 if current_path.parent.resolve() != expected_dir.resolve():
+                    # A folder the index walk skips is no place for an entry
+                    # (#1552): the file stays, and ``errors`` says why.
+                    kept = entry_paths.kept_in_place(kb_config.path, target_path)
+                    if kept:
+                        raise ValidationError(kept)
                     # A file an in-KB link names stays: moving it would leave
                     # the user's link pointing at nothing (#1262). The walk
                     # for links runs once, and only when a move is planned.
@@ -4818,6 +4866,22 @@ def _frontmatter_span(text: str) -> FrontmatterSpan:
     split = split_frontmatter(text)
     assert isinstance(split, Frontmatter), split  # apply() just produced it
     return FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+
+
+def _same_yaml_value(a: Any, b: Any) -> bool:
+    """``values_identical`` (the same YAML value, type included: ``True`` is not
+    ``1``, ``"5.5"`` is not ``5.5``), and ``.nan`` is the same value as itself.
+
+    What "the update sent the value the file holds" means for a kept model row
+    and for an echo's unchanged key (#1588 fix round 1). ``values_identical``
+    compares a float with ``==``, so ``.nan`` never equals itself there and a
+    file's own ``importance: .nan`` would stop an update of another field.
+    """
+    from ..schema.field_aliases import values_identical
+
+    if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
+        return True
+    return values_identical(a, b)
 
 
 def _nested_block_is_all_equal_pairs(entry: Entry, file_values: dict[str, Any]) -> bool:

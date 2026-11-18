@@ -70,6 +70,10 @@ class KBHealthResponse(BaseModel):
     type_name_drift_total: int = 0
     type_name_drift_has_more: bool = False
     schema_errors: list[dict[str, Any]] = Field(default_factory=list)
+    # How many entry files an earlier version wrote where the index walk does
+    # not list them (#1552): a count, never the paths, over the network; a
+    # warning, `healthy` unchanged. `pyrite index health` names them locally.
+    unlisted_entry_files: int = 0
 
 
 class KBReindexResponse(BaseModel):
@@ -97,6 +101,13 @@ class KBReindexResponse(BaseModel):
 # =============================================================================
 
 
+#: A column field's value as an index reader returns it: text, or the
+#: number or boolean its declared type reads it as (#1503,
+#: ``docs/json-contracts.md``, "Entry row shape"). ``bool`` before the
+#: numbers, so pydantic's smart union keeps ``True`` a boolean.
+ColumnValue = str | bool | int | float | None
+
+
 class SearchResult(BaseModel):
     """Single search result."""
 
@@ -105,7 +116,7 @@ class SearchResult(BaseModel):
     entry_type: str
     title: str
     snippet: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
     tags: list[str] = []
     #: Cosine similarity to the query, 3 places, on a row the vector leg
@@ -180,9 +191,9 @@ class EntryResponse(BaseModel):
     title: str
     body: str | None = None
     summary: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
-    status: str | None = None
+    status: ColumnValue = None
     # A list is a list: a column a file's type refused is left out of the reply
     # (ADR-0042 8a, ``get_entry``), never sent as null.
     tags: list[str] = []
@@ -457,6 +468,11 @@ class ErrorResponse(BaseModel):
 # =============================================================================
 
 
+# What `importance` accepts, for the OpenAPI document; the rule itself is
+# `validate_importance`, applied by the write gate to the value as sent.
+_IMPORTANCE_SCHEMA: dict[str, Any] = {"type": "integer", "minimum": 1, "maximum": 10}
+
+
 class CreateEntryRequest(BaseModel):
     """JSON body for creating an entry.
 
@@ -475,7 +491,10 @@ class CreateEntryRequest(BaseModel):
     title: str
     body: str = ""
     date: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] = []
     participants: list[str] = []
     role: str | None = None
@@ -492,7 +511,10 @@ class UpdateEntryRequest(BaseModel):
     kb: str
     title: str | None = None
     body: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
 
