@@ -175,9 +175,9 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "GET /auth/users/{user_id}/permissions": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
     "PUT /auth/users/{user_id}/role": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
 }
-REST_NOT_YET_MIGRATED_SIZE = (
-    68  # lower it with every entry removed; never raise it (68: #1685, pending, see #1708)
-)
+# 67 -> 68, maintainer 2026-11-18 (#1685, PR #1708): POST /api/tasks/{task_id}/start,
+# guarded as /claim; it migrates with claim (ADR-0037 §5, recorded changes).
+REST_NOT_YET_MIGRATED_SIZE = 68  # lower it with every entry removed; never raise it
 
 #: Non-GET operations that pass the policy only with a *read* declaration while
 #: their write or admin tier is still decided by `requires_tier`, the repos
@@ -329,9 +329,9 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "zettel_inbox",
     }
 )
-MCP_NOT_YET_MIGRATED_SIZE = (
-    108  # lower it with every entry removed; never raise it (108: #1685, pending, see #1708)
-)
+# 106 -> 108, maintainer 2026-11-18 (#1685, PR #1708): task_start and task_finish,
+# guarded as task_claim; they migrate with it (ADR-0037 §5, recorded changes).
+MCP_NOT_YET_MIGRATED_SIZE = 108  # lower it with every entry removed; never raise it
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {
