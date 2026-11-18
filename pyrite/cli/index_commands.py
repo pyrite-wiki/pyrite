@@ -14,7 +14,7 @@ from typer.core import TyperCommand
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db, require_kb
 from .outcome import Outcome, OutcomeKind
-from .output import OUTPUT_FORMAT_RICH_DEFAULT, cli_console, path_line, validate_output_format
+from .output import OUTPUT_FORMAT_UNASKED, cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -354,7 +354,7 @@ def index_sync(
         "and searchable, with its schema findings and embedding state; exit 3 unless every one "
         "is confirmed. With no NAME: every entry this sync added or changed. Needs -k.",
     ),
-    output_format: str = OUTPUT_FORMAT_RICH_DEFAULT,
+    output_format: str | None = OUTPUT_FORMAT_UNASKED,
 ) -> Outcome:
     """Incremental sync, with optional content-hash verification.
 

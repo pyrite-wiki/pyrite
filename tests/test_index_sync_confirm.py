@@ -606,3 +606,58 @@ def test_rest_confirm_without_wait_is_refused(world):
         state_db.close()
     assert resp.status_code == 422, resp.text
     assert resp.json()["detail"]["code"] == "VALIDATION_FAILED"
+
+
+# --------------------------------------------------------------------------
+# A refusal keeps dev's shapes: JSON when no format is asked, one line in rich
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def corrupt_index(tmp_path, monkeypatch):
+    """One KB whose index file is garbage: every command refuses STORAGE_ERROR."""
+    import pyrite.config as config_module
+
+    config_dir, data_dir, kb = tmp_path / "config", tmp_path / "data", tmp_path / "kb"
+    for d in (config_dir, data_dir, kb):
+        d.mkdir()
+    config_file = config_dir / "config.yaml"
+    config_file.write_text(
+        json.dumps({"knowledge_bases": [{"name": "t", "path": str(kb), "kb_type": "generic"}]}),
+        encoding="utf-8",
+    )
+    (data_dir / "index.db").write_bytes(b"garbage")
+    monkeypatch.setenv("PYRITE_CONFIG_DIR", str(config_dir))
+    monkeypatch.setenv("PYRITE_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("PYRITE_FORMAT", raising=False)
+    monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
+    monkeypatch.setattr(config_module, "CONFIG_FILE", config_file)
+
+
+def _invoke(*args: str, env: dict[str, str] | None = None):
+    from typer.testing import CliRunner
+
+    from pyrite.cli import app
+
+    return CliRunner().invoke(app, list(args), env=env)
+
+
+def test_a_refusal_under_format_rich_is_one_error_line(corrupt_index):
+    result = _invoke("index", "sync", "--format", "rich")
+
+    assert result.exit_code == 1, result.output
+    lines = plain(result.stdout).splitlines()
+    assert lines[0].startswith("ERROR [STORAGE_ERROR]: "), result.stdout
+
+
+def test_a_refusal_with_no_format_asked_is_the_json_error_shape(corrupt_index):
+    result = _invoke("index", "sync", "--confirm", "-k", "t", "x")
+
+    assert result.exit_code == 1, result.output
+    payload = _json(result)
+    assert (payload["error_code"], payload["outcome"]) == ("STORAGE_ERROR", "error")
+
+
+def test_a_refusal_under_pyrite_format_json_is_json(corrupt_index):
+    result = _invoke("index", "sync", env={"PYRITE_FORMAT": "json"})
+    assert _json(result)["error_code"] == "STORAGE_ERROR"

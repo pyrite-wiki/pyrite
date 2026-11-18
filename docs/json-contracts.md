@@ -1931,7 +1931,11 @@ checked against each command's Typer signature by
 | `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
 | `task create` | yes (shared; `-f` deprecated) | `json` |
-| `index sync` | yes (shared, `rich` default; #1691) | `rich` |
+
+`index sync` takes the shared option with no default (#1691): asked for
+nothing (no `--format`, no `PYRITE_FORMAT`), it prints its result as text and a
+refusal as the JSON error shape, as it did before it joined the contract; an
+asked-for format applies to both.
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
@@ -2221,9 +2225,10 @@ load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
 (REST 422).
 
 **Plain `index sync`** is on the outcome contract too (maintainer, 2026-11-17):
-its `--format` is the shared option with `rich` as the default, so a person
-sees the text they always saw, and `PYRITE_FORMAT=json` or `--format json`
-prints the sync result (`added`, `updated`, `removed`, `malformed`,
+its `--format` is the shared option with no default, so with no format asked
+for a person sees the text they always saw and a refusal is the JSON error
+shape, as before; `--format rich` prints a refusal as one `ERROR [CODE]` line;
+`PYRITE_FORMAT=json` or `--format json` prints the sync result (`added`, `updated`, `removed`, `malformed`,
 `skipped`, `duplicates`, `aliases`, `dangling_links`, `unreadable_kbs`,
 `unreadable_folders`, `unreadable_files`, `changed`, and `embedded` when the
 sync embedded any) plus `outcome`. `changed` lists `{kb, id, path, change}`

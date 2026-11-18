@@ -540,11 +540,15 @@ class _BodyGuard:
         #: The format asked for, read when the body starts: the body cannot
         #: change the format its answer is printed in.
         self.format: str | None = None
+        #: The command declared ``OUTPUT_FORMAT_UNASKED`` and no format was
+        #: asked for: its outcome is printed as text, a refusal in the
+        #: default format (#1691).
+        self.unasked = False
         self._watch: _StdoutWatch | None = None
 
     def watch_body_of(self, ctx: Any) -> None:
         """Called by the shared option's callback, while click is parsing."""
-        from ..cli.output import declares_shared_format, requested_format
+        from ..cli.output import UNASKED_META_KEY, declares_shared_format, requested_format
 
         command = ctx.command
         body = getattr(command.callback, _BODY, command.callback)
@@ -555,6 +559,7 @@ class _BodyGuard:
         def entered(*args: Any, **kwargs: Any) -> Any:
             if not self.entered:
                 self.format = requested_format(ctx)
+                self.unasked = self.format is None and bool(ctx.meta.get(UNASKED_META_KEY))
             self._enter()
             self.returned = _NOT_RETURNED
             self.returned = body(*args, **kwargs)
@@ -803,7 +808,7 @@ class PyriteCLIGroup(TyperGroup):
         try:
             # Still watched: serialising a payload can print or raise too.
             try:
-                answer = self._decide(guard, fmt, result, raised)
+                answer = self._decide(guard, fmt, result, raised, self._outcome_format(guard, fmt))
             except KeyboardInterrupt:
                 raise
             except BaseException as exc:
@@ -832,9 +837,25 @@ class PyriteCLIGroup(TyperGroup):
         return result
 
     @staticmethod
-    def _decide(guard: _BodyGuard, fmt: str, result: Any, raised: BaseException | None) -> _Answer:
+    def _outcome_format(guard: _BodyGuard, fmt: str) -> str:
+        """The format a returned outcome is printed in: ``fmt``, unless the
+        command declared ``OUTPUT_FORMAT_UNASKED`` and no format was asked for,
+        when it is text for a person (a refusal stays in ``fmt``, #1691)."""
+        from ..cli.output import UNASKED_OUTCOME_FORMAT
+
+        return UNASKED_OUTCOME_FORMAT if guard.unasked else fmt
+
+    @staticmethod
+    def _decide(
+        guard: _BodyGuard,
+        fmt: str,
+        result: Any,
+        raised: BaseException | None,
+        outcome_fmt: str | None = None,
+    ) -> _Answer:
         """The allow-list. Each branch names something accepted; the last
-        lines are everything else."""
+        lines are everything else. A refusal is printed in ``fmt``, a
+        returned outcome in ``outcome_fmt`` (``fmt`` unless given)."""
         from ..cli.outcome import Outcome
 
         if isinstance(raised, KeyboardInterrupt):
@@ -842,7 +863,7 @@ class PyriteCLIGroup(TyperGroup):
         if isinstance(raised, PyriteError | ValueError):
             return _error_answer(_refusal_payload(raised), fmt)
         if raised is None and type(result) is Outcome and result is guard.returned:
-            return _outcome_answer(result, fmt)
+            return _outcome_answer(result, outcome_fmt or fmt)
 
         if raised is not None:
             logger.debug("CLI command raised %s", type(raised).__name__, exc_info=raised)

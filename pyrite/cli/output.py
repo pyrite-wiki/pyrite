@@ -106,8 +106,23 @@ def _two_answers() -> typer.BadParameter:
     return typer.BadParameter("-f and --format were both given; use --format only.")
 
 
-def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str) -> str:
-    value = validate_shared_format(value)
+#: Set when a command declares ``OUTPUT_FORMAT_UNASKED`` and no format was
+#: asked for (no ``--format``, no ``PYRITE_FORMAT``): the root prints its
+#: outcome as ``rich`` and a refusal in the default format, JSON (#1691).
+UNASKED_META_KEY = "pyrite.output_format.unasked"
+
+#: The format an outcome is printed in when ``UNASKED_META_KEY`` is set.
+UNASKED_OUTCOME_FORMAT = "rich"
+
+
+def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str | None) -> str | None:
+    if value is None:
+        # Only OUTPUT_FORMAT_UNASKED has no default, and only when neither
+        # --format nor PYRITE_FORMAT gave one (click reads the variable first).
+        ctx.meta[UNASKED_META_KEY] = True
+    else:
+        value = validate_shared_format(value)
+        ctx.meta.pop(UNASKED_META_KEY, None)
     if _given_on_the_command_line(ctx, param):
         # Click runs the callbacks of options given on the command line in the
         # order they were given, so whichever of -f and --format comes second
@@ -159,17 +174,20 @@ OUTPUT_FORMAT = typer.Option(
     help="Output format: json (default), yaml, or rich for text. PYRITE_FORMAT sets the default.",
 )
 
-#: The shared option for a command whose default output is text for a person
-#: and whose text existing callers read (``index sync``, #1691): the same
-#: option, the same check and the same ``PYRITE_FORMAT``, only the default is
-#: ``rich``. A person running it sees what they saw before; an agent with
-#: ``PYRITE_FORMAT=json`` or ``--format json`` gets the outcome contract's JSON.
-OUTPUT_FORMAT_RICH_DEFAULT = typer.Option(
-    "rich",
+#: The shared option for a command whose answer, when no format is asked
+#: for, keeps the two shapes it had before it joined the contract: its result
+#: as text for a person, and a refusal as the JSON error shape (``index sync``,
+#: #1691). The same option, check and ``PYRITE_FORMAT``; only the default is
+#: unset, and the root resolves it per half (``UNASKED_META_KEY``). An asked-for
+#: format (``--format`` or ``PYRITE_FORMAT``) applies to both halves.
+OUTPUT_FORMAT_UNASKED = typer.Option(
+    None,
     "--format",
     envvar="PYRITE_FORMAT",
     callback=_record_format,
-    help="Output format: rich (default), json or yaml. PYRITE_FORMAT sets the default.",
+    show_default=False,
+    help="Output format: json, yaml or rich. Unset: the result as text, a refusal as JSON. "
+    "PYRITE_FORMAT sets the default.",
 )
 
 #: ``-f`` meant ``--format`` on the task commands. #303: it keeps working until
