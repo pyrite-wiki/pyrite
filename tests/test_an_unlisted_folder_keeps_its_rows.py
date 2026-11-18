@@ -438,6 +438,51 @@ def test_a_name_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
     assert result["removed"] == 0
 
 
+def test_a_folder_named_dot_md_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
+    """A folder named *.md whose listing gives DT_UNKNOWN keeps the rows under it
+    and is named under unreadable_folders (#1720)."""
+    import pyrite.storage.repository as repository
+
+    folder_md = kb.root / "sub" / "folder.md"
+    folder_md.mkdir(parents=True, exist_ok=True)
+    (folder_md / "nested.md").write_text(_note("nested", "Nested"))
+
+    kb.im.sync_incremental(KB)
+    assert "nested" in _rows(kb)
+
+    real_scandir = os.scandir
+    untyped = str(folder_md)
+
+    class Untyped:
+        def __init__(self, item):
+            self._item = item
+            self.name = item.name
+            self.path = item.path
+
+        def is_dir(self, **kw):
+            raise PermissionError(13, "Permission denied")
+
+        def is_symlink(self):
+            raise PermissionError(13, "Permission denied")
+
+    class Listing:
+        def __init__(self, top):
+            self._it = real_scandir(top)
+
+        def __enter__(self):
+            return (Untyped(i) if i.path == untyped else i for i in self._it)
+
+        def __exit__(self, *exc):
+            self._it.close()
+
+    monkeypatch.setattr(repository.os, "scandir", Listing)
+    result = kb.im.sync_incremental(KB)
+    monkeypatch.undo()
+    assert "nested" in set(_rows(kb))
+    assert {"kb": KB, "path": "sub/folder.md", "error": FIXED} in result["unreadable_folders"]
+    assert result["removed"] == 0
+
+
 # ---------------------------------------------------------------------------
 # The surfaces: CLI, health, MCP and REST
 # ---------------------------------------------------------------------------

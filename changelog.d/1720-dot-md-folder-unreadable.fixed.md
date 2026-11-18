@@ -1,0 +1,1 @@
+- A folder named `*.md` whose type the OS will not give (e.g. DT_UNKNOWN) now keeps the rows under it and is reported under `unreadable_folders` (#1720).
