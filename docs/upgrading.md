@@ -18,6 +18,22 @@ repeat.
   `params`** is now refused by the tools that read the board (0.26.3 loaded it
   and never ran the checker). Remove the key, or drop `type` to make the
   criterion a checker.
+- **`-f key=a,b` no longer splits on commas.** `pyrite create -f` and
+  `pyrite update -f` (and `--append`/`--remove`) send a value with commas as
+  one value: `-f 'affiliations=City A, Inc.'` stores the one item
+  `City A, Inc.`, where 0.26.3 stored `City A` and `Inc.` for a field the
+  schema declares as a list. To send several values, use a JSON array:
+  `-f 'affiliations=["City A", "City B"]'`. A script that relied on the
+  comma split now stores one item; change it to the JSON array.
+- **Naming the same `-f` key twice is refused.** `-f k=one -f k=two` on
+  `create` or `update` now fails with `VALIDATION_FAILED` instead of keeping
+  `two` and dropping `one`. Send both in one JSON array.
+- **A scalar sent to a declared list field is stored as a one-item list,** on
+  the CLI, MCP (`kb_create`, `kb_bulk_create`, `kb_update`) and REST alike:
+  `-f affiliations="City A"` stores `affiliations: [City A]`. A file that
+  already holds a scalar there is not rewritten; `pyrite qa validate` now
+  reports it (`expected list`), as a warning, or an error under
+  `validation.enforce: true`. Edit the file to `[value]` to clear it.
 
 ## Upgrading from 0.25.8 to 0.26.0
 

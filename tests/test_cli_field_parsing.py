@@ -62,21 +62,21 @@ class TestParseFieldValue:
     def test_true_case_insensitive(self):
         assert _parse_field_value("True") is True
 
-    # --- Comma-separated lists ---
+    # --- Commas: never split (#1502; several values go as a JSON array) ---
 
-    def test_comma_separated_for_list_field(self):
-        assert _parse_field_value("ICE,Adelanto", field_type="list") == ["ICE", "Adelanto"]
+    def test_a_comma_list_is_one_value_for_a_list_field(self):
+        # The CLI parses syntax only; the service stores a scalar sent to a
+        # declared list as one item (tests/test_declared_list_fields_hold_on_every_surface.py).
+        assert _parse_field_value("ICE,Adelanto") == "ICE,Adelanto"
 
-    def test_comma_separated_for_multi_select_field(self):
-        assert _parse_field_value("ICE, Adelanto, CBP", field_type="multi-select") == [
-            "ICE",
-            "Adelanto",
-            "CBP",
-        ]
+    def test_a_comma_list_is_one_value_for_a_multi_select_field(self):
+        assert _parse_field_value("ICE, Adelanto, CBP") == "ICE, Adelanto, CBP"
 
-    def test_trailing_comma_for_list_field_ignored(self):
-        result = _parse_field_value("a,b,", field_type="list")
-        assert result == ["a", "b"]
+    def test_a_trailing_comma_is_kept(self):
+        assert _parse_field_value("a,b,") == "a,b,"
+
+    def test_a_json_array_gives_several_values(self):
+        assert _parse_field_value('["ICE", "Adelanto, CA"]') == ["ICE", "Adelanto, CA"]
 
     def test_comma_in_untyped_value_stays_a_string(self):
         assert (
@@ -84,7 +84,7 @@ class TestParseFieldValue:
         )
 
     def test_comma_in_text_field_stays_a_string(self):
-        assert _parse_field_value("Portland, OR", field_type="text") == "Portland, OR"
+        assert _parse_field_value("Portland, OR") == "Portland, OR"
 
     def test_thousands_separator_stays_a_string(self):
         assert _parse_field_value("1,600 words") == "1,600 words"
@@ -104,8 +104,9 @@ class TestParseFieldValue:
 class TestParseFieldValueEndToEnd:
     """Test that parsed values survive through build_entry for known types."""
 
-    def test_participants_comma_list_creates_event(self):
-        """Comma-separated participants should create an EventEntry with a list."""
+    def test_participants_json_array_creates_event(self):
+        """Several participants go as a JSON array: an EventEntry with that list
+        (a comma list is one value now, #1502)."""
         from pyrite.models.factory import build_entry
 
         entry = build_entry(
@@ -113,7 +114,7 @@ class TestParseFieldValueEndToEnd:
             title="Test Event",
             body="test",
             date="2026-03-30",
-            participants=_parse_field_value("ICE,Adelanto,CBP", field_type="list"),
+            participants=_parse_field_value('["ICE", "Adelanto", "CBP"]'),
         )
         assert entry.participants == ["ICE", "Adelanto", "CBP"]
 

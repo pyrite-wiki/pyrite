@@ -127,7 +127,7 @@ def _parse_task_create_fields(
     not refused here: `KBService.create` refuses it for every surface
     (#1010), so the rule has one home.
     """
-    from .entry_commands import _field_type_for, _parse_field_value
+    from .entry_commands import _parse_field_value
 
     fields: dict[str, Any] = {}
     for fv in field or []:
@@ -171,7 +171,7 @@ def _parse_task_create_fields(
             raise ValidationError(
                 message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
-        fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
+        fields[k] = _parse_field_value(v)
     return fields
 
 

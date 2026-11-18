@@ -356,15 +356,16 @@ class TestLoadPathIsUnchanged:
         assert entry.participants == ["a", "b"]
 
 
-class TestCliKeepsListTyping:
-    def test_create_f_participants_and_actors_both_parse_as_lists(self):
-        from pyrite.cli.entry_commands import _field_type_for, _parse_field_value
-        from pyrite.config import PyriteConfig, Settings
+class TestCliNeverSplits:
+    def test_create_f_participants_and_actors_are_never_split(self):
+        """The CLI parses syntax only (#1502): `a,b` is one value for the alias
+        and its target alike; the service stores it as the one-item list
+        `["a,b"]` (tests/test_declared_list_fields_hold_on_every_surface.py)."""
+        from pyrite.cli.entry_commands import _parse_field_value
 
-        config = PyriteConfig(knowledge_bases=[], settings=Settings())
         for name in ("participants", "actors"):
-            field_type = _field_type_for(config, "none", "event", name)
-            assert _parse_field_value("a,b", field_type) == ["a", "b"], name
+            assert _parse_field_value("a,b") == "a,b", name
+            assert _parse_field_value('["a", "b"]') == ["a", "b"], name
 
 
 class TestConformance:
