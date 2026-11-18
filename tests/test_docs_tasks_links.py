@@ -18,7 +18,23 @@ def _blocks(page):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="The documented entry writes require POSIX publication")
-@pytest.mark.parametrize("page", ["tasks.md", "links.md"])
+@pytest.mark.parametrize(
+    "page",
+    [
+        pytest.param(
+            "tasks.md",
+            marks=pytest.mark.control(
+                reason="verify-red reverts docs/tasks.md with the code, so its --dispatchable "
+                "example is not there to run; with the page and without the feature that "
+                "line exits 2"
+            ),
+        ),
+        pytest.param(
+            "links.md",
+            marks=pytest.mark.control(reason="links.md is not part of the #1686 change"),
+        ),
+    ],
+)
 def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
     world = cli_world()
     monkeypatch.chdir(tmp_path)
