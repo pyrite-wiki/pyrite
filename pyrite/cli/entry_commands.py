@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import json as _json
 import logging
-import math
-import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -182,34 +180,20 @@ def _field_type_for(
     return None
 
 
-_WHOLE_TEXT = re.compile(r"-?(0|[1-9][0-9]*)", re.ASCII)
-_DECIMAL_TEXT = re.compile(r"-?(0|[1-9][0-9]*)\.[0-9]+", re.ASCII)
-
-
-def _read_declared_number(text: str) -> Any:
-    """ASCII whole numbers and decimals; other spellings stay text (#1628)."""
-    if _WHOLE_TEXT.fullmatch(text) and text != "-0":
-        return int(text)
-    if _DECIMAL_TEXT.fullmatch(text):
-        value = float(text)
-        if math.isfinite(value) and repr(value) == text:
-            return value
-    return text
-
-
 def _parse_field_value(value: str, field_type: str | None = None) -> Any:
     """Parse a ``--field`` value using its declared type when available (#1672).
 
-    When a field has a declared type:
-      - ``text``, ``string``, ``select``, ``object-ref``: the value is kept
-        exactly as typed (#1672). A quoted JSON string (``"..."``) is unpacked
-        if it decodes as a string.
-      - ``number``: parsed using dev's one number rule (``read_declared_number``).
-        Non-matching values stay typed text.
-      - ``checkbox``: parsed as boolean (``true``/``false``, ``1``/``0``).
-      - ``date`` / ``datetime``: kept as string (unpacked from JSON quotes if given).
+    When a field has a declared text-like type (``text``, ``string``, ``select``,
+    ``object-ref``): the value is kept exactly as typed (#1672), preventing
+    numeric-looking text (such as ``1.10``, ``02134``, ``1e5``, ``true``)
+    from being converted into floats, ints, or booleans. A quoted JSON string
+    (``"..."``) is unpacked if it decodes as a string.
 
-    When undeclared (``field_type is None``), keeps dev's fallback (#1502):
+    When declared date-like (``date``, ``datetime``): kept as string (unpacked
+    from JSON quotes if given).
+
+    All other fields (including number, checkbox, and undeclared fields) fall
+    through to dev's parser (#1502):
       1. JSON (strings, arrays, and objects)
       2. Integer
       3. Float
@@ -229,23 +213,7 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
                 pass
         return value
 
-    # 2. Number-like declared fields: dev's one number rule (#1628)
-    if field_type in {"number", "int", "float"}:
-        num = _read_declared_number(stripped)
-        if num is not stripped:
-            return num
-        return value
-
-    # 3. Boolean-like declared fields: only true/false, 1/0
-    if field_type in {"checkbox", "boolean", "bool"}:
-        val_lower = stripped.lower()
-        if val_lower in {"true", "1"}:
-            return True
-        if val_lower in {"false", "0"}:
-            return False
-        return value
-
-    # 4. Date-like declared fields
+    # 2. Date-like declared fields
     if field_type in {"date", "datetime"}:
         if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
             try:
@@ -256,7 +224,7 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
                 pass
         return stripped
 
-    # 5. Undeclared fields (field_type is None) fallback (#1502):
+    # Fallback to dev's parser (#1502):
     # 1. JSON strings, arrays, or objects
     if stripped.startswith(('"', "[", "{")):
         try:

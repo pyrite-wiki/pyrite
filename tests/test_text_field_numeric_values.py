@@ -3,8 +3,8 @@
 A value sent to a field declared text (or string) is stored exactly as typed, on
 every surface: CLI -f, MCP kb_create/kb_update, and REST POST/PATCH. Numeric-looking
 values like 1.10, 02134, 1e5, true, and 2026-11-17 remain strings and are not parsed
-into floats, ints, or booleans. Declared number fields continue to store numeric values
-per dev's one number rule (read_declared_number).
+into floats, ints, or booleans. Declared number fields continue to store what dev
+stores (the service owns the number rule #1628).
 """
 
 from __future__ import annotations
@@ -187,73 +187,45 @@ def test_declared_text_field_update_preserves_value(world, surface, i, val):
     assert isinstance(stored_val, str)
 
 
-def test_cli_declared_number_conforms_to_number_rule(world):
-    """Number parsing conforms to dev's one number rule (#1628):
-    ASCII whole numbers and canonical decimals become int/float;
-    007, 1e3, 7.50 remain text.
+def test_cli_declared_number_stores_what_dev_stores(world):
+    """A declared number field given -f priority=7 and -f 'priority="007"'
+    stores what dev stores (7 and "007"). The service owns the number rule (#1628);
+    the CLI passes the value through as typed.
     """
-    cases = [
-        ("42", 42, int),
-        ("-5", -5, int),
-        ("3.14", 3.14, float),
-        ("007", "007", str),
-        ("1e3", "1e3", str),
-        ("7.50", "7.50", str),
-        ("-0", "-0", str),
-    ]
-    for idx, (raw_str, expected_val, expected_type) in enumerate(cases):
-        entry_id = f"num-{idx}"
-        res = world.cli(
-            "create",
-            "-k",
-            KB_NAME,
-            "-t",
-            "note",
-            "--title",
-            entry_id,
-            "-f",
-            f"count={raw_str}",
-            "--format",
-            "json",
-        )
-        assert res.exit_code == 0, res.output
-        created_id = json.loads(res.output)["entry_id"]
-        got = _get_entry_field(world, created_id, "count")
-        assert got == expected_val, f"count={raw_str} expected {expected_val}, got {got}"
-        assert type(got) is expected_type, (
-            f"count={raw_str} expected {expected_type}, got {type(got)}"
-        )
+    res1 = world.cli(
+        "create",
+        "-k",
+        KB_NAME,
+        "-t",
+        "note",
+        "--title",
+        "num-plain",
+        "-f",
+        "count=7",
+        "--format",
+        "json",
+    )
+    assert res1.exit_code == 0, res1.output
+    id1 = json.loads(res1.output)["entry_id"]
+    val1 = _get_entry_field(world, id1, "count")
+    assert val1 == 7
+    assert type(val1) is int
 
-
-def test_cli_declared_checkbox_rule(world):
-    """Checkbox parsing only accepts true/false, 1/0; yes/no remain text."""
-    cases = [
-        ("true", True, bool),
-        ("false", False, bool),
-        ("1", True, bool),
-        ("0", False, bool),
-        ("yes", "yes", str),
-        ("no", "no", str),
-    ]
-    for idx, (raw_str, expected_val, expected_type) in enumerate(cases):
-        entry_id = f"chk-{idx}"
-        res = world.cli(
-            "create",
-            "-k",
-            KB_NAME,
-            "-t",
-            "note",
-            "--title",
-            entry_id,
-            "-f",
-            f"urgent={raw_str}",
-            "--format",
-            "json",
-        )
-        assert res.exit_code == 0, res.output
-        created_id = json.loads(res.output)["entry_id"]
-        got = _get_entry_field(world, created_id, "urgent")
-        assert got == expected_val, f"urgent={raw_str} expected {expected_val}, got {got}"
-        assert type(got) is expected_type, (
-            f"urgent={raw_str} expected {expected_type}, got {type(got)}"
-        )
+    res2 = world.cli(
+        "create",
+        "-k",
+        KB_NAME,
+        "-t",
+        "note",
+        "--title",
+        "num-quoted",
+        "-f",
+        'count="007"',
+        "--format",
+        "json",
+    )
+    assert res2.exit_code == 0, res2.output
+    id2 = json.loads(res2.output)["entry_id"]
+    val2 = _get_entry_field(world, id2, "count")
+    assert val2 == "007"
+    assert type(val2) is str
