@@ -200,6 +200,16 @@ def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
                 message, errors=[{"field": "--field", "rule": "format", "message": message}]
             )
         k, v = fv.split("=", 1)
+        if k == "tags":
+            # `tags` is a base field, outside the schema's `type_fields`, so no
+            # coercion makes it a list: `-f tags=a,b` would store the one tag
+            # "a,b", and `-f tags=a` a string read back as characters (#231).
+            # Refused, pointing at the option that parses it (the maintainer,
+            # #1502, 2026-11-18).
+            message = "--field tags=... is refused: set tags with --tags a,b"
+            raise ValidationError(
+                message, errors=[{"field": "tags", "rule": "own_option", "message": message}]
+            )
         if k in out:
             message = (
                 f"--field {k} is given more than once; send several values as one "

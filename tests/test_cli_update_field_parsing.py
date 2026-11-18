@@ -1,9 +1,12 @@
-"""`pyrite update -f` must parse values according to their field types (#231).
+"""`pyrite update -f` must never store tags as a raw string (#231, #1502).
 
 `-f tags=alpha,beta` used to store the raw string ``alpha,beta`` because the
 update path coerced ints only while the create path used the full value parser.
 The reader then iterated the string as a sequence, so the entry came back tagged
-with the characters of the value and silently dropped out of tag lookups.
+with the characters of the value and silently dropped out of tag lookups. The
+CLI then split it on commas; since #1502 it splits nothing, and `-f tags=...`
+is refused, pointing at `--tags` (the maintainer, 2026-11-18), so it can never
+store the one tag ``alpha,beta``.
 """
 
 import json
@@ -62,23 +65,36 @@ def _create_note(config: PyriteConfig) -> None:
     assert result.exit_code == 0, result.output
 
 
-def test_update_field_writes_a_comma_separated_value_as_a_list(tmp_path):
+def test_update_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
     config, kb_path = _make_env(tmp_path)
     _create_note(config)
     entry_id = _entry_id(kb_path)
+    path = list(kb_path.rglob("*.md"))[0]
+    before = path.read_bytes()
 
     result = _invoke(
         config, ["update", entry_id, "-k", "notes", "-f", "tags=alpha,beta", "--format", "json"]
     )
-    assert result.exit_code == 0, result.output
+    assert result.exit_code != 0, result.output
+    payload = _json_payload(result)
+    assert payload["error_code"] == "VALIDATION_FAILED", payload
+    assert "--tags" in payload["error"], payload
+    # Nothing was written: no raw string, no one tag "alpha,beta".
+    assert path.read_bytes() == before
 
-    # The file must not carry the raw string: that is what got read back as the
-    # characters a, l, p, h, ...
-    text = list(kb_path.rglob("*.md"))[0].read_text(encoding="utf-8")
-    assert "alpha,beta" not in text, text
 
-    payload = _json_payload(_invoke(config, ["get", entry_id, "-k", "notes", "--format", "json"]))
-    assert payload["tags"] == ["alpha", "beta"], payload
+def test_create_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
+    config, kb_path = _make_env(tmp_path)
+    result = _invoke(
+        config,
+        ["create", "-k", "notes", "-t", "note", "--title", "Tag probe", "-b", "body",
+         "-f", "tags=alpha", "--format", "json"],
+    )  # fmt: skip
+    assert result.exit_code != 0, result.output
+    payload = _json_payload(result)
+    assert payload["error_code"] == "VALIDATION_FAILED", payload
+    assert "--tags" in payload["error"], payload
+    assert not list(kb_path.rglob("*.md"))
 
 
 def test_update_field_matches_the_dedicated_tags_flag(tmp_path):
