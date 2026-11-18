@@ -254,13 +254,20 @@ def registry() -> dict[str, object]:
 UNBOUNDED: dict[tuple[str, str], str] = {}
 
 #: (command path, parameter name) -> why the checker cannot classify the type (a
-#: ``parser=`` option) and why that is safe. One row: `qa duplicates --threshold`.
+#: ``parser=`` option) and why that is safe. Rows: `qa duplicates --threshold`, and
+#: `create`/`update --field`, which is text, never a number.
+_FIELD_TEXT = (
+    "a key=value text option, never a number; its ``parser=`` function returns the "
+    "text unchanged and refuses `tags=...` at parse time (usage error, exit 2, #1502)"
+)
 UNCLASSIFIED: dict[tuple[str, str], str] = {
     ("pyrite qa duplicates", "threshold"): (
         "a click float range accepts NaN; its ``parser=`` function refuses a non-finite or "
         "out-of-range value at parse time (usage error, exit 2); to be replaced by the "
         "shared finite-float type tracked on #1541"
     ),
+    ("pyrite create", "field"): _FIELD_TEXT,
+    ("pyrite update", "field"): _FIELD_TEXT,
 }
 
 #: #1541: unbounded on ``dev`` today, grouped by the module that declares them.

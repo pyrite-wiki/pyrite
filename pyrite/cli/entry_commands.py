@@ -186,6 +186,22 @@ def _parse_field_value(value: str) -> Any:
     return value
 
 
+def _field_flag(value: str) -> str:
+    """One ``-f key=value`` as given; ``-f tags=...`` is a usage error.
+
+    ``tags`` is a base field, outside the schema's ``type_fields``, so the
+    service's list coercion does not apply to it: without the old comma split,
+    ``-f tags=a,b`` would store the one tag "a,b", and ``-f tags=a`` a string
+    read back as characters (#231). ``--tags`` parses it (the maintainer on
+    #1502, 2026-11-18). A ``parser=`` (not a callback, which the Outcome
+    contract forbids), so the refusal is click's: ``USAGE_ERROR``, exit 2,
+    before any KB is opened.
+    """
+    if value.split("=", 1)[0].strip() == "tags":
+        raise typer.BadParameter("tags=... is refused: set tags with --tags a,b")
+    return value
+
+
 def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
     """``-f key=value`` pairs of ``create``/``update`` as ``{key: value}``.
 
@@ -200,16 +216,6 @@ def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
                 message, errors=[{"field": "--field", "rule": "format", "message": message}]
             )
         k, v = fv.split("=", 1)
-        if k == "tags":
-            # `tags` is a base field, outside the schema's `type_fields`, so no
-            # coercion makes it a list: `-f tags=a,b` would store the one tag
-            # "a,b", and `-f tags=a` a string read back as characters (#231).
-            # Refused, pointing at the option that parses it (the maintainer,
-            # #1502, 2026-11-18).
-            message = "--field tags=... is refused: set tags with --tags a,b"
-            raise ValidationError(
-                message, errors=[{"field": "tags", "rule": "own_option", "message": message}]
-            )
         if k in out:
             message = (
                 f"--field {k} is given more than once; send several values as one "
@@ -332,6 +338,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             None,
             "--field",
             "-f",
+            parser=_field_flag,
             help='Extra field as key=value; several values as a JSON array: -f \'k=["a","b"]\'',
         ),
         link: list[str] | None = typer.Option(
@@ -576,6 +583,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             None,
             "--field",
             "-f",
+            parser=_field_flag,
             help='Extra field as key=value; several values as a JSON array: -f \'k=["a","b"]\'',
         ),
         append: list[str] | None = typer.Option(

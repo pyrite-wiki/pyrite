@@ -5,14 +5,15 @@ update path coerced ints only while the create path used the full value parser.
 The reader then iterated the string as a sequence, so the entry came back tagged
 with the characters of the value and silently dropped out of tag lookups. The
 CLI then split it on commas; since #1502 it splits nothing, and `-f tags=...`
-is refused, pointing at `--tags` (the maintainer, 2026-11-18), so it can never
-store the one tag ``alpha,beta``.
+is a usage error pointing at `--tags` (the maintainer, 2026-11-18), so it can
+never store the one tag ``alpha,beta``.
 """
 
 import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from typer.testing import CliRunner
 
 from pyrite.cli import app
@@ -75,9 +76,10 @@ def test_update_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
     result = _invoke(
         config, ["update", entry_id, "-k", "notes", "-f", "tags=alpha,beta", "--format", "json"]
     )
-    assert result.exit_code != 0, result.output
+    assert result.exit_code == 2, result.output
     payload = _json_payload(result)
-    assert payload["error_code"] == "VALIDATION_FAILED", payload
+    assert payload["outcome"] == "error", payload
+    assert payload["error_code"] == "USAGE_ERROR", payload
     assert "--tags" in payload["error"], payload
     # Nothing was written: no raw string, no one tag "alpha,beta".
     assert path.read_bytes() == before
@@ -90,9 +92,10 @@ def test_create_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
         ["create", "-k", "notes", "-t", "note", "--title", "Tag probe", "-b", "body",
          "-f", "tags=alpha", "--format", "json"],
     )  # fmt: skip
-    assert result.exit_code != 0, result.output
+    assert result.exit_code == 2, result.output
     payload = _json_payload(result)
-    assert payload["error_code"] == "VALIDATION_FAILED", payload
+    assert payload["outcome"] == "error", payload
+    assert payload["error_code"] == "USAGE_ERROR", payload
     assert "--tags" in payload["error"], payload
     assert not list(kb_path.rglob("*.md"))
 
@@ -175,3 +178,19 @@ def test_update_field_reads_a_json_string_literal(tmp_path):
     assert result.exit_code == 0, result.output
     payload = _json_payload(_invoke(config, ["get", entry_id, "-k", "notes", "--format", "json"]))
     assert payload["metadata"]["question"] == "a, b"
+
+
+@pytest.mark.control(
+    reason="--tags a,b always wrote two tags; the -f tags refusal must not touch it"
+)
+def test_create_dedicated_tags_flag_writes_two_tags(tmp_path):
+    config, kb_path = _make_env(tmp_path)
+    result = _invoke(
+        config,
+        ["create", "-k", "notes", "-t", "note", "--title", "Tag probe", "-b", "body",
+         "--tags", "a,b", "--format", "json"],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    (path,) = list(kb_path.rglob("*.md"))
+    fm = load_yaml(path.read_text(encoding="utf-8").split("---")[1])
+    assert fm["tags"] == ["a", "b"], fm

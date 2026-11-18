@@ -25,8 +25,9 @@ repeat.
   schema declares as a list. To send several values, use a JSON array:
   `-f 'affiliations=["City A", "City B"]'`. A script that relied on the
   comma split now stores one item; change it to the JSON array.
-- **`-f tags=...` is refused** on `create` and `update`: set tags with
-  `--tags a,b` (`--append tags=x` and `--remove tags=x` still work).
+- **`-f tags=...` is refused** on `create` and `update`, as a usage error
+  (`USAGE_ERROR`, exit 2): set tags with `--tags a,b` (`--append tags=x` and
+  `--remove tags=x` still work).
 - **Naming the same `-f` key twice is refused.** `-f k=one -f k=two` on
   `create` or `update` now fails with `VALIDATION_FAILED` instead of keeping
   `two` and dropping `one`. Send both in one JSON array.
