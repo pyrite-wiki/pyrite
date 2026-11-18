@@ -57,7 +57,7 @@ _PAGE, _PAGES = 100, 10
 
 def confirm_entries(
     index_mgr: IndexManager,
-    kb_name: str,
+    kb_name: str | None,
     names: list[str] | None,
     sync_result: dict[str, Any],
 ) -> dict[str, Any]:
@@ -71,7 +71,9 @@ def confirm_entries(
     confirmed, else ``partial``) for a caller that sees no exit code.
     """
     config, db = index_mgr.config, index_mgr.db
-    kb = config.get_kb(kb_name)
+    # Every surface refuses a confirm without a KB before it syncs; None here
+    # confirms nothing rather than every KB.
+    kb = config.get_kb(kb_name) if kb_name else None
     named = bool(names)
     if named:
         targets = list(dict.fromkeys(names or []))
@@ -184,7 +186,7 @@ class _EmbeddingStates:
     """``embedded``, ``queued`` or ``unavailable`` for an entry of one KB,
     read once for the KB, never waited on (ADR-0035)."""
 
-    def __init__(self, db, kb_name: str, model_name: str | None):
+    def __init__(self, db, kb_name: str | None, model_name: str | None):
         self._db = db
         self._model_name = model_name
         self._kb_name = kb_name
@@ -195,6 +197,8 @@ class _EmbeddingStates:
 
     def _load(self) -> None:
         self._loaded = True
+        if self._kb_name is None:
+            return
         from .embedding_service import semantic_unavailable_for
 
         if semantic_unavailable_for(self._db) is not None:

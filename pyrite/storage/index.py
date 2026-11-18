@@ -1491,8 +1491,9 @@ class IndexManager:
             path = root / rel_path
             if rel_path not in malformed:
                 found, _why = repo.read_id(path)
-                if found:
-                    return id_text(found)
+                held = id_text(found) if found else None
+                if held:
+                    return held
             return path.stem
 
         def row_for_id(name: str, entry_id: str) -> dict[str, Any]:
