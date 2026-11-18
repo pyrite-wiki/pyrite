@@ -62,7 +62,7 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.control(
+_control = pytest.mark.control(
     reason="a ratchet over code this PR does not change: it guards the next failure-shaped site"
 )
 
@@ -355,6 +355,7 @@ def _observed() -> dict[str, dict[str, int]]:
     return _OBSERVED
 
 
+@_control
 def test_the_scan_sees_the_tree() -> None:
     """A scanner that silently walks nothing would pass every baseline."""
     assert len(_modules()) > 250
@@ -365,12 +366,14 @@ def test_the_scan_sees_the_tree() -> None:
 
 
 @pytest.mark.parametrize("shape", SHAPES)
+@_control
 def test_a_shape_is_at_or_below_its_baseline(shape: str) -> None:
     counts, _ = _read_baseline()
     problems = _compare(shape, _observed()[shape], counts[shape])
     assert not problems, "\n".join(problems)
 
 
+@_control
 def test_every_broad_handler_is_classified() -> None:
     _, table = _read_baseline()
     observed = broad_handlers(["pyrite", *[str(r.relative_to(REPO)) for r in ROOTS[1:]]], REPO)
@@ -379,6 +382,7 @@ def test_every_broad_handler_is_classified() -> None:
     assert not problems, "\n".join(problems)
 
 
+@_control
 def test_a_swallow_row_never_claims_a_handler_that_raises() -> None:
     """The class names are checked, not only the counts: re-raise rows match the AST."""
     _, table = _read_baseline()
@@ -391,6 +395,7 @@ def test_a_swallow_row_never_claims_a_handler_that_raises() -> None:
     assert not wrong, wrong
 
 
+@_control
 def test_the_baseline_file_holds_no_zero_or_negative_count() -> None:
     counts, table = _read_baseline()
     assert all(n > 0 for per in counts.values() for n in per.values())
@@ -400,6 +405,7 @@ def test_the_baseline_file_holds_no_zero_or_negative_count() -> None:
 # --- planted violations and controls: the scanners see what they claim to ------
 
 
+@_control
 def test_planted_http_exception_is_seen() -> None:
     assert http_exception_sites("raise HTTPException(status_code=400, detail='x')") == 1
     assert http_exception_sites("raise fastapi.HTTPException(404, detail={'a': 1})") == 1
@@ -409,12 +415,14 @@ def test_planted_http_exception_is_seen() -> None:
     )
 
 
+@_control
 def test_http_exception_controls_are_not_counted() -> None:
     assert http_exception_sites("try:\n  pass\nexcept HTTPException:\n  pass") == 0
     assert http_exception_sites("raise PyriteError('x')") == 0
     assert http_exception_sites("from fastapi import HTTPException") == 0
 
 
+@_control
 def test_planted_error_dict_is_seen() -> None:
     assert error_dict_sites("def f():\n  return {'error': 'nope'}") == 1
     assert error_dict_sites("x = {'error': 'nope', 'count': 0, 'results': []}") == 1
@@ -422,6 +430,7 @@ def test_planted_error_dict_is_seen() -> None:
     assert error_dict_sites("x = [{'error': 'a'}, {'error': 'b'}]") == 2
 
 
+@_control
 def test_error_dict_controls_are_not_counted() -> None:
     assert (
         error_dict_sites("x = {'error': 'm', 'error_code': 'KB_NOT_FOUND', 'retryable': False}")
@@ -442,6 +451,7 @@ def test_error_dict_controls_are_not_counted() -> None:
         "x = {'error': 'm', 'error_code': 'MADE_UP_CODE'}",
     ],
 )
+@_control
 def test_planted_unknown_code_is_seen(source: str) -> None:
     table = {"ENTRY_NOT_FOUND"}
     assert code_literals(source) == ["MADE_UP_CODE"]
@@ -461,10 +471,12 @@ def test_planted_unknown_code_is_seen(source: str) -> None:
         "_error('lower_case', 'm')",
     ],
 )
+@_control
 def test_unknown_code_controls_are_not_counted(source: str) -> None:
     assert unknown_code_sites(source, {"ENTRY_NOT_FOUND"}) == 0
 
 
+@_control
 def test_the_code_table_is_the_classes_not_the_source() -> None:
     from pyrite.exceptions import EntryNotFoundError
 
@@ -478,6 +490,7 @@ def _plant(tmp_path: Path, source: str) -> dict[tuple[str, str], list[bool]]:
     return broad_handlers(["pkg"], tmp_path)
 
 
+@_control
 def test_planted_broad_handlers_are_seen(tmp_path: Path) -> None:
     found = _plant(
         tmp_path,
@@ -499,6 +512,7 @@ def test_planted_broad_handlers_are_seen(tmp_path: Path) -> None:
     }
 
 
+@_control
 def test_broad_handler_controls_are_not_counted(tmp_path: Path) -> None:
     found = _plant(
         tmp_path,
@@ -512,6 +526,7 @@ def test_broad_handler_controls_are_not_counted(tmp_path: Path) -> None:
     assert found == {}
 
 
+@_control
 def test_a_new_handler_and_a_stale_row_both_fail() -> None:
     table = {("pkg/mod.py", "f", SWALLOW): (1, "")}
     assert _classification_problems({("pkg/mod.py", "f"): [False]}, table) == []
@@ -525,6 +540,7 @@ def test_a_new_handler_and_a_stale_row_both_fail() -> None:
     assert len(stale) == 1 and "Lower or delete" in stale[0]
 
 
+@_control
 def test_a_reraise_row_must_match_the_ast_and_give_a_reason() -> None:
     key = ("pkg/mod.py", "f")
     assert _classification_problems({key: [True]}, {(*key, RERAISE): (1, "re-raises as X")}) == []
@@ -535,6 +551,7 @@ def test_a_reraise_row_must_match_the_ast_and_give_a_reason() -> None:
     assert len(unexplained) == 1 and "no reason" in unexplained[0]
 
 
+@_control
 def test_compare_flags_growth_and_stale_room_and_passes_equal() -> None:
     assert _compare("error_dict", {"a.py": 2}, {"a.py": 2}) == []
     assert _compare("error_dict", {}, {}) == []
@@ -548,6 +565,7 @@ def test_compare_flags_growth_and_stale_room_and_passes_equal() -> None:
     assert len(gone) == 1 and "(delete it)" in gone[0]
 
 
+@_control
 def test_every_baseline_path_exists() -> None:
     counts, table = _read_baseline()
     paths = {p for per in counts.values() for p in per} | {p for p, _f, _c in table}
