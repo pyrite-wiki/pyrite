@@ -589,15 +589,19 @@ def _free_form_map(input_schema: dict) -> str | None:
     keys (an object with no fixed `properties` and `additionalProperties` not
     false: `kb_create`'s `metadata`), or None when there is none or several
     (`kb_manage`'s `type_def` and `schema`: no guess between them)."""
-    maps = [
-        name
-        for name, spec in (input_schema.get("properties") or {}).items()
-        if isinstance(spec, dict)
-        and "object"
-        in (spec.get("type") if isinstance(spec.get("type"), list) else [spec.get("type")])
-        and not spec.get("properties")
-        and spec.get("additionalProperties") is not False
-    ]
+
+    def is_map(spec: object) -> bool:
+        if not isinstance(spec, dict):
+            return False
+        kind = spec.get("type")
+        kinds = kind if isinstance(kind, list) else [kind]
+        return (
+            "object" in kinds
+            and not spec.get("properties")
+            and spec.get("additionalProperties") is not False
+        )
+
+    maps = [name for name, spec in (input_schema.get("properties") or {}).items() if is_map(spec)]
     return maps[0] if len(maps) == 1 else None
 
 
