@@ -1884,12 +1884,12 @@ class KBRepository:
         yield from self.list_collection_files()
 
     def list_collection_files(self, unreadable: list[str] | None = None) -> Iterator[Path]:
-        """Every ``__collection.yaml`` the walk keeps (not under a hidden part).
+        """Every ``__collection.yaml`` the walk keeps (not under a hidden part
+        or templates folder inside the KB).
         ``unreadable``: as ``_folders``."""
         for yaml_file in self._named("__collection.yaml", unreadable):
-            if any(part.startswith(".") for part in yaml_file.parts):
-                continue
-            yield yaml_file
+            if self._lexically_listed(yaml_file):
+                yield yaml_file
 
     def load_entry_from_bytes(self, file_path: Path, raw: bytes) -> Entry:
         """``load_entry_from_file`` of ``raw``, the file's bytes as already read.
@@ -1942,9 +1942,7 @@ class KBRepository:
                 continue
 
         # Discover __collection.yaml files
-        for yaml_file in self._named("__collection.yaml"):
-            if any(part.startswith(".") for part in yaml_file.parts):
-                continue
+        for yaml_file in self.list_collection_files():
             try:
                 entry = self._load_collection(yaml_file)
                 entry.kb_name = self.name
@@ -1968,11 +1966,7 @@ class KBRepository:
     def count(self) -> int:
         """Count total entries in the KB."""
         md_count = sum(1 for _ in self.list_files())
-        yaml_count = sum(
-            1
-            for f in self._named("__collection.yaml")
-            if not any(part.startswith(".") for part in f.parts)
-        )
+        yaml_count = sum(1 for _ in self.list_collection_files())
         return md_count + yaml_count
 
     def search_files(self, query: str) -> Iterator[tuple[Entry, Path]]:
