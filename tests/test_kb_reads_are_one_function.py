@@ -731,7 +731,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 58,
+    "DECIDED_INSIDE": 59,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
