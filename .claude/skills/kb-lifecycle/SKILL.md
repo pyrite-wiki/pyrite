@@ -33,7 +33,7 @@ These rules exist because violating them caused real problems across multiple KB
 
 5. **Cross-KB linking is a thinking task.** The intellectual work of identifying how concepts in one KB relate to concepts in another requires reading entries in both KBs and understanding the relationship. `pyrite links suggest` can provide leads but cannot judge intellectual connections.
 
-6. **Calibrate finished coverage to the subject.** See Coverage Expectations for finished-KB sizes; quality matters more than count. A bounded first pass is not a finished KB.
+6. **A KB needs 30-50+ entries to justify its existence.** Below 30, the knowledge graph lacks density and the entries might as well live in a parent KB. Target 30-50 for focused/secondary subjects, 60-120 for major thinkers with large bodies of work. These are guidelines — quality matters more than count — but they help calibrate when to stop researching.
 
 ## First pass
 

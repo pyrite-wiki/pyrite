@@ -4,13 +4,14 @@ import re
 import shlex
 from pathlib import Path
 
-from typer.core import TyperGroup
-from typer._click.exceptions import ClickException, MissingParameter, UsageError
 import yaml
+from typer import BadParameter
+from typer.core import TyperGroup
 from typer.main import get_command
 
 from pyrite.cli import app
 from pyrite.config import KBConfig
+from tests.outcome_walk import _typers_click_exception
 
 SKILL = Path(__file__).resolve().parents[1] / ".claude/skills/kb-lifecycle"
 
@@ -23,6 +24,7 @@ def commands(text):
 
 def parse_command(example):
     args = shlex.split(re.sub(r"<[^>]+>", "example", example))[1:]
+    # Parser internals inspect the real CLI grammar without running callbacks or requiring a KB.
     command = get_command(app)
     reference = not any(arg.startswith("-") for arg in args) and "<" not in example
     while True:
@@ -37,11 +39,13 @@ def parse_command(example):
             _, command, args = command.resolve_command(ctx, rest)
             continue
         if rest and not command.allow_extra_args:
-            raise UsageError(f"Unexpected arguments: {rest}")
+            raise BadParameter(f"Unexpected arguments: {rest}")
         if not reference:
             for param in command.params:
                 if param.required and values.get(param.name) in (None, ()):
-                    raise MissingParameter(ctx=ctx, param=param)
+                    raise BadParameter(
+                        f"Missing required parameter: {param.name}", ctx=ctx, param=param
+                    )
         return
 
 
@@ -53,7 +57,7 @@ def test_all_lifecycle_commands_parse():
             count += 1
             try:
                 parse_command(example)
-            except ClickException as exc:
+            except _typers_click_exception() as exc:
                 errors.append(f"{path.name}: {example}: {exc.format_message()}")
     assert count > 20, "The command extractor stopped finding examples"
     assert not errors, "\n".join(errors)
@@ -94,7 +98,8 @@ def test_phase_five_creates_a_real_backlink(cli_world, tmp_path):
         if c.startswith(("pyrite links bulk-create ", "pyrite backlinks "))
     ]
     assert len(recipe_commands) == 3, "Need dry-run, apply and backlink verification"
-    # Run the corrected index/QA examples too, against the same real scratch KB.
+    # Run index/QA examples against the same scratch KB; index adds --no-embed
+    # rather than executing the plain documented form, to avoid model downloads.
     main_text = (SKILL / "SKILL.md").read_text()
     for example in sorted(set(commands(main_text))):
         if not example.startswith(("pyrite index build ", "pyrite qa fix ", "pyrite qa gaps ")):
@@ -120,7 +125,7 @@ def test_phase_five_creates_a_real_backlink(cli_world, tmp_path):
 def test_lifecycle_scope_and_creation_guidance():
     text = (SKILL / "SKILL.md").read_text()
     assert text.count("10-15") == 1
-    assert text.count("30-50") == 1
+    assert "**A KB needs 30-50+ entries to justify its existence.**" in text
     assert "## First pass" in text
     assert ".research/" in text
     for path in SKILL.rglob("*.md"):
