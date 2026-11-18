@@ -110,7 +110,7 @@ class SchemaService:
             collisions = set(fields.keys()) & RESERVED_FIELD_NAMES
             if collisions:
                 first_col = sorted(collisions)[0]
-                return {"error": reserved_field_error_message(type_name, first_col)}
+                raise ValidationError(reserved_field_error_message(type_name, first_col))
 
         types[type_name] = type_def
         data["types"] = types
@@ -168,7 +168,9 @@ class SchemaService:
                             collisions = set(fields.keys()) & RESERVED_FIELD_NAMES
                             if collisions:
                                 first_col = sorted(collisions)[0]
-                                return {"error": reserved_field_error_message(type_name, first_col)}
+                                raise ValidationError(
+                                    reserved_field_error_message(type_name, first_col)
+                                )
 
             data["types"] = schema["types"]
         if "policies" in schema:
