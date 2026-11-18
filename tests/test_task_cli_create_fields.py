@@ -239,6 +239,42 @@ def test_task_create_field_keeps_commas_for_an_undeclared_value(task_cli_env):
     assert fm["why_me"] == "a login, a payment"
 
 
+@pytest.mark.cli
+def test_task_create_field_refuses_a_repeated_key(task_cli_env):
+    """`pyrite task create --field k=1 --field k=2` is refused (#1726).
+
+    Aligns `task create` with `pyrite create` and `update` (#1502): a repeated
+    `--field` key raises `VALIDATION_FAILED` (exit 2 under Typer), points to a
+    JSON array, and writes no task entry file.
+    """
+    tasks_dir = task_cli_env["config"].get_kb("test-tasks").path / "tasks"
+    before = set(tasks_dir.iterdir())
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Repeated field task",
+            "-k",
+            "test-tasks",
+            "--field",
+            "custom_val=1",
+            "--field",
+            "custom_val=2",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code != 0, result.output
+    data = json.loads(result.output)
+    assert data["error_code"] == "VALIDATION_FAILED", data
+    assert '["' in data["error"] or "JSON" in data["error"], data
+    assert "is given more than once" in data["error"], data
+    assert data["errors"][0]["rule"] == "repeated", data
+    after = set(tasks_dir.iterdir())
+    assert after == before
+
+
 @pytest.mark.parametrize(
     ("flag", "value"),
     [
