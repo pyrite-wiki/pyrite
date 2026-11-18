@@ -17,6 +17,7 @@ which ``test_every_link_target_reader_honours_the_mark`` checks in the source.
 from __future__ import annotations
 
 import ast
+import os
 import re
 from pathlib import Path
 
@@ -112,6 +113,22 @@ def test_the_graph_counts_and_orphans_do_not_count_the_broken_link(world):
     gaps = QAAnalyticsService(config, db).analyze_gaps(KB)
     assert "missing.md" in {e["id"] for e in gaps["no_inlinks"]}
     assert "real" not in {e["id"] for e in gaps["no_inlinks"]}
+
+
+def test_renaming_the_decoy_leaves_the_broken_link_broken(world):
+    """The decoy's id changes: the broken row names a path, not the decoy, so it
+    stays broken and the renamed entry gets no backlink (delta cold read of
+    51636e68, finding 1)."""
+    config, db, im = world
+    other = config.knowledge_bases[0].path / "other.md"
+    other.write_text(_note("x", "Decoy renamed."), encoding="utf-8")
+    stat = other.stat()
+    os.utime(other, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
+    im.sync_incremental()
+    missing = WikilinkService(config, db).check_links(kb_name=KB)
+    assert [m["target_id"] for m in missing] == ["missing.md"]
+    assert db.get_backlinks("x", KB, readable_kbs=UNSCOPED) == []
+    assert im.check_health(KB)["broken_links"] == 1
 
 
 # ---------------------------------------------------------------------------

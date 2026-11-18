@@ -698,14 +698,17 @@ class BaseBackend(ABC):
         if count and file_path:
             # Rows that named the gone entry by its path: another entry may
             # still be at that file (a rename writes the new id first), else
-            # the row is broken and holds its path again (#1723).
+            # the row is broken and holds its path again (#1723). Only a
+            # resolved row named the gone entry by its file; a broken row whose
+            # path text equals the gone id names a path, not this entry, and
+            # stays broken.
             self._session.flush()
             rows = [
                 row
                 for row in self._session.query(Link)
                 .filter(Link.target_id == entry_id, Link.target_kb == kb_name)
                 .all()
-                if row.target_path is not None
+                if row.target_path is not None and row.target_resolved == 1
             ]
             self._resolve_rows(rows, kb_name, lambda _path: file_path)
         self._session.commit()
