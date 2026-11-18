@@ -300,8 +300,8 @@ def test_the_three_surfaces_agree_row_for_row(answers):
 
 def test_counts_cover_every_task_in_scope(world):
     out = cli(world, "--dispatchable", "-k", WORK)
-    # `-k work`: o-open and o-done are outside; `other:` dependencies are no
-    # longer readable by this listing, so dep-kb-ok is blocked too.
+    # `-k work`: o-open and o-done are not listed; `other:` dependencies are no
+    # longer in this listing's scope, so dep-kb-ok is blocked too.
     want = dict(COUNTS, dispatchable=17, not_open=9, blocked=7)
     assert out["counts"] == want
     assert out["count"] == 17 == len(out["tasks"])

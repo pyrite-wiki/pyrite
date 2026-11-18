@@ -1550,6 +1550,17 @@
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now: open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "KB name (optional)",
             "type": "string"
@@ -2488,6 +2499,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now: open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
@@ -3909,6 +3931,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now: open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
