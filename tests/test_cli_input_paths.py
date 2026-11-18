@@ -103,6 +103,14 @@ NOT_INPUT_FILE: dict[tuple[tuple[str, ...], str], str] = {
     (("mcp-setup",), "config_path"): "another program's config, guarded by #582",
     (("kb", "commit"), "paths"): "paths inside a KB for git, not read by Pyrite",
     (("kb", "schema", "add-type"), "subdirectory"): "a KB subdirectory name",
+    (
+        ("task", "create"),
+        "body_file",
+    ): "checked by require_input_file at parse time, a usage error (#1687)",
+    (
+        ("task", "update"),
+        "body_file",
+    ): "checked by require_input_file at parse time, a usage error (#1687)",
     (("search",), "use_files"): "a boolean",
     (("repo", "unsubscribe"), "delete_files"): "a boolean",
     (("link",), "bidirectional"): "a boolean",

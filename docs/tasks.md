@@ -99,6 +99,28 @@ pyrite task checkpoint write-intro -k test-kb --message "Outline ready" --confid
 pyrite task reset write-intro -k test-kb --reason "Worker stopped" --operator reviewer
 ```
 
+## Ticket text from a file
+
+A long ticket, or one with backticks, `$` and quotes, belongs in a file. Save it as
+`ticket.md`:
+
+```markdown
+Outline the guide.
+
+Run `make docs` with $HOME set; keep "quotes" intact.
+```
+
+`task create` and `task update` take `--body-file <path>` (`-` reads stdin) or
+`--stdin`, and write the text as the body. Give one body source only: `--body`
+with `--body-file`, or `--body-file` with `--stdin`, is a usage error (exit 2).
+A file that opens with a `---` frontmatter block is refused; `pyrite create -t task
+--body-file <file>` reads frontmatter.
+
+```bash
+pyrite task create "Guide outline" -k test-kb --body-file ticket.md
+pyrite task update guide-outline -k test-kb --body-file ticket.md
+```
+
 ## Split work and inspect completion
 
 ```bash

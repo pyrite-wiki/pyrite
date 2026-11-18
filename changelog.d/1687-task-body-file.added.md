@@ -1,0 +1,1 @@
+`pyrite task create` and `pyrite task update` take `--body-file <path>` (`-` reads stdin) and `--stdin`, and `task update` takes `--body`. Two body sources, a missing path, a directory, or a file or stdin text that opens with frontmatter are usage errors (exit 2); the frontmatter refusal points at `pyrite create -t task --body-file`. (#1687)
