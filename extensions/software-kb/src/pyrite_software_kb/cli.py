@@ -553,7 +553,7 @@ def sw_standards(
         help="Output format: json, rich",
     ),
 ):
-    """List all standards (standard + programmatic_validation + development_convention). [deprecated: use validations/conventions]"""
+    """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.27.0: use validations/conventions]"""
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
