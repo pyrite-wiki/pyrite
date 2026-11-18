@@ -48,6 +48,48 @@ pyrite task create "Write outro" -k test-kb --priority 8
 pyrite task list -k test-kb --dispatchable --fields id,priority
 ```
 
+## Park a task until a date
+
+A task often waits on something outside the queue: a reply, a ruling, a
+person's decision, a date. `task park` records why (`--reason`), who must act
+(`--kind person` for a person, `--kind external` for the world, the default)
+and when to look again (`--retest-after YYYY-MM-DD`). It writes
+`parked_awaiting`, `park_kind` and `retest_after` in one write and never
+changes the status, so an open or an in-progress task can be parked. A new
+park replaces the old one; `task unpark` removes the three keys.
+
+One predicate reads a park, given today's date, and every view uses it. A
+task is parked when `parked_awaiting` gives a reason or `retest_after` is
+set. Empty, whitespace-only and `''` reasons are not reasons, and text in the
+body never parks a task:
+
+| Park state | When |
+|---|---|
+| `none` | not parked |
+| `parked` | waiting; no date yet, a date still ahead, or a `retest_after` that is not a date |
+| `due` | an external park whose `retest_after` is today or earlier: an agent's recheck |
+| `person` | `--kind person` (or a kind Pyrite does not know): never handed back to agents by date |
+
+`--dispatchable` leaves a `parked` or `person` task out (reason `parked`). On
+its date an open external park comes back in `tasks` with `recheck: true`.
+Every other live task whose park is due (in progress, claimed, blocked, or
+open but assigned) is listed under `due_rechecks`, so a recheck is never lost
+because its task is in progress. "Due" is derived, never written: the
+recheck worker unparks the task or parks it again with a new date.
+`task list --parked` lists every parked task, due and person parks
+included, with its `park_state`; `--unparked` lists the rest. MCP `task_list`
+takes `parked: true|false`, REST `?parked=true|false`, and MCP has
+`task_park` and `task_unpark` (write tier). `qa validate` reports an unknown
+`park_kind`, a `retest_after` that is not a date, and a `retest_after` with no
+reason (rule `task_park`) and changes nothing.
+
+```bash
+pyrite task create "Await records" -k test-kb
+pyrite task park await-records -k test-kb --reason foia-response --retest-after 2099-01-01
+pyrite task list -k test-kb --parked --fields id,park_state,retest_after
+pyrite task unpark await-records -k test-kb
+```
+
 ## Start and finish in one call
 
 An agent working a queue makes the same walk on every task. `task start` claims
@@ -161,6 +203,8 @@ task's dependency IDs. Use full KB names for tool arguments.
 | Claim | task claim | task_claim | write |
 | Claim and start | task start | task_start | write |
 | Finish (walk to done) | task finish | task_finish | write |
+| Park until a date | task park | task_park | write |
+| Unpark | task unpark | task_unpark | write |
 | Update status | task update | task_update | write |
 | Release claim | task reset | — (operator CLI) | — |
 | Checkpoint | task checkpoint | task_checkpoint | write |
