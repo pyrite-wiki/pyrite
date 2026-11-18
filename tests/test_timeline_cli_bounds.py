@@ -1,10 +1,14 @@
-"""`pyrite timeline` refuses out-of-range --limit and --min-importance.
+"""`pyrite timeline` and `pyrite-read timeline` refuse out-of-range --limit
+and --min-importance.
 
 The timeline --limit had no lower bound, so --limit -1 was accepted and
 SQLite read it as "no limit", returning every event. --min-importance
 promised 1-10 in its help but enforced nothing. Both now refuse bad values
 as usage errors (exit 2), matching the REST timeline, which enforces
 limit ge=1 le=500 and min_importance ge=1 le=10.
+
+`pyrite-read timeline` is a second copy of the command in read_cli.py, where
+--limit -1 sliced off the last event instead (#1412); it takes the same bounds.
 """
 
 import json
@@ -12,9 +16,17 @@ import json
 import pytest
 from click import unstyle
 
+from pyrite.cli import app as pyrite_app
 from pyrite.config import KBConfig, KBType
 from pyrite.models import EventEntry
+from pyrite.read_cli import app as read_app
 from pyrite.storage.repository import KBRepository
+
+
+@pytest.fixture(params=[pyrite_app, read_app], ids=["pyrite", "pyrite-read"])
+def app(request):
+    """Both timeline commands: `pyrite timeline` and `pyrite-read timeline`."""
+    return request.param
 
 
 @pytest.fixture
@@ -48,34 +60,38 @@ def _usage_error(result, option):
 
 @pytest.mark.cli
 @pytest.mark.parametrize("bad_limit", ["-1", "0", "501"])
-def test_timeline_limit_out_of_range_is_usage_error(timeline_world, bad_limit):
-    result = timeline_world.cli("timeline", "--limit", bad_limit, "--format", "json")
+def test_timeline_limit_out_of_range_is_usage_error(timeline_world, app, bad_limit):
+    result = timeline_world.cli("timeline", "--limit", bad_limit, "--format", "json", app=app)
     _usage_error(result, "--limit")
 
 
 @pytest.mark.cli
-@pytest.mark.parametrize("bad_importance", ["0", "11"])
-def test_timeline_min_importance_out_of_range_is_usage_error(timeline_world, bad_importance):
-    result = timeline_world.cli("timeline", "--min-importance", bad_importance, "--format", "json")
+@pytest.mark.parametrize("bad_importance", ["-1", "0", "11"])
+def test_timeline_min_importance_out_of_range_is_usage_error(timeline_world, app, bad_importance):
+    result = timeline_world.cli(
+        "timeline", "--min-importance", bad_importance, "--format", "json", app=app
+    )
     _usage_error(result, "--min-importance")
 
 
 @pytest.mark.cli
-def test_timeline_limit_one_returns_one_event(timeline_world):
-    result = timeline_world.cli("timeline", "--limit", "1", "--format", "json")
+def test_timeline_limit_one_returns_one_event(timeline_world, app):
+    result = timeline_world.cli("timeline", "--limit", "1", "--format", "json", app=app)
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["count"] == 1
 
 
 @pytest.mark.cli
-def test_timeline_limit_at_cap_still_works(timeline_world):
-    result = timeline_world.cli("timeline", "--limit", "500", "--format", "json")
+def test_timeline_limit_at_cap_still_works(timeline_world, app):
+    result = timeline_world.cli("timeline", "--limit", "500", "--format", "json", app=app)
     assert result.exit_code == 0, result.output
     assert json.loads(result.output)["count"] == 2
 
 
 @pytest.mark.cli
 @pytest.mark.parametrize("good_importance", ["1", "10"])
-def test_timeline_min_importance_in_range_works(timeline_world, good_importance):
-    result = timeline_world.cli("timeline", "--min-importance", good_importance, "--format", "json")
+def test_timeline_min_importance_in_range_works(timeline_world, app, good_importance):
+    result = timeline_world.cli(
+        "timeline", "--min-importance", good_importance, "--format", "json", app=app
+    )
     assert result.exit_code == 0, result.output

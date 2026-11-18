@@ -12,6 +12,7 @@ import logging
 import re
 import shlex
 from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -1456,6 +1457,10 @@ class KBService:
     def _hook_ctx(
         self, kb_name: str, kb_config: KBConfig, operation: str, extra: dict | None = None
     ) -> PluginContext:
+        # `kb_schema` is what lets a before_save hook judge by the KB's own
+        # declarations: `_task_validate_transition` reads the task
+        # `state_machine` a kb.yaml declares from it, and with no schema it
+        # falls back to the core TASK_WORKFLOW (#1709).
         return PluginContext(
             config=self.config,
             db=self.db,
@@ -1463,6 +1468,7 @@ class KBService:
             user="",
             operation=operation,
             kb_type=kb_config.kb_type,
+            kb_schema=kb_config.kb_schema,
             **({"extra": extra} if extra else {}),
         )
 
@@ -1540,8 +1546,10 @@ class KBService:
         allow_undeclared: bool,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         pending_ids: set[str] | None = None,
-        pending_paths: set[Path] | None = None,
+        pending_paths: AbstractSet[Path] | None = None,
+        pending_keys: AbstractSet[tuple[str, ...]] | None = None,
         owns: frozenset[str] = frozenset(),
+        ingest: bool = False,
     ) -> tuple[Entry, list[dict[str, Any]]]:
         """Decide whether ``spec`` is a valid new entry; build it if so.
 
@@ -1564,10 +1572,11 @@ class KBService:
         -- the same on
         every surface, a file given to ``add`` included. ``pending_ids``
         are ids an earlier item of the same dry run would have created;
-        ``pending_paths`` are resolved file paths an earlier item of the same
-        dry run would have created -- needed because a `file_pattern` type's
+        ``pending_paths`` / ``pending_keys`` are resolved file paths (or
+        folded keys) an earlier item of the same batch has created (or would
+        create in a dry run) -- needed because a `file_pattern` type's
         filename comes from FIELDS, not the id, so two different ids can
-        collide on the same path (#391 cold read).
+        collide on the same path (#391 cold read; #1623).
 
         A caller's spec never sets a field Pyrite or the type manages, at any
         spelling (#1010). ``owns`` names the managed fields an in-process
@@ -1621,6 +1630,8 @@ class KBService:
         body = fields.pop("body", "")
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
+            if not ingest:
+                self._refuse_non_initial_status_on_create(entry_type, kb_config, fields)
             fields, attributes = self._with_declared_fields(entry_type, kb_config, fields)
             entry = build_entry(entry_type, entry_id=entry_id, title=title, body=body, **fields)
             entry._create_fields = attributes
@@ -1666,7 +1677,10 @@ class KBService:
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
         resolved_path = repo._resolve_file_path(
-            entry, repo._infer_subdir(entry), taken=frozenset(pending_paths or ())
+            entry,
+            repo._infer_subdir(entry),
+            taken=pending_paths or frozenset(),
+            taken_keys=pending_keys or frozenset(),
         )
         # A path that leads out of the KB gets the write's own refusal here,
         # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
@@ -1677,7 +1691,17 @@ class KBService:
         # ``repo.present``, not ``Path.exists``: never "absent" because a
         # file outside is missing.
         taken = repo.present(resolved_path)
-        if taken or resolved_path in (pending_paths or ()):
+        resolved_key = entry_paths.folded_path_key(kb_config.path, resolved_path)
+        if pending_keys is not None:
+            is_pending = resolved_key in pending_keys
+        elif pending_paths:
+            is_pending = any(
+                entry_paths.folded_path_key(kb_config.path, p) == resolved_key
+                for p in pending_paths
+            )
+        else:
+            is_pending = False
+        if taken or is_pending:
             holder = repo.holder_of_path(resolved_path) if taken else None
             held = f", which holds '{holder}'" if holder and holder != entry.id else ""
             raise EntryExistsError(
@@ -1767,6 +1791,9 @@ class KBService:
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         owns: frozenset[str] = frozenset(),
+        pending_paths: AbstractSet[Path] | None = None,
+        pending_keys: AbstractSet[tuple[str, ...]] | None = None,
+        ingest: bool = False,
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1776,6 +1803,9 @@ class KBService:
             allow_undeclared=allow_undeclared,
             builder=builder,
             owns=owns,
+            pending_paths=pending_paths,
+            pending_keys=pending_keys,
+            ingest=ingest,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         prepared_id = entry.id
@@ -1793,7 +1823,14 @@ class KBService:
         # changes before the file is written.
         warnings = self._validate_write(entry, kb_name, kb_config)
         try:
-            self._doc_mgr.save_entry(entry, kb_name, kb_config, is_create=True)
+            self._doc_mgr.save_entry(
+                entry,
+                kb_name,
+                kb_config,
+                is_create=True,
+                taken=pending_paths or frozenset(),
+                taken_keys=pending_keys or frozenset(),
+            )
         except FileExistsError as e:
             # #391 cold read round 2: the exists() check in _prepare and this
             # write are two different moments -- two truly concurrent creates
@@ -1914,7 +1951,10 @@ class KBService:
             kb_config = self.require_kb(kb_name)
         else:
             kb_config = self._writable_kb(kb_name)
-        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
+        # Built on the first item that writes, inside its try: `_hook_ctx`
+        # reads the KB's schema, and a kb.yaml that does not load must refuse
+        # each item (as `_prepare` does), not the whole call (#1709).
+        hook_ctx: PluginContext | None = None
 
         results: list[dict[str, Any]] = []
         created_ids: list[tuple[str, str]] = []  # (entry_id, kb_name) for batch embed
@@ -1923,6 +1963,7 @@ class KBService:
         # of the same batch would have created.
         would_create: set[str] = set()
         would_create_paths: set[Path] = set()
+        would_create_keys: set[tuple[str, ...]] = set()
 
         for spec in entries:
             ignored: list[str] = []
@@ -1937,16 +1978,23 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         pending_ids=would_create,
                         pending_paths=would_create_paths,
+                        pending_keys=would_create_keys,
+                        ingest=drop_managed,
                     )
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
-                    would_create_paths.add(
-                        repo._resolve_file_path(
-                            entry, repo._infer_subdir(entry), taken=frozenset(would_create_paths)
-                        )
+                    resolved = repo._resolve_file_path(
+                        entry,
+                        repo._infer_subdir(entry),
+                        taken=would_create_paths,
+                        taken_keys=would_create_keys,
                     )
+                    would_create_paths.add(resolved)
+                    would_create_keys.add(entry_paths.folded_path_key(kb_config.path, resolved))
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
+                    if hook_ctx is None:
+                        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
                     written = self._prepare_and_save(
                         kb_name,
                         kb_config,
@@ -1954,8 +2002,16 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         hook_ctx=hook_ctx,
                         embed=False,
+                        pending_paths=would_create_paths,
+                        pending_keys=would_create_keys,
+                        ingest=drop_managed,
                     )
                     entry, warnings = written.entry, written.warnings
+                    if entry.file_path is not None:
+                        would_create_paths.add(entry.file_path)
+                        would_create_keys.add(
+                            entry_paths.folded_path_key(kb_config.path, entry.file_path)
+                        )
                     created_ids.append((entry.id, kb_name))
                     item = {"created": True, "entry_id": entry.id}
                 if warnings:
@@ -2593,6 +2649,63 @@ class KBService:
                 errors=[{"field": name, "rule": "managed", "message": message}],
                 suggestion=f"name it something else, for example `{entry_type}_{name}`",
             )
+
+    def _refuse_non_initial_status_on_create(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        fields: dict[str, Any],
+    ) -> None:
+        """A create refuses a status other than the initial state on types
+        with a state machine (#1684). Ingest (add, import, sync) is exempt."""
+        from ..models.task import TASK_WORKFLOW, resolve_workflow_for_type
+
+        # Judge task against the core TASK_WORKFLOW only (#1684 review, #1709 option a)
+        if entry_type == "task":
+            workflow = TASK_WORKFLOW
+        else:
+            kb_schema = getattr(kb_config, "kb_schema", None)
+            workflow = resolve_workflow_for_type(entry_type, kb_schema)
+            if workflow is TASK_WORKFLOW:
+                return
+
+        status_field = workflow.get("field", "status")
+        initial = workflow.get("initial", "open")
+
+        sent_status = None
+        has_status = False
+
+        if status_field in fields:
+            sent_status = fields[status_field]
+            has_status = True
+        elif f"metadata.{status_field}" in fields:
+            sent_status = fields[f"metadata.{status_field}"]
+            has_status = True
+        elif isinstance(fields.get("metadata"), Mapping) and status_field in fields["metadata"]:
+            sent_status = fields["metadata"][status_field]
+            has_status = True
+        elif isinstance(fields.get("fields"), Mapping) and status_field in fields["fields"]:
+            sent_status = fields["fields"][status_field]
+            has_status = True
+
+        if not has_status or sent_status is None:
+            return
+
+        if sent_status == initial:
+            return
+
+        if entry_type == "task":
+            message = "a new task is always created open; use `task claim` or `task update --status` to change it."
+            suggestion = "use `task claim` or `task update --status` to change it."
+        else:
+            message = f"a new {entry_type} is always created {initial}; change it after creation."
+            suggestion = "change it after creation."
+
+        raise ValidationError(
+            message,
+            errors=[{"field": status_field, "rule": "managed", "message": message}],
+            suggestion=suggestion,
+        )
 
     def _drop_managed_for_import(
         self, kb_config: KBConfig, spec: dict[str, Any]

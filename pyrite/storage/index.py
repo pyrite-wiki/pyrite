@@ -60,6 +60,7 @@ from ..utils.metadata import parse_metadata
 from . import entry_paths
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
+from .markdown_links import markdown_link_targets
 from .repository import KBRepository
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,22 @@ _FENCED_CODE_RE = re.compile(r"^(```|~~~).*?^\1\s*$", re.MULTILINE | re.DOTALL)
 # Matches inline code spans: `...` or ``...`` (spans that could contain a literal backtick).
 # Matches the shorter form only on a single line to avoid eating multi-paragraph text.
 _INLINE_CODE_RE = re.compile(r"``[^`\n]+?``|`[^`\n]+?`")
+
+
+# A `prefix:` naming another KB at the front of a reference value, the shape
+# the wikilink grammar (`_WIKILINK_RE` group 1) accepts.
+_REF_PREFIX_RE = re.compile(r"^([a-z0-9-]+):(.+)$", re.DOTALL)
+
+
+def _strip_wikilink_brackets(value: str) -> str:
+    """``[[target]]`` -> ``target``, once, trimming space inside and outside the
+    brackets; any other text is returned trimmed. Shared by every frontmatter
+    value that names an entry (object-ref fields, edge endpoints), so a value
+    spelled ``x`` and ``[[x]]`` is one id. An empty ``[[]]`` returns ``""``."""
+    text = value.strip()
+    if text.startswith("[[") and text.endswith("]]"):
+        text = text[2:-2].strip()
+    return text
 
 
 def _strip_code_regions(text: str) -> str:
@@ -580,6 +597,25 @@ class IndexManager:
         `resolve_entry` (#979)."""
         return self.config.link_kb(prefix, kb_name)
 
+    def _object_ref_target(self, value: str, kb_name: str) -> tuple[str, str]:
+        """The entry an object-ref value names, as ``(id, kb)``: brackets
+        stripped, and a ``prefix:`` read as a KB only when it names a registered
+        KB (by full name, then shortname: the check ``resolve_entry`` makes), so
+        ``x``, ``[[x]]``, ``other:x`` and ``[[other:x]]`` index as the id they
+        name (#1693). Any other value is the whole id in this KB, as it was
+        before and as ``resolve_entry`` reads it: a colon is legal in an entry
+        id, so ``doi:10.1000-x`` and ``https://ex.org/x`` name entries of those
+        ids, not the KBs ``doi`` and ``https``. The id is ``""`` when the value
+        names nothing (``[[]]``)."""
+        text = _strip_wikilink_brackets(value)
+        match = _REF_PREFIX_RE.match(text)
+        if match is not None:
+            kb = self.config.readable_kb_named(match.group(1), readable_kbs=None)
+            rest = match.group(2).strip()
+            if kb is not None and rest:
+                return rest, kb.name
+        return text, kb_name
+
     def _frontmatter_link(self, link: dict[str, Any], kb_name: str) -> dict[str, Any]:
         """A frontmatter ``links:`` item as the index stores it: its ``kb`` is
         a KB field in link position (a name or a shortname, like a ``[[kb:id]]``
@@ -882,6 +918,26 @@ class IndexManager:
                         }
                     )
 
+        # Markdown links to entry files in this KB (#1723): the row keeps the
+        # path (`path`, the `link.target_path` column) and the backend's
+        # resolver gives it the id of the entry indexed there now, whatever
+        # order the files are written in. The root goes with the row so the
+        # resolver can name this entry's own path (`_resolve_path_links`).
+        root = self._root_of(kb_name, file_path)
+        data["_kb_root"] = str(root)
+        if scannable_body:
+            for path, note in markdown_link_targets(scannable_body, root, file_path):
+                data["links"].append(
+                    {
+                        "target": path,
+                        "kb": kb_name,
+                        "prefix": None,
+                        "relation": "markdown_link",
+                        "note": note,
+                        "path": path,
+                    }
+                )
+
         # Extract object-ref fields for entry_ref table
         refs = []
         try:
@@ -897,20 +953,19 @@ class IndexManager:
                             value = fm.get(field_name)
                             if value:
                                 target_type = field_schema.constraints.get("target_type")
-                                if isinstance(value, list):
-                                    for v in value:
-                                        if isinstance(v, str):
-                                            refs.append(
-                                                {
-                                                    "target_id": v,
-                                                    "field_name": field_name,
-                                                    "target_type": target_type,
-                                                }
-                                            )
-                                elif isinstance(value, str):
+                                named: set[tuple[str, str]] = set()
+                                for v in value if isinstance(value, list) else [value]:
+                                    if not isinstance(v, str):
+                                        continue
+                                    target_id, target_kb = self._object_ref_target(v, kb_name)
+                                    # `[x, "[[x]]"]` names one entry: one row.
+                                    if not target_id or (target_id, target_kb) in named:
+                                        continue
+                                    named.add((target_id, target_kb))
                                     refs.append(
                                         {
-                                            "target_id": value,
+                                            "target_id": target_id,
+                                            "target_kb": target_kb,
                                             "field_name": field_name,
                                             "target_type": target_type,
                                         }
@@ -934,9 +989,7 @@ class IndexManager:
                         value = fm.get(endpoint_spec.field)
                         if value and isinstance(value, str):
                             # Strip wikilink brackets if present: [[target]] -> target
-                            endpoint_id = value.strip()
-                            if endpoint_id.startswith("[[") and endpoint_id.endswith("]]"):
-                                endpoint_id = endpoint_id[2:-2].strip()
+                            endpoint_id = _strip_wikilink_brackets(value)
                             if endpoint_id:
                                 edge_endpoints.append(
                                     {
@@ -2027,6 +2080,7 @@ class IndexManager:
         broken_sql = """
             SELECT COUNT(*) as cnt FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE e.id IS NULL
         """
         broken_params: dict[str, Any] = {}

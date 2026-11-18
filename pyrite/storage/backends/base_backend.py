@@ -56,8 +56,17 @@ def kb_names_clause(
     return f"{column} IN ({', '.join(keys)})"
 
 
-#: A link row's identity: (target_id, target_kb, relation, target_prefix).
-LinkKey = tuple[Any, Any, Any, Any]
+#: A link row's identity: (target, target_kb, relation, target_prefix,
+#: target_path). For a link that names an id, ``target`` is that id and
+#: ``target_path`` is None; for a Markdown link to an entry file (#1723) both
+#: are the path, so resolving the row's ``target_id`` never changes its key.
+LinkKey = tuple[Any, Any, Any, Any, Any]
+
+
+def _row_key(row: Link) -> LinkKey:
+    """The key of a stored link row: what ``_link_rows`` would key it by."""
+    target = row.target_path if row.target_path is not None else row.target_id
+    return (target, row.target_kb, row.relation, row.target_prefix, row.target_path)
 
 
 def _link_rows(kb_name: str, links: list[dict[str, Any]]) -> dict[LinkKey, dict[str, Any]]:
@@ -86,6 +95,7 @@ def _link_rows(kb_name: str, links: list[dict[str, Any]]) -> dict[LinkKey, dict[
             as_stored_text(link.get("kb", kb_name)),
             relation,
             as_stored_text(link.get("prefix")),
+            as_stored_text(link.get("path")),
         )
         rows.setdefault(
             key,
@@ -95,6 +105,16 @@ def _link_rows(kb_name: str, links: list[dict[str, Any]]) -> dict[LinkKey, dict[
             },
         )
     return rows
+
+
+def _kb_relative(file_path: str | None, root: str) -> str | None:
+    """``file_path`` as KB-relative POSIX text under ``root``, or None."""
+    if not file_path:
+        return None
+    try:
+        return Path(file_path).relative_to(root).as_posix()
+    except ValueError:
+        return None
 
 
 def _with_inverse_relation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -390,13 +410,27 @@ class BaseBackend(ABC):
 
     def upsert_entry(self, entry_data: dict[str, Any]) -> None:
         """Insert or update an entry with tags, sources, links, refs, blocks."""
-        entry_id = entry_data.get("id")
-        kb_name = entry_data.get("kb_name")
+        # Read from an untyped row dict; a missing key reaches the ORM as None
+        # and is refused there, as before.
+        entry_id: Any = entry_data.get("id")
+        kb_name: Any = entry_data.get("kb_name")
         try:
             self._upsert_entry_main(entry_id, kb_name, entry_data)
             self._sync_tags(entry_id, kb_name, entry_data.get("tags", []))
             self._sync_sources(entry_id, kb_name, entry_data.get("sources", []))
-            self._sync_links(entry_id, kb_name, entry_data.get("links", []))
+            if entry_data.get("_kb_root"):
+                self._sync_links(entry_id, kb_name, entry_data.get("links", []))
+                self._resolve_path_links(entry_id, kb_name, entry_data)
+            else:
+                # A row not made from its file (written back from a read,
+                # `dedup`) cannot name paths: its Markdown link rows stay as
+                # they are until a write from the file re-derives them (#1723).
+                links = [
+                    link
+                    for link in entry_data.get("links", [])
+                    if link.get("relation") != "markdown_link"
+                ]
+                self._sync_links(entry_id, kb_name, links, keep_path_rows=True)
             self._sync_entry_refs(entry_id, kb_name, entry_data)
             self._sync_blocks(entry_id, kb_name, entry_data)
             self._sync_edge_endpoints(entry_id, kb_name, entry_data)
@@ -526,8 +560,19 @@ class BaseBackend(ABC):
             )
 
     @abstractmethod
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
-        """Sync links — implementation differs between SQLite and Postgres."""
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
+        """Sync links — implementation differs between SQLite and Postgres.
+
+        ``keep_path_rows``: leave the source's Markdown link rows (a
+        ``target_path``) untouched, for a write that cannot name paths (#1723).
+        """
         ...
 
     def _sync_entry_refs(self, entry_id: str, kb_name: str, entry_data: dict) -> None:
@@ -576,8 +621,96 @@ class BaseBackend(ABC):
                 )
             )
 
+    def _resolve_path_links(self, entry_id: str, kb_name: str, entry_data: dict) -> None:
+        """Keep every Markdown link row that this write touches pointing at
+        the entry indexed at its path now (#1723).
+
+        A row of a Markdown link keeps the path it was written with
+        (``target_path``); its ``target_id`` is the id of the entry whose
+        file is at that path, or the path text when none is (a broken link,
+        decision D1). Three sets of rows can change when ``entry_id`` is
+        written: its own path rows (just synced), rows elsewhere in the KB
+        that name its path (it appeared there, or its id changed), and rows
+        that named it under another path (it moved). Each is re-derived from
+        the entry table as it is now, so the result does not depend on the
+        order of writes; a delete re-derives the rows that named the gone id
+        (``delete_entry``). Called only for a write that carries ``_kb_root``
+        (a row made from its file).
+        """
+        root = entry_data["_kb_root"]
+        self._session.flush()
+        own_path = _kb_relative(entry_data.get("file_path"), root)
+        # One query per set, each naming only the columns of its own index
+        # (`idx_link_source`, `idx_link_target`, `idx_link_target_path`), and
+        # the path-row test made here: an OR of the three, or a
+        # `target_path IS NOT NULL` in SQL, lets SQLite range over every path
+        # row in the KB, and a write must cost its own links, not the KB.
+        queries = [
+            self._session.query(Link).filter(Link.source_id == entry_id, Link.source_kb == kb_name),
+            self._session.query(Link).filter(Link.target_id == entry_id, Link.target_kb == kb_name),
+        ]
+        if own_path is not None:
+            queries.append(
+                self._session.query(Link).filter(
+                    Link.target_kb == kb_name, Link.target_path == own_path
+                )
+            )
+        with self._session.no_autoflush:  # flushed once, above
+            rows = list(
+                {
+                    row.id: row
+                    for query in queries
+                    for row in query.all()
+                    if row.target_path is not None and row.target_kb == kb_name
+                }.values()
+            )
+            self._resolve_rows(rows, kb_name, lambda path: str(Path(root) / path))
+
+    def _resolve_rows(self, rows: list, kb_name: str, file_of: Callable[[str], str]) -> None:
+        """Set each path row's ``target_id`` to the entry at ``file_of(path)``
+        and ``target_resolved`` to 1, or to the path text and 0 (broken). Two entries at one file (a duplicate id's winner
+        and a row a rename has not removed yet) resolve to the smaller id; the
+        write that removes the other resolves the row again."""
+        if not rows:
+            return
+        files = {row.target_path: file_of(row.target_path) for row in rows}
+        # One lookup for every file, on `idx_entry_kb_file_path`.
+        at_file: dict[str, str] = {}
+        for entry_id, file_path in (
+            self._session.query(Entry.id, Entry.file_path)
+            .filter(Entry.kb_name == kb_name, Entry.file_path.in_(set(files.values())))
+            .all()
+        ):
+            if file_path not in at_file or entry_id < at_file[file_path]:
+                at_file[file_path] = entry_id
+        for row in rows:
+            hit = at_file.get(files[row.target_path])
+            target, resolved = (hit, 1) if hit is not None else (row.target_path, 0)
+            if row.target_id != target:
+                row.target_id = target
+            if row.target_resolved != resolved:
+                row.target_resolved = resolved
+
     def delete_entry(self, entry_id: str, kb_name: str) -> bool:
+        gone = self._session.get(Entry, (entry_id, kb_name))
+        file_path = gone.file_path if gone is not None else None
         count = self._session.query(Entry).filter_by(id=entry_id, kb_name=kb_name).delete()
+        if count and file_path:
+            # Rows that named the gone entry by its path: another entry may
+            # still be at that file (a rename writes the new id first), else
+            # the row is broken and holds its path again (#1723). Only a
+            # resolved row named the gone entry by its file; a broken row whose
+            # path text equals the gone id names a path, not this entry, and
+            # stays broken.
+            self._session.flush()
+            rows = [
+                row
+                for row in self._session.query(Link)
+                .filter(Link.target_id == entry_id, Link.target_kb == kb_name)
+                .all()
+                if row.target_path is not None and row.target_resolved == 1
+            ]
+            self._resolve_rows(rows, kb_name, lambda _path: file_path)
         self._session.commit()
         return count > 0
 
@@ -994,6 +1127,7 @@ class BaseBackend(ABC):
             FROM link l
             JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
             WHERE l.target_id = :entry_id AND l.target_kb = :kb_name
+              AND COALESCE(l.target_resolved, 1) = 1
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
         scope = kb_names_clause("e.kb_name", readable_kbs, params)
@@ -1032,6 +1166,7 @@ class BaseBackend(ABC):
                    e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
                 {f"AND {scope}" if scope else ""}
             WHERE l.source_id = :entry_id AND l.source_kb = :kb_name
             """,
@@ -1075,7 +1210,7 @@ class BaseBackend(ABC):
                    l.target_prefix as prefix, l.note
             FROM link l
             JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
-            WHERE l.target_kb = :kb_name
+            WHERE l.target_kb = :kb_name AND COALESCE(l.target_resolved, 1) = 1
             """,
             {"kb_name": kb_name},
         )
@@ -1095,6 +1230,7 @@ class BaseBackend(ABC):
                    e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE l.source_kb = :kb_name
             """,
             {"kb_name": kb_name},
@@ -1179,6 +1315,7 @@ class BaseBackend(ABC):
                                   e.title, e.entry_type
                            FROM link l
                            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                               AND COALESCE(l.target_resolved, 1) = 1
                                {f"AND {entry_clause}" if entry_clause else ""}
                            WHERE l.source_id = :eid AND l.source_kb = :ekb
                                {f"AND {source_clause}" if source_clause else ""}""",
@@ -1219,6 +1356,7 @@ class BaseBackend(ABC):
                            FROM link l
                            JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
                            WHERE l.target_id = :eid AND l.target_kb = :ekb
+                               AND COALESCE(l.target_resolved, 1) = 1
                                {f"AND {entry_clause}" if entry_clause else ""}""",
                         {"eid": eid, "ekb": ekb, **scope},
                     )
@@ -1269,6 +1407,7 @@ class BaseBackend(ABC):
                                WHERE l.source_id = e.id AND l.source_kb = e.kb_name)
                    OR EXISTS (SELECT 1 FROM link l
                               WHERE l.target_id = e.id AND l.target_kb = e.kb_name
+                                AND COALESCE(l.target_resolved, 1) = 1
                                 {f"AND {inbound}" if inbound else ""}))
                   {f"AND {entry_scope}" if entry_scope else ""}
             """
@@ -1285,6 +1424,7 @@ class BaseBackend(ABC):
             if nodes:
                 link_rows = self._exec(
                     "SELECT source_id, source_kb, target_id, target_kb, relation FROM link"
+                    " WHERE COALESCE(target_resolved, 1) = 1"
                 )
                 for r in link_rows:
                     src = (r["source_id"], r["source_kb"])
@@ -1314,6 +1454,7 @@ class BaseBackend(ABC):
                    COUNT(l.id) as link_count
             FROM entry e
             LEFT JOIN link l ON e.id = l.target_id AND e.kb_name = l.target_kb
+                AND COALESCE(l.target_resolved, 1) = 1
         """
         params: dict[str, Any] = {}
         if kb_name:
@@ -1344,6 +1485,7 @@ class BaseBackend(ABC):
             )
             AND e.id NOT IN (
                 SELECT target_id FROM link WHERE target_kb = e.kb_name
+                AND COALESCE(target_resolved, 1) = 1
                 {f"AND {inbound}" if inbound else ""}
             )
         """

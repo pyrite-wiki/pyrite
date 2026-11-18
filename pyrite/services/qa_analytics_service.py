@@ -145,6 +145,7 @@ class QAAnalyticsService:
             "AND e.entry_type NOT IN ('backlog_item', 'qa_assessment', 'collection') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l WHERE l.target_id = e.id AND l.target_kb = :kb_name"
+            "  AND COALESCE(l.target_resolved, 1) = 1"
             ") "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l WHERE l.source_id = e.id AND l.source_kb = :kb_name"
@@ -245,7 +246,7 @@ class QAAnalyticsService:
             "WHERE e.kb_name = :kb_name "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l "
-            "  WHERE l.target_id = e.id AND l.target_kb = e.kb_name"
+            "  WHERE l.target_id = e.id AND l.target_kb = e.kb_name AND COALESCE(l.target_resolved, 1) = 1"
             ") ORDER BY e.entry_type, e.id",
             {"kb_name": kb_name},
         )

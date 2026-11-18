@@ -38,6 +38,7 @@ from ..exceptions import (
     ValidationError,
     refusal_row_text,
 )
+from ..schema.field_aliases import METADATA, path_segments
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from ..utils.errors import cli_error, cli_error_from
@@ -258,24 +259,30 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
 
 
 def _field_flag(value: str) -> str:
-    """One ``-f key=value`` as given; ``-f tags=...`` is a usage error.
+    """One ``-f key=value`` as given; ``-f tags=...`` or ``-f metadata.tags=...`` is a usage error.
 
     ``tags`` is a base field, outside the schema's ``type_fields``, so the
     service's list coercion does not apply to it: without the old comma split,
     ``-f tags=a,b`` would store the one tag "a,b", and ``-f tags=a`` a string
     read back as characters (#231). ``--tags`` parses it (the maintainer on
-    #1502, 2026-11-18). A ``parser=`` (not a callback, which the Outcome
-    contract forbids), so the refusal is click's: ``USAGE_ERROR``, exit 2,
-    before any KB is opened.
+    #1502, 2026-11-18). ADR-0042 treats ``metadata.k`` as a spelling of ``k``,
+    so ``-f metadata.tags=...`` is refused identically (#1725). A ``parser=``
+    (not a callback, which the Outcome contract forbids), so the refusal is
+    click's: ``USAGE_ERROR``, exit 2, before any KB is opened.
     """
-    if value.split("=", 1)[0].strip() == "tags":
-        raise typer.BadParameter("tags=... is refused: set tags with --tags a,b")
+    key = value.split("=", 1)[0].strip()
+    try:
+        segs = path_segments(key)
+    except ValueError:
+        segs = ()
+    if segs in (("tags",), (METADATA, "tags")):
+        raise typer.BadParameter(f"{key}=... is refused: set tags with --tags a,b")
     return value
 
 
 def _item_flag(flag: str) -> Callable[[str], str]:
     """A ``parser=`` for ``--append``/``--remove``: one ``key=value`` as given,
-    and ``tags=`` with a comma outside a JSON list is a usage error.
+    and ``tags=`` or ``metadata.tags=`` with a comma outside a JSON list is a usage error (#1725).
 
     The CLI splits nothing (#1502), so ``--append tags=c,d`` would store the
     one tag "c,d" and ``--remove tags=a,b`` would remove nothing and exit 0.
@@ -286,11 +293,20 @@ def _item_flag(flag: str) -> Callable[[str], str]:
 
     def parse(value: str) -> str:
         key, _, item = value.partition("=")
-        if key.strip() == "tags" and "," in item and not item.strip().startswith("["):
+        k_strip = key.strip()
+        try:
+            segs = path_segments(k_strip)
+        except ValueError:
+            segs = ()
+        if (
+            segs in (("tags",), (METADATA, "tags"))
+            and "," in item
+            and not item.strip().startswith("[")
+        ):
             raise typer.BadParameter(
-                f"a comma in {flag} tags=... is refused: give one tag per {flag} "
-                f"(`{flag} tags=a {flag} tags=b`) or a JSON list "
-                f'(`{flag} \'tags=["a", "b"]\'`)'
+                f"a comma in {flag} {k_strip}=... is refused: give one tag per {flag} "
+                f"(`{flag} {k_strip}=a {flag} {k_strip}=b`) or a JSON list "
+                f'(`{flag} \'{k_strip}=["a", "b"]\'`)'
             )
         return value
 

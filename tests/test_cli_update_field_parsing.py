@@ -66,7 +66,8 @@ def _create_note(config: PyriteConfig) -> None:
     assert result.exit_code == 0, result.output
 
 
-def test_update_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
+@pytest.mark.parametrize("key", ["tags", "metadata.tags"])
+def test_update_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path, key):
     config, kb_path = _make_env(tmp_path)
     _create_note(config)
     entry_id = _entry_id(kb_path)
@@ -74,7 +75,7 @@ def test_update_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
     before = path.read_bytes()
 
     result = _invoke(
-        config, ["update", entry_id, "-k", "notes", "-f", "tags=alpha,beta", "--format", "json"]
+        config, ["update", entry_id, "-k", "notes", "-f", f"{key}=alpha,beta", "--format", "json"]
     )
     assert result.exit_code == 2, result.output
     payload = _json_payload(result)
@@ -85,12 +86,13 @@ def test_update_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
     assert path.read_bytes() == before
 
 
-def test_create_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path):
+@pytest.mark.parametrize("key", ["tags", "metadata.tags"])
+def test_create_field_tags_is_refused_pointing_at_the_tags_flag(tmp_path, key):
     config, kb_path = _make_env(tmp_path)
     result = _invoke(
         config,
         ["create", "-k", "notes", "-t", "note", "--title", "Tag probe", "-b", "body",
-         "-f", "tags=alpha", "--format", "json"],
+         "-f", f"{key}=alpha", "--format", "json"],
     )  # fmt: skip
     assert result.exit_code == 2, result.output
     payload = _json_payload(result)
@@ -213,8 +215,16 @@ def _tagged_note(config: PyriteConfig, kb_path: Path) -> tuple[str, Path]:
     return path.stem, path
 
 
-@pytest.mark.parametrize(("flag", "value"), [("--append", "tags=c,d"), ("--remove", "tags=a,b")])
-def test_a_comma_in_append_or_remove_tags_is_refused(tmp_path, flag, value):
+@pytest.mark.parametrize(
+    ("flag", "value", "key"),
+    [
+        ("--append", "tags=c,d", "tags"),
+        ("--append", "metadata.tags=c,d", "metadata.tags"),
+        ("--remove", "tags=a,b", "tags"),
+        ("--remove", "metadata.tags=a,b", "metadata.tags"),
+    ],
+)
+def test_a_comma_in_append_or_remove_tags_is_refused(tmp_path, flag, value, key):
     config, kb_path = _make_env(tmp_path)
     entry_id, path = _tagged_note(config, kb_path)
     before = path.read_bytes()
@@ -223,7 +233,7 @@ def test_a_comma_in_append_or_remove_tags_is_refused(tmp_path, flag, value):
     assert result.exit_code == 2, result.output
     payload = _json_payload(result)
     assert payload["error_code"] == "USAGE_ERROR", payload
-    assert f"{flag} tags=" in payload["error"] and "JSON" in payload["error"], payload
+    assert f"{flag} {key}=" in payload["error"] and "JSON" in payload["error"], payload
     assert path.read_bytes() == before
 
 
