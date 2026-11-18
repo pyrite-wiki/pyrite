@@ -31,6 +31,9 @@ types:
         type: number
       urgent:
         type: checkbox
+      level:
+        type: select
+        options: [1, 2]
 """
 
 TEXT_CASES = [
@@ -129,6 +132,12 @@ def test_declared_text_field_create_preserves_value(world, surface, i, val):
     assert count_val == 7
     assert type(count_val) is int
 
+    if surface == "cli" and val == "1.10":
+        # Pin the text on disk: the .md file holds version: '1.10' (#1672)
+        entry_file = world.kb_path(KB_NAME) / "notes" / f"{created_id}.md"
+        content = entry_file.read_text(encoding="utf-8")
+        assert "version: '1.10'" in content or 'version: "1.10"' in content, content
+
 
 @pytest.mark.parametrize("surface", ["cli", "mcp", "rest"])
 @pytest.mark.parametrize(("i", "val"), list(enumerate(TEXT_CASES)))
@@ -188,7 +197,7 @@ def test_declared_text_field_update_preserves_value(world, surface, i, val):
 
 
 def test_cli_declared_number_stores_what_dev_stores(world):
-    """A declared number field given -f priority=7 and -f 'priority="007"'
+    """A declared number field given -f count=7 and -f 'count="007"'
     stores what dev stores (7 and "007"). The service owns the number rule (#1628);
     the CLI passes the value through as typed.
     """
@@ -229,3 +238,25 @@ def test_cli_declared_number_stores_what_dev_stores(world):
     val2 = _get_entry_field(world, id2, "count")
     assert val2 == "007"
     assert type(val2) is str
+
+
+def test_cli_declared_select_with_numeric_options(world):
+    """A select with options: [1, 2] given -f level=1 stores 1 as an int (#1672)."""
+    res = world.cli(
+        "create",
+        "-k",
+        KB_NAME,
+        "-t",
+        "note",
+        "--title",
+        "select-numeric",
+        "-f",
+        "level=1",
+        "--format",
+        "json",
+    )
+    assert res.exit_code == 0, res.output
+    created_id = json.loads(res.output)["entry_id"]
+    val = _get_entry_field(world, created_id, "level")
+    assert val == 1
+    assert type(val) is int

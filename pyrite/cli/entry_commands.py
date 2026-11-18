@@ -183,7 +183,7 @@ def _field_type_for(
 def _parse_field_value(value: str, field_type: str | None = None) -> Any:
     """Parse a ``--field`` value using its declared type when available (#1672).
 
-    When a field has a declared text-like type (``text``, ``string``, ``select``,
+    When a field has a declared text-like type (``text``, ``string``,
     ``object-ref``): the value is kept exactly as typed (#1672), preventing
     numeric-looking text (such as ``1.10``, ``02134``, ``1e5``, ``true``)
     from being converted into floats, ints, or booleans. A quoted JSON string
@@ -192,8 +192,8 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
     When declared date-like (``date``, ``datetime``): kept as string (unpacked
     from JSON quotes if given).
 
-    All other fields (including number, checkbox, and undeclared fields) fall
-    through to dev's parser (#1502):
+    All other fields (including select, number, checkbox, and undeclared fields)
+    fall through to dev's parser (#1502):
       1. JSON (strings, arrays, and objects)
       2. Integer
       3. Float
@@ -203,7 +203,7 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
     stripped = value.strip()
 
     # 1. Text-like declared fields: store exactly as typed (#1672)
-    if field_type in {"text", "string", "select", "object-ref"}:
+    if field_type in {"text", "string", "object-ref"}:
         if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
             try:
                 unpacked = _json.loads(stripped)
