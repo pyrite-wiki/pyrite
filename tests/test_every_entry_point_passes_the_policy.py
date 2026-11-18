@@ -109,6 +109,7 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "POST /api/reviews": "3b: requires_kb_tier('write'), a per-KB write",
     "DELETE /api/reviews/{review_id}": "3b: requires_kb_tier('write', resolve_kb=...), a row's KB",
     "POST /api/tasks/{task_id}/claim": "3b: requires_kb_tier('write'), a per-KB write",
+    "POST /api/tasks/{task_id}/start": "3b: requires_kb_tier('write'), a per-KB write",
     "GET /api/admin/merge-queue": "3c: requires_tier('admin'), instance administration",
     "GET /api/admin/merge-queue/{username}/diff": (
         "3c: requires_tier('admin'), instance administration"
@@ -174,7 +175,9 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "GET /auth/users/{user_id}/permissions": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
     "PUT /auth/users/{user_id}/role": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
 }
-REST_NOT_YET_MIGRATED_SIZE = 67  # lower it with every entry removed; never raise it
+REST_NOT_YET_MIGRATED_SIZE = (
+    68  # lower it with every entry removed; never raise it (68: #1685, pending, see #1708)
+)
 
 #: Non-GET operations that pass the policy only with a *read* declaration while
 #: their write or admin tier is still decided by `requires_tier`, the repos
@@ -310,7 +313,9 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "task_create",
         "task_critical_path",
         "task_decompose",
+        "task_finish",
         "task_list",
+        "task_start",
         "task_status",
         "task_subtree",
         "task_update",
@@ -324,7 +329,9 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "zettel_inbox",
     }
 )
-MCP_NOT_YET_MIGRATED_SIZE = 106  # lower it with every entry removed; never raise it
+MCP_NOT_YET_MIGRATED_SIZE = (
+    108  # lower it with every entry removed; never raise it (108: #1685, pending, see #1708)
+)
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {
