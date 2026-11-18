@@ -202,3 +202,63 @@ def test_without_a_declared_machine_the_core_table_allows_open_to_claimed(world_
     world = world_for(NO_MACHINE_YAML)
     _update(world, surface, "claimed")
     assert _file_status(world) == "claimed"
+
+
+# -- the other routes that move a status -------------------------------------
+#
+# `claim` and `reset` write through `KBService.update_entry`, so they meet the
+# declared machine too; `task update --comment` writes through
+# `apply_operations`, which runs the same hook.
+
+
+def _index_status(world) -> str:
+    return world.db.get_entry("x", KB).get("status")
+
+
+def _set_file_status(world, status: str) -> None:
+    path = world.kb_path(KB) / "tasks" / "x.md"
+    path.write_text(path.read_text().replace("status: open", f"status: {status}"))
+    world.index(KB)
+
+
+@pytest.mark.parametrize("route", ["cli", "mcp", "rest"])
+def test_claim_is_refused_where_the_declared_table_has_no_open_to_claimed(world_for, route):
+    world = world_for(STRICT_YAML)  # declares open -> review only
+    if route == "cli":
+        world.cli("task", "claim", "x", "-k", KB, "-a", "bob", "--format", "json")
+    elif route == "mcp":
+        world.mcp(tier="write")._dispatch_tool(
+            "task_claim", {"task_id": "x", "kb_name": KB, "assignee": "bob"}
+        )
+    else:
+        world.client.post("/api/tasks/x/claim", params={"kb": KB}, json={"assignee": "bob"})
+    # The claim moves the index row first and rolls it back when the file
+    # write is refused: neither the file nor the index may say `claimed`.
+    assert _file_status(world) == "open"
+    assert _index_status(world) == "open"
+
+
+def test_reset_is_refused_where_the_declared_table_has_no_in_progress_to_open(world_for):
+    world = world_for(STRICT_YAML)
+    _set_file_status(world, "in_progress")
+    world.cli("task", "reset", "x", "-k", KB, "--format", "json")
+    assert _file_status(world) == "in_progress"
+
+
+@pytest.mark.control(
+    reason="reset supplies its own reason, which relaxed mode needs; core allowed it too"
+)
+def test_reset_is_accepted_by_a_relaxed_machine_because_it_carries_a_reason(world_for):
+    world = world_for(RELAXED_YAML)
+    _set_file_status(world, "in_progress")
+    world.cli("task", "reset", "x", "-k", KB, "--format", "json")
+    assert _file_status(world) == "open"
+
+
+def test_the_audit_comment_route_applies_the_declared_table(world_for):
+    world = world_for(STRICT_YAML)
+    args = ["task", "update", "x", "-k", KB, "--comment", "why", "--format", "json"]
+    world.cli(*args, "-s", "claimed")
+    assert _file_status(world) == "open"  # declared table: no open -> claimed
+    world.cli(*args, "-s", "review")
+    assert _file_status(world) == "review"  # declared table: open -> review

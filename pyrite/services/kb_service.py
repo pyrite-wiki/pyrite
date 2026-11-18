@@ -1441,6 +1441,10 @@ class KBService:
     def _hook_ctx(
         self, kb_name: str, kb_config: KBConfig, operation: str, extra: dict | None = None
     ) -> PluginContext:
+        # `kb_schema` is what lets a before_save hook judge by the KB's own
+        # declarations: `_task_validate_transition` reads the task
+        # `state_machine` a kb.yaml declares from it, and with no schema it
+        # falls back to the core TASK_WORKFLOW (#1709).
         return PluginContext(
             config=self.config,
             db=self.db,
@@ -1448,6 +1452,7 @@ class KBService:
             user="",
             operation=operation,
             kb_type=kb_config.kb_type,
+            kb_schema=kb_config.kb_schema,
             **({"extra": extra} if extra else {}),
         )
 
