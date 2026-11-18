@@ -38,6 +38,11 @@ def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
                 assert last["claimed"] is False
             if args[:2] == ["links", "bulk-create"] and expected == 3:
                 assert last["outcome"] == "partial"
+            if "--dispatchable" in args:
+                # write-intro is claimed by now; only write-outro is free.
+                assert last["tasks"] == [{"id": "write-outro", "kb_name": "test-kb", "priority": 8}]
+                assert last["excluded"] == []
+                assert last["counts"]["not_open"] == 1
             if args[0] == "backlinks":
                 assert any(row["id"] == "alpha" for row in last["entries"])
     if page == "tasks.md":

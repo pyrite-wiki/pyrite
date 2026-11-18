@@ -27,6 +27,21 @@ second claim exits1; do not treat that as successful ownership.
 pyrite task claim write-intro -k test-kb --assignee bob
 ```
 
+## Find the tasks a worker can take now
+
+`--dispatchable` lists the open tasks nobody holds: unassigned, not parked,
+every dependency resolved, and no children (a parent's work is in its
+children, which are listed instead). The most important come first, then the
+oldest. `counts` says how many tasks were left out for each reason, and
+`excluded` names each open one with its reason. `--fields` keeps only the
+keys you name, plus `id` and `kb_name`. MCP `task_list` takes `dispatchable`
+and `fields`; REST takes `?dispatchable=true&fields=...`.
+
+```bash
+pyrite task create "Write outro" -k test-kb --priority 8
+pyrite task list -k test-kb --dispatchable --fields id,priority
+```
+
 ## Record progress and release a stale claim
 
 A checkpoint records work without pretending the task is complete. Reset is an
