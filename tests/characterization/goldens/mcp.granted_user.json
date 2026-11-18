@@ -3947,6 +3947,32 @@
     "error_code": "FORBIDDEN",
     "retryable": false
   },
+  "task_finish | granted_user | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | granted_user | no-default-role-kb": {
+    "did_you_mean": [],
+    "error": "KB 'no-default-role-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | granted_user | private-kb": {
+    "error": "Insufficient permissions on KB 'private-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_finish | granted_user | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
   "task_list | granted_user | missing-kb": {
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
@@ -3970,6 +3996,32 @@
   "task_list | granted_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
+  },
+  "task_start | granted_user | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | granted_user | no-default-role-kb": {
+    "did_you_mean": [],
+    "error": "KB 'no-default-role-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | granted_user | private-kb": {
+    "error": "Insufficient permissions on KB 'private-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_start | granted_user | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
   },
   "task_status | granted_user | missing-kb": {
     "did_you_mean": [],

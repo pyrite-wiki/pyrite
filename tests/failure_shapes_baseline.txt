@@ -56,7 +56,7 @@ error_dict | 1 | pyrite/server/endpoints/worktree.py
 error_dict | 1 | pyrite/server/mcp_server.py
 error_dict | 4 | pyrite/services/export_service.py
 error_dict | 13 | pyrite/services/git_service.py
-error_dict | 10 | pyrite/services/kb_service.py
+error_dict | 9 | pyrite/services/kb_service.py
 error_dict | 1 | pyrite/services/qa_analytics_service.py
 error_dict | 17 | pyrite/services/repo_service.py
 error_dict | 3 | pyrite/services/schema_service.py

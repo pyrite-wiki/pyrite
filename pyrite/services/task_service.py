@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..config import PyriteConfig
 from ..exceptions import (
@@ -834,6 +834,179 @@ class TaskService:
         """Atomically claim an open task. Delegates to KBService.claim_entry()."""
         return self.kb_svc.claim_entry(task_id, kb_name, assignee)
 
+    def start_task(self, task_id: str, kb_name: str, assignee: str) -> dict[str, Any]:
+        """Claim and start an open task in one write (#1685).
+
+        The decision is ``claim_entry``'s compare-and-set, the one `task
+        claim` runs, from ``open`` straight to ``in_progress``; the file write
+        passes through ``claimed`` (both edges judged by the workflow) and
+        appends one ``status_change_log`` item per edge. A task the same
+        assignee already holds as ``claimed`` (a worker that died between
+        claim and start) is moved on to ``in_progress`` by the same
+        compare-and-set from ``claimed``. Anything else is claim's lost
+        claim, unchanged: ``claimed: False``, ``error``, ``current_status``.
+
+        On success the result adds ``task`` (the single-entry read, with its
+        body) and ``parent`` (``{id, title, body}`` or None), their bodies
+        bounded together by the response budget (json-contracts, "Body
+        truncation").
+        """
+        self._refuse_not_a_task(task_id, kb_name)
+
+        def edge(old: str, new: str):
+            return _log_item(old, new, assignee)
+
+        result: dict[str, Any] = self.kb_svc.claim_entry(
+            task_id,
+            kb_name,
+            assignee,
+            from_status="open",
+            to_status="in_progress",
+            via=("claimed",),
+            ops=[edge("open", "claimed"), edge("claimed", "in_progress")],
+        )
+        if not result.get("claimed") and result.get("current_status") == "claimed":
+            holder = self._query(
+                "SELECT assignee FROM entry WHERE id = :id AND kb_name = :kb_name",
+                {"id": task_id, "kb_name": kb_name},
+            )
+            if holder and (holder[0].get("assignee") or "") == assignee:
+                result = self.kb_svc.claim_entry(
+                    task_id,
+                    kb_name,
+                    assignee,
+                    from_status="claimed",
+                    to_status="in_progress",
+                    ops=[edge("claimed", "in_progress")],
+                    # Only the holder read above moves it on: every check
+                    # the claim passes matches it, so a claim taken in
+                    # between is refused, never replaced.
+                    holder=assignee,
+                )
+        if not result.get("claimed"):
+            return result
+        return {**result, **self._started_context(task_id, kb_name)}
+
+    def _refuse_not_a_task(self, task_id: str, kb_name: str) -> None:
+        rows = self._query(
+            "SELECT entry_type FROM entry WHERE id = :id AND kb_name = :kb_name",
+            {"id": task_id, "kb_name": kb_name},
+        )
+        if rows and rows[0].get("entry_type") != "task":
+            raise ValidationError(
+                f"'{task_id}' is a {rows[0].get('entry_type')!r}, not a task: "
+                "`task start` and `task finish` move tasks only."
+            )
+
+    def _started_context(self, task_id: str, kb_name: str) -> dict[str, Any]:
+        """The started task and its parent, as a worker needs them to begin."""
+        from .body_bounds import load_body_bounds
+
+        task = self.kb_svc.get_entry(task_id, kb_name, readable_kbs=UNSCOPED) or {}
+        parent_id = task.get("parent") or ""
+        parent = None
+        if parent_id:
+            found = self.kb_svc.get_entry(parent_id, kb_name, readable_kbs=UNSCOPED)
+            if found:
+                parent = {
+                    "id": found.get("id"),
+                    "title": found.get("title"),
+                    "body": found.get("body") or "",
+                }
+        bounded = load_body_bounds().fill_budget([task, *([parent] if parent else [])])
+        return {"task": bounded[0], "parent": bounded[1] if parent else None}
+
+    def finish_task(
+        self,
+        task_id: str,
+        kb_name: str,
+        *,
+        walk: bool = False,
+        reason: str = "",
+        by: str = "",
+        operator_override: bool = False,
+    ) -> dict[str, Any]:
+        """Move a held task to ``done`` in one write (#1685).
+
+        Finish requires the caller to hold the task; operators have an
+        explicit override. The caller is ``by`` (the surface sets it: the
+        signed-in account, or the label a caller with no account names), and
+        must be the task's current assignee. A caller who is not, or no caller
+        at all, is refused (``Forbidden``) before any write. With
+        ``operator_override`` the operator (``acting() is OPERATOR``: the local
+        process, an operator key) finishes a task it does not hold; the log
+        items record ``by: operator`` and ``override: true``. The override is
+        never implied, and anyone but the operator asking for it is refused.
+        The write rechecks the holder in the bytes it replaces.
+
+        The path is the workflow's shortest declared one (``status_walk``);
+        without ``walk`` only a direct edge is taken and the refusal names
+        the path ``walk`` would take. One write sets ``status``,
+        ``status_reason`` (when ``reason`` is given) and appends one
+        ``status_change_log`` item per edge; the ``before_save`` workflow hook
+        judges every edge and refuses unless the path starts at the status
+        the file holds when the write reads it. A task nothing holds (the path
+        passes through the workflow's initial state) is refused: ``cancelled``
+        retires one.
+        """
+        from ..models.task import resolve_workflow_for_type, status_walk
+        from ..storage.file_operations import Set
+        from ..storage.repository import KBRepository
+
+        kb_config = self.config.require_kb(kb_name, db=self.db)
+        entry = KBRepository(kb_config).load(task_id)
+        if not entry:
+            raise EntryNotFoundError(f"Task '{task_id}' not found in KB '{kb_name}'")
+        if entry.entry_type != "task":
+            raise ValidationError(
+                f"'{task_id}' is a {entry.entry_type!r}, not a task: "
+                "`task finish` moves tasks only."
+            )
+        holder = getattr(entry, "assignee", "") or ""
+        who, override = _finisher(task_id, holder, by, operator_override)
+        workflow = resolve_workflow_for_type("task", getattr(kb_config, "kb_schema", None))
+        initial = workflow.get("initial", "open")
+        target = "done"
+        current = getattr(entry, "status", "") or initial
+        if current == target:
+            raise ValidationError(f"Task '{task_id}' is already '{target}'; nothing to finish.")
+        path = status_walk(workflow, current, target)
+        if path is None:
+            raise ValidationError(
+                f"Cannot finish task '{task_id}': its workflow has no path from "
+                f"'{current}' to '{target}'."
+            )
+        if initial in path:
+            raise ValidationError(
+                f"Cannot finish task '{task_id}' from '{current}': nothing holds it "
+                f"(the path to '{target}' passes through '{initial}'). Start it with "
+                f"`pyrite task start`, or retire it with `task update --status cancelled`."
+            )
+        if len(path) > 2 and not walk:
+            raise ValidationError(
+                f"Cannot move task '{task_id}' from '{current}' to '{target}' in one step. "
+                f"`--walk` (MCP `walk: true`) would pass through: {' → '.join(path)}."
+            )
+        ops: list[Any] = [Set("status", target)]
+        if reason:
+            ops.append(Set("status_reason", reason))
+        ops.extend(
+            _log_item(old, new, who, reason, override=override)
+            for old, new in zip(path, path[1:], strict=False)
+        )
+        written = self.kb_svc.apply_operations(
+            task_id, kb_name, ops, status_path=path, expect_holder=holder
+        )
+        return {
+            "finished": True,
+            "task_id": task_id,
+            "status": getattr(written.entry, "status", target),
+            "path": path,
+            "status_reason": getattr(written.entry, "status_reason", "") or "",
+            "by": who,
+            "override": override,
+        }
+
     def reset_task(
         self,
         task_id: str,
@@ -1280,6 +1453,56 @@ class TaskService:
         return result
 
 
+def _finisher(task_id: str, holder: str, by: str, operator_override: bool) -> tuple[str, bool]:
+    """Who finishes the task and whether by override: finish requires the
+    caller to hold the task; operators have an explicit override."""
+    from ..exceptions import Forbidden
+    from .acting import OPERATOR, acting
+
+    if by and holder and by == holder:
+        return by, False
+    if operator_override:
+        if acting() is not OPERATOR:
+            raise Forbidden(
+                f"Task '{task_id}': only the operator may finish a task it does not hold "
+                "(the operator override). Nothing was written."
+            )
+        return "operator", True
+    who = f"'{by}'" if by else "a caller with no identity"
+    held = f"held by '{holder}'" if holder else "held by no one"
+    refusal = Forbidden(
+        f"Task '{task_id}' is {held}: finish requires the caller to hold the task, "
+        f"and {who} does not. Nothing was written."
+    )
+    # `suggestion` is a public attribute every refusal may carry
+    # (exceptions.PUBLIC_ATTRIBUTES); Forbidden does not declare it.
+    cast(Any, refusal).suggestion = (
+        "Finish it as its holder (`--by <holder>`; MCP: sign in as the holder or pass `by`), "
+        "or, as the operator, pass the explicit override (`--operator-override`; "
+        "MCP `operator_override: true`)."
+    )
+    raise refusal
+
+
+def _log_item(old: str, new: str, by: str, comment: str = "", *, override: bool = False):
+    """One ``status_change_log`` item for the edge ``old`` -> ``new``, as an
+    ``Append`` (the earlier items keep their bytes). ``comment`` only when
+    there is one: nothing is written that was not asked for."""
+    from ..storage.file_operations import Append
+
+    item: dict[str, Any] = {
+        "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "from": old,
+        "to": new,
+        "by": by,
+    }
+    if comment:
+        item["comment"] = comment
+    if override:
+        item["override"] = True
+    return Append("status_change_log", item)
+
+
 def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
     """Return a task's dependency IDs in their stored order."""
     metadata = parse_metadata(task.get("metadata") or {})
@@ -1349,11 +1572,7 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
     if not hasattr(entry, "entry_type"):
         return entry
 
-    from ..models.task import (
-        TASK_WORKFLOW,
-        resolve_workflow_for_type,
-        validate_status_change,
-    )
+    from ..models.task import TASK_WORKFLOW, resolve_workflow_for_type
 
     # Resolve the workflow for this entry-type. If we're not the core
     # `task` type AND no state_machine is declared, the resolver falls
@@ -1371,6 +1590,22 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
 
     old_status = context.get("old_status")
     new_status = getattr(entry, "status", None)
+    status_path = context.get("status_path")
+    if status_path is not None:
+        # A multi-step change (`task start`, `task finish --walk`; #1685):
+        # every edge of the path is judged below, as one change each, and the
+        # path must start at the status the file holds now (the file decides,
+        # ADR-0042 decision 10) and end at the one written. No fail-open here.
+        path = list(status_path)
+        if len(path) < 2 or path[0] != old_status or path[-1] != new_status:
+            raise ValidationError(
+                f"Cannot move '{entry.id}' along {' → '.join(map(str, path))}: "
+                f"the file's status is '{old_status}', and this write sets '{new_status}'. "
+                "Nothing was written; read the task again and retry."
+            )
+        for before, after in zip(path, path[1:], strict=False):
+            _judge_status_edge(entry, context, workflow, before, after)
+        return entry
     # Fails OPEN on a missing old status. That is safe only because every
     # update hands this hook the old status of a fully loaded file: a file its
     # type cannot load is refused before any hook (ADR-0042 8a), never given
@@ -1387,6 +1622,17 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
         )["completion"]
         if completion.get("complete") is True and completion.get("basis") == "children":
             return entry
+
+    _judge_status_edge(entry, context, workflow, old_status, new_status)
+    return entry
+
+
+def _judge_status_edge(
+    entry: Entry, context: dict, workflow: dict, old_status: str, new_status: str
+) -> None:
+    """Refuse one status edge ``old_status`` -> ``new_status`` that ``workflow``
+    does not allow, through ``validate_status_change`` (the one judge)."""
+    from ..models.task import validate_status_change
 
     # The reason field carries through frontmatter as `status_reason`; an
     # absent attribute is treated as empty string.
@@ -1427,8 +1673,6 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
                 )
             raise refusal
         raise ValidationError(err)
-
-    return entry
 
 
 def register_task_hooks(runner: HookRunner) -> None:
