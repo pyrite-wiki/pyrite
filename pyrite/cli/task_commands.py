@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
 task_app = typer.Typer(help="Task management commands")
 
-
 def _get_service(*kbs: object) -> tuple[TaskService, PyriteDB]:
     """Create TaskService and return (service, db) for cleanup.
 
@@ -55,7 +54,6 @@ def _get_service(*kbs: object) -> tuple[TaskService, PyriteDB]:
         db.close()
         raise
     return TaskService(config, db), db
-
 
 #: `--field` keys refused because a dedicated option already sets them,
 #: named so the error can point the caller at the right option.
@@ -108,7 +106,6 @@ _FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
 #: existing entry, which does persist. Refusing here rather than silently
 #: accepting and dropping.
 _FIELD_CREATE_NEVER_TAKES_EFFECT: frozenset[str] = frozenset({"type", "created_at", "updated_at"})
-
 
 def _parse_task_create_fields(
     field: list[str] | None, *, config: Any, kb_name: str
@@ -178,7 +175,6 @@ def _parse_task_create_fields(
         fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
     return fields
 
-
 def _resolve_task_body(
     body: str | None,
     body_file: Path | None,
@@ -211,16 +207,22 @@ def _resolve_task_body(
     else:
         return None
 
-    # Option C: frontmatter at start is refused
-    split = split_frontmatter(resolved)
-    if isinstance(split, Frontmatter):
-        raise ValidationError(
-            "Task body starts with a frontmatter block (---). "
-            "Task bodies do not read frontmatter. "
-            "Use `pyrite create -t task --body-file <file>` if you want frontmatter fields."
-        )
+    # Option C: frontmatter at start is refused only for file/stdin bodies.
+    # A --body value is literal text typed on the command line, not a file
+    # whose frontmatter could be mistaken for fields, so "---\n..." there
+    # must be kept verbatim. File/stdin bodies keep the refusal: a file
+    # starting with --- looks like it carries frontmatter fields, and
+    # task bodies do not read frontmatter.
+    from_file = stdin_flag or body_file is not None
+    if from_file:
+        split = split_frontmatter(resolved)
+        if isinstance(split, Frontmatter):
+            raise ValidationError(
+                "Task body starts with a frontmatter block (---). "
+                "Task bodies do not read frontmatter. "
+                "Use `pyrite create -t task --body-file <file>` if you want frontmatter fields."
+            )
     return resolved
-
 
 @task_app.command("create")
 def task_create(
@@ -332,7 +334,6 @@ def task_create(
     outcome_fn = Outcome.partial if result.get("failed_links") else Outcome.done
     return outcome_fn(result, rich=rich)
 
-
 def _completion_text(derived: dict) -> str:
     """One cell for a task's derived completion, e.g. ``yes (2/2 children)``."""
     c = derived["completion"]
@@ -341,14 +342,12 @@ def _completion_text(derived: dict) -> str:
         return f"{word} ({c['children_complete']}/{c['children']} children)"
     return word
 
-
 def _status_cell(item: dict) -> str:
     """The file's status, marked when its children make it complete."""
     c = item["derived"]["completion"]
     if c["complete"] and c["basis"] == "children":
         return f"{item['status']} [dim](children done)[/dim]"
     return item["status"]
-
 
 def _render_list(console, data: dict) -> None:
     table = Table(title="Tasks")
@@ -369,7 +368,6 @@ def _render_list(console, data: dict) -> None:
             item["parent"] or "",
         )
     console.print(table)
-
 
 @task_app.command("list")
 def task_list(
@@ -395,7 +393,6 @@ def task_list(
         db.close()
     return Outcome.done({"count": len(items), "tasks": items}, rich=_render_list)
 
-
 @task_app.command("get")
 def task_get(
     task_id: str = typer.Argument(..., help="Task entry ID"),
@@ -405,7 +402,6 @@ def task_get(
 ) -> Outcome:
     """Show task details with children, dependencies, and evidence."""
     return _task_get_impl(task_id, kb_name)
-
 
 @task_app.command("status")
 def task_status(
@@ -422,7 +418,6 @@ def task_status(
         style="dim",
     )
     return _task_get_impl(task_id, kb_name)
-
 
 def _render_task(console, result: dict) -> None:
     console.print(f"\n[bold]{result['title']}[/bold]")
@@ -446,7 +441,6 @@ def _render_task(console, result: dict) -> None:
         console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
         for c in children:
             console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
-
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
@@ -491,7 +485,6 @@ def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     finally:
         db.close()
     return Outcome.done(result, rich=_render_task)
-
 
 @task_app.command("update")
 def task_update(
@@ -566,7 +559,6 @@ def task_update(
 
     return Outcome.done(result, rich=rich)
 
-
 @task_app.command("claim")
 def task_claim(
     task_id: str = typer.Argument(..., help="Task entry ID"),
@@ -596,7 +588,6 @@ def task_claim(
     if result.get("claimed"):
         return Outcome.done(result, rich=rich)
     return Outcome.nothing(result, rich=rich)
-
 
 @task_app.command("reset")
 def task_reset(
@@ -628,7 +619,6 @@ def task_reset(
 
     return Outcome.done(result, rich=rich)
 
-
 def _render_decompose(console, output: dict) -> None:
     console.print(f"[green]Decomposed:[/green] {output['parent_id']}")
     for r in output["children"]:
@@ -636,7 +626,6 @@ def _render_decompose(console, output: dict) -> None:
             console.print(f"  [green]+[/green] {r['entry_id']}")
         else:
             console.print(f"  [red]x[/red] {r.get('error', 'Unknown error')}")
-
 
 @task_app.command("decompose")
 def task_decompose(
@@ -664,7 +653,6 @@ def task_decompose(
 
     failed = sum(1 for r in results if not r.get("created"))
     return Outcome.from_counts(len(results) - failed, failed, output, rich=_render_decompose)
-
 
 @task_app.command("migrate-relaxed-mode")
 def task_migrate_relaxed_mode(
@@ -695,7 +683,6 @@ def task_migrate_relaxed_mode(
             console.print("[yellow]Dry run — no files modified.[/yellow]")
 
     return Outcome.done(result, rich=rich)
-
 
 @task_app.command("checkpoint")
 def task_checkpoint(
