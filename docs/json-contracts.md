@@ -1328,7 +1328,7 @@ refused in its slot.
 `searches` has one slot per query, in input order. A slot that ran is the
 document a single `pyrite search` prints for the same arguments: same rows,
 same `match`, `match_basis`, `legs_run` and `warnings`, same `--fields`
-projection (a test compares them). A slot that was refused (a syntax error, a
+projection (`test_a_slot_equals_the_single_search` compares them). A slot that was refused (a syntax error, a
 query over the length cap, an unknown KB, an unknown key, a bad value) has
 `query`, `count: 0`, `results: []` and the canonical error shape
 (`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
@@ -1337,9 +1337,12 @@ siblings. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
 none is `{"count": 0, "searches": []}`, exit 0.
 
 The batch as a whole is refused, exit 1 with the error shape and no `searches`,
-when the file is missing (`NOT_FOUND`), is not JSON, is not a list, or holds
-more than 50 queries (`VALIDATION_FAILED`; the cap `batch-read` has). Warnings
-and the trace go to stderr, prefixed with the query's position.
+when the file is missing (`NOT_FOUND`), is not UTF-8, cannot be read (an
+`OSError`), is not JSON, is not a list, or holds more than 50 queries
+(`VALIDATION_FAILED`; the cap `batch-read` has); stdin (`-`) is refused the
+same way, never with a traceback. Warnings and the trace go to stderr,
+prefixed with the query's position. The stale-index warning appears once for
+the whole batch and covers every KB, not only the ones the queries name.
 
 ### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
 

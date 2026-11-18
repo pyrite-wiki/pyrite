@@ -587,13 +587,30 @@ def _read_batch(source: str, output_format: str) -> list:
     import json
     import sys
 
+    from ..exceptions import outside_text
     from ..utils.errors import cli_error
     from .context import input_file_or_exit
 
-    if source == "-":
-        text = sys.stdin.read()
-    else:
-        text = input_file_or_exit(source, "Batch file", output_format).read_text(encoding="utf-8")
+    try:
+        if source == "-":
+            text = sys.stdin.read()
+        else:
+            path = input_file_or_exit(source, "Batch file", output_format)
+            text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        cli_error(
+            "--batch input is not valid UTF-8 text",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion="save the file as UTF-8 JSON",
+        )
+    except OSError as e:
+        cli_error(
+            f"--batch input could not be read: {outside_text(e)}",
+            output_format,
+            error_code="VALIDATION_FAILED",
+            suggestion="check the path and its permissions",
+        )
     try:
         items = json.loads(text)
     except ValueError as e:
@@ -637,6 +654,10 @@ def _run_batch(
     from ..utils.errors import exit_unless_whole
 
     items = _read_batch(source, output_format)
+    # The base settings are the ones a single search uses: with `-k`, it reads
+    # them from get_config_with_registered_kbs, which returns this same config
+    # (it only merges registered KBs into it), so `settings` and `search_mode`
+    # do not differ per slot.
     config = load_config()
     env_fields = os.environ.get(SEARCH_FIELDS_ENV)
 
@@ -654,6 +675,8 @@ def _run_batch(
                 err_console.print("[yellow]Index is empty. Building index...[/yellow]")
                 kb_svc.build_index()
             else:
+                # Once for the whole batch, over every KB: slots name different
+                # KBs, so there is no single scope to narrow it to.
                 _warn_if_stale(config, db, None)
             search_svc = SearchService(db, settings=config.settings)
 

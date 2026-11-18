@@ -50,7 +50,10 @@ class Batch:
             result = self.world.cli("search", "--batch", "-", *flags, input=text)
         else:
             path = self.world.root / "queries.json"
-            path.write_text(text)
+            if isinstance(text, bytes):
+                path.write_bytes(text)
+            else:
+                path.write_text(text)
             result = self.world.cli("search", "--batch", str(path), *flags)
         return result
 
@@ -314,6 +317,46 @@ def test_input_that_is_not_a_json_list_is_refused(b, raw):
     result = b.batch(None, raw=raw)
 
     assert result.exit_code == 1, result.output
+    body = payload(result)
+    assert body["error_code"] == "VALIDATION_FAILED"
+    assert "searches" not in body
+
+
+@pytest.mark.parametrize("stdin", [False, True], ids=["file", "stdin"])
+@pytest.mark.parametrize(
+    "raw", [b"\xff\xfe", b'[{"query": "fal\xffcon"}]'], ids=["bom-like", "mid-text"]
+)
+def test_input_that_is_not_utf8_is_a_typed_refusal_never_a_traceback(b, raw, stdin):
+    result = b.batch(None, raw=raw, stdin=stdin)
+
+    assert result.exit_code == 1, result.output
+    assert "Traceback" not in result.output and "UnicodeDecodeError" not in result.output
+    body = payload(result)
+    assert body["error_code"] == "VALIDATION_FAILED"
+    assert "UTF-8" in body["error"]
+    assert body["retryable"] is False
+    assert "searches" not in body
+
+
+@pytest.mark.parametrize("error", [PermissionError("denied"), OSError("I/O error")])
+def test_an_os_error_reading_the_batch_file_is_a_typed_refusal(b, monkeypatch, error):
+    import pathlib
+
+    path = b.world.root / "queries.json"
+    path.write_text("[]")
+    real = pathlib.Path.read_text
+
+    def failing(self, *args, **kwargs):
+        if self == path:
+            raise error
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "read_text", failing)
+
+    result = b.world.cli("search", "--batch", str(path))
+
+    assert result.exit_code == 1, result.output
+    assert "Traceback" not in result.output
     body = payload(result)
     assert body["error_code"] == "VALIDATION_FAILED"
     assert "searches" not in body
