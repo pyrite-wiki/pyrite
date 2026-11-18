@@ -65,6 +65,7 @@ PRINCIPAL_NAMES = (
     "global_user",
     "local_user",
     "granted_user",
+    "bad_key",
 )
 
 _DISPOSABLE_NAME = "characterization-access-deciding-does-not-exist"
