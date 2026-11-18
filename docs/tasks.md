@@ -21,11 +21,14 @@ MCP `task_create` accepts optional `due_date` and `links`.
 Tasks can also take a long body from a file or stdin, like `pyrite create` does.
 Only one body source at a time: `--body`, `--body-file`, or `--stdin`.
 
+```text
+printf 'Outline...\n' > /tmp/task-body.txt
+cat /tmp/task-body.txt | pyrite task update body-from-file -k test-kb --stdin
+```
+
 ```bash
-printf 'Outline with `backticks` and $dollar\nSecond line\n' > /tmp/task-body.txt
 pyrite task create "Body from file" -k test-kb --body-file /tmp/task-body.txt
-pyrite task update body-from-file -k test-kb --body-file /tmp/task-body.txt
-printf 'From stdin\n' | pyrite task update body-from-file -k test-kb --stdin
+pyrite task get body-from-file -k test-kb
 ```
 
 A claim is atomic: competing agents do not both acquire an open task. Inspect
