@@ -9,10 +9,12 @@ from pathlib import Path
 
 import typer
 from rich.table import Table
+from typer.core import TyperCommand
 
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db, require_kb
-from .output import cli_console, path_line, validate_output_format
+from .outcome import Outcome, OutcomeKind
+from .output import OUTPUT_FORMAT_RICH_DEFAULT, cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -68,11 +70,12 @@ def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, 
     return stats["embedded"] + from_queue, max(0, skipped), max(0, -skipped)
 
 
-def _print_file_links(results: dict) -> None:
+def _print_file_links(results: dict, out=None) -> None:
     """The in-KB symbolic links a reconcile reported (#1262), for `index sync`
     and `kb reindex`: aliases (another name for an entry file, never indexed
     themselves) and dangling links (nothing at the path they name). Both are
     the user's files and are left as they are."""
+    out = out or console
     for key, heading, style in (
         ("aliases", "Aliases: {n} (in-KB links to an entry file; not indexed themselves)", ""),
         (
@@ -85,15 +88,15 @@ def _print_file_links(results: dict) -> None:
         if not rows:
             continue
         line = heading.format(n=len(rows))
-        console.print(f"  [{style}]{line}[/{style}]" if style else f"  {line}")
+        out.print(f"  [{style}]{line}[/{style}]" if style else f"  {line}")
         for row in rows[:5]:
-            console.print(
+            out.print(
                 f"    • {row['kb']}: {row['path']} -> {row['target']}",
                 markup=False,
                 highlight=False,
             )
         if len(rows) > 5:
-            console.print(f"    [dim]… and {len(rows) - 5} more[/dim]")
+            out.print(f"    [dim]… and {len(rows) - 5} more[/dim]")
 
 
 def _could_not_reach(results: dict) -> int:
@@ -103,21 +106,22 @@ def _could_not_reach(results: dict) -> int:
     return len(results.get("unreadable_folders") or []) + len(results.get("unreadable_files") or [])
 
 
-def _print_unreadable_folders(results: dict, indent: str = "  ") -> None:
+def _print_unreadable_folders(results: dict, indent: str = "  ", out=None) -> None:
     """The folders a reconcile could not list, each KB-relative (#1546): the
     rows under them were kept. For `index sync`, `index build` and `kb
     reindex`; the local CLI names them, a network caller gets a count."""
+    out = out or console
     rows = results.get("unreadable_folders") or []
     if not rows:
         return
-    console.print(
+    out.print(
         f"{indent}[red]Unreadable folders: {len(rows)} (could not be listed; "
         "the rows under them are kept)[/red]"
     )
     for row in rows[:10]:
-        console.print(f"{indent}  • {row['kb']}: {row['path']}", markup=False, highlight=False)
+        out.print(f"{indent}  • {row['kb']}: {row['path']}", markup=False, highlight=False)
     if len(rows) > 10:
-        console.print(f"{indent}  [dim]… and {len(rows) - 10} more[/dim]")
+        out.print(f"{indent}  [dim]… and {len(rows) - 10} more[/dim]")
 
 
 def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
@@ -301,8 +305,40 @@ def _kb_relative(config, path_text: str) -> Path:
     return path
 
 
-@index_app.command("sync")
+class _SyncCommand(TyperCommand):
+    """`index sync`, refusing the option combinations it cannot run while
+    click parses: a usage error (``USAGE_ERROR``, exit 2), as before the
+    command moved onto the outcome contract, where a refusal raised from the
+    body is a ``PyriteError`` (ADR-0046: the body has no usage errors)."""
+
+    def parse_args(self, ctx, args):
+        rest = super().parse_args(ctx, args)
+        params = ctx.params
+        if params.get("background") and params.get("verify"):
+            raise typer.BadParameter("--verify cannot be combined with --background", ctx=ctx)
+        if params.get("background") and params.get("confirm"):
+            raise typer.BadParameter("--confirm cannot be combined with --background", ctx=ctx)
+        names = params.get("names")
+        if names and not params.get("confirm"):
+            raise typer.BadParameter(
+                f"unexpected argument {names[0]!r}: entry names are read only with --confirm",
+                ctx=ctx,
+            )
+        if params.get("confirm") and not params.get("kb_name"):
+            raise typer.BadParameter(
+                "--confirm needs the KB the entries are in: pass -k/--kb", ctx=ctx
+            )
+        return rest
+
+
+@index_app.command("sync", cls=_SyncCommand)
 def index_sync(
+    names: list[str] | None = typer.Argument(
+        None,
+        metavar="[NAME]...",
+        help="With --confirm: the ids or KB-relative paths of the entries to confirm.",
+        show_default=False,
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to sync (all if omitted)"),
     no_embed: bool = typer.Option(False, "--no-embed", help="Skip auto-embedding after sync"),
     background: bool = typer.Option(False, "--background", help="Run in background thread"),
@@ -311,87 +347,47 @@ def index_sync(
         "--verify",
         help="Hash all known files whose stat is unchanged and sync changed content (foreground only).",
     ),
-):
-    """Incremental sync, with optional content-hash verification."""
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="After the sync, report whether each NAME (an id or a KB-relative path) is indexed "
+        "and searchable, with its schema findings and embedding state; exit 3 unless every one "
+        "is confirmed. With no NAME: every entry this sync added or changed. Needs -k.",
+    ),
+    output_format: str = OUTPUT_FORMAT_RICH_DEFAULT,
+) -> Outcome:
+    """Incremental sync, with optional content-hash verification.
+
+    `--confirm NAME...` then says, for each named id or KB-relative path,
+    whether it is indexed (its row matches its file and a keyword search
+    returns it), not_indexed, not_found, malformed, duplicate or skipped, with
+    its schema findings and embedding state (embedded, queued or
+    unavailable; never waited on). Exit 0 when every one is confirmed, 3 when
+    any is not (a schema error on a named entry counts), 1 when nothing synced.
+    """
     from ..storage import IndexManager
 
-    if background and verify:
-        raise typer.BadParameter("--verify cannot be combined with --background")
-
+    # The combinations of options it refuses are refused while click parses
+    # (`_SyncCommand`), a usage error, exit 2.
     config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db, output_format="rich")
+    require_kb(config, kb_name, db=db)
 
     if background:
         from ..services.index_worker import IndexWorker
 
         worker = IndexWorker(db, config)
         job_id = worker.submit_sync(kb_name)
-        console.print(f"[green]Sync job submitted:[/green] {job_id}")
-        console.print("Use 'pyrite index jobs' to check progress.")
-        return
+        return Outcome.done({"submitted": True, "job_id": job_id}, rich=_render_submitted)
 
     index_mgr = IndexManager(db, config)
 
-    from ..utils.kb_files import KB_YAML_REFUSALS
-
-    try:
-        if verify:
-            results = index_mgr.sync_incremental(kb_name, verify=True)
-        else:
-            results = index_mgr.sync_incremental(kb_name)
-    except KB_YAML_REFUSALS as exc:
-        # `-k` named a KB whose files cannot be read (#1542), or whose
-        # kb.yaml does not load (#1547): nothing synced, its rows kept.
-        from ..utils.errors import cli_error_from
-
-        cli_error_from(exc)
-
-    console.print("[green]Sync complete:[/green]")
-    console.print(f"  Added: {results['added']}")
-    console.print(f"  Updated: {results['updated']}")
-    console.print(f"  Removed: {results['removed']}")
-    # Surface malformed-frontmatter files as a summary instead of letting
-    # per-file ScannerError tracebacks pollute stderr. Tier A 1080.
-    malformed = results.get("malformed", [])
-    if malformed:
-        console.print(f"  [yellow]Malformed: {len(malformed)} file(s) skipped[/yellow]")
-        for entry in malformed[:5]:
-            console.print(path_line("    • ", _kb_relative(config, entry["path"]), style="dim"))
-        if len(malformed) > 5:
-            console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
-    skipped = results.get("skipped", [])
-    if skipped:
-        console.print(f"  [yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
-        for entry in skipped[:5]:
-            console.print(
-                f"    {entry['path']}: {entry['reason']}",
-                markup=False,
-                highlight=False,
-            )
-        if len(skipped) > 5:
-            console.print(f"    [dim]... and {len(skipped) - 5} more[/dim]")
-
-    duplicates = results.get("duplicates", [])
-    if duplicates:
-        console.print(
-            f"  [yellow]Duplicate ids: {len(duplicates)} (one file indexed per id)[/yellow]"
-        )
-        for line in _duplicate_lines(duplicates):
-            console.print(f"    • {line}", markup=False, highlight=False)
-
-    _print_file_links(results)
-    # Folders it could not list: their rows kept (#1546). A file it could not
-    # read is under Malformed above; both count as failed for the exit.
-    _print_unreadable_folders(results)
-
-    # A KB whose files could not be read was not synced and kept its rows
-    # (#1542): named, and the exit says the sync was not whole (below).
-    unreadable_kbs = results.get("unreadable_kbs", [])
-    for item in unreadable_kbs:
-        console.print(
-            f"  [red]Not synced: {item['kb']}: {item['error']}[/red]",
-            highlight=False,
-        )
+    # `-k` named a KB whose files cannot be read (#1542), or whose kb.yaml
+    # does not load (#1547): `KB_YAML_REFUSALS` is raised, nothing synced, its
+    # rows kept, and the root renders the refusal.
+    if verify:
+        results = index_mgr.sync_incremental(kb_name, verify=True)
+    else:
+        results = index_mgr.sync_incremental(kb_name)
 
     # Auto-embed new/updated entries if embeddings are available.
     #
@@ -414,12 +410,107 @@ def index_sync(
                 svc = EmbeddingService(db, model_name=config.settings.embedding_model)
                 stats = svc.embed_all(kb_name=kb_name)
                 if stats["embedded"] > 0:
-                    console.print(f"  Embedded: {stats['embedded']}")
+                    results["embedded"] = stats["embedded"]
         except Exception:
             logger.debug("Embedding not available, skipping")
 
+    if confirm:
+        # After the embed, so each row's embedding state is what it now is.
+        from ..services.index_confirm import confirm_entries
+
+        results["confirm"] = confirm_entries(index_mgr, kb_name, names, results)
+
+    # A KB whose files could not be read was not synced and kept its rows
+    # (#1542); a folder it could not list, or a file it could not read, kept
+    # theirs (#1546). Each counts as failed: exit 3, or 1 when nothing synced.
+    unreadable_kbs = results.get("unreadable_kbs", [])
     synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
-    exit_unless_whole(len(unreadable_kbs) + _could_not_reach(results), synced)
+    failed = len(unreadable_kbs) + _could_not_reach(results)
+    outcome = Outcome.from_counts(synced, failed, results, rich=_sync_renderer(config))
+    if outcome.kind is OutcomeKind.DONE and results.get("confirm", {}).get("not_confirmed"):
+        # A named entry that is not confirmed: the sync ran, the ask did not
+        # all happen (docs/json-contracts.md, "Exit codes (CLI)").
+        return Outcome.partial(results, rich=outcome.rich)
+    return outcome
+
+
+def _render_submitted(out, data: dict) -> None:
+    out.print(f"[green]Sync job submitted:[/green] {data['job_id']}")
+    out.print("Use 'pyrite index jobs' to check progress.")
+
+
+def _sync_renderer(config):
+    """The text `index sync` has always printed, then the confirm rows."""
+
+    def render_sync(out, results: dict) -> None:
+        out.print("[green]Sync complete:[/green]")
+        out.print(f"  Added: {results['added']}")
+        out.print(f"  Updated: {results['updated']}")
+        out.print(f"  Removed: {results['removed']}")
+        # Surface malformed-frontmatter files as a summary instead of letting
+        # per-file ScannerError tracebacks pollute stderr. Tier A 1080.
+        malformed = results.get("malformed", [])
+        if malformed:
+            out.print(f"  [yellow]Malformed: {len(malformed)} file(s) skipped[/yellow]")
+            for entry in malformed[:5]:
+                out.print(path_line("    • ", _kb_relative(config, entry["path"]), style="dim"))
+            if len(malformed) > 5:
+                out.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
+        skipped = results.get("skipped", [])
+        if skipped:
+            out.print(f"  [yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
+            for entry in skipped[:5]:
+                out.print(f"    {entry['path']}: {entry['reason']}", markup=False, highlight=False)
+            if len(skipped) > 5:
+                out.print(f"    [dim]... and {len(skipped) - 5} more[/dim]")
+
+        duplicates = results.get("duplicates", [])
+        if duplicates:
+            out.print(
+                f"  [yellow]Duplicate ids: {len(duplicates)} (one file indexed per id)[/yellow]"
+            )
+            for line in _duplicate_lines(duplicates):
+                out.print(f"    • {line}", markup=False, highlight=False)
+
+        _print_file_links(results, out=out)
+        # Folders it could not list: their rows kept (#1546). A file it could
+        # not read is under Malformed above; both count as failed for the exit.
+        _print_unreadable_folders(results, out=out)
+
+        for item in results.get("unreadable_kbs", []):
+            out.print(f"  [red]Not synced: {item['kb']}: {item['error']}[/red]", highlight=False)
+
+        if results.get("embedded"):
+            out.print(f"  Embedded: {results['embedded']}")
+
+        if "confirm" in results:
+            _render_confirm(out, results["confirm"])
+
+    return render_sync
+
+
+def _render_confirm(out, block: dict) -> None:
+    rows = block["entries"]
+    which = "named" if block["named"] else "added or changed by this sync"
+    out.print(f"Confirm ({which}): {block['confirmed']} of {len(rows)} confirmed", highlight=False)
+    for row in rows:
+        mark = "[green]ok[/green]" if row["confirmed"] else "[red]NOT CONFIRMED[/red]"
+        where = f" ({row['path']})" if row.get("path") and row["path"] != row["name"] else ""
+        out.print(f"  {mark} ", end="")
+        out.print(f"{row['name']}{where}: {row['status']}", markup=False, highlight=False)
+        details = []
+        if row.get("reason"):
+            details.append(row["reason"])
+        if row.get("paths"):
+            details.append("claimed by " + ", ".join(row["paths"]))
+        if row.get("embedding"):
+            details.append(f"embedding {row['embedding']}")
+        if details:
+            out.print("      " + "; ".join(details), markup=False, highlight=False)
+        for finding in row["findings"]:
+            out.print(
+                f"      {finding['severity']}: {finding['message']}", markup=False, highlight=False
+            )
 
 
 @index_app.command("stats")

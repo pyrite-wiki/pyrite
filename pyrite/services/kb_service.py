@@ -3644,7 +3644,10 @@ class KBService:
                 "Entries are only searchable once indexed. Direct file "
                 "writes under a KB's path (not via `pyrite create`/`update`) "
                 "need `pyrite index sync` afterward -- it's incremental "
-                "and cheap, safe to run after every batch of writes."
+                "and cheap, safe to run after every batch of writes. "
+                "`pyrite index sync -k <kb> --confirm <id-or-path> ...` also "
+                "says whether each named entry is indexed and searchable, "
+                "and exits 3 when one is not."
             ),
             "error_contract": {
                 "shape": "{error, error_code, suggestion?, errors?, retryable}",

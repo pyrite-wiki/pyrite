@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import ValidationError as PydanticValidationError
 
 from ...config import validate_kb_default_role
@@ -84,6 +84,8 @@ def get_stats(
 def sync_index(
     request: Request,
     wait: bool = False,
+    kb: str | None = None,
+    confirm: list[str] | None = Query(None),
     worker: IndexWorker = Depends(get_index_worker),
     index_mgr: IndexManager = Depends(get_index_mgr),
 ):
@@ -91,10 +93,30 @@ def sync_index(
 
     By default submits a background job and returns immediately with a job_id.
     Pass ?wait=true to block until completion and return the legacy SyncResponse
-    format with counts.
+    format with counts; ?kb= syncs that KB alone.
+
+    ``confirm`` (repeated: ``?confirm=a&confirm=notes/b.md``; one empty value
+    confirms every entry the sync added or changed) adds the ``confirm`` block
+    ``pyrite index sync --confirm`` prints (``services.index_confirm``,
+    #1691). It needs ``wait=true`` and ``kb``.
     """
+    if kb is not None:
+        from ...services.access_policy import UNSCOPED
+        from ...services.kb_resolver import resolve_kb
+
+        # Admin tier, so unscoped: an unknown name is 404 KB_NOT_FOUND.
+        kb = resolve_kb(index_mgr.config, kb, readable_kbs=UNSCOPED).name
+    if confirm is not None:
+        if not wait:
+            raise ValidationError(
+                "confirm needs wait=true: a confirm reads the sync, which a background job "
+                "has not done yet"
+            )
+        if not kb:
+            raise ValidationError("confirm needs kb: the KB the entries are in")
+        confirm = [name for name in confirm if name.strip()]
     if wait:
-        result = index_mgr.sync_incremental()
+        result = index_mgr.sync_incremental(kb)
 
         # ADR-0035: a write enqueues instead of embedding, and this is one of
         # the two server paths that pay that debt back (the other is the
@@ -112,7 +134,7 @@ def sync_index(
 
         broadcast_event("kb_synced", entry_id="", kb_name="")
 
-        return SyncResponse(
+        response = SyncResponse(
             synced=True,
             added=result.get("added", 0),
             updated=result.get("updated", 0),
@@ -122,8 +144,16 @@ def sync_index(
             # Folders it could not list, rows kept: a count, never a path (#1546).
             unreadable_folders=network_shape(result)["unreadable_folders"],
         )
+        if confirm is None:
+            return response
+        from ...services.index_confirm import confirm_entries
 
-    job_id = worker.submit_sync()
+        return {
+            **response.model_dump(),
+            "confirm": confirm_entries(index_mgr, kb, confirm, result),
+        }
+
+    job_id = worker.submit_sync(kb)
     return {"job_id": job_id, "status": "submitted"}
 
 

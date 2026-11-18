@@ -159,6 +159,19 @@ OUTPUT_FORMAT = typer.Option(
     help="Output format: json (default), yaml, or rich for text. PYRITE_FORMAT sets the default.",
 )
 
+#: The shared option for a command whose default output is text for a person
+#: and whose text existing callers read (``index sync``, #1691): the same
+#: option, the same check and the same ``PYRITE_FORMAT``, only the default is
+#: ``rich``. A person running it sees what they saw before; an agent with
+#: ``PYRITE_FORMAT=json`` or ``--format json`` gets the outcome contract's JSON.
+OUTPUT_FORMAT_RICH_DEFAULT = typer.Option(
+    "rich",
+    "--format",
+    envvar="PYRITE_FORMAT",
+    callback=_record_format,
+    help="Output format: rich (default), json or yaml. PYRITE_FORMAT sets the default.",
+)
+
 #: ``-f`` meant ``--format`` on the task commands. #303: it keeps working until
 #: 0.27, with a warning on stderr, then goes. Declared beside OUTPUT_FORMAT on
 #: a command that had ``-f``; hidden from help.

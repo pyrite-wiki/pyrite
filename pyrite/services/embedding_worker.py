@@ -349,6 +349,15 @@ class EmbeddingWorker:
             logger.debug("embed_queue unreadable", exc_info=True)
             return False
 
+    def queued_ids(self, kb_name: str) -> set[str]:
+        """The ids of ``kb_name`` with a queue row, whatever its status: each
+        is owed an embedding of its current text (``index sync --confirm``
+        reports it as ``queued``, #1691)."""
+        rows = self.db._raw_conn.execute(
+            "SELECT entry_id FROM embed_queue WHERE kb_name = ?", (kb_name,)
+        ).fetchall()
+        return {r[0] for r in rows}
+
     def get_status(self) -> dict:
         """Get queue status: counts by status."""
         rows = self.db._raw_conn.execute(

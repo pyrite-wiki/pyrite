@@ -357,10 +357,9 @@ def test_confirm_with_no_ids_and_nothing_changed_is_done_and_empty(world):
 def test_a_row_whose_hash_differs_from_its_file_is_not_indexed(world):
     """The stat matches, so the sync does not re-read the file; the confirm
     still compares the row's hash with the file's."""
-    world.db.execute_sql(
-        "UPDATE entry SET content_hash = 'not-the-files-hash' WHERE id = 'unchanged'", {}
-    )
-    world.db.commit()
+    con = world.db._raw_conn
+    con.execute("UPDATE entry SET content_hash = 'not-the-files-hash' WHERE id = 'unchanged'")
+    con.commit()
 
     row = _rows(_json(_sync(world, "--confirm", "unchanged")))["unchanged"]
 
@@ -378,13 +377,13 @@ def test_a_row_the_keyword_index_does_not_hold_is_not_searchable(world):
         {},
     )
     r = rows[0]
-    db.execute_sql(
+    db._raw_conn.execute(
         "INSERT INTO entry_fts(entry_fts, rowid, id, kb_name, entry_type, title, body, summary, "
         "location) VALUES('delete', :rowid, :id, :kb_name, :entry_type, :title, "
         "COALESCE(:body, ''), COALESCE(:summary, ''), COALESCE(:location, ''))",
         dict(r),
     )
-    db.commit()
+    db._raw_conn.commit()
 
     row = _rows(_json(_sync(world, "--confirm", "unchanged")))["unchanged"]
 
@@ -487,8 +486,8 @@ def test_names_without_confirm_are_refused(world):
 
 def test_confirm_without_a_kb_is_refused(world):
     result = world.cli("index", "sync", "--no-embed", "--format", "json", "--confirm", "x")
-    assert result.exit_code == 1, result.output
-    assert _json(result)["error_code"] == "VALIDATION_FAILED"
+    assert result.exit_code == 2, result.output
+    assert "--confirm needs the KB" in result.output
 
 
 def test_a_kb_whose_kb_yaml_does_not_load_refuses_and_confirms_nothing(world):
@@ -614,4 +613,5 @@ def test_rest_confirm_without_wait_is_refused(world):
     state_db = getattr(app.state, "pyrite_db", None)
     if state_db is not None:
         state_db.close()
-    assert resp.status_code == 400, resp.text
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "VALIDATION_FAILED"

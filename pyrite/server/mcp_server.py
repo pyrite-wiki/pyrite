@@ -245,6 +245,23 @@ def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool
     return None
 
 
+def _confirm_names(value: Any, *, kb_name: Any, background: Any) -> list[str] | None:
+    """``kb_index_sync``'s ``confirm``: None when not asked, else the names (an
+    empty list confirms what the sync changed). Refused with a background sync
+    or without ``kb_name``, as ``index sync --confirm`` refuses them (#1691)."""
+    if value is None:
+        return None
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValidationError("confirm must be a list of entry ids or KB-relative paths")
+    if background:
+        raise ValidationError(
+            "confirm cannot be combined with background: a confirm reads the sync"
+        )
+    if not kb_name:
+        raise ValidationError("confirm needs kb_name: the KB the entries are in")
+    return [v for v in value if v.strip()]
+
+
 def _error(
     code: str,
     message: str,
@@ -2212,9 +2229,14 @@ class PyriteMCPServer:
     # =========================================================================
 
     def _kb_index_sync(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Sync index with file changes. Set background=true for async execution."""
+        """Sync index with file changes. Set background=true for async execution.
+
+        ``confirm`` (a list of ids or KB-relative paths; empty: every entry the
+        sync added or changed) adds the ``confirm`` block ``index sync
+        --confirm`` prints (``services.index_confirm``, #1691)."""
         kb_name = args.get("kb_name")
         background = args.get("background", False)
+        confirm = _confirm_names(args.get("confirm"), kb_name=kb_name, background=background)
 
         if background:
             worker = self._get_index_worker()
@@ -2224,7 +2246,7 @@ class PyriteMCPServer:
         results = self.index_mgr.sync_incremental(kb_name)
         from ..services.index_health import network_shape
 
-        return {
+        answer = {
             "synced": True,
             "added": results["added"],
             "updated": results["updated"],
@@ -2237,6 +2259,11 @@ class PyriteMCPServer:
             # path, over the network (``network_shape``).
             "unreadable_folders": network_shape(results)["unreadable_folders"],
         }
+        if confirm is not None:
+            from ..services.index_confirm import confirm_entries
+
+            answer["confirm"] = confirm_entries(self.index_mgr, kb_name, confirm, results)
+        return answer
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:
         """Check status of a background index job."""
