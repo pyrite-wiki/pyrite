@@ -333,8 +333,9 @@ def task_list(
     dispatchable: bool = typer.Option(
         False,
         "--dispatchable",
-        help="Only tasks a worker can take now: open, unassigned, unparked, unblocked, "
-        "no children; highest priority first. Adds counts and excluded.",
+        help="Only tasks a worker can take now (for a caller who may claim, each one is a "
+        "task claim accepts): open, unassigned, unparked, unblocked, no children; "
+        "highest priority first. Adds counts and excluded.",
     ),
     fields: str | None = typer.Option(
         None,

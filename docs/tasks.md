@@ -32,7 +32,8 @@ pyrite task claim write-intro -k test-kb --assignee bob
 `--dispatchable` lists the open tasks nobody holds: unassigned, not parked,
 every dependency resolved, and no children (a parent's work is in its
 children, which are listed instead). The most important come first, then the
-oldest. `counts` says how many tasks were left out for each reason, and
+oldest. For a caller who may claim, every listed task is one `task claim`
+accepts now. `counts` says how many tasks were left out for each reason, and
 `excluded` names each open one with its reason. `--fields` keeps only the
 keys you name, plus `id` and `kb_name`. MCP `task_list` takes `dispatchable`
 and `fields`; REST takes `?dispatchable=true&fields=...`.

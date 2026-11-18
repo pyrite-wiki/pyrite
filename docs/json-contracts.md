@@ -1189,17 +1189,18 @@ without them the body is unchanged:
 
   ```json
   {"count": 2, "tasks": [...],
-   "counts": {"dispatchable": 2, "not_open": 5, "orphaned": 0, "has_children": 1,
-              "assigned": 1, "parked": 3, "blocked": 2},
+   "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
+              "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
+              "unreadable": 0},
    "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}]}
   ```
 
   `counts` has every key, even at zero, and sums to the tasks the other
   filters matched. `excluded` lists each **open** task that was left out,
   with its one reason, in the same order; tasks that are not open are only
-  counted. Every listed task is one `task claim` accepts now: a row the claim
-  would refuse is left out with its reason. A task gets the first reason that
-  applies:
+  counted. For a caller who may claim, every listed task is one `task claim`
+  accepts now: a row the claim would refuse is left out with its reason. A
+  task gets the first reason that applies:
 
   | Reason | The task |
   |---|---|
