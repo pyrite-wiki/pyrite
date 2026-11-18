@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
@@ -16,10 +17,12 @@ from ..exceptions import (
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
+from ..models.task_queue import classify_tasks, count_reasons, dependency_ids
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 from .access_policy import UNSCOPED, named_kb
+from .read_shaping import project_fields
 
 if TYPE_CHECKING:
     from ..models import Entry
@@ -529,6 +532,130 @@ class TaskService:
                     t["parked_awaiting"] = (entry.get("parked_awaiting") or "").strip()
 
         return tasks
+
+    def task_listing(
+        self,
+        kb_name: str | None = None,
+        status: str | None = None,
+        assignee: str | None = None,
+        parent: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
+        priority: int | None = None,
+        *,
+        dispatchable: bool = False,
+        fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """The body of `task list` on every surface: ``{"count", "tasks"}``.
+
+        The CLI ``task list``, the MCP ``task_list`` tool and REST ``GET
+        /tasks`` return this and nothing else. Without ``dispatchable`` and
+        ``fields`` it is exactly :meth:`list_tasks` under ``tasks``, as before
+        #1686.
+
+        ``dispatchable`` keeps only the tasks a worker can take now, as
+        :func:`~pyrite.models.task_queue.classify_tasks` decides (the one
+        place that is decided), in its order: priority highest first, then
+        oldest. It adds ``counts`` (every task the other filters matched, per
+        reason, ``dispatchable`` included) and ``excluded`` (each open task
+        left out, with its one reason, in the same order). Nothing is written.
+
+        ``fields`` projects each ``tasks`` row through
+        :func:`~pyrite.services.read_shaping.project_fields`.
+        """
+        tasks = self.list_tasks(
+            kb_name=kb_name,
+            status=status,
+            assignee=assignee,
+            parent=parent,
+            kb_names=kb_names,
+            priority=priority,
+        )
+        out: dict[str, Any] = {}
+        if dispatchable:
+            classified = self._classify_for_dispatch(tasks, kb_name, kb_names)
+            tasks = [row for row, reason in classified if reason is None]
+            out["counts"] = count_reasons(classified)
+            out["excluded"] = [
+                {"id": row["id"], "kb_name": row["kb_name"], "reason": reason}
+                for row, reason in classified
+                if reason not in (None, "not_open")
+            ]
+        if fields:
+            tasks = [project_fields(row, fields) for row in tasks]
+        return {"count": len(tasks), "tasks": tasks, **out}
+
+    def _classify_for_dispatch(
+        self,
+        tasks: list[dict[str, Any]],
+        kb_name: str | None,
+        kb_names: set[str] | list[str] | None,
+    ) -> list[tuple[dict[str, Any], str | None]]:
+        """Gather what :func:`classify_tasks` reads beyond a ``list_tasks``
+        row, ask it, and hand back the rows as ``list_tasks`` shaped them.
+
+        The I/O is here, so the classifier stays pure: one index read for
+        each row's ``created_at``, ``file_path`` and ``dependencies``, a
+        stat of the file of each task whose effective status is open, and
+        the derived completion of a KB a ``kb:id`` dependency names -- only
+        when this listing reads that KB, so a dependency on a KB the caller
+        may not read stays unresolved (blocked) and reveals nothing.
+        """
+        if not tasks:
+            return []
+        if kb_name:
+            scope = {kb_name}
+        elif kb_names is not None:
+            scope = set(kb_names)
+        else:
+            scope = {kb.name for kb in self.config.all_kbs()}
+        listed_kbs = sorted({t["kb_name"] for t in tasks})
+        params: dict[str, Any] = {}
+        in_listed = kb_names_clause("kb_name", listed_kbs, params)
+        extra_rows = self._query(
+            "SELECT kb_name, id, created_at, file_path, metadata FROM entry "
+            f"WHERE entry_type = 'task' AND {in_listed}",
+            params,
+        )
+        extra = {(r["kb_name"], r["id"]): r for r in extra_rows}
+
+        derived = {kb: self.derived_completion(kb) for kb in listed_kbs}
+        inputs = []
+        for task in tasks:
+            row = extra.get((task["kb_name"], task["id"]), {})
+            deps = parse_metadata(row.get("metadata")).get("dependencies")
+            open_now = task["derived"]["effective_status"] == "open"
+            inputs.append(
+                {
+                    **task,
+                    "created_at": row.get("created_at") or "",
+                    "dependencies": deps,
+                    "file_present": not open_now or self._file_present(task, row),
+                }
+            )
+            for dep in dependency_ids(deps):
+                other, sep, _ = dep.partition(":")
+                if sep and other in scope and other not in derived:
+                    derived[other] = self.derived_completion(other)
+
+        by_key = {(t["kb_name"], t["id"]): t for t in tasks}
+        return [
+            (by_key[(row["kb_name"], row["id"])], reason)
+            for row, reason in classify_tasks(inputs, derived)
+        ]
+
+    def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
+        """Whether the task's file is still on disk. A row that records no
+        path cannot be checked and is not called orphaned."""
+        file_path = row.get("file_path")
+        if not file_path:
+            return True
+        path = Path(file_path)
+        if not path.is_absolute():
+            kb = self.config.get_kb(task["kb_name"])
+            if kb is None:
+                return True
+            path = Path(kb.path) / path
+        return path.exists()
 
     # -- Protocol finders (ADR-0017) -------------------------------------
     # Cross-type queries over the protocol columns. The MCP `kb_find_*`
