@@ -1429,7 +1429,7 @@ class IndexManager:
         self.db.update_kb_indexed(kb_config.name, len(plan.winners) - len(unwritable))
         return results
 
-    def locate(self, kb_config: KBConfig, names: Iterable[str]) -> list[dict[str, Any]]:
+    def confirm_rows(self, kb_config: KBConfig, names: Iterable[str]) -> list[dict[str, Any]]:
         """What the files and the rows say about each named id or KB-relative
         path, read after a sync (``index sync --confirm``, #1691). Writes
         nothing.

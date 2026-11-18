@@ -8,7 +8,7 @@ back. Writes nothing.
 Each name, an id or a KB-relative path (principle 5: a file with no ``id:``
 can be confirmed by its path), gets one row:
 
-- ``status``: what the files and the rows say (``IndexManager.locate``), with
+- ``status``: what the files and the rows say (``IndexManager.confirm_rows``), with
   one more check: an entry whose row matches its file is ``indexed`` only if a
   keyword search for it returns it; otherwise it is ``not_indexed``. The
   keyword row is written by a trigger on the entry row (SQLite), so the two
@@ -83,12 +83,12 @@ def confirm_entries(
                 if row["kb"] == kb_name and row["change"] != "removed"
             )
         )
-    rows = index_mgr.locate(kb, targets) if kb is not None and targets else []
+    rows = index_mgr.confirm_rows(kb, targets) if kb is not None and targets else []
 
     from .search_service import SearchService
 
     search = SearchService(db, config.settings)
-    embedding = _EmbeddingStates(db, kb_name)
+    embedding = _EmbeddingStates(db, kb_name, config.settings.embedding_model)
     entries = []
     for row in rows:
         entries.append(_confirm_row(row, kb_name, named, db, config, search, embedding))
@@ -184,8 +184,9 @@ class _EmbeddingStates:
     """``embedded``, ``queued`` or ``unavailable`` for an entry of one KB,
     read once for the KB, never waited on (ADR-0035)."""
 
-    def __init__(self, db, kb_name: str):
+    def __init__(self, db, kb_name: str, model_name: str | None):
         self._db = db
+        self._model_name = model_name
         self._kb_name = kb_name
         self._loaded = False
         self._unavailable = False
@@ -212,7 +213,9 @@ class _EmbeddingStates:
         from .embedding_worker import EmbeddingWorker
 
         try:
-            self._queued = EmbeddingWorker(self._db).queued_ids(self._kb_name)
+            self._queued = EmbeddingWorker(self._db, model_name=self._model_name).queued_ids(
+                self._kb_name
+            )
         except Exception:
             logger.debug("Could not read the embed queue", exc_info=True)
 

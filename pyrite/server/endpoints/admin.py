@@ -86,6 +86,7 @@ def sync_index(
     wait: bool = False,
     kb: str | None = None,
     confirm: list[str] | None = Query(None),
+    policy: AccessPolicy = Depends(get_access_policy),
     worker: IndexWorker = Depends(get_index_worker),
     index_mgr: IndexManager = Depends(get_index_mgr),
 ):
@@ -101,11 +102,10 @@ def sync_index(
     #1691). It needs ``wait=true`` and ``kb``.
     """
     if kb is not None:
-        from ...services.access_policy import UNSCOPED
-        from ...services.kb_resolver import resolve_kb
-
-        # Admin tier, so unscoped: an unknown name is 404 KB_NOT_FOUND.
-        kb = resolve_kb(index_mgr.config, kb, readable_kbs=UNSCOPED).name
+        # Through the one resolver, for the caller: an unknown name is 404
+        # KB_NOT_FOUND, as on the other admin KB routes.
+        resolved = resolve_named_kb(request, policy, kb)
+        kb = resolved.name if resolved is not None else None
     if confirm is not None:
         if not wait:
             raise ValidationError(

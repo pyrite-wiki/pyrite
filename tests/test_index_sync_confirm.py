@@ -35,6 +35,7 @@ import pytest
 
 from pyrite.config import KBConfig
 from tests._world import build_world
+from tests.cli_help import plain
 
 KB = "notes"
 
@@ -397,34 +398,24 @@ def test_a_row_the_keyword_index_does_not_hold_is_not_searchable(world):
 # --------------------------------------------------------------------------
 
 
-@pytest.fixture
-def fake_embedder(monkeypatch):
-    """An embedding provider that needs no model: a fixed vector."""
-    import pyrite.services.embedding_service as es
+def _with_a_model(world, monkeypatch):
+    """An embedding provider whose model is a stand-in (the process edge):
+    the real EmbeddingService and embed queue run."""
+    monkeypatch.undo()  # the world's no_embedder
+    from tests.search_verdict_seed import install_fake_model
 
-    monkeypatch.setattr(es, "is_available", lambda: True)
-    monkeypatch.setattr(es.EmbeddingService, "embed_text", lambda self, text: [0.1] * 384)
+    install_fake_model(monkeypatch)
+    if not world.db.vec_available:
+        pytest.skip("sqlite-vec is not loaded here: no entry can be embedded")
 
 
 def _embedded(world, monkeypatch):
-    monkeypatch.undo()
-    import pyrite.services.embedding_service as es
-
-    monkeypatch.setattr(es, "is_available", lambda: True)
-    monkeypatch.setattr(es.EmbeddingService, "embed_text", lambda self, text: [0.1] * 384)
-    if not world.db.vec_available:
-        pytest.skip("sqlite-vec is not loaded here: no entry can be embedded")
+    _with_a_model(world, monkeypatch)
     return ()  # the sync embeds
 
 
 def _queued(world, monkeypatch):
-    monkeypatch.undo()
-    import pyrite.services.embedding_service as es
-
-    monkeypatch.setattr(es, "is_available", lambda: True)
-    monkeypatch.setattr(es.EmbeddingService, "embed_text", lambda self, text: [0.1] * 384)
-    if not world.db.vec_available:
-        pytest.skip("sqlite-vec is not loaded here: the queue state is not entered")
+    _with_a_model(world, monkeypatch)
     return ("--no-embed",)  # owed, not embedded
 
 
@@ -475,19 +466,19 @@ def test_a_queued_row_is_queued_even_when_an_old_vector_exists(world, monkeypatc
 def test_confirm_with_background_is_refused(world):
     result = world.cli("index", "sync", "-k", KB, "--background", "--confirm", "unchanged")
     assert result.exit_code == 2, result.output
-    assert "--confirm cannot be combined with --background" in result.output
+    assert "--confirm cannot be combined with --background" in plain(result.output)
 
 
 def test_names_without_confirm_are_refused(world):
     result = world.cli("index", "sync", "-k", KB, "unchanged")
     assert result.exit_code == 2, result.output
-    assert "--confirm" in result.output
+    assert "--confirm" in plain(result.output)
 
 
 def test_confirm_without_a_kb_is_refused(world):
     result = world.cli("index", "sync", "--no-embed", "--format", "json", "--confirm", "x")
     assert result.exit_code == 2, result.output
-    assert "--confirm needs the KB" in result.output
+    assert "--confirm needs the KB" in plain(result.output)
 
 
 def test_a_kb_whose_kb_yaml_does_not_load_refuses_and_confirms_nothing(world):
