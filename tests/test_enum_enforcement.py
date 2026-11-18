@@ -197,10 +197,23 @@ class TestValidateEntrySwitch:
         result = schema(enforce_enums=mode).validate_entry("org", {"title": "T", field: value})
         bucket = result["errors"] if mode else result["warnings"]
         other = result["warnings"] if mode else result["errors"]
-        hits = [f for f in bucket if f["field"] == field]
+
+        # A scalar in a list field is also a type finding, "expected list"
+        # (#1502), under `enforce` (off here, so a warning) -- not the enum
+        # switch. Counted apart from the enum finding this test is about.
+        def is_type(f):
+            return f["field"] == field and f.get("expected") == "list"
+
+        scalar_on_list = field == "codes" and not isinstance(value, list)
+        type_findings = [f for f in result["errors"] + result["warnings"] if is_type(f)]
+        assert [(f["rule"], f["severity"]) for f in type_findings] == (
+            [("field_list", "warning")] if scalar_on_list else []
+        ), result
+
+        hits = [f for f in bucket if f["field"] == field and not is_type(f)]
         assert len(hits) == 1, result
         assert hits[0]["rule"] == rule
-        assert not [f for f in other if f["field"] == field]
+        assert not [f for f in other if f["field"] == field and not is_type(f)]
         assert hits[0]["severity"] == ("error" if mode else "warning")
 
     def test_the_switch_defaults_to_on_when_absent(self):
@@ -307,14 +320,16 @@ class TestWritePath:
         ADR-0042 decision 8 (#676): a violation already on disk, in a field the
         request does not name, comes back as a warning; it no longer refuses
         an unrelated update. (Round 1 of #570 pinned the refusal; the decision
-        overrides it.) Setting the field to another bad value still refuses."""
+        overrides it.) Setting the field to another bad value still refuses:
+        a mapping, which stays bad after the coercion (a scalar sent to a
+        multi-select is stored as a one-item list now, #1502)."""
         svc, kb, _ = svc_factory(enforce_enums=True, enforce=True)
         path = _write_org(kb, "acme", labels="a")
         written = svc.update("acme", "t", {"tags": ["x"]})
         assert any(w["field"] == "labels" for w in written.warnings)
         assert 'labels: "a"' in path.read_text()
         with pytest.raises(SchemaViolationError, match="labels"):
-            svc.update("acme", "t", {"labels": "b"})
+            svc.update("acme", "t", {"labels": {"k": 1}})
 
     def test_a_select_cannot_become_a_list_through_the_exception(self, svc_factory):
         """Round 1, should-fix 2: the per-element exception is for list-valued
