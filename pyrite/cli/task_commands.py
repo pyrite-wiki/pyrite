@@ -106,9 +106,7 @@ _FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
 _FIELD_CREATE_NEVER_TAKES_EFFECT: frozenset[str] = frozenset({"type", "created_at", "updated_at"})
 
 
-def _parse_task_create_fields(
-    field: list[str] | None, *, config: Any, kb_name: str
-) -> dict[str, Any]:
+def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
     """Parse `--field key=value` pairs for `task create`.
 
     Uses the same value parser as `create -f`/`update -f`
@@ -228,7 +226,7 @@ def task_create(
 
     svc, db = _get_service(kb_name)
     try:
-        fields = _parse_task_create_fields(field, config=svc.config, kb_name=kb_name)
+        fields = _parse_task_create_fields(field)
         result = svc.create_task(
             kb_name=kb_name,
             title=title,
