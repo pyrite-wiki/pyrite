@@ -39,12 +39,10 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
-from pyrite.server.api import create_app, get_config, get_db
+from pyrite.server.api import create_app
 from pyrite.services.auth_service import AuthService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import SESSION_COOKIE
-
-pytestmark = pytest.mark.core
 
 KB_NAME = "public-kb"
 ADMIN_KEY = "operator-admin-key"
@@ -98,9 +96,8 @@ class World:
             {"past": past, "h": hashlib.sha256(self.expired.encode()).hexdigest()},
         )
         assert auth.logout(self.revoked)
+        # The app opens its own handle on the same index file.
         self.app = create_app(config=self.config)
-        self.app.dependency_overrides[get_config] = lambda: self.config
-        self.app.dependency_overrides[get_db] = lambda: self.db
 
     def client(self) -> TestClient:
         return TestClient(self.app)

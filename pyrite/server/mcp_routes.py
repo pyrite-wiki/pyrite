@@ -385,11 +385,11 @@ def mount_mcp_routes(
             mcp_server = _get_mcp_server(tier)
             info["tools_count"] = len(mcp_server.tools)
             info["tier"] = tier
-        except HTTPException as exc:
+        except HTTPException:
             if presented is not None:
                 # A credential that does not verify is refused, not shown
                 # the unauthenticated view (#1754); only no credential is.
-                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+                return JSONResponse(status_code=401, content={"detail": _REFUSED})
             # Unauthenticated — show basic info
             read_server = _get_mcp_server("read")
             info["tools_count"] = len(read_server.tools)

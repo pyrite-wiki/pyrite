@@ -622,22 +622,21 @@ async def verify_api_key(
             request.state.auth_user = ctx["user"]
         return
 
-    if resolution.outcome is Outcome.FAILED:
-        headers = None
-        if resolution.failed_cookie:
-            clear = Response()
-            clear.delete_cookie(key=SESSION_COOKIE, path="/")
-            headers = {"set-cookie": clear.headers["set-cookie"]}
-        raise HTTPException(status_code=401, detail="Invalid or missing API key", headers=headers)
+    headers = None
+    if resolution.outcome is Outcome.NONE:
+        if config.settings.auth.enabled and config.settings.auth.anonymous_tier:
+            request.state.api_role = config.settings.auth.anonymous_tier
+            # Not an operator key: per-KB roles apply (a private KB is hidden).
+            request.state.anonymous = True
+            return
+    elif resolution.failed_cookie:
+        # Presented and not verified: refused below whatever the anonymous
+        # tier says. A stale cookie is also cleared.
+        clear = Response()
+        clear.delete_cookie(key=SESSION_COOKIE, path="/")
+        headers = {"set-cookie": clear.headers["set-cookie"]}
 
-    # No credential presented.
-    if config.settings.auth.enabled and config.settings.auth.anonymous_tier:
-        request.state.api_role = config.settings.auth.anonymous_tier
-        # Not an operator key: per-KB roles apply (a private KB is hidden).
-        request.state.anonymous = True
-        return
-
-    raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    raise HTTPException(status_code=401, detail="Invalid or missing API key", headers=headers)
 
 
 def requires_tier(tier: str):
