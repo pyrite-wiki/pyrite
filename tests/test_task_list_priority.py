@@ -74,7 +74,6 @@ def test_service_priority_filter_respects_kb_scope(task_list_env, tmp_path, kb_n
         (["--priority", "7"], {"Seven open", "Seven claimed"}),
         (["--priority", "7", "--status", "open"], {"Seven open"}),
         ([], {"Seven open", "Seven claimed", "Five open"}),
-        (["--priority", "0"], set()),
     ],
 )
 def test_cli_priority_filter(task_list_env, fmt, filters, expected):
@@ -87,6 +86,20 @@ def test_cli_priority_filter(task_list_env, fmt, filters, expected):
     else:
         for title in ("Seven open", "Seven claimed", "Five open"):
             assert (title in result.stdout) == (title in expected)
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize("fmt", ["json", "rich"])
+def test_cli_priority_filter_refuses_zero(task_list_env, fmt):
+    result = runner.invoke(app, ["task", "list", "-k", "test-tasks", "-f", fmt, "--priority", "0"])
+    assert result.exit_code == 2, result.output
+    if fmt == "json":
+        error = json.loads(result.stdout)
+        assert error["error_code"] == "USAGE_ERROR"
+        assert "--priority" in error["error"]
+    else:
+        assert "USAGE_ERROR" in result.output
+        assert "--priority" in plain(result.output)
 
 
 @pytest.mark.cli
