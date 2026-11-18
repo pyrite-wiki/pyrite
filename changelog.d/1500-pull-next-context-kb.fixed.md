@@ -1,1 +1,0 @@
-- `sw pull-next` now checks dependencies and counts linked context in each candidate's own KB when no KB is specified, so blocked items are not recommended. Its CLI and MCP recommendation includes `kb_name`. Context bundles now include up to 200 characters of each readable linked entry's body; unreadable targets remain hidden (#1500).

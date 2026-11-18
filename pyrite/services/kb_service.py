@@ -1456,6 +1456,10 @@ class KBService:
     def _hook_ctx(
         self, kb_name: str, kb_config: KBConfig, operation: str, extra: dict | None = None
     ) -> PluginContext:
+        # `kb_schema` is what lets a before_save hook judge by the KB's own
+        # declarations: `_task_validate_transition` reads the task
+        # `state_machine` a kb.yaml declares from it, and with no schema it
+        # falls back to the core TASK_WORKFLOW (#1709).
         return PluginContext(
             config=self.config,
             db=self.db,
@@ -1463,6 +1467,7 @@ class KBService:
             user="",
             operation=operation,
             kb_type=kb_config.kb_type,
+            kb_schema=kb_config.kb_schema,
             **({"extra": extra} if extra else {}),
         )
 
@@ -1914,7 +1919,10 @@ class KBService:
             kb_config = self.require_kb(kb_name)
         else:
             kb_config = self._writable_kb(kb_name)
-        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
+        # Built on the first item that writes, inside its try: `_hook_ctx`
+        # reads the KB's schema, and a kb.yaml that does not load must refuse
+        # each item (as `_prepare` does), not the whole call (#1709).
+        hook_ctx: PluginContext | None = None
 
         results: list[dict[str, Any]] = []
         created_ids: list[tuple[str, str]] = []  # (entry_id, kb_name) for batch embed
@@ -1947,6 +1955,8 @@ class KBService:
                     )
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
+                    if hook_ctx is None:
+                        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
                     written = self._prepare_and_save(
                         kb_name,
                         kb_config,
