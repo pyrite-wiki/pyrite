@@ -1,0 +1,2 @@
+- **A `research-queue` init template, and dynamic `pyrite init --help` listing all accepted templates (#1663).**
+  `pyrite init -t research-queue` creates a dedicated research tracking KB with declared ticket fields (`target_kb`, `question`, `sources_wanted`), `ai_instructions`, and follow-up `guidelines`, reusing the `task` state machine and workflow enforcement. `pyrite init --help` dynamically lists all accepted templates across built-ins and plugin presets (including `task` and `research-queue`).

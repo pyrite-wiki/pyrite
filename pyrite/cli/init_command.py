@@ -10,7 +10,7 @@ from pathlib import Path
 
 import typer
 
-from ..models.task import TASK_KB_PRESET
+from ..models.task import TASK_KB_PRESET, TASK_STATUSES
 from .output import cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -433,12 +433,103 @@ BUILTIN_TEMPLATES = {
 }
 
 
+def _research_queue_template() -> dict:
+    task_type = copy.deepcopy(TASK_KB_PRESET["types"]["task"])
+    for opt in ("target_kb", "question", "sources_wanted"):
+        if opt not in task_type.setdefault("optional", []):
+            task_type["optional"].append(opt)
+    task_type["fields"] = {
+        "target_kb": {
+            "type": "text",
+            "description": "Knowledge base the research writes into",
+        },
+        "question": {
+            "type": "text",
+            "description": "Specific research question to answer",
+        },
+        "sources_wanted": {
+            "type": "list",
+            "description": "Types or locations of sources to consult",
+        },
+    }
+    task_type["field_descriptions"] = {
+        "target_kb": "Knowledge base the research writes into",
+        "question": "Specific research question to answer",
+        "sources_wanted": "Types or locations of sources to consult",
+    }
+    task_type["ai_instructions"] = (
+        "Write tickets that an agent can work autonomously: specify target_kb, "
+        "the concrete research question to answer, and what sources to consult."
+    )
+    task_type["guidelines"] = (
+        "When spawning follow-up research tasks, link them to the originating "
+        "ticket (e.g. via follows link or parent) so the research lineage is traceable."
+    )
+    return {
+        "name": "my-research-queue",
+        "description": "Research queue knowledge base for tracking research tasks and tickets",
+        "types": {
+            "task": task_type,
+        },
+        "policies": {
+            "enforce_workflow": True,
+        },
+        "validation": {
+            "enforce": True,
+            "rules": [
+                {
+                    "field": "status",
+                    "enum": list(TASK_STATUSES),
+                },
+                {"field": "priority", "range": [1, 10]},
+            ],
+        },
+        "directories": ["tasks"],
+    }
+
+
+BUILTIN_TEMPLATES["research-queue"] = _research_queue_template()
+
+
+def available_templates() -> list[str]:
+    """All template names accepted by init_kb: built-in templates plus registry presets."""
+    templates = set(BUILTIN_TEMPLATES.keys())
+    try:
+        from ..plugins import get_registry
+
+        templates.update(get_registry().get_all_kb_presets().keys())
+    except Exception:
+        pass
+    return sorted(templates)
+
+
+def resolve_template(template: str) -> dict | None:
+    """Resolve a template name against plugin presets first, then built-in templates."""
+    try:
+        from ..plugins import get_registry
+
+        plugin_presets = get_registry().get_all_kb_presets()
+        if template in plugin_presets:
+            return plugin_presets[template]
+    except Exception:
+        logger.warning("Failed to load plugin presets for template '%s'", template, exc_info=True)
+
+    if template in BUILTIN_TEMPLATES:
+        return BUILTIN_TEMPLATES[template]
+
+    return None
+
+
+def _template_help() -> str:
+    return f"Template: {', '.join(available_templates())}"
+
+
 def init_kb(
     template: str = typer.Option(
         ...,
         "--template",
         "-t",
-        help="Template: software, zettelkasten, research, intellectual-biography, movement, empty",
+        help=_template_help(),
     ),
     path: Path = typer.Option(..., "--path", "-p", help="Directory for the new KB"),
     name: str | None = typer.Option(
@@ -505,25 +596,13 @@ def init_kb(
     if schema_file is not None:
         preset = load_yaml_file(schema_file)
     else:
-        try:
-            from ..plugins import get_registry
-
-            plugin_presets = get_registry().get_all_kb_presets()
-            if template in plugin_presets:
-                preset = plugin_presets[template]
-        except Exception:
-            logger.warning(
-                "Failed to load plugin presets for template '%s'", template, exc_info=True
-            )
-
+        preset = resolve_template(template)
         if preset is None:
-            if template not in BUILTIN_TEMPLATES:
-                available = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
-                console.print(
-                    f"[red]Error:[/red] Unknown template '{template}'. Available: {available}"
-                )
-                raise typer.Exit(1)
-            preset = BUILTIN_TEMPLATES[template]
+            available = ", ".join(available_templates())
+            console.print(
+                f"[red]Error:[/red] Unknown template '{template}'. Available: {available}"
+            )
+            raise typer.Exit(1)
 
     # Create directory structure
     path.mkdir(parents=True, exist_ok=True)

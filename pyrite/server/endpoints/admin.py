@@ -19,6 +19,7 @@ from ...services.access_policy import ROLES, AccessPolicy, Action, AnyKB, ReadSc
 from ...services.auth_service import AuthService
 from ...services.embedding_worker import EmbeddingWorker
 from ...services.ephemeral_service import EphemeralKBService, InvalidEphemeralKBNameError
+from ...services.index_health import network_shape
 from ...services.index_worker import IndexWorker
 from ...services.kb_registry_service import KBRegistryService
 from ...services.llm_service import LLMService
@@ -118,6 +119,8 @@ def sync_index(
             removed=result.get("removed", 0),
             skipped=result.get("skipped", []),
             unreadable_kbs=result.get("unreadable_kbs", []),
+            # Folders it could not list, rows kept: a count, never a path (#1546).
+            unreadable_folders=network_shape(result)["unreadable_folders"],
         )
 
     job_id = worker.submit_sync()
@@ -314,7 +317,7 @@ def reindex_kb(
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
         )
-    return KBReindexResponse(name=name, **result)
+    return KBReindexResponse(name=name, **network_shape(result))
 
 
 @router.post("/kbs/gc", dependencies=[Depends(requires_tier("admin"))])

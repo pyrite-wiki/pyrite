@@ -96,6 +96,30 @@ def _print_file_links(results: dict) -> None:
             console.print(f"    [dim]… and {len(rows) - 5} more[/dim]")
 
 
+def _could_not_reach(results: dict) -> int:
+    """How many folders and files a reconcile could not reach (#1546): each
+    counts as a failed item for ``exit_unless_whole``, so a sync, build or
+    reindex that could not reach something does not exit 0."""
+    return len(results.get("unreadable_folders") or []) + len(results.get("unreadable_files") or [])
+
+
+def _print_unreadable_folders(results: dict, indent: str = "  ") -> None:
+    """The folders a reconcile could not list, each KB-relative (#1546): the
+    rows under them were kept. For `index sync`, `index build` and `kb
+    reindex`; the local CLI names them, a network caller gets a count."""
+    rows = results.get("unreadable_folders") or []
+    if not rows:
+        return
+    console.print(
+        f"{indent}[red]Unreadable folders: {len(rows)} (could not be listed; "
+        "the rows under them are kept)[/red]"
+    )
+    for row in rows[:10]:
+        console.print(f"{indent}  • {row['kb']}: {row['path']}", markup=False, highlight=False)
+    if len(rows) > 10:
+        console.print(f"{indent}  [dim]… and {len(rows) - 10} more[/dim]")
+
+
 def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
     """One line per id held by several files, the indexed file first.
 
@@ -179,6 +203,9 @@ def index_build(
 
     unreadable: list[str] = []
     built = 0
+    # What each rebuild could not reach (#1546): named below, and counted
+    # as failed for the exit code.
+    reports: list[dict] = []
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -199,13 +226,17 @@ def index_build(
 
                 return update_progress
 
+            report: dict = {}
             try:
                 if with_attribution and git_service:
                     count = index_mgr.index_with_attribution(
-                        kb.name, git_service, progress_callback=make_progress_callback(task)
+                        kb.name,
+                        git_service,
+                        progress_callback=make_progress_callback(task),
+                        report=report,
                     )
                 else:
-                    count = index_mgr.index_kb(kb.name, make_progress_callback(task))
+                    count = index_mgr.index_kb(kb.name, make_progress_callback(task), report=report)
             except KB_YAML_REFUSALS as exc:
                 # Not rebuilt, its rows kept; the others go on (#1542). Also a
                 # kb.yaml that does not load, KB_CONFIG_INVALID (#1547).
@@ -215,8 +246,21 @@ def index_build(
                 )
                 continue
             built += 1
+            reports.append(report)
             progress.update(task, description=f"[green]✓[/green] {kb.name}: {count} entries")
 
+    could_not_reach = 0
+    for report in reports:
+        _print_unreadable_folders(report)
+        files = report.get("unreadable_files") or []
+        if files:
+            console.print(
+                f"  [red]Unreadable files: {len(files)} (could not be read; "
+                "their rows are kept)[/red]"
+            )
+            for row in files[:10]:
+                console.print(path_line("    • ", _kb_relative(config, row["path"]), style="dim"))
+        could_not_reach += _could_not_reach(report)
     if unreadable:
         console.print(f"\n[red]Not rebuilt (unreadable): {', '.join(unreadable)}[/red]")
     console.print("\n[green]Index build complete.[/green]")
@@ -245,7 +289,16 @@ def index_build(
         except Exception:
             logger.debug("Embedding not available, skipping")
 
-    exit_unless_whole(len(unreadable), built)
+    exit_unless_whole(len(unreadable) + could_not_reach, built)
+
+
+def _kb_relative(config, path_text: str) -> Path:
+    """``path_text`` below the KB that holds it, for a line of output."""
+    path = Path(path_text)
+    for kb in config.all_kbs():
+        if path.is_relative_to(kb.path):
+            return path.relative_to(kb.path)
+    return path
 
 
 @index_app.command("sync")
@@ -303,12 +356,7 @@ def index_sync(
     if malformed:
         console.print(f"  [yellow]Malformed: {len(malformed)} file(s) skipped[/yellow]")
         for entry in malformed[:5]:
-            path = Path(entry["path"])
-            for kb in config.all_kbs():
-                if path.is_relative_to(kb.path):
-                    path = path.relative_to(kb.path)
-                    break
-            console.print(path_line("    • ", path, style="dim"))
+            console.print(path_line("    • ", _kb_relative(config, entry["path"]), style="dim"))
         if len(malformed) > 5:
             console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
     skipped = results.get("skipped", [])
@@ -332,6 +380,9 @@ def index_sync(
             console.print(f"    • {line}", markup=False, highlight=False)
 
     _print_file_links(results)
+    # Folders it could not list: their rows kept (#1546). A file it could not
+    # read is under Malformed above; both count as failed for the exit.
+    _print_unreadable_folders(results)
 
     # A KB whose files could not be read was not synced and kept its rows
     # (#1542): named, and the exit says the sync was not whole (below).
@@ -368,7 +419,7 @@ def index_sync(
             logger.debug("Embedding not available, skipping")
 
     synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
-    exit_unless_whole(len(unreadable_kbs), synced)
+    exit_unless_whole(len(unreadable_kbs) + _could_not_reach(results), synced)
 
 
 @index_app.command("stats")
@@ -620,6 +671,7 @@ def index_health(
             "malformed_frontmatter": malformed_frontmatter,
             "unreadable_files": unreadable_files,
             "unreadable_kbs": health.get("unreadable_kbs", []),
+            "unreadable_folders": health.get("unreadable_folders", []),
             "orphaned_entries": orphaned_entries,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
@@ -882,6 +934,16 @@ def _report_health(
         console.print(f"[red]Unreadable knowledge bases ({len(unreadable_kbs)}):[/red]")
         for item in unreadable_kbs:
             console.print(f"  {item['kb']}: {item['error']}")
+    unreadable_folders = health.get("unreadable_folders", [])
+    if unreadable_folders:
+        console.print(
+            f"[red]Unreadable folders ({len(unreadable_folders)}; the rows under them "
+            "are kept):[/red]"
+        )
+        for item in unreadable_folders[:10]:
+            console.print(f"  {item['kb']}: {item['path']}", markup=False, highlight=False)
+        if len(unreadable_folders) > 10:
+            console.print(f"  ... and {len(unreadable_folders) - 10} more")
     unreadable_files = health.get("unreadable_files", [])
     if unreadable_files:
         console.print(f"[red]Unreadable files ({len(unreadable_files)}):[/red]")
