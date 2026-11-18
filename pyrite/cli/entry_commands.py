@@ -157,13 +157,15 @@ def _field_type_for(
         resolved_type = resolve_entry_type(entry_type, kb_config.kb_type, kb_config.kb_schema)
         type_fields = kb_config.kb_schema.type_fields(resolved_type)
         if field_name in type_fields:
-            return type_fields[field_name].field_type
+            ft = type_fields[field_name].field_type
+            return str(ft) if ft is not None else None
 
         from ..schema.field_aliases import field_aliases
 
         target = field_aliases(resolved_type).get(field_name, field_name)
         if target in type_fields:
-            return type_fields[target].field_type
+            ft = type_fields[target].field_type
+            return str(ft) if ft is not None else None
 
     from ..schema import CORE_TYPES
     from ..schema.field_aliases import field_aliases
@@ -176,7 +178,8 @@ def _field_type_for(
     if spelled:
         from ..schema.kb_schema import _core_field_type
 
-        return _core_field_type(spelled)
+        cft = _core_field_type(spelled)
+        return str(cft) if cft is not None else None
     return None
 
 
@@ -748,11 +751,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             # The read is kept for its refusals (an ambiguous id, an unnamed
             # KB), which answer before anything else; entry_type helps parse
             # declared text/number fields correctly (#1672).
-            entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+            existing_entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
             entry_type = (
-                (entry.get("entry_type") or entry.get("type"))
-                if isinstance(entry, dict)
-                else getattr(entry, "entry_type", getattr(entry, "type", None))
+                (existing_entry.get("entry_type") or existing_entry.get("type"))
+                if isinstance(existing_entry, dict)
+                else getattr(existing_entry, "entry_type", getattr(existing_entry, "type", None))
             )
 
             # --field key=value pairs: syntax only; the service applies the schema.
