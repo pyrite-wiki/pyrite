@@ -27,6 +27,30 @@ second claim exits1; do not treat that as successful ownership.
 pyrite task claim write-intro -k test-kb --assignee bob
 ```
 
+## Start and finish in one call
+
+An agent working a queue makes the same walk on every task. `task start` claims
+an open task and starts it in one write: the same compare-and-set as `task
+claim` decides it, so a lost start exits 1 with `claimed: false`, like a lost
+claim, and changes nothing. It records open → claimed → in_progress in the
+task's `status_change_log` and returns the task with its body and its parent's.
+Retrying `start` on a task you already claimed moves it on to in_progress.
+
+`task finish` moves a held task to `done` in one write. Without `--walk` it
+takes only a direct edge (in_progress → done, review → done); with `--walk` it
+passes through every declared intermediate state and records each edge, so no
+state is skipped. A refusal names the path `--walk` would take. A task nothing
+holds (open) is not finished; cancel it instead.
+
+```bash
+pyrite task create "Fix typo" -k test-kb
+pyrite task start fix-typo -k test-kb --assignee alice
+pyrite task finish fix-typo -k test-kb --reason "Typo fixed"
+pyrite task create "Fix link" -k test-kb
+pyrite task claim fix-link -k test-kb --assignee bob
+pyrite task finish fix-link -k test-kb --walk --reason "Link fixed"
+```
+
 ## Record progress and release a stale claim
 
 A checkpoint records work without pretending the task is complete. Reset is an
@@ -54,7 +78,9 @@ pyrite task get publish-guide -k test-kb
 ```
 
 The normal stored-state path is open → claimed → in_progress → done (or failed,
-blocked or review). Follow the transition refusal rather than skipping states.
+blocked or review). Follow the transition refusal rather than skipping states;
+`task start` and `task finish --walk` walk the same states in one call and
+record each one.
 A parent's completion is derived from its children. Completing the children
 makes the derived result complete without rewriting the parent's stored
 status. Read both the stored status and `derived`; do not infer parent
@@ -72,6 +98,8 @@ task's dependency IDs. Use full KB names for tool arguments.
 | List | task list | task_list | read |
 | Inspect | task get | task_status | read |
 | Claim | task claim | task_claim | write |
+| Claim and start | task start | task_start | write |
+| Finish (walk to done) | task finish | task_finish | write |
 | Update status | task update | task_update | write |
 | Release claim | task reset | — (operator CLI) | — |
 | Checkpoint | task checkpoint | task_checkpoint | write |

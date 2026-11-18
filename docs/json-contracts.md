@@ -1479,8 +1479,8 @@ decision 8a). Pyrite reads such a file partially and writes it not at all.
 exit 1, REST 422, MCP `error_code`), and nothing is written: an update (REST
 `PUT`/`PATCH`, MCP `kb_update`, CLI `update`), an echo of a read (it carries
 `load_problems`, which is set aside, and is refused like any other update), a
-delete, a link from it, a rename of it, a task claim, update, checkpoint or
-reset, and a plugin's write through `ctx.kb_service`. A request that would
+delete, a link from it, a rename of it, a task claim, start, finish, update,
+checkpoint or reset, and a plugin's write through `ctx.kb_service`. A request that would
 change nothing is refused the same way. No validator or hook is run, so none
 judges a value the file does not hold. The message names the file by its path
 relative to the KB, the declared type, the refused fields and the loader's
@@ -1592,6 +1592,38 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 `false`. A target that a change set created and then deleted is unresolved
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
+
+## Task start and finish
+
+`task start` (CLI), `task_start` (MCP) and `POST /api/tasks/{id}/start` (REST)
+return one dict, `TaskService.start_task`'s (#1685). A start that won:
+
+```json
+{
+  "claimed": true,
+  "task_id": "fix-typo",
+  "assignee": "alice",
+  "status": "in_progress",
+  "task": {"id": "fix-typo", "title": "Fix typo", "body": "...", "...": "the single-entry read"},
+  "parent": {"id": "docs", "title": "Docs", "body": "..."}
+}
+```
+
+`parent` is `null` for a task with none. The two bodies share one response
+budget and are bounded as in [Body truncation](#body-truncation). A lost start
+is a lost claim's dict unchanged: `{"claimed": false, "error": "...",
+"current_status": "in_progress"}`, CLI outcome `nothing` and exit 1, MCP and
+REST a result (not an error). The file write records two `status_change_log`
+items, `{date, from, to, by}`: open → claimed and claimed → in_progress.
+
+`task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
+dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
+"in_progress", "done"], "status_reason"}`, with one `status_change_log` item
+per edge of `path` (`comment` is the reason, when one was given). A refusal is
+`VALIDATION_FAILED` (CLI exit 1): a status with no path to `done`, a task
+nothing holds (`open`), a path of more than one edge without `--walk` (`walk:
+true`; the message names the path), or an edge the workflow refuses. REST has
+no finish route; a REST client uses `PATCH /api/entries/{id}`.
 
 ## Body truncation
 
@@ -1776,7 +1808,7 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
 
   Single-effect commands that fail answer `1`: `kb commit` when the commit was
   rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
-  when the claim is lost (in `--format json` too), `social reputation` when it
+  and `task start` when the claim is lost (in `--format json` too), `social reputation` when it
   cannot compute the reputation, `investigation network` and `evidence-chain`
   when the answer is an error.
 
