@@ -144,29 +144,25 @@ def _read_stdin() -> str:
     return sys.stdin.read()
 
 
-def _field_type_for(
-    config: Any, kb_name: str, entry_type: str | None, field_name: str
-) -> str | None:
+def _field_type_for(kb_config: Any, entry_type: str | None, field_name: str) -> str | None:
     """Return the declared type for a field, including core-type metadata."""
-    if not entry_type or config is None:
+    if not entry_type or kb_config is None:
         return None
 
-    kb_config = config.get_kb(kb_name)
-    if kb_config is not None:
-        from ..schema.type_mapping import resolve_entry_type
+    from ..schema.type_mapping import resolve_entry_type
 
-        resolved_type = resolve_entry_type(entry_type, kb_config.kb_type, kb_config.kb_schema)
-        type_fields = kb_config.kb_schema.type_fields(resolved_type)
-        if field_name in type_fields:
-            ft = type_fields[field_name].field_type
-            return str(ft) if ft is not None else None
+    resolved_type = resolve_entry_type(entry_type, kb_config.kb_type, kb_config.kb_schema)
+    type_fields = kb_config.kb_schema.type_fields(resolved_type)
+    if field_name in type_fields:
+        ft = type_fields[field_name].field_type
+        return str(ft) if ft is not None else None
 
-        from ..schema.field_aliases import field_aliases
+    from ..schema.field_aliases import field_aliases
 
-        target = field_aliases(resolved_type).get(field_name, field_name)
-        if target in type_fields:
-            ft = type_fields[target].field_type
-            return str(ft) if ft is not None else None
+    target = field_aliases(resolved_type).get(field_name, field_name)
+    if target in type_fields:
+        ft = type_fields[target].field_type
+        return str(ft) if ft is not None else None
 
     from ..schema import CORE_TYPES
     from ..schema.field_aliases import field_aliases
@@ -318,12 +314,19 @@ def _parse_field_flags(
     config: Any = None,
     kb_name: str | None = None,
     entry_type: str | None = None,
+    kb_config: Any = None,
 ) -> dict[str, Any]:
     """``-f key=value`` pairs of ``create``/``update`` as ``{key: value}``.
 
     A key named twice is refused: keeping one of the values would drop the
     other (#1502). Several values for one field go as one JSON array.
     """
+    if kb_config is None and config is not None and kb_name:
+        try:
+            kb_config = config.require_kb(kb_name)
+        except Exception:
+            kb_config = None
+
     out: dict[str, Any] = {}
     for fv in pairs:
         if "=" not in fv:
@@ -340,7 +343,7 @@ def _parse_field_flags(
             raise ValidationError(
                 message, errors=[{"field": k, "rule": "repeated", "message": message}]
             )
-        field_type = _field_type_for(config, kb_name, entry_type, k) if config and kb_name else None
+        field_type = _field_type_for(kb_config, entry_type, k)
         out[k] = _parse_field_value(v, field_type)
     return out
 
@@ -547,11 +550,13 @@ def register_entry_commands(app: typer.Typer) -> None:
             extra["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
+            try:
+                kb_config = config.require_kb(kb_name)
+            except Exception:
+                kb_config = None
             # --field key=value pairs: syntax only; the service applies the schema.
             extra.update(
-                _parse_field_flags(
-                    field or [], config=config, kb_name=kb_name, entry_type=entry_type
-                )
+                _parse_field_flags(field or [], kb_config=kb_config, entry_type=entry_type)
             )
             # Every create decision -- the ADR-0034 truncated-body refusal (the
             # marker may arrive via --field or in the frontmatter of a
@@ -764,6 +769,10 @@ def register_entry_commands(app: typer.Typer) -> None:
             updates["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
+            try:
+                kb_config = config.require_kb(kb_name)
+            except Exception:
+                kb_config = None
             # The read is kept for its refusals (an ambiguous id, an unnamed
             # KB), which answer before anything else; entry_type helps parse
             # declared text/number fields correctly (#1672).
@@ -776,9 +785,7 @@ def register_entry_commands(app: typer.Typer) -> None:
 
             # --field key=value pairs: syntax only; the service applies the schema.
             updates.update(
-                _parse_field_flags(
-                    field or [], config=config, kb_name=kb_name, entry_type=entry_type
-                )
+                _parse_field_flags(field or [], kb_config=kb_config, entry_type=entry_type)
             )
 
             def items(pairs: list[str] | None) -> dict[str, Any]:
@@ -794,11 +801,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                             errors=[{"field": "--field", "rule": "format", "message": message}],
                         )
                     k, v = fv.split("=", 1)
-                    field_type = (
-                        _field_type_for(config, kb_name, entry_type, k)
-                        if config and kb_name
-                        else None
-                    )
+                    field_type = _field_type_for(kb_config, entry_type, k)
                     value = _parse_field_value(v, field_type)
                     out.setdefault(k, []).extend(value if isinstance(value, list) else [value])
                 return out
