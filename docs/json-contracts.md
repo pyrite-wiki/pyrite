@@ -559,7 +559,7 @@ a row here (a test compares this table with the command's output).
 | `malformed_frontmatter` | Files that read but whose frontmatter does not parse. | Warning | Hand edit the YAML, then `pyrite index sync`. |
 | `unreadable_files` | Files that exist but whose bytes cannot be read or decoded. | Failure | Fix permissions or encoding, then `pyrite index sync`. |
 | `unreadable_kbs` | KBs whose `kb.yaml` Pyrite could not check or read (for example, a KB folder it may not search), as `{kb, error}`; every other KB is still checked. | Failure | Fix the folder's permissions, then `pyrite index sync`. |
-| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
+| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). A symbolic link is never named, whatever its target. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
 | `orphaned_entries` | Indexed IDs absent from the readable files although the recorded path exists. | Failure | `pyrite index sync` (or hand edit the ID). |
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
@@ -2113,9 +2113,17 @@ not parse still loses its row, as before.
   gone, and its row is retired, as before. So is a path that
   `KBFiles.present` answers absent: a link loop, or a file removed while the
   walk ran; a loop stays reported under `malformed` and in health's
-  `unreadable_files`, as before, and does not count for the exit code. A
-  name in a folder whose type the operating system will not give is treated
-  as a folder it could not list.
+  `unreadable_files`, as before, and does not count for the exit code.
+- **What counts as a folder it could not list.** Only a folder the walk
+  tried to list and could not (its listing failed, or failed part way), and
+  a name whose own type the operating system will not give (in a folder
+  Pyrite may not search, on a filesystem that does not say a name's type),
+  unless its name ends in `.md` or is `__collection.yaml` (then it is that
+  file's own stat that names it). A symbolic link is never one: the walk
+  never enters a link, so a link whose target cannot be reached (a link to
+  itself, a link into a folder Pyrite may not search, a link through a
+  file) is not named, and a sync that meets one still exits `0` and health
+  stays healthy, as before.
 - **What a reconcile reports.** Its result carries `unreadable_folders`,
   `{kb, path, error}` (`path` KB-relative, `error` the fixed `KB_UNREADABLE`
   message), and `unreadable_files`, `{kb, path, error}` (the absolute path
