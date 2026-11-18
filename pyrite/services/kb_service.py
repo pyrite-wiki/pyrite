@@ -4249,7 +4249,12 @@ class KBService:
         )
         if held:
             _refuse_assignee_values(entry_id, held[0].get("assignee") or "", assignee or "")
+        # The holder a refused file write puts back in the index row: none for
+        # a plain claim, as it always was; `task start`'s retry from `claimed`
+        # needs its own holder back, or the retry reads no holder and loses
+        # until the next sync (#1685).
         prior_assignee = (held[0].get("assignee") or None) if held else None
+        rollback_assignee = prior_assignee if (via or ops) else None
         status_path = (from_status, *via, to_status) if (via or ops) else None
 
         if getattr(self.db, "is_change_set", False):
@@ -4301,19 +4306,18 @@ class KBService:
         try:
             self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path)
         except Exception as e:
-            # Rollback index CAS on file error: the row's status and holder
-            # as they were before it (no holder for a claim of an open entry).
+            # Rollback index CAS on file error (the holder: see rollback_assignee).
             logger.warning("File update failed for claim on %s, rolling back: %s", entry_id, e)
             session.execute(
                 text("""UPDATE entry
                    SET status = :from_status,
-                       assignee = :prior_assignee
+                       assignee = :rollback_assignee
                    WHERE id = :entry_id AND kb_name = :kb_name"""),
                 {
                     "entry_id": entry_id,
                     "kb_name": kb_name,
                     "from_status": from_status,
-                    "prior_assignee": prior_assignee,
+                    "rollback_assignee": rollback_assignee,
                 },
             )
             session.commit()

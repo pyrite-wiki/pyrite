@@ -185,6 +185,42 @@ def test_start_when_the_file_is_no_longer_open_is_refused_and_the_index_restored
     assert not _row(world, "t")["assignee"]
 
 
+@pytest.mark.control(
+    reason="pins dev's failure path for a plain claim: a refused file write clears the "
+    "holder in the index row; holds before and after #1685"
+)
+def test_a_plain_claim_whose_file_write_is_refused_leaves_the_row_as_dev_does(world):
+    """`task claim`'s rollback is unchanged by `start`: status back to the
+    claim's `from`, and no holder, even where the row held one before."""
+    from pyrite.services.task_service import TaskService
+
+    path = world.add_entry(KB, _task("t", "status: open\nassignee: agent:old\n"))
+    path.write_text(_task("t", "status: done\nassignee: agent:old\n"))
+    before = path.read_bytes()
+
+    result = TaskService(world.config, world.db).claim_task("t", KB, "agent:new")
+
+    assert result["claimed"] is False
+    assert path.read_bytes() == before
+    assert _row(world, "t") == {"status": "open", "assignee": None}
+
+
+def test_a_start_retry_whose_file_write_is_refused_keeps_its_holder_in_the_row(world):
+    """`start`'s own rollback: a retry from `claimed` (the same assignee)
+    whose file write is refused puts the holder back, so the next retry still
+    finds it; a cleared holder would make that retry lose until a sync."""
+    path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))
+    path.write_text(_task("t", f"status: done\nassignee: {WHO}\n"))
+    before = path.read_bytes()
+
+    code, data = _cli_start(world, "t")
+
+    assert code == 1, data
+    assert data["claimed"] is False
+    assert path.read_bytes() == before
+    assert _row(world, "t") == {"status": "claimed", "assignee": WHO}
+
+
 def test_start_refuses_a_file_its_type_cannot_load_before_the_compare_and_set(world):
     path = world.add_entry(KB, _task("t", "status: open\n"))
     row_before = _row(world, "t")
@@ -318,6 +354,89 @@ def _start_worker(tmpdir_str: str, assignee: str, result_queue, barrier) -> None
         result_queue.put((assignee, {k: result.get(k) for k in ("claimed", "current_status")}))
     finally:
         db.close()
+
+
+def _race_worker(tmpdir_str: str, verb: str, assignee: str, result_queue, barrier) -> None:
+    """`start` or `claim` in a separate process, released by the barrier."""
+    from pyrite.services.task_service import TaskService
+    from pyrite.storage.database import PyriteDB
+
+    config = _race_config(Path(tmpdir_str))
+    db = PyriteDB(config.settings.index_path)
+    try:
+        svc = TaskService(config, db)
+        barrier.wait(timeout=_BARRIER_TIMEOUT)
+        call = svc.start_task if verb == "start" else svc.claim_task
+        result = call("t", KB, assignee)
+        result_queue.put(
+            (verb, assignee, {k: result.get(k) for k in ("claimed", "current_status")})
+        )
+    finally:
+        db.close()
+
+
+def _seed_race(tmp_path: Path) -> Path:
+    from pyrite.services.task_service import TaskService
+    from pyrite.storage.database import PyriteDB
+
+    config = _race_config(tmp_path)
+    (tmp_path / "kb").mkdir()
+    path = tmp_path / "kb" / "t.md"
+    path.write_text(_task("t", "status: open\n"))
+    db = PyriteDB(config.settings.index_path)
+    db.register_kb(name=KB, kb_type="generic", path=str(tmp_path / "kb"), description="")
+    TaskService(config, db).kb_svc.index_kb(KB)
+    db.close()
+    return path
+
+
+def _run_all(procs) -> None:
+    import time
+
+    for p in procs:
+        p.start()
+    end = time.monotonic() + _GROUP_DEADLINE
+    for p in procs:
+        p.join(timeout=max(0.0, end - time.monotonic()))
+    for p in procs:
+        if p.exitcode is None:
+            p.kill()
+    assert all(p.exitcode == 0 for p in procs), [p.exitcode for p in procs]
+
+
+def test_starts_racing_claims_exactly_one_wins_and_the_file_says_which(tmp_path):
+    """`start` and `claim` are decided by one compare-and-set, so of starts
+    and claims racing for one open task exactly one wins, and the file is the
+    winner's: in_progress with both edges for a start, claimed with no log
+    item for a claim (a claim writes none; #1680 item 5)."""
+    path = _seed_race(tmp_path)
+    ctx = multiprocessing.get_context("spawn")
+    queue = ctx.Queue()
+    barrier = ctx.Barrier(N_STARTERS)
+    verbs = ["start" if i % 2 == 0 else "claim" for i in range(N_STARTERS)]
+    procs = [
+        ctx.Process(target=_race_worker, args=(str(tmp_path), verb, f"agent:{i}", queue, barrier))
+        for i, verb in enumerate(verbs)
+    ]
+    _run_all(procs)
+    results = [queue.get(timeout=10) for _ in procs]
+
+    winners = [(verb, who) for verb, who, r in results if r["claimed"] is True]
+    assert len(winners) == 1, results
+    verb, who = winners[0]
+    front = _front(path)
+    assert front["assignee"] == who
+    if verb == "start":
+        assert front["status"] == "in_progress"
+        assert _edges(front) == [("open", "claimed", who), ("claimed", "in_progress", who)]
+        expected_loss = "in_progress"
+    else:
+        assert front["status"] == "claimed"
+        assert _edges(front) == []
+        expected_loss = "claimed"
+    for _verb, _who, r in results:
+        if r["claimed"] is False:
+            assert r["current_status"] == expected_loss, results
 
 
 def test_concurrent_starts_exactly_one_wins_and_the_file_records_both_edges(tmp_path):
