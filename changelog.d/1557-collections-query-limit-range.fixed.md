@@ -1,0 +1,1 @@
+- `pyrite collections query --limit` now rejects values outside 1–1000 with a usage error before opening a KB, including zero, which was previously ignored (#1557).
