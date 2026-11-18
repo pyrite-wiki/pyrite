@@ -1,0 +1,1 @@
+- `pyrite index sync` honours `PYRITE_FORMAT` and takes `--format` (`rich`, `json`, `yaml`) like every command on the outcome contract: with `PYRITE_FORMAT=json` or `--format json` it prints the sync result as JSON with an `outcome` key, where it printed text before. Its default stays `rich`, so its text, its counts and its exit codes are unchanged (#1691).
