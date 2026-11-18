@@ -732,22 +732,36 @@ def test_the_service_refuses_a_kb_this_process_has_not_loaded(world):
 # --------------------------------------------------------------------------
 
 
-#: Each read of the embedding state, and the SQL that breaks it for real (no
-#: mock): a view takes the table's name, so `CREATE ... IF NOT EXISTS` on
-#: open leaves it in place, and the read fails in SQLite itself.
+#: Each read of the embedding state: the table it reads, and the read itself.
 EMBEDDING_READS = {
-    "which entries are embedded": ("vec_entry", "CREATE VIEW vec_entry AS SELECT 1 AS x"),
-    "the embed queue": ("embed_queue", "CREATE VIEW embed_queue AS SELECT 1 AS x"),
+    "which entries are embedded": ("vec_entry", "SELECT rowid FROM vec_entry"),
+    "the embed queue": ("embed_queue", "SELECT entry_id FROM embed_queue"),
 }
 
 
 def _break(world, monkeypatch, read: str) -> None:
+    """Break one read for real (no mock): a view over a table that is then
+    dropped takes the table's name, so `CREATE ... IF NOT EXISTS` on open
+    leaves it in place, and every query of it fails in SQLite itself.
+
+    Not a view of a constant (`SELECT 1 AS x`): a SQLite built with
+    SQLITE_ALLOW_ROWID_IN_VIEW (CI's Python 3.12 has one) answers `SELECT
+    rowid` from such a view with rows, so nothing failed and the cell read
+    `queued`, exit 0. Whether the break holds is checked here, against the
+    read itself, so a SQLite that accepts it fails this setup, not the code.
+    """
+    import sqlite3
+
     _with_a_model(world, monkeypatch)
-    table, view = EMBEDDING_READS[read]
+    table, query = EMBEDDING_READS[read]
     con = world.db._raw_conn
     con.execute(f"DROP TABLE IF EXISTS {table}")
-    con.execute(view)
+    con.execute("CREATE TABLE gone_for_the_test (x)")
+    con.execute(f"CREATE VIEW {table} AS SELECT x FROM gone_for_the_test")
+    con.execute("DROP TABLE gone_for_the_test")
     con.commit()
+    with pytest.raises(sqlite3.OperationalError):
+        con.execute(query).fetchall()
 
 
 @pytest.mark.parametrize("read", list(EMBEDDING_READS))
