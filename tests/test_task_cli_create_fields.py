@@ -244,8 +244,8 @@ def test_task_create_field_refuses_a_repeated_key(task_cli_env):
     """`pyrite task create --field k=1 --field k=2` is refused (#1726).
 
     Aligns `task create` with `pyrite create` and `update` (#1502): a repeated
-    `--field` key raises `VALIDATION_FAILED` (exit 2 under Typer), points to a
-    JSON array, and writes no task entry file.
+    `--field` key raises `VALIDATION_FAILED`, points to a JSON array, and
+    writes no task entry file.
     """
     tasks_dir = task_cli_env["config"].get_kb("test-tasks").path / "tasks"
     before = set(tasks_dir.iterdir())
