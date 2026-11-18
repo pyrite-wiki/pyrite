@@ -66,6 +66,11 @@ ACCEPTORS = {
     ("pyrite/server/endpoints/tasks.py", "list_tasks"): ("rest-json", "GET /api/tasks"),
     ("pyrite/server/mcp_server.py", "_task_list"): ("mcp", None),
     ("pyrite/services/task_service.py", "task_listing"): ("helper", None),
+    # `search --batch` (#1692) prints json/yaml/rich only (csv and markdown are usage
+    # errors), so it has no per-format case here; `_shape_rows` is the row rule it
+    # shares with `search`, and tests/test_search_batch.py pins `fields` per slot.
+    ("pyrite/cli/search_commands.py", "_shape_rows"): ("helper", None),
+    ("pyrite/cli/search_commands.py", "_run_batch"): ("helper", None),
 }
 #: Not acceptors, by design, and pinned below: `GET /api/entries` takes no `fields`.
 
