@@ -20,6 +20,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,7 @@ from ..exceptions import (
     ValidationError,
     refusal_row_text,
 )
+from ..schema.field_aliases import METADATA, path_segments
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from ..utils.errors import cli_error, cli_error_from
@@ -142,41 +144,18 @@ def _read_stdin() -> str:
     return sys.stdin.read()
 
 
-def _field_type_for(
-    config: Any, kb_name: str, entry_type: str | None, field_name: str
-) -> str | None:
-    """Return the declared type for a field, including core-type metadata."""
-    if not entry_type:
-        return None
-
-    kb_config = config.get_kb(kb_name)
-    if kb_config is not None:
-        type_schema = kb_config.kb_schema.types.get(entry_type)
-        if type_schema is not None:
-            field_schema = type_schema.fields.get(field_name)
-            if field_schema is not None:
-                return field_schema.field_type
-
-    from ..schema import CORE_TYPES
-    from ..schema.field_aliases import field_aliases
-
-    core_fields = CORE_TYPES.get(entry_type, {}).get("fields", {})
-    # `participants` (the attribute name `create` accepts) is an alias of the
-    # file key `actors`: it parses as the target does.
-    name = field_aliases(entry_type).get(field_name, field_name) if entry_type else field_name
-    return core_fields.get(field_name) or core_fields.get(name)
-
-
-def _parse_field_value(value: str, field_type: str | None = None) -> Any:
-    """Parse a ``--field`` value using its declared type when available.
+def _parse_field_value(value: str) -> Any:
+    """Parse a ``--field`` value's syntax. The CLI knows no schema: whether a
+    field holds a list is the service's to decide (#1502, ``FieldSchema.coerce``).
 
     Parsing order:
       1. JSON (strings, arrays, and objects): ``"a, b"``, ``[1,2]``, or ``{"k": "v"}``
       2. Integer: ``42``
       3. Float: ``3.14``
       4. Boolean: ``true``/``false``
-      5. Comma-separated list for list-like fields: ``a,b,c`` → ``["a","b","c"]``
-      6. Plain string (fallback)
+      5. Plain string (fallback), commas and all: ``a,b`` is one value.
+
+    Several values are sent as a JSON array, ``-f 'k=["a","b"]'``.
     """
     stripped = value.strip()
 
@@ -205,15 +184,89 @@ def _parse_field_value(value: str, field_type: str | None = None) -> Any:
     if stripped.lower() == "false":
         return False
 
-    # 5. Comma-separated list only when the schema declares a list-like field.
-    is_list_field = field_type in {"list", "multi-select", "tags"} or (
-        isinstance(field_type, str) and field_type.startswith("list[")
-    )
-    if is_list_field and "," in stripped:
-        return [item.strip() for item in stripped.split(",") if item.strip()]
-
-    # 6. Plain string
+    # 5. Plain string, never split on commas (#1502: `City A, Inc.` is one value)
     return value
+
+
+def _field_flag(value: str) -> str:
+    """One ``-f key=value`` as given; ``-f tags=...`` or ``-f metadata.tags=...`` is a usage error.
+
+    ``tags`` is a base field, outside the schema's ``type_fields``, so the
+    service's list coercion does not apply to it: without the old comma split,
+    ``-f tags=a,b`` would store the one tag "a,b", and ``-f tags=a`` a string
+    read back as characters (#231). ``--tags`` parses it (the maintainer on
+    #1502, 2026-11-18). ADR-0042 treats ``metadata.k`` as a spelling of ``k``,
+    so ``-f metadata.tags=...`` is refused identically (#1725). A ``parser=``
+    (not a callback, which the Outcome contract forbids), so the refusal is
+    click's: ``USAGE_ERROR``, exit 2, before any KB is opened.
+    """
+    key = value.split("=", 1)[0].strip()
+    try:
+        segs = path_segments(key)
+    except ValueError:
+        segs = ()
+    if segs in (("tags",), (METADATA, "tags")):
+        raise typer.BadParameter(f"{key}=... is refused: set tags with --tags a,b")
+    return value
+
+
+def _item_flag(flag: str) -> Callable[[str], str]:
+    """A ``parser=`` for ``--append``/``--remove``: one ``key=value`` as given,
+    and ``tags=`` or ``metadata.tags=`` with a comma outside a JSON list is a usage error (#1725).
+
+    The CLI splits nothing (#1502), so ``--append tags=c,d`` would store the
+    one tag "c,d" and ``--remove tags=a,b`` would remove nothing and exit 0.
+    Refused instead, naming what works (the maintainer's item B, applied to
+    both flags). Other fields keep a comma in an item: only ``tags`` had the
+    split users relied on, and it has its own option.
+    """
+
+    def parse(value: str) -> str:
+        key, _, item = value.partition("=")
+        k_strip = key.strip()
+        try:
+            segs = path_segments(k_strip)
+        except ValueError:
+            segs = ()
+        if (
+            segs in (("tags",), (METADATA, "tags"))
+            and "," in item
+            and not item.strip().startswith("[")
+        ):
+            raise typer.BadParameter(
+                f"a comma in {flag} {k_strip}=... is refused: give one tag per {flag} "
+                f"(`{flag} {k_strip}=a {flag} {k_strip}=b`) or a JSON list "
+                f'(`{flag} \'{k_strip}=["a", "b"]\'`)'
+            )
+        return value
+
+    return parse
+
+
+def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
+    """``-f key=value`` pairs of ``create``/``update`` as ``{key: value}``.
+
+    A key named twice is refused: keeping one of the values would drop the
+    other (#1502). Several values for one field go as one JSON array.
+    """
+    out: dict[str, Any] = {}
+    for fv in pairs:
+        if "=" not in fv:
+            message = f"--field must be key=value, got '{fv}'"
+            raise ValidationError(
+                message, errors=[{"field": "--field", "rule": "format", "message": message}]
+            )
+        k, v = fv.split("=", 1)
+        if k in out:
+            message = (
+                f"--field {k} is given more than once; send several values as one "
+                f'JSON array: -f \'{k}=["a", "b"]\''
+            )
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "repeated", "message": message}]
+            )
+        out[k] = _parse_field_value(v)
+    return out
 
 
 def _print_warnings(console: Console, warnings: list) -> None:
@@ -323,7 +376,11 @@ def register_entry_commands(app: typer.Typer) -> None:
         importance: int = typer.Option(5, "--importance", "-i", help="Importance (1-10)"),
         status: str = typer.Option("", "--status", help="Entry status (e.g., draft, confirmed)"),
         field: list[str] | None = typer.Option(
-            None, "--field", "-f", help="Extra field as key=value"
+            None,
+            "--field",
+            "-f",
+            parser=_field_flag,
+            help='Extra field as key=value; several values as a JSON array: -f \'k=["a","b"]\'',
         ),
         link: list[str] | None = typer.Option(
             None,
@@ -414,20 +471,8 @@ def register_entry_commands(app: typer.Typer) -> None:
             extra["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
-            # Parse --field key=value pairs with the current KB schema.
-            if field:
-                for fv in field:
-                    if "=" not in fv:
-                        message = f"--field must be key=value, got '{fv}'"
-                        raise ValidationError(
-                            message,
-                            errors=[{"field": "--field", "rule": "format", "message": message}],
-                        )
-                    k, v = fv.split("=", 1)
-                    extra[k] = _parse_field_value(
-                        v, _field_type_for(config, kb_name, entry_type, k)
-                    )
-
+            # --field key=value pairs: syntax only; the service applies the schema.
+            extra.update(_parse_field_flags(field or []))
             # Every create decision -- the ADR-0034 truncated-body refusal (the
             # marker may arrive via --field or in the frontmatter of a
             # --body-file/--stdin read), the undeclared-type refusal (core types
@@ -576,15 +621,23 @@ def register_entry_commands(app: typer.Typer) -> None:
             None, "--lifecycle", help="Lifecycle state: active or archived"
         ),
         field: list[str] | None = typer.Option(
-            None, "--field", "-f", help="Extra field as key=value"
+            None,
+            "--field",
+            "-f",
+            parser=_field_flag,
+            help='Extra field as key=value; several values as a JSON array: -f \'k=["a","b"]\'',
         ),
         append: list[str] | None = typer.Option(
             None,
             "--append",
+            parser=_item_flag("--append"),
             help="Add one item to a list field, as key=value (a JSON list adds each)",
         ),
         remove: list[str] | None = typer.Option(
-            None, "--remove", help="Remove one item from a list field, as key=value"
+            None,
+            "--remove",
+            parser=_item_flag("--remove"),
+            help="Remove one item from a list field, as key=value (a JSON list removes each)",
         ),
         unset: list[str] | None = typer.Option(
             None, "--unset", help="Remove a key with its own lines (null is a value, not a removal)"
@@ -631,22 +684,13 @@ def register_entry_commands(app: typer.Typer) -> None:
             updates["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
-            current = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
-            entry_type = current.get("entry_type") if current is not None else None
+            # The read is kept for its refusals (an ambiguous id, an unnamed
+            # KB), which answer before anything else; its value is no longer
+            # needed, since the CLI applies no schema to `-f` (#1502).
+            svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
 
-            # Parse --field key=value pairs with the existing entry's schema.
-            if field:
-                for fv in field:
-                    if "=" not in fv:
-                        message = f"--field must be key=value, got '{fv}'"
-                        raise ValidationError(
-                            message,
-                            errors=[{"field": "--field", "rule": "format", "message": message}],
-                        )
-                    k, v = fv.split("=", 1)
-                    updates[k] = _parse_field_value(
-                        v, _field_type_for(config, kb_name, entry_type, k)
-                    )
+            # --field key=value pairs: syntax only; the service applies the schema.
+            updates.update(_parse_field_flags(field or []))
 
             def items(pairs: list[str] | None) -> dict[str, Any]:
                 # Every pair is kept, in the order given: a field named twice
@@ -661,7 +705,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                             errors=[{"field": "--field", "rule": "format", "message": message}],
                         )
                     k, v = fv.split("=", 1)
-                    value = _parse_field_value(v, _field_type_for(config, kb_name, entry_type, k))
+                    value = _parse_field_value(v)
                     out.setdefault(k, []).extend(value if isinstance(value, list) else [value])
                 return out
 

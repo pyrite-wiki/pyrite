@@ -254,13 +254,28 @@ def registry() -> dict[str, object]:
 UNBOUNDED: dict[tuple[str, str], str] = {}
 
 #: (command path, parameter name) -> why the checker cannot classify the type (a
-#: ``parser=`` option) and why that is safe. One row: `qa duplicates --threshold`.
+#: ``parser=`` option) and why that is safe. Rows: `qa duplicates --threshold`, and
+#: `create`/`update --field` and `update --append`/`--remove`, which are text, never a
+#: number.
+_FIELD_TEXT = (
+    "a key=value text option, never a number; its ``parser=`` function returns the "
+    "text unchanged and refuses `tags=...` at parse time (usage error, exit 2, #1502)"
+)
+_ITEM_TEXT = (
+    "a key=value text option, never a number; its ``parser=`` function returns the "
+    "text unchanged and refuses a comma in `tags=...` at parse time (usage error, "
+    "exit 2, #1502)"
+)
 UNCLASSIFIED: dict[tuple[str, str], str] = {
     ("pyrite qa duplicates", "threshold"): (
         "a click float range accepts NaN; its ``parser=`` function refuses a non-finite or "
         "out-of-range value at parse time (usage error, exit 2); to be replaced by the "
         "shared finite-float type tracked on #1541"
     ),
+    ("pyrite create", "field"): _FIELD_TEXT,
+    ("pyrite update", "field"): _FIELD_TEXT,
+    ("pyrite update", "append"): _ITEM_TEXT,
+    ("pyrite update", "remove"): _ITEM_TEXT,
 }
 
 #: #1541: unbounded on ``dev`` today, grouped by the module that declares them.
@@ -295,7 +310,6 @@ NOT_YET: set[tuple[str, str]] = {
     #
     #
     # pyrite/cli/collection_commands.py
-    ("pyrite collections query", "limit"),
     #
     #
     # pyrite/cli/link_commands.py
@@ -309,8 +323,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite-read timeline", "min_importance"),
     ("pyrite-read timeline", "limit"),
     # extensions/social/src/pyrite_social/cli.py
-    ("pyrite social newest", "limit"),
-    ("pyrite social top", "limit"),
 }
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"

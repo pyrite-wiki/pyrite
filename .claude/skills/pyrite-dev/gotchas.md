@@ -272,11 +272,11 @@ db.execute_sql("SELECT * FROM entry WHERE id = ?", (entry_id,))
 
 **When this bites you:** Adding a new search mode or modifying the hybrid pipeline. Always ensure both legs fetch enough to cover `offset + limit`.
 
-## `list_files()` Skips Files with "template" in the Filename
+## The Index Walk Skips `README.md`, Dot-Folders and `_templates/` (Any Case)
 
-`KBRepository.list_files()` (repository.py:244) filters out any `.md` file whose name contains the substring `"template"`. This is a broad substring check, not a prefix/suffix match.
+The index walk (`pyrite/storage/entry_paths.py`; `KBRepository.list_files()` in `repository.py` uses it) skips a `README.md` in any letter case, any path part that starts with a dot, and a folder named `_templates` in any letter case (`_Templates`, `_TEMPLATES`). It does not look at the word "template" anywhere else in a name: `templated-foo.md` is indexed (#1552).
 
-**When this bites you:** Creating KB entries with filenames like `templated-foo.md`, `template-bar.md`, or `path-templates.md`. They silently won't be indexed. Rename to avoid the word entirely (e.g., `dynamic-foo.md`).
+**When this bites you:** A file you wrote under one of those names will not be indexed. If it states an `id:`, `pyrite index health` names it under `unlisted_entry_files` with reason `readme`, `hidden` or `templates`. Rename it to a name the walk lists, keep the `id:` line, then run `pyrite index sync`. Writes through Pyrite refuse a path the walk would skip.
 
 ## Closing a Backlog Item: Use `status=done` (and the History of the `kb/notes/` Misplacement)
 
@@ -306,22 +306,12 @@ KB presets first (`PluginRegistry.get_type_default_subdirectory`), so new items 
 When closing an item you still `git mv` it to `kb/backlog/done/` yourself — that is a
 convention, not something the type's subdirectory encodes.
 
-**Trap 3 — `-f` is not a substitute for a dedicated flag on list-typed fields (#231).**
-`-f status=done` is correct and is the pattern CLAUDE.md shows, so the hand reaches for
-`-f tags=a,b` next. It does not work, and it does not tell you:
-
-```
-$ pyrite update <id> -k pyrite -f tags=mcp,agent-ux
-{"updated": true, ...}                 # looks fine
-$ pyrite get <id> -k pyrite --format json | jq .tags
-["m","c","p",",","a","g","e","n","t","-","u","x"]     # the CHARACTERS
-```
-
-`-f` stores the raw string (`tags: mcp,agent-ux`, not a YAML list), and the reader then
-iterates it as a sequence. The entry drops out of `pyrite tags`, out of tag-filtered
-search and out of every `sw` view keyed on a tag, silently. Use `--tags "a,b"`, which
-parses properly. Assume the same for any other list-typed field reachable through `-f`
-(`participants`, `aliases`, `actors`). Repair by re-running with `--tags`.
+**Trap 3 — list-typed fields and `-f` (#231, #1502).** `-f status=done` is correct, but
+`-f tags=a,b` once stored the characters of the string (the entry then dropped out of
+`pyrite tags`, tag-filtered search and every `sw` view keyed on a tag, silently). Now `-f tags=...`
+is refused (exit 2, `USAGE_ERROR`, nothing written): use `--tags a,b`, or `--append tags=x`, one
+tag per flag. `-f` never splits on commas: for a declared list field a scalar becomes a one-item
+list, and several values go as `-f 'k=["a","b"]'`.
 
 **Always read the entry back** after a CLI update that touched a list field:
 `pyrite get <id> -k pyrite --format json` shows what the index will actually serve, which

@@ -35,6 +35,16 @@ describe('EntryCard', () => {
 		expect(screen.getByText('note')).toBeInTheDocument();
 	});
 
+	it.each([false, 0, 2025])('renders scalar status %s', (status) => {
+		render(EntryCard, { props: { entry: { ...sampleEntry, status } } });
+		expect(screen.getByText(String(status))).toBeInTheDocument();
+	});
+
+	it('hides an empty status', () => {
+		render(EntryCard, { props: { entry: { ...sampleEntry, status: '' } } });
+		expect(document.querySelector('.rounded-full.bg-emerald-100')).toBeNull();
+	});
+
 	it('shows summary when available', () => {
 		render(EntryCard, { props: { entry: sampleEntry } });
 		expect(screen.getByText('A test summary')).toBeInTheDocument();

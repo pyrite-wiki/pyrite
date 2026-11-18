@@ -1456,6 +1456,10 @@ class KBService:
     def _hook_ctx(
         self, kb_name: str, kb_config: KBConfig, operation: str, extra: dict | None = None
     ) -> PluginContext:
+        # `kb_schema` is what lets a before_save hook judge by the KB's own
+        # declarations: `_task_validate_transition` reads the task
+        # `state_machine` a kb.yaml declares from it, and with no schema it
+        # falls back to the core TASK_WORKFLOW (#1709).
         return PluginContext(
             config=self.config,
             db=self.db,
@@ -1463,6 +1467,7 @@ class KBService:
             user="",
             operation=operation,
             kb_type=kb_config.kb_type,
+            kb_schema=kb_config.kb_schema,
             **({"extra": extra} if extra else {}),
         )
 
@@ -1542,6 +1547,7 @@ class KBService:
         pending_ids: set[str] | None = None,
         pending_paths: set[Path] | None = None,
         owns: frozenset[str] = frozenset(),
+        ingest: bool = False,
     ) -> tuple[Entry, list[dict[str, Any]]]:
         """Decide whether ``spec`` is a valid new entry; build it if so.
 
@@ -1621,6 +1627,8 @@ class KBService:
         body = fields.pop("body", "")
         if builder is None:
             self._refuse_managed_on_create(entry_type, kb_config, fields, owns)
+            if not ingest:
+                self._refuse_non_initial_status_on_create(entry_type, kb_config, fields)
             fields, attributes = self._with_declared_fields(entry_type, kb_config, fields)
             entry = build_entry(entry_type, entry_id=entry_id, title=title, body=body, **fields)
             entry._create_fields = attributes
@@ -1697,7 +1705,9 @@ class KBService:
         The declaration is ``KBSchema.type_fields`` (core < plugin < kb.yaml),
         never the class's dataclass fields (the maintainer on #86, 2026-10-20).
         A field the caller sent, at any spelling and empty or not, is the
-        caller's (ADR-0042 #720). One not sent is added before the entry is
+        caller's (ADR-0042 #720), as the declared type stores it
+        (``FieldSchema.coerce``: a scalar sent to a list is ``[scalar]``,
+        #1502). One not sent is added before the entry is
         built, so the entry that is validated, given to the hooks, indexed,
         returned and written is one entry:
 
@@ -1721,7 +1731,8 @@ class KBService:
         model = {f.name for f in dataclasses.fields(cls) if f.init and not f.name.startswith("_")}
         aliases = class_field_aliases(cls, entry_type)
         envelope = fields.get("metadata")
-        envelope = envelope if isinstance(envelope, Mapping) else {}
+        envelope = dict(envelope) if isinstance(envelope, Mapping) else {}
+        fields = dict(fields)
         added: dict[str, Any] = {}
         attributes: dict[str, str | None] = {}
         for name, schema in kb_config.kb_schema.type_fields(entry_type).items():
@@ -1730,10 +1741,14 @@ class KBService:
             field, _rest = field_at(cls, entry_type, (name,))
             if field in skip or field in added or field in attributes:
                 continue
-            sent = any(
-                path[-1] in (envelope if len(path) > 1 else fields)
-                for path in spellings_of(cls, entry_type, field)
-            )
+            sent = False
+            for path in spellings_of(cls, entry_type, field):
+                where = envelope if len(path) > 1 else fields
+                if path[-1] in where:
+                    sent = True
+                    # A value sent for a declared list is stored as a list,
+                    # at the spelling it was sent at (#1502).
+                    where[path[-1]] = schema.coerce(where[path[-1]])
             attribute = field if field in model else None
             if attribute is None:
                 attribute = next((a for a, t in aliases.items() if t == field and a in model), None)
@@ -1745,6 +1760,8 @@ class KBService:
                 added[field] = schema.empty_value()
             if attribute is None:
                 attributes[field] = None
+        if envelope:
+            fields["metadata"] = envelope
         return {**fields, **added}, attributes
 
     def _prepare_and_save(
@@ -1758,6 +1775,7 @@ class KBService:
         embed: bool = True,
         builder: Callable[[str, str, str, str, dict[str, Any]], Entry] | None = None,
         owns: frozenset[str] = frozenset(),
+        ingest: bool = False,
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1767,6 +1785,7 @@ class KBService:
             allow_undeclared=allow_undeclared,
             builder=builder,
             owns=owns,
+            ingest=ingest,
         )
         ctx = hook_ctx or self._hook_ctx(kb_name, kb_config, "create")
         prepared_id = entry.id
@@ -1905,7 +1924,10 @@ class KBService:
             kb_config = self.require_kb(kb_name)
         else:
             kb_config = self._writable_kb(kb_name)
-        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
+        # Built on the first item that writes, inside its try: `_hook_ctx`
+        # reads the KB's schema, and a kb.yaml that does not load must refuse
+        # each item (as `_prepare` does), not the whole call (#1709).
+        hook_ctx: PluginContext | None = None
 
         results: list[dict[str, Any]] = []
         created_ids: list[tuple[str, str]] = []  # (entry_id, kb_name) for batch embed
@@ -1928,6 +1950,7 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         pending_ids=would_create,
                         pending_paths=would_create_paths,
+                        ingest=drop_managed,
                     )
                     would_create.add(entry.id)
                     repo = KBRepository(kb_config)
@@ -1938,6 +1961,8 @@ class KBService:
                     )
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
+                    if hook_ctx is None:
+                        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
                     written = self._prepare_and_save(
                         kb_name,
                         kb_config,
@@ -1945,6 +1970,7 @@ class KBService:
                         allow_undeclared=allow_undeclared,
                         hook_ctx=hook_ctx,
                         embed=False,
+                        ingest=drop_managed,
                     )
                     entry, warnings = written.entry, written.warnings
                     created_ids.append((entry.id, kb_name))
@@ -2585,6 +2611,63 @@ class KBService:
                 suggestion=f"name it something else, for example `{entry_type}_{name}`",
             )
 
+    def _refuse_non_initial_status_on_create(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        fields: dict[str, Any],
+    ) -> None:
+        """A create refuses a status other than the initial state on types
+        with a state machine (#1684). Ingest (add, import, sync) is exempt."""
+        from ..models.task import TASK_WORKFLOW, resolve_workflow_for_type
+
+        # Judge task against the core TASK_WORKFLOW only (#1684 review, #1709 option a)
+        if entry_type == "task":
+            workflow = TASK_WORKFLOW
+        else:
+            kb_schema = getattr(kb_config, "kb_schema", None)
+            workflow = resolve_workflow_for_type(entry_type, kb_schema)
+            if workflow is TASK_WORKFLOW:
+                return
+
+        status_field = workflow.get("field", "status")
+        initial = workflow.get("initial", "open")
+
+        sent_status = None
+        has_status = False
+
+        if status_field in fields:
+            sent_status = fields[status_field]
+            has_status = True
+        elif f"metadata.{status_field}" in fields:
+            sent_status = fields[f"metadata.{status_field}"]
+            has_status = True
+        elif isinstance(fields.get("metadata"), Mapping) and status_field in fields["metadata"]:
+            sent_status = fields["metadata"][status_field]
+            has_status = True
+        elif isinstance(fields.get("fields"), Mapping) and status_field in fields["fields"]:
+            sent_status = fields["fields"][status_field]
+            has_status = True
+
+        if not has_status or sent_status is None:
+            return
+
+        if sent_status == initial:
+            return
+
+        if entry_type == "task":
+            message = "a new task is always created open; use `task claim` or `task update --status` to change it."
+            suggestion = "use `task claim` or `task update --status` to change it."
+        else:
+            message = f"a new {entry_type} is always created {initial}; change it after creation."
+            suggestion = "change it after creation."
+
+        raise ValidationError(
+            message,
+            errors=[{"field": status_field, "rule": "managed", "message": message}],
+            suggestion=suggestion,
+        )
+
     def _drop_managed_for_import(
         self, kb_config: KBConfig, spec: dict[str, Any]
     ) -> tuple[dict[str, Any], list[str]]:
@@ -2781,9 +2864,15 @@ class KBService:
         # `status_change_log[0]` re-read as a list index).
         path: tuple[Any, ...] = (*head, *rest)
         if isinstance(op, Set):
-            value = (
-                self._value_for_file(entry, field, op.value) if not rest else _plain_value(op.value)
-            )
+            sent = op.value
+            if not rest:
+                # A value set on a declared list field is stored as a list
+                # (#1502): the same coercion a create makes, on the resolved
+                # field (an alias or `metadata.k` is its target here).
+                declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+                if declared is not None:
+                    sent = declared.coerce(sent)
+            value = self._value_for_file(entry, field, sent) if not rest else _plain_value(sent)
             spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
             if _same_instant_as_file(file_values, spelled, value):
                 return Set(path, file_values[spelled])  # the same instant: no change

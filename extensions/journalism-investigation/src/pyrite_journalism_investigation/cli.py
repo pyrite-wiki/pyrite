@@ -421,6 +421,9 @@ def qa_report(
         )
         console.print(f"  Orphans (no evidence): {claims['orphans']}")
         console.print(f"  Disputed/retracted: {claims['disputed_ratio']}%")
+        console.print(
+            f"  Unverified, not updated in {stale_days} days: {claims['stale_unverified']}"
+        )
         console.print()
 
         if claims["confidence"]:
