@@ -203,7 +203,7 @@ def _field_flag(value: str) -> str:
     key = value.split("=", 1)[0].strip()
     try:
         segs = path_segments(key)
-    except Exception:
+    except ValueError:
         segs = ()
     if segs in (("tags",), (METADATA, "tags")):
         raise typer.BadParameter(f"{key}=... is refused: set tags with --tags a,b")
@@ -226,7 +226,7 @@ def _item_flag(flag: str) -> Callable[[str], str]:
         k_strip = key.strip()
         try:
             segs = path_segments(k_strip)
-        except Exception:
+        except ValueError:
             segs = ()
         if (
             segs in (("tags",), (METADATA, "tags"))
