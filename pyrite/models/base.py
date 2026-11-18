@@ -18,6 +18,7 @@ from ..exceptions import EntryTypeError, json_safe_value
 from ..schema import Link, Provenance, Source, validate_importance
 from ..schema.validators import importance_value
 from ..utils.frontmatter import require_frontmatter
+from ..utils.parse import safe_int
 from ..utils.yaml import load_yaml
 
 logger = logging.getLogger(__name__)
@@ -344,6 +345,21 @@ class Entry(ABC):
     _unrepresented_keys: dict[str, Any] | None = field(
         default=None, init=False, repr=False, compare=False
     )
+
+    def __post_init__(self) -> None:
+        """Reset `_importance_given` when it disagrees with `importance` (#1703).
+
+        Building an entry via `dataclasses.replace(entry, importance=X)` copies
+        the old `_importance_given` (an init field) along with all other fields.
+        If `_importance_given` disagrees with `importance`, clear it to `_ABSENT`
+        so `validation_errors` judges the replaced attribute `X`.
+        """
+        if self._importance_given is not _ABSENT:
+            expected = importance_value(self._importance_given)
+            if expected is None:
+                expected = safe_int(self._importance_given, DEFAULT_IMPORTANCE)
+            if self.importance != expected:
+                super().__setattr__("_importance_given", _ABSENT)
 
     def __setattr__(self, name: str, value: Any) -> None:
         """Assigning a field makes it explicit, whatever value it is given.
