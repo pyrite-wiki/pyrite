@@ -518,10 +518,19 @@ def test_no_embedding_provider_still_confirms(world):
 
 
 # --------------------------------------------------------------------------
-# CLI, MCP and REST agree
+# CLI, MCP and REST agree; a network answer follows index health's shape (#1552)
 # --------------------------------------------------------------------------
 
-NAMES = ["a", "b", "missing", "dup", "broken", "sub/no-id-here.md"]
+NAMES = [
+    "a",
+    "b",
+    "missing",
+    "dup",
+    "broken",
+    "sub/no-id-here.md",
+    "secret",
+    ".hidden/secret.md",
+]
 
 
 def _seed_mixed(world):
@@ -530,17 +539,62 @@ def _seed_mixed(world):
     _duplicate(world)
     _malformed(world)
     _id_less_by_path(world)
+    _dot_folder(world)
 
 
-#: What every surface reports for NAMES after the seed: by hand.
-EXPECTED = {
-    "a": ("indexed", True),
-    "b": ("indexed", False),
-    "missing": ("not_found", False),
-    "dup": ("duplicate", False),
-    "broken": ("malformed", False),
-    "sub/no-id-here.md": ("indexed", True),
+_SCHEMA_ERROR = [("schema_violation", "error", "severity")]
+
+#: Every field of every row the local CLI reports for NAMES after the seed,
+#: by hand: name -> (id, path, status, reason, extra, searchable, findings,
+#: embedding, confirmed). ``extra`` is the duplicate's ``paths``.
+CLI_ROWS = {
+    "a": ("a", "a.md", "indexed", None, None, True, [], "unavailable", True),
+    "b": ("b", "b.md", "indexed", None, None, True, _SCHEMA_ERROR, "unavailable", False),
+    "missing": ("missing", None, "not_found", None, None, None, [], None, False),
+    "dup": (
+        "dup", "dup-a.md", "duplicate", None, ["dup-a.md", "dup-b.md"], None, [], None, False,
+    ),
+    "broken": (
+        "broken", "broken.md", "malformed", "its frontmatter does not parse",
+        None, None, [], None, False,
+    ),
+    "sub/no-id-here.md": (
+        "no-id-epsilon", "sub/no-id-here.md", "indexed", None, None, True, [],
+        "unavailable", True,
+    ),
+    "secret": ("secret", ".hidden/secret.md", "skipped", "hidden", None, None, [], None, False),
+    ".hidden/secret.md": (
+        None, ".hidden/secret.md", "skipped", "hidden", None, None, [], None, False,
+    ),
+}  # fmt: skip
+
+#: The same for a network caller (MCP, REST), by hand. As index health answers
+#: them (services/index_health.py ``network_shape``): a file the walk does not
+#: index is not described (the name is ``not_found``), and the files that
+#: claim a duplicate id are not listed.
+NETWORK_ROWS = {
+    **CLI_ROWS,
+    "dup": ("dup", "dup-a.md", "duplicate", None, None, None, [], None, False),
+    "secret": ("secret", None, "not_found", None, None, None, [], None, False),
+    ".hidden/secret.md": (None, None, "not_found", None, None, None, [], None, False),
 }
+
+
+def _as_tuples(rows: list[dict]) -> dict[str, tuple]:
+    return {
+        r["name"]: (
+            r["id"],
+            r["path"],
+            r["status"],
+            r["reason"],
+            r.get("paths"),
+            r["searchable"],
+            [(f["rule"], f["severity"], f["field"]) for f in r["findings"]],
+            r["embedding"],
+            r["confirmed"],
+        )
+        for r in rows
+    }
 
 
 def _cli_rows(world):
@@ -549,41 +603,125 @@ def _cli_rows(world):
     return payload["confirm"]["entries"]
 
 
-def _mcp_rows(world):
-    res = world.mcp("admin")._dispatch_tool("kb_index_sync", {"kb_name": KB, "confirm": NAMES})
-    assert res["confirm"]["outcome"] == "partial", res
-    return res["confirm"]["entries"]
+def _mcp_answer(world, args: dict) -> dict:
+    return world.mcp("admin")._dispatch_tool("kb_index_sync", {"kb_name": KB, **args})
 
 
-def _rest_rows(world):
+def _rest_answer(world, params: dict):
     from starlette.testclient import TestClient
 
     from tests._world import _create_app_without_static
 
     app = _create_app_without_static(world.config, world.root)
-    with TestClient(app) as client:
-        resp = client.post("/api/index/sync", params={"wait": "true", "kb": KB, "confirm": NAMES})
-    state_db = getattr(app.state, "pyrite_db", None)
-    if state_db is not None:
-        state_db.close()
+    try:
+        with TestClient(app) as client:
+            return client.post("/api/index/sync", params={"wait": "true", "kb": KB, **params})
+    finally:
+        state_db = getattr(app.state, "pyrite_db", None)
+        if state_db is not None:
+            state_db.close()
+
+
+def _mcp_rows(world):
+    res = _mcp_answer(world, {"confirm": NAMES})
+    assert res["confirm"]["outcome"] == "partial", res
+    return res["confirm"]["entries"]
+
+
+def _rest_rows(world):
+    resp = _rest_answer(world, {"confirm": NAMES})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["confirm"]["outcome"] == "partial", body
     return body["confirm"]["entries"]
 
 
-SURFACES = {"cli": _cli_rows, "mcp": _mcp_rows, "rest": _rest_rows}
+#: surface -> (rows, the rows it must report).
+SURFACES = {
+    "cli": (_cli_rows, CLI_ROWS),
+    "mcp": (_mcp_rows, NETWORK_ROWS),
+    "rest": (_rest_rows, NETWORK_ROWS),
+}
 
 
 @pytest.mark.parametrize("surface", list(SURFACES))
-def test_each_surface_reports_the_same_rows(world, surface):
+def test_each_surface_reports_its_rows_written_by_hand(world, surface):
     _seed_mixed(world)
-    reference = _cli_rows(world)  # synced once; the next sync changes nothing
+    rows_of, expected = SURFACES[surface]
 
-    rows = SURFACES[surface](world)
+    rows = rows_of(world)
 
-    assert {r["name"]: (r["status"], r["confirmed"]) for r in rows} == EXPECTED
-    assert rows == reference
+    assert [r["name"] for r in rows] == NAMES
+    assert _as_tuples(rows) == expected
+
+
+@pytest.mark.parametrize("surface", ["mcp", "rest"])
+def test_a_network_row_never_names_a_file_the_walk_does_not_index(world, surface):
+    _seed_mixed(world)
+    rows = _mcp_rows(world) if surface == "mcp" else _rest_rows(world)
+
+    text = json.dumps(rows)
+
+    assert ".hidden" not in text
+    assert "dup-b.md" not in text
+
+
+# --------------------------------------------------------------------------
+# One service decides: blank names, and a KB this process has not loaded
+# --------------------------------------------------------------------------
+
+
+def _cli_blank(world, blank):
+    result = _sync(world, "--confirm", blank)
+    return result.exit_code, _json(result)["confirm"]
+
+
+def _mcp_blank(world, blank):
+    block = _mcp_answer(world, {"confirm": [blank]})["confirm"]
+    return (0 if block["outcome"] == "done" else 3), block
+
+
+def _rest_blank(world, blank):
+    resp = _rest_answer(world, {"confirm": [blank]})
+    assert resp.status_code == 200, resp.text
+    block = resp.json()["confirm"]
+    return (0 if block["outcome"] == "done" else 3), block
+
+
+BLANK_SURFACES = {"cli": _cli_blank, "mcp": _mcp_blank, "rest": _rest_blank}
+
+
+@pytest.mark.parametrize("blank", ["", "  "], ids=["empty", "spaces"])
+@pytest.mark.parametrize("surface", list(BLANK_SURFACES))
+def test_a_blank_name_is_no_name_on_every_surface(world, surface, blank):
+    """A blank name names nothing: what this sync added or changed is
+    confirmed, the same on all three surfaces."""
+    _write(world, "fresh.md", note("fresh", "Fresh Gamma"))
+
+    code, block = BLANK_SURFACES[surface](world, blank)
+
+    assert code == 0
+    assert block["named"] is False
+    assert [(r["name"], r["status"], r["confirmed"]) for r in block["entries"]] == [
+        ("fresh", "indexed", True)
+    ]
+
+
+def test_the_service_refuses_a_kb_this_process_has_not_loaded(world):
+    """MCP and REST resolve a KB through the registry as well as the loaded
+    config; the sync and the confirm read the config. A KB only the registry
+    holds is refused, never answered `done` with no rows."""
+    from pyrite.config import PyriteConfig
+    from pyrite.exceptions import KBNotFoundError
+    from pyrite.services.index_confirm import confirm_entries
+    from pyrite.storage.index import IndexManager
+
+    unloaded = PyriteConfig(knowledge_bases=[], settings=world.config.settings)
+    index_mgr = IndexManager(world.db, unloaded)
+
+    for names in (["unchanged"], []):
+        with pytest.raises(KBNotFoundError):
+            confirm_entries(index_mgr, KB, names, index_mgr.sync_incremental(KB))
 
 
 def test_mcp_confirm_with_background_is_refused(world):
@@ -609,8 +747,56 @@ def test_rest_confirm_without_wait_is_refused(world):
 
 
 # --------------------------------------------------------------------------
-# A refusal keeps dev's shapes: JSON when no format is asked, one line in rich
+# A refusal keeps dev's shapes. With no format asked, dev printed a refusal of
+# `index sync` as one rich `ERROR [CODE]` line, except a storage fault, which
+# its root printed as the JSON error shape. Each expected answer below is
+# dev's, copied by hand from a run of dev's CLI.
 # --------------------------------------------------------------------------
+
+
+def _unasked(world, *args: str, monkeypatch):
+    monkeypatch.delenv("PYRITE_FORMAT", raising=False)
+    return world.cli("index", "sync", "--no-embed", *args)
+
+
+def test_an_unknown_kb_with_no_format_asked_is_dev_s_error_line(world, monkeypatch):
+    result = _unasked(world, "-k", "nope", monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout).splitlines() == [
+        "ERROR [KB_NOT_FOUND]: KB 'nope' not found",
+        "    hint: To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) "
+        "with no KB name.",
+    ]
+
+
+def test_a_kb_yaml_that_does_not_load_with_no_format_asked_is_dev_s_error_line(world, monkeypatch):
+    (world.kb_path(KB) / "kb.yaml").write_bytes(b"name: notes\ntypes: {note: [unclosed\n")
+
+    result = _unasked(world, "-k", KB, monkeypatch=monkeypatch)
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout).splitlines() == [
+        "ERROR [KB_CONFIG_INVALID]: This knowledge base's kb.yaml could not be loaded (it is "
+        "not valid UTF-8 YAML holding a mapping); the operator needs to correct the file."
+    ]
+
+
+def test_an_unreadable_kb_with_no_format_asked_is_dev_s_error_line(world, monkeypatch):
+    root = world.kb_path(KB)
+    root.chmod(0o000)
+    try:
+        if os.access(root, os.R_OK):
+            pytest.skip(f"running as a user (uid {os.getuid()}) whom mode 000 does not stop")
+        result = _unasked(world, "-k", KB, monkeypatch=monkeypatch)
+    finally:
+        root.chmod(0o755)
+
+    assert result.exit_code == 1, result.output
+    assert plain(result.stdout).splitlines() == [
+        "ERROR [KB_UNREADABLE]: Pyrite could not read this knowledge base's files: the "
+        "operating system refused (for example, a folder or file Pyrite may not open)."
+    ]
 
 
 @pytest.fixture
@@ -650,7 +836,7 @@ def test_a_refusal_under_format_rich_is_one_error_line(corrupt_index):
     assert lines[0].startswith("ERROR [STORAGE_ERROR]: "), result.stdout
 
 
-def test_a_refusal_with_no_format_asked_is_the_json_error_shape(corrupt_index):
+def test_a_storage_fault_with_no_format_asked_is_the_json_error_shape(corrupt_index):
     result = _invoke("index", "sync", "--confirm", "-k", "t", "x")
 
     assert result.exit_code == 1, result.output
