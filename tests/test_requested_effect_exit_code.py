@@ -699,6 +699,16 @@ class TestTasks:
             is False
         )
 
+    def test_a_lost_start_exits_one_in_json_as_in_rich(self, cli):
+        cli.pyrite("task", "create", "S1", "-k", "demo")
+        first = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "me", "--format", "json")
+        assert first.returncode == 0, first.stdout + first.stderr
+        for fmt in ("json", "rich"):
+            again = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", fmt)
+            assert again.returncode == REFUSED, (fmt, again.stdout + again.stderr)
+        lost = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", "json")
+        assert json.loads(lost.stdout)["claimed"] is False
+
     def test_children_that_failed_to_create_are_partial(self, cli):
         cli.pyrite("task", "create", "Parent", "-k", "demo")
         # The second child has the first one's title, hence its id: refused.
@@ -967,6 +977,7 @@ GUARDED = {
     "pyrite sw migrate-standards": "TestJournalismAndSoftwareResults",
     "pyrite sw prioritize": "TestJournalismAndSoftwareResults",
     "pyrite task claim": "TestTasks",
+    "pyrite task start": "TestTasks",
     "pyrite task decompose": "TestTasks",
     "pyrite-admin index embed": "TestEmbed",
     "pyrite-admin index health": "TestAdminRepo",
@@ -1036,6 +1047,7 @@ SAFE = {
     "pyrite task create": "one entry",
     "pyrite task migrate-relaxed-mode": "idempotent backfill; 'skipped' means not applicable, not "
     "failed",
+    "pyrite task finish": "one write; a refused walk exits 1 and writes nothing",
     "pyrite task reset": "one transition",
     "pyrite task update": "one entry",
     "pyrite update": "one entry; a refusal exits 1",

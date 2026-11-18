@@ -344,6 +344,30 @@ def w_mcp_task_claim(world):
     )
 
 
+def w_cli_task_start(world):
+    return _cli(world, "task", "start", "x", "-k", "sw", "-a", "agent:a")
+
+
+def w_mcp_task_start(world):
+    return _mcp(
+        world.mcp()._dispatch_tool(
+            "task_start", {"task_id": "x", "kb_name": "sw", "assignee": "agent:a"}
+        )
+    )
+
+
+def w_cli_task_finish(world):
+    return _cli(world, "task", "finish", "x", "-k", "sw", "--walk", "--reason", "r")
+
+
+def w_mcp_task_finish(world):
+    return _mcp(
+        world.mcp()._dispatch_tool(
+            "task_finish", {"task_id": "x", "kb_name": "sw", "walk": True, "reason": "r"}
+        )
+    )
+
+
 def w_cli_task_update_audited(world):
     # `--comment` reads the old status first (task_service.update_task).
     return _cli(world, "task", "update", "x", "-k", "sw", "-s", "done", "--comment", "c")
@@ -426,6 +450,10 @@ WRITE_METHODS = {
         w_cli_rename,
         w_cli_task_claim,
         w_mcp_task_claim,
+        w_cli_task_start,
+        w_mcp_task_start,
+        w_cli_task_finish,
+        w_mcp_task_finish,
         w_cli_task_update_audited,
         w_mcp_task_update,
         w_mcp_task_checkpoint,
@@ -651,7 +679,11 @@ CALL_SITES: dict[str, tuple[str, object]] = {
     ),
     "pyrite/services/kb_service.py::KBService.claim_entry": (
         WRITER,
-        ["cli_task_claim", "mcp_task_claim"],
+        ["cli_task_claim", "mcp_task_claim", "cli_task_start", "mcp_task_start"],
+    ),
+    "pyrite/services/task_service.py::TaskService.finish_task": (
+        WRITER,
+        ["cli_task_finish", "mcp_task_finish"],
     ),
     "pyrite/services/task_service.py::TaskService.update_task": (
         WRITER,
