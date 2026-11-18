@@ -968,14 +968,10 @@ class KBRepository:
                             # name ITSELF is (a folder that gives no type,
                             # in one this process may not search) may it be
                             # a folder: the rows under it are kept and it is
-                            # named (#1546). Not a name the walk lists as a
-                            # file (``*.md``, a ``__collection.yaml``): that
-                            # file's own stat names it.
-                            if (
-                                not item.name.endswith(".md")
-                                and item.name != "__collection.yaml"
-                                and _type_unknown(item)
-                            ):
+                            # named (#1546, #1720). Whatever its name (*.md and
+                            # __collection.yaml included, #1720): if it is really
+                            # a file, that file's own stat also names it.
+                            if _type_unknown(item):
                                 could_not_list(os.path.join(top, item.name))
                         if not is_dir:
                             filenames.append(item.name)
