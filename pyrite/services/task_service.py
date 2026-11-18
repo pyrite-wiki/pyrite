@@ -646,6 +646,10 @@ class TaskService:
                     from_status="claimed",
                     to_status="in_progress",
                     ops=[edge("claimed", "in_progress")],
+                    # Only the holder read above moves it on: every check
+                    # the claim passes matches it, so a claim taken in
+                    # between is refused, never replaced.
+                    holder=assignee,
                 )
         if not result.get("claimed"):
             return result

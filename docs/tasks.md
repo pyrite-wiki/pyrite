@@ -34,7 +34,9 @@ an open task and starts it in one write: the same compare-and-set as `task
 claim` decides it, so a lost start exits 1 with `claimed: false`, like a lost
 claim, and changes nothing. It records open → claimed → in_progress in the
 task's `status_change_log` and returns the task with its body and its parent's.
-Retrying `start` on a task you already claimed moves it on to in_progress.
+Retrying `start` on a task you already claimed moves it on to in_progress. Only
+the holder moves a claimed task on: if the claim changes hands meanwhile, the
+retry is refused, naming who holds it now, and their claim stays.
 
 `task finish` moves a held task to `done` in one write. Without `--walk` it
 takes only a direct edge (in_progress → done, review → done); with `--walk` it

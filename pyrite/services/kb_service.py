@@ -130,6 +130,19 @@ def _refuse_assignee_change(entry_id: str, before: Entry | None, after: Entry) -
     _refuse_assignee_values(entry_id, _assignee_of(before), _assignee_of(after))
 
 
+def _lost_claim(
+    entry_id: str, current: Any, from_status: str, current_holder: str, holder: str | None
+) -> dict[str, Any]:
+    """A claim's compare-and-set lost: claim's lost dict. When the status was
+    right and the holder was not (`task start`'s retry, #1685), the error
+    names who holds it now."""
+    if holder is not None and current == from_status and current_holder != holder:
+        error = f"Entry '{entry_id}' is '{current}', held by '{current_holder}', not '{holder}'"
+    else:
+        error = f"Entry '{entry_id}' is '{current}', not '{from_status}'"
+    return {"claimed": False, "error": error, "current_status": current}
+
+
 def _refuse_assignee_values(entry_id: str, old: str, new: str) -> None:
     """`_refuse_assignee_change` on the two assignee values."""
     from .acting import OPERATOR, acting
@@ -2289,6 +2302,7 @@ class KBService:
         ops: list[Any] | None = None,
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
+        expect_holder: str | None = None,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2346,6 +2360,16 @@ class KBService:
                 raise EntryNotFoundError(
                     f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
                 ) from None
+            if expect_holder is not None:
+                # `task start`'s retry from `claimed` (#1685): only the holder
+                # it read moves the claim on. Read from these bytes, on every
+                # attempt, so a claim taken in between is refused, not replaced.
+                file_holder = getattr(entry, "assignee", "") or ""
+                if file_holder != expect_holder:
+                    raise ValidationError(
+                        f"'{entry_id}' is held by '{file_holder}', not '{expect_holder}': "
+                        "only its holder moves it on. Nothing was written."
+                    )
             text = raw.decode("utf-8")
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -4213,6 +4237,7 @@ class KBService:
         to_status: str = "claimed",
         via: Sequence[str] = (),
         ops: Sequence[Any] = (),
+        holder: str | None = None,
     ) -> dict[str, Any]:
         """Atomically claim an Assignable + Statusable entry via CAS.
 
@@ -4224,7 +4249,11 @@ class KBService:
         edge by edge by the workflow on the file write, and the item
         operations (its audit trail) that write carries. The compare-and-set
         is the same one either way; with neither, the file write is exactly
-        a plain claim's.
+        a plain claim's. ``holder`` is `task start`'s retry from ``claimed``:
+        only that holder moves the claim on, so every check this claim
+        passes (the index compare-and-set, the change set's read, the file
+        write) also matches it, and a claim someone else took in between is
+        refused, naming them. A plain claim passes none.
 
         Returns:
             Dict with claimed=True on success, or error details.
@@ -4259,7 +4288,7 @@ class KBService:
 
         if getattr(self.db, "is_change_set", False):
             return self._claim_in_change_set(
-                entry_id, kb_name, assignee, from_status, to_status, ops, status_path
+                entry_id, kb_name, assignee, from_status, to_status, ops, status_path, holder
             )
 
         session = self.db.session
@@ -4269,6 +4298,8 @@ class KBService:
             status_clause = "(status = :from_status OR status IS NULL)"
         else:
             status_clause = "status = :from_status"
+        if holder is not None:
+            status_clause += " AND assignee = :holder"
         result = session.execute(
             text(f"""UPDATE entry
                SET status = :to_status,
@@ -4281,13 +4312,14 @@ class KBService:
                 "kb_name": kb_name,
                 "to_status": to_status,
                 "from_status": from_status,
+                "holder": holder,
             },
         )
         session.commit()
 
         if result.rowcount == 0:
             rows = self.db.execute_sql(
-                "SELECT status FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+                "SELECT status, assignee FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
                 {"entry_id": entry_id, "kb_name": kb_name},
             )
             if not rows:
@@ -4296,15 +4328,13 @@ class KBService:
                     "error": f"Entry '{entry_id}' not found in KB '{kb_name}'",
                 }
             current = rows[0].get("status", from_status)
-            return {
-                "claimed": False,
-                "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
-                "current_status": current,
-            }
+            return _lost_claim(
+                entry_id, current, from_status, rows[0].get("assignee") or "", holder
+            )
 
         # Update the markdown file to match
         try:
-            self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path)
+            self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path, holder)
         except Exception as e:
             # Rollback index CAS on file error (the holder: see rollback_assignee).
             logger.warning("File update failed for claim on %s, rolling back: %s", entry_id, e)
@@ -4347,6 +4377,7 @@ class KBService:
         to_status: str,
         ops: Sequence[Any] = (),
         status_path: Sequence[str] | None = None,
+        holder: str | None = None,
     ) -> dict[str, Any]:
         """A claim whose write lands in the claimer's change set (a KB with
         `landing: review`; ADR-0044 §1, decided 2026-10-20: claims follow the
@@ -4358,13 +4389,12 @@ class KBService:
         if not entry:
             return {"claimed": False, "error": f"Entry '{entry_id}' not found in KB '{kb_name}'"}
         current = entry.get("status")
-        if not (current == from_status or (from_status == "open" and not current)):
-            return {
-                "claimed": False,
-                "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
-                "current_status": current,
-            }
-        self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path)
+        current_holder = entry.get("assignee") or ""
+        if not (current == from_status or (from_status == "open" and not current)) or (
+            holder is not None and current_holder != holder
+        ):
+            return _lost_claim(entry_id, current, from_status, current_holder, holder)
+        self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path, holder)
         return {"claimed": True, "task_id": entry_id, "assignee": assignee, "status": to_status}
 
     def _write_claim(
@@ -4375,10 +4405,12 @@ class KBService:
         to_status: str,
         ops: Sequence[Any],
         status_path: Sequence[str] | None,
+        holder: str | None = None,
     ) -> None:
         """A claim's one file write. A plain claim is exactly the field update
-        it always was; `task start`'s carries its audit items and the path its
-        edges are judged along (#1685)."""
+        it always was; `task start`'s carries its audit items, the path its
+        edges are judged along, and on a retry from `claimed` the holder the
+        file must still name (#1685)."""
         if status_path is None:
             self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
             return
@@ -4389,6 +4421,7 @@ class KBService:
             restrict=False,
             ops=list(ops),
             status_path=status_path,
+            expect_holder=holder,
         )
 
     # =========================================================================

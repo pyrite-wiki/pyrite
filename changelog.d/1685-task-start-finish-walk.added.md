@@ -3,7 +3,8 @@
   task to `in_progress` through `claimed`, decided by the same compare-and-set as `task claim`:
   of two concurrent starts one wins, and the loser exits 1 with `claimed: false` and
   `current_status`, as a lost claim does. A task the same assignee already claimed moves on to
-  `in_progress`. The result carries the task with its body and `parent: {id, title, body}`.
+  `in_progress`, only while that assignee still holds it: a claim someone else took meanwhile is
+  refused, naming them, and kept. The result carries the task with its body and `parent: {id, title, body}`.
   `task finish <id> -k <kb> [--walk] [--reason R] [--by who]` moves a held task to `done`: with
   `--walk` through every intermediate state of the task workflow (claimed → in_progress → done, blocked →
   in_progress → done), without it only a direct edge, and the refusal names the path. Both

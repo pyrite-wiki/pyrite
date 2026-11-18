@@ -1629,6 +1629,9 @@ is a lost claim's dict unchanged: `{"claimed": false, "error": "...",
 "current_status": "in_progress"}`, CLI outcome `nothing` and exit 1, MCP and
 REST a result (not an error); an id the index does not hold is answered the
 same way (`claimed: false`, `error`, no `current_status`), as claim answers it.
+A retry of a task the caller holds as `claimed` moves it on only while the
+caller still holds it: a claim someone else took meanwhile is a lost start
+whose `error` names the current holder, and nothing is written.
 Refusals that are errors, not results: an entry that is not a task
 (`VALIDATION_FAILED`), a task held by another account (`FORBIDDEN`, claim's
 holder rule), a file its type cannot load (`ENTRY_UNREADABLE`) and an unknown
