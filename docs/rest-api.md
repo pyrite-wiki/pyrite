@@ -20,6 +20,7 @@ Send the key on every request, in a header (preferred) or a query parameter:
 
 ```bash
 curl -H "X-API-Key: my-key" "http://127.0.0.1:8088/api/kbs"
+curl -H "Authorization: Bearer my-key" "http://127.0.0.1:8088/api/kbs"
 curl "http://127.0.0.1:8088/api/kbs?api_key=my-key"
 ```
 
@@ -33,10 +34,23 @@ What a request needs depends on the server's mode:
 | API keys | `PYRITE_API_KEY` (one admin key) or `api_keys` in `config.yaml` (a role each: `read`, `write`, `admin`) | a valid key |
 | User accounts | `PYRITE_AUTH_ENABLED=true` | a key, or the `pyrite_session` cookie from `POST /auth/login`; with `anonymous_tier` set, no credential for what that tier allows |
 
+`Authorization: Bearer` also carries a session token, as on `/mcp`.
+
 A request without a valid credential gets `401` (`{"detail": "Invalid or
 missing API key"}`). A key whose role is too low gets `403`. Keys, roles,
 anonymous access and the first admin are in
 [Configuration](configuration.md).
+
+**A credential that does not verify gets `401`, never anonymous access.**
+Only a request that sends *no* credential is the anonymous visitor. A key
+(`X-API-Key`, `Authorization: Bearer`, `?api_key`) or a `pyrite_session`
+cookie that is wrong, empty, expired or revoked gets `401` even when
+`anonymous_tier` allows reads, on REST, on `/mcp` and on the live-update
+socket. When a request carries more than one, the first in the order
+`Authorization: Bearer`, `X-API-Key`, `?api_key`, cookie decides: a wrong
+key next to a valid cookie is `401`. A `401` caused by the session cookie
+also clears the cookie, so a browser's next request is anonymous. An
+`Authorization` header with another scheme (a proxy's `Basic`) is not read.
 
 ## Read the API reference
 

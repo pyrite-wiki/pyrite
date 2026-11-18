@@ -86,8 +86,10 @@ def resolve_api_key_role(key: str | None, config: PyriteConfig) -> str | None:
     Returns:
         - "admin" when no keys are configured and auth is disabled (open access)
         - None when no keys are configured and auth is enabled: no key is
-          valid, so the caller falls through to its session or the anonymous
-          tier (any key used to answer "admin" here)
+          valid (any key used to answer "admin" here). A presented key that
+          resolves to None is refused with 401 by every surface: it never
+          falls through to a session cookie or the anonymous tier
+          (``server/credentials.py``, #1754)
         - "admin" when key matches the legacy single api_key
         - The configured role when key hash matches an api_keys entry
         - None when key is invalid or missing (auth enabled but key wrong)

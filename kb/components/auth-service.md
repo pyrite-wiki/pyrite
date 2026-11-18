@@ -54,8 +54,23 @@ effective_role(user, kb) =
     4. user.role                         -- user's global role fallback, only
                                             when user.global_access (operator-
                                             vetted users; not self-registered)
-    5. anonymous_tier                    -- anonymous fallback (if no user)
+    5. anonymous_tier                    -- anonymous fallback (if no
+                                            credential was presented)
 ```
+
+## Credential Resolution (#1754)
+
+Who the caller is comes before the chain above, from one resolver,
+`pyrite/server/credentials.py`, which REST (`verify_api_key`), `/mcp`
+(`mcp_routes._resolve_credential`) and the live-update socket
+(`websocket.resolve_socket_scope`) all ask. It answers *verified* (an operator
+key, a session user, or open access with auth off and no keys), *none* (no
+credential presented), or *failed* (one was presented and did not verify).
+Only *none* may become the anonymous visitor; *failed* is 401 (a refused
+handshake on the socket) whatever `anonymous_tier` says. The first credential
+presented decides, in the order `Authorization: Bearer`, `X-API-Key`,
+`?api_key` (REST and socket only), `pyrite_session` cookie; nothing weaker is
+consulted. A REST 401 caused by the cookie clears it (it is `httponly`).
 
 ## REST Endpoints
 

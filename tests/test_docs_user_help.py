@@ -31,7 +31,7 @@ def test_every_documented_curl_call_runs_against_real_app(make_client):
     _seed(config, db)
     page = (ROOT / "docs/rest-api.md").read_text(encoding="utf-8")
     calls = re.findall(r"^curl .+$", page, re.M)
-    assert len(calls) == 5
+    assert len(calls) == 6  # the Bearer example joined the key examples (#1754)
     for line in calls:
         tokens = shlex.split(line)[1:]
         method, headers, body, url = "GET", {}, None, None
