@@ -1778,10 +1778,8 @@ class QAService:
     def _check_ignored_declarations(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Report any declarations in kb.yaml that Pyrite does not honour because they use reserved names."""
         kb_config = self.config.get_kb(kb_name)
-        if not kb_config or not kb_config.kb_yaml_present:
-            return
-        schema = kb_config.kb_schema
-        if not schema or not getattr(schema, "ignored_declarations", None):
+        schema = kb_config.kb_schema if kb_config else None
+        if schema is None or not getattr(schema, "ignored_declarations", None):
             return
         for decl in schema.ignored_declarations:
             issues.append(

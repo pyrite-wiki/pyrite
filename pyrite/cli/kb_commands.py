@@ -351,7 +351,7 @@ def kb_validate(
                 schema = kb.kb_schema
                 if schema and getattr(schema, "ignored_declarations", None):
                     ignored_decls = schema.ignored_declarations
-        except Exception:
+        except (PyriteError, OSError, ValueError):
             pass
 
         if ignored_decls:
@@ -829,11 +829,6 @@ def schema_add_type(
     except (PyriteError, ValueError) as e:
         _kb_error(e, output_format)
 
-    if "error" in result:
-        from ..utils.errors import cli_error
-
-        cli_error(result["error"], output_format, error_code="VALIDATION_FAILED")
-
     formatted = _format_output(result, output_format)
     if formatted is not None:
         typer.echo(formatted)
@@ -908,11 +903,6 @@ def schema_set(
         result = svc.set_schema(kb_name, schema)
     except (PyriteError, ValueError) as e:
         _kb_error(e, output_format)
-
-    if "error" in result:
-        from ..utils.errors import cli_error
-
-        cli_error(result["error"], output_format, error_code="VALIDATION_FAILED")
 
     formatted = _format_output(result, output_format)
     if formatted is not None:

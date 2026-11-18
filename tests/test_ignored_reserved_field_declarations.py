@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from pyrite.cli import app
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.exceptions import ValidationError
 from pyrite.schema.kb_schema import KBSchema
 from pyrite.schema.reserved import RESERVED_FIELD_NAMES, reserved_field_error_message
 from pyrite.server.mcp_server import PyriteMCPServer
@@ -160,12 +161,12 @@ def test_schema_service_set_schema_refuses_reserved_fields(tmp_path, field_name,
             }
         }
     }
-    result = svc.set_schema("test-kb", new_schema)
-
     if is_reserved:
-        assert "error" in result
-        assert result["error"] == reserved_field_error_message("note", field_name)
+        with pytest.raises(ValidationError) as excinfo:
+            svc.set_schema("test-kb", new_schema)
+        assert str(excinfo.value) == reserved_field_error_message("note", field_name)
     else:
+        result = svc.set_schema("test-kb", new_schema)
         assert result.get("set") is True
         assert "error" not in result
 
@@ -198,12 +199,12 @@ def test_schema_service_add_type_refuses_reserved_fields_in_fields(
             field_name: {"type": "text"},
         },
     }
-    result = svc.add_type("test-kb", "custom", type_def)
-
     if is_reserved:
-        assert "error" in result
-        assert result["error"] == reserved_field_error_message("custom", field_name)
+        with pytest.raises(ValidationError) as excinfo:
+            svc.add_type("test-kb", "custom", type_def)
+        assert str(excinfo.value) == reserved_field_error_message("custom", field_name)
     else:
+        result = svc.add_type("test-kb", "custom", type_def)
         assert result.get("added") is True
         assert "error" not in result
 
