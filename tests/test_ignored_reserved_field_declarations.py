@@ -2,13 +2,12 @@
 
 import json
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
 from pyrite.cli import app
-from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.config import KBConfig, PyriteConfig, Settings, save_config
 from pyrite.exceptions import ValidationError
 from pyrite.schema.kb_schema import KBSchema
 from pyrite.schema.reserved import RESERVED_FIELD_NAMES, reserved_field_error_message
@@ -17,6 +16,7 @@ from pyrite.services.qa_service import QAService
 from pyrite.services.schema_service import SchemaService
 from pyrite.storage.database import PyriteDB
 from pyrite.utils.yaml import dump_yaml_file
+from tests._world import pointed
 
 runner = CliRunner()
 
@@ -101,11 +101,10 @@ def test_kb_validate_reports_ignored_declaration_parametrized(tmp_path, field_na
         settings=Settings(index_path=db_path),
     )
 
-    with (
-        patch("pyrite.config.load_config", return_value=config),
-        patch("pyrite.cli.load_config", return_value=config),
-        patch("pyrite.cli.kb_commands.load_config", return_value=config),
-    ):
+    config_dir = tmp_path / f"config-{field_name}"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with pointed(config_dir):
+        save_config(config)
         result = runner.invoke(app, ["kb", "validate", f"kb-{field_name}", "--format", "json"])
 
     data = json.loads(result.output)
@@ -360,11 +359,10 @@ def test_cli_schema_set_refuses_reserved_field(tmp_path):
         schema_file,
     )
 
-    with (
-        patch("pyrite.config.load_config", return_value=config),
-        patch("pyrite.cli.load_config", return_value=config),
-        patch("pyrite.cli.kb_commands.load_config", return_value=config),
-    ):
+    config_dir = tmp_path / "config-set"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    with pointed(config_dir):
+        save_config(config)
         result = runner.invoke(
             app, ["kb", "schema", "set", "cli-kb", "-s", str(schema_file), "--format", "json"]
         )
