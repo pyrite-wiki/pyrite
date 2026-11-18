@@ -91,6 +91,34 @@ repeat.
   --limit` below 1 (#1560), `sw` list `--limit` or `--offset` below 0 (#1565),
   an invalid `--sort`, `--sort-by` or `--sort-order` (#1387), and `qa assess
   --entry <missing>`, which exits 1 with `ENTRY_NOT_FOUND` (#1499).
+- **`-f key=a,b` no longer splits on commas.** `pyrite create -f`,
+  `pyrite update -f` and `--append`/`--remove` on fields other than `tags`
+  send a value with commas as one value: `-f 'affiliations=City A, Inc.'` stores the one item
+  `City A, Inc.`, where 0.26.3 stored `City A` and `Inc.` for a field the
+  schema declares as a list. To send several values, use a JSON array:
+  `-f 'affiliations=["City A", "City B"]'`. A script that relied on the
+  comma split now stores one item; change it to the JSON array.
+- **`-f tags=...` is refused** on `create` and `update`, as a usage error
+  (`USAGE_ERROR`, exit 2): set tags with `--tags a,b`.
+- **A comma in `--append tags=...` or `--remove tags=...` is refused** the
+  same way (0.26.3 split it). Give one tag per flag
+  (`--append tags=c --append tags=d`) or a JSON list
+  (`--append 'tags=["c", "d"]'`). One tag per flag works as before.
+- **Naming the same `-f` key twice is refused.** `-f k=one -f k=two` on
+  `create` or `update` now fails with `VALIDATION_FAILED` instead of keeping
+  `two` and dropping `one`. Send both in one JSON array.
+- **A scalar sent to a declared list field is stored as a one-item list,** on
+  the CLI, MCP (`kb_create`, `kb_bulk_create`, `kb_update`) and REST alike:
+  `-f affiliations="City A"` stores `affiliations: [City A]`. A file that
+  already holds a scalar there is not rewritten; `pyrite qa validate` now
+  reports it (`expected list`), as a warning, or an error under
+  `validation.enforce: true`. Edit the file to `[value]` to clear it.
+- **Under `validation.enforce: true`, two writes are now refused**
+  (`SCHEMA_VIOLATION`): `pyrite add` of a file whose declared
+  list field holds a scalar (a whole file is never coerced; write `[value]`
+  in it first), and a mapping sent to a declared list field. An update of
+  another field on a file that already holds a scalar is still accepted,
+  with a warning.
 
 ## Upgrading from 0.26.2 to 0.26.3
 

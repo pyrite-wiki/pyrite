@@ -72,6 +72,12 @@ For code-defined types, protocols and plugins see
   ([[adr-0022]]).
 - Only `enforce_enums: false` (a YAML boolean) turns enum enforcement off
   ([[adr-0008]] point 3).
+- A field `KBSchema.type_fields` types `list`, `multi-select` or `tags`
+  holds a list on every write surface: a scalar sent to it is stored as a
+  one-item list by `FieldSchema.coerce` (called by `KBService` on create and
+  on a field set), never split on commas; `validate_entry` reports a non-list
+  value there, from every layer, and nothing rewrites a file that holds one
+  (#1502, `tests/test_declared_list_fields_hold_on_every_surface.py`).
 
 ## ADRs in reading order
 
@@ -92,7 +98,8 @@ Components [[schema-validation]], [[schema-service]], [[entry-factory]],
 `tests/test_enum_enforcement.py`, `tests/test_schema_fields.py`,
 `tests/test_schema_validate.py`, `tests/test_schema_versioning.py`,
 `tests/test_schema_edge_types.py`, `tests/test_edge_endpoint_validation.py`,
-`tests/test_shipped_schemas_accept_workflows.py`.
+`tests/test_shipped_schemas_accept_workflows.py`,
+`tests/test_declared_list_fields_hold_on_every_surface.py`.
 
 ## Known gaps
 
