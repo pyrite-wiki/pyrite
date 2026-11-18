@@ -1305,6 +1305,61 @@ columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
 whole row.
 
+### `search --batch`: many searches in one process (CLI only)
+
+`pyrite search --batch queries.json` (`-` reads stdin) takes the place of
+`QUERY` and runs a JSON list of query objects in one process: one config load,
+one index, one embedding-model load. `QUERY` and `--batch` together, `--files`
+or `--expand` with `--batch`, and `--format csv|markdown` with `--batch` are
+usage errors (exit 2). MCP clients issue parallel `kb_search` calls instead;
+there is no MCP or REST batch search.
+
+```json
+[
+  {"query": "falcon", "kb": "birds"},
+  {"query": "marsh", "kb": "birds", "type": ["note"], "mode": "semantic", "limit": 5, "fields": "id,title"}
+]
+```
+
+A query object has `query` (required) and may have `kb`, `type` (a list, as
+`--type` repeats), `mode`, `limit`, `fields` (a string, or a list joined by
+commas), `status` and `tag`. The command-line options are the defaults for
+every query and a key in the object overrides them; options with no key
+(`--exclude-type`, `--from`, `--to`, `--fips`, `--state`, `--include-archived`,
+`--include-body`) apply to all of them. Any other key, `expand` included, is
+refused in its slot.
+
+```json
+{
+  "count": 2,
+  "searches": [
+    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "keyword_match": "strong"},
+    {"query": "falcon AND", "count": 0, "results": [], "error": "...", "error_code": "QUERY_SYNTAX", "retryable": false, "suggestion": "..."}
+  ]
+}
+```
+
+`searches` has one slot per query, in input order. A slot that ran is the
+document a single `pyrite search` prints for the same arguments: same rows,
+same `match`, `match_basis`, `legs_run` and `warnings`, same `--fields`
+projection (`test_a_slot_equals_the_single_search` compares them). A slot that was refused (a syntax error, a
+query over the length cap, an unknown KB, an unknown key, a bad value) has
+`query`, `count: 0`, `results: []` and the canonical error shape
+(`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
+siblings. Text that is not valid UTF-8 (a lone surrogate) is such a refusal,
+`VALIDATION_FAILED`. Only a refusal (a `PyriteError`) fills a slot; an unexpected
+fault is not caught per slot and ends the command. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
+(`partial`) when some were refused, 1 (`nothing`) when all were. A batch of
+none is `{"count": 0, "searches": []}`, exit 0.
+
+The batch as a whole is refused, exit 1 with the error shape and no `searches`,
+when the file is missing (`NOT_FOUND`), is not UTF-8, cannot be read (an
+`OSError`), is not JSON, is not a list, or holds more than 50 queries
+(`VALIDATION_FAILED`; the cap `batch-read` has); stdin (`-`) is refused the
+same way, never with a traceback. Warnings and the trace go to stderr,
+prefixed with the query's position. The stale-index warning appears once for
+the whole batch and covers every KB, not only the ones the queries name.
+
 ### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
 
 Every search response, on the CLI (`pyrite search`, `pyrite-read search`),
