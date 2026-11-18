@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -574,14 +575,17 @@ def _validate_field_value(
 
     elif ft in ("list", "tags"):
         # A list field holding a scalar or a mapping (#1502): a type error,
-        # governed by `validation.enforce` like `multi-select`'s above.
+        # governed by `validation.enforce` like `multi-select`'s above. Its
+        # own rule, `field_type`, so a reader keyed on `rule` never takes it
+        # for the enum check's `field_list` (an off-list element).
         if not isinstance(value, list):
             errors.append(
                 {
                     "field": field_name,
-                    "rule": "field_list",
+                    "rule": "field_type",
                     "expected": "list",
-                    "got": type(value).__name__,
+                    # A loaded mapping is a YAML-library class: name it as one.
+                    "got": "dict" if isinstance(value, Mapping) else type(value).__name__,
                 }
             )
 

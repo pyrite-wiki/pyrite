@@ -459,6 +459,8 @@ def test_qa_reports_a_scalar_in_a_declared_list_field(
         (finding,) = findings
         assert finding["severity"] == ("error" if enforce else "warning")
         assert "expected list" in finding["message"], finding
+        # Its own rule, never the enum check's `field_list` (an off-list element).
+        assert finding.get("schema_rule") == "field_type", finding
     finally:
         world.close()
 
@@ -519,7 +521,9 @@ def test_add_of_a_whole_file_is_not_coerced(tmp_path: Path):
 
 def test_a_write_warns_about_a_scalar_already_on_disk(tmp_path: Path):
     """The write path runs the same check: an update of another field keeps
-    the scalar and says so (a warning, never a refusal, even under enforce)."""
+    the scalar already on disk and says so, as a warning even under enforce
+    (ADR-0042 decision 8: the write did not cause it). A write that brings a
+    non-list in is refused under enforce: see the two tests below."""
     kb_yaml = f"name: {KB}\nkb_type: generic\nvalidation:\n  enforce: true\n"
     world = _world(tmp_path, kb_yaml, rest=False)
     try:
@@ -579,5 +583,54 @@ def test_append_with_a_comma_adds_one_item(tmp_path: Path):
             )
         )
         assert _stored(world, "person-a", "affiliations") == ["a", "City A, Inc."]
+    finally:
+        world.close()
+
+
+ENFORCED = f"name: {KB}\nkb_type: generic\nvalidation:\n  enforce: true\n"
+
+
+def test_add_of_a_file_with_a_scalar_list_field_is_refused_under_enforce(tmp_path: Path):
+    """`pyrite add` is not coerced (the file is the user's), so under
+    `validation.enforce: true` the new type check refuses it: the scalar is
+    the write's own, not one already on disk. Nothing is written."""
+    world = _world(tmp_path, ENFORCED, rest=False)
+    try:
+        src = tmp_path / "given.md"
+        src.write_text(SCALAR_ON_DISK, encoding="utf-8")
+        result = world.cli("add", str(src), "-k", KB, "--format", "json")
+        assert result.exit_code != 0, result.output
+        out = json.loads(result.stdout)
+        assert out["error_code"] == "SCHEMA_VIOLATION", out
+        assert "affiliations" in out["error"], out
+        assert not list(world.kb_path(KB).rglob("person-a.md"))
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize("surface", ["mcp.kb_create", "mcp.kb_update"])
+def test_a_mapping_sent_to_a_list_field_is_refused_under_enforce(tmp_path: Path, surface: str):
+    """A mapping is never wrapped in a list: under enforce the type check
+    refuses it, and nothing is written."""
+    world = _world(tmp_path, ENFORCED, rest=False)
+    try:
+        if surface == "mcp.kb_update":
+            _seed(world, "person", "seeded")
+            before = _file_of(world, "seeded").read_bytes()
+        server = world.mcp(tier="write")
+        if surface == "mcp.kb_create":
+            args = {"kb_name": KB, "entry_type": "person", "title": "Mapped", "body": "x",
+                    "affiliations": {"k": 1}}  # fmt: skip
+            result = server._dispatch_tool("kb_create", args)
+        else:
+            args = {"kb_name": KB, "entry_id": "seeded", "affiliations": {"k": 1}}
+            result = server._dispatch_tool("kb_update", args)
+        assert result.get("error_code") == "SCHEMA_VIOLATION", result
+        # A mapping is named as one, never by the YAML library's class name.
+        assert result["errors"][0]["got"] == "dict", result
+        if surface == "mcp.kb_create":
+            assert not list(world.kb_path(KB).rglob("mapped.md"))
+        else:
+            assert _file_of(world, "seeded").read_bytes() == before
     finally:
         world.close()

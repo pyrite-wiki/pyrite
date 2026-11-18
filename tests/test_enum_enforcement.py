@@ -198,22 +198,18 @@ class TestValidateEntrySwitch:
         bucket = result["errors"] if mode else result["warnings"]
         other = result["warnings"] if mode else result["errors"]
 
-        # A scalar in a list field is also a type finding, "expected list"
-        # (#1502), under `enforce` (off here, so a warning) -- not the enum
-        # switch. Counted apart from the enum finding this test is about.
-        def is_type(f):
-            return f["field"] == field and f.get("expected") == "list"
-
+        # A scalar in a list field also draws the type finding, rule
+        # `field_type` (#1502), under `enforce` (off here, so a warning): its
+        # own rule, never the enum's.
+        types = [f for f in result["errors"] + result["warnings"] if f["rule"] == "field_type"]
         scalar_on_list = field == "codes" and not isinstance(value, list)
-        type_findings = [f for f in result["errors"] + result["warnings"] if is_type(f)]
-        assert [(f["rule"], f["severity"]) for f in type_findings] == (
-            [("field_list", "warning")] if scalar_on_list else []
+        assert [(f["field"], f["severity"]) for f in types] == (
+            [("codes", "warning")] if scalar_on_list else []
         ), result
 
-        hits = [f for f in bucket if f["field"] == field and not is_type(f)]
+        hits = [f for f in bucket if f["field"] == field and f["rule"] == rule]
         assert len(hits) == 1, result
-        assert hits[0]["rule"] == rule
-        assert not [f for f in other if f["field"] == field and not is_type(f)]
+        assert not [f for f in other if f["field"] == field and f["rule"] == rule]
         assert hits[0]["severity"] == ("error" if mode else "warning")
 
     def test_the_switch_defaults_to_on_when_absent(self):

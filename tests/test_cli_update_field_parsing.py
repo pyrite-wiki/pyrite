@@ -194,3 +194,53 @@ def test_create_dedicated_tags_flag_writes_two_tags(tmp_path):
     (path,) = list(kb_path.rglob("*.md"))
     fm = load_yaml(path.read_text(encoding="utf-8").split("---")[1])
     assert fm["tags"] == ["a", "b"], fm
+
+
+# --append / --remove tags=...: a comma is refused as -f tags= is (#1502, the
+# maintainer's item B applied to both flags). Since the CLI splits nothing,
+# `--append tags=c,d` would store the one tag "c,d" and `--remove tags=a,b`
+# would remove nothing and exit 0.
+
+
+def _tagged_note(config: PyriteConfig, kb_path: Path) -> tuple[str, Path]:
+    result = _invoke(
+        config,
+        ["create", "-k", "notes", "-t", "note", "--title", "Tag probe", "-b", "body",
+         "--tags", "x,a,b"],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    (path,) = list(kb_path.rglob("*.md"))
+    return path.stem, path
+
+
+@pytest.mark.parametrize(("flag", "value"), [("--append", "tags=c,d"), ("--remove", "tags=a,b")])
+def test_a_comma_in_append_or_remove_tags_is_refused(tmp_path, flag, value):
+    config, kb_path = _make_env(tmp_path)
+    entry_id, path = _tagged_note(config, kb_path)
+    before = path.read_bytes()
+
+    result = _invoke(config, ["update", entry_id, "-k", "notes", flag, value, "--format", "json"])
+    assert result.exit_code == 2, result.output
+    payload = _json_payload(result)
+    assert payload["error_code"] == "USAGE_ERROR", payload
+    assert f"{flag} tags=" in payload["error"] and "JSON" in payload["error"], payload
+    assert path.read_bytes() == before
+
+
+@pytest.mark.control(reason="one tag per --append/--remove, or a JSON list, always worked")
+@pytest.mark.parametrize(
+    ("flag", "value", "expected"),
+    [
+        ("--append", "tags=c", ["x", "a", "b", "c"]),
+        ("--append", 'tags=["c", "d"]', ["x", "a", "b", "c", "d"]),
+        ("--remove", "tags=a", ["x", "b"]),
+        ("--remove", 'tags=["a", "b"]', ["x"]),
+    ],
+)
+def test_one_tag_or_a_json_list_in_append_or_remove_works(tmp_path, flag, value, expected):
+    config, kb_path = _make_env(tmp_path)
+    entry_id, path = _tagged_note(config, kb_path)
+    result = _invoke(config, ["update", entry_id, "-k", "notes", flag, value, "--format", "json"])
+    assert result.exit_code == 0, result.output
+    fm = load_yaml(path.read_text(encoding="utf-8").split("---")[1])
+    assert fm["tags"] == expected, fm

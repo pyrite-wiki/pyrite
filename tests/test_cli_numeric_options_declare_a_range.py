@@ -255,10 +255,16 @@ UNBOUNDED: dict[tuple[str, str], str] = {}
 
 #: (command path, parameter name) -> why the checker cannot classify the type (a
 #: ``parser=`` option) and why that is safe. Rows: `qa duplicates --threshold`, and
-#: `create`/`update --field`, which is text, never a number.
+#: `create`/`update --field` and `update --append`/`--remove`, which are text, never a
+#: number.
 _FIELD_TEXT = (
     "a key=value text option, never a number; its ``parser=`` function returns the "
     "text unchanged and refuses `tags=...` at parse time (usage error, exit 2, #1502)"
+)
+_ITEM_TEXT = (
+    "a key=value text option, never a number; its ``parser=`` function returns the "
+    "text unchanged and refuses a comma in `tags=...` at parse time (usage error, "
+    "exit 2, #1502)"
 )
 UNCLASSIFIED: dict[tuple[str, str], str] = {
     ("pyrite qa duplicates", "threshold"): (
@@ -268,6 +274,8 @@ UNCLASSIFIED: dict[tuple[str, str], str] = {
     ),
     ("pyrite create", "field"): _FIELD_TEXT,
     ("pyrite update", "field"): _FIELD_TEXT,
+    ("pyrite update", "append"): _ITEM_TEXT,
+    ("pyrite update", "remove"): _ITEM_TEXT,
 }
 
 #: #1541: unbounded on ``dev`` today, grouped by the module that declares them.

@@ -20,6 +20,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -200,6 +201,30 @@ def _field_flag(value: str) -> str:
     if value.split("=", 1)[0].strip() == "tags":
         raise typer.BadParameter("tags=... is refused: set tags with --tags a,b")
     return value
+
+
+def _item_flag(flag: str) -> Callable[[str], str]:
+    """A ``parser=`` for ``--append``/``--remove``: one ``key=value`` as given,
+    and ``tags=`` with a comma outside a JSON list is a usage error.
+
+    The CLI splits nothing (#1502), so ``--append tags=c,d`` would store the
+    one tag "c,d" and ``--remove tags=a,b`` would remove nothing and exit 0.
+    Refused instead, naming what works (the maintainer's item B, applied to
+    both flags). Other fields keep a comma in an item: only ``tags`` had the
+    split users relied on, and it has its own option.
+    """
+
+    def parse(value: str) -> str:
+        key, _, item = value.partition("=")
+        if key.strip() == "tags" and "," in item and not item.strip().startswith("["):
+            raise typer.BadParameter(
+                f"a comma in {flag} tags=... is refused: give one tag per {flag} "
+                f"(`{flag} tags=a {flag} tags=b`) or a JSON list "
+                f'(`{flag} \'tags=["a", "b"]\'`)'
+            )
+        return value
+
+    return parse
 
 
 def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
@@ -589,10 +614,14 @@ def register_entry_commands(app: typer.Typer) -> None:
         append: list[str] | None = typer.Option(
             None,
             "--append",
+            parser=_item_flag("--append"),
             help="Add one item to a list field, as key=value (a JSON list adds each)",
         ),
         remove: list[str] | None = typer.Option(
-            None, "--remove", help="Remove one item from a list field, as key=value"
+            None,
+            "--remove",
+            parser=_item_flag("--remove"),
+            help="Remove one item from a list field, as key=value (a JSON list removes each)",
         ),
         unset: list[str] | None = typer.Option(
             None, "--unset", help="Remove a key with its own lines (null is a value, not a removal)"
