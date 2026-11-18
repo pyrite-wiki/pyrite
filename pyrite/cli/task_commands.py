@@ -207,14 +207,21 @@ def _resolve_task_body(
     else:
         return None
 
-    # Option C: frontmatter at start is refused
-    split = split_frontmatter(resolved)
-    if isinstance(split, Frontmatter):
-        raise ValidationError(
-            "Task body starts with a frontmatter block (---). "
-            "Task bodies do not read frontmatter. "
-            "Use `pyrite create -t task --body-file <file>` if you want frontmatter fields."
-        )
+    # Option C: frontmatter at start is refused only for file/stdin bodies.
+    # A --body value is literal text typed on the command line, not a file
+    # whose frontmatter could be mistaken for fields, so "---\n..." there
+    # must be kept verbatim. File/stdin bodies keep the refusal: a file
+    # starting with --- looks like it carries frontmatter fields, and
+    # task bodies do not read frontmatter.
+    from_file = stdin_flag or body_file is not None
+    if from_file:
+        split = split_frontmatter(resolved)
+        if isinstance(split, Frontmatter):
+            raise ValidationError(
+                "Task body starts with a frontmatter block (---). "
+                "Task bodies do not read frontmatter. "
+                "Use `pyrite create -t task --body-file <file>` if you want frontmatter fields."
+            )
     return resolved
 
 @task_app.command("create")
