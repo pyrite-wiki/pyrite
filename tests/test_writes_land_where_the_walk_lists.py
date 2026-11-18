@@ -72,6 +72,8 @@ types:
     file_pattern: "{{id}}.txt"
   pat_upper:
     file_pattern: "{{id}}.MD"
+  pat_case:
+    file_pattern: "{{id}}-x.md"
   tpl_case:
     subdirectory: memos/_TeMpLaTeS
   tpl_upper:
@@ -927,8 +929,8 @@ def test_batch_refuses_colliding_file_pattern_under_case_difference(tmp_path):
     env = Env(tmp_path / "env")
     try:
         batch = [
-            {"entry_type": "pat_title", "id": "p1", "title": "Abc"},
-            {"entry_type": "pat_title", "id": "p2", "title": "abc"},
+            {"entry_type": "pat_case", "id": "Abc", "title": "First"},
+            {"entry_type": "pat_case", "id": "abc", "title": "Second"},
         ]
         # Dry run
         dry = env.svc.bulk_create_entries(KB, batch, validate_only=True)

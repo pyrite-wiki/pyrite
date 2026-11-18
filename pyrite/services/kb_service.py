@@ -1654,7 +1654,10 @@ class KBService:
         # the same way the real filesystem does for a non-dry-run one.
         repo = KBRepository(kb_config)
         resolved_path = repo._resolve_file_path(
-            entry, repo._infer_subdir(entry), taken=frozenset(pending_paths or ())
+            entry,
+            repo._infer_subdir(entry),
+            taken=pending_paths or frozenset(),
+            taken_keys=pending_keys or frozenset(),
         )
         # A path that leads out of the KB gets the write's own refusal here,
         # so a dry run and a real create answer alike (OUTSIDE_KB_ROOT), and
@@ -1758,8 +1761,6 @@ class KBService:
         owns: frozenset[str] = frozenset(),
         pending_paths: AbstractSet[Path] | None = None,
         pending_keys: AbstractSet[tuple[str, ...]] | None = None,
-        taken: AbstractSet[Path] = frozenset(),
-        taken_keys: AbstractSet[tuple[str, ...]] = frozenset(),
     ) -> WriteResult:
         """The one create pipeline: :meth:`_prepare`, then hooks, save, index, embed."""
         entry, warnings = self._prepare(
@@ -1793,8 +1794,8 @@ class KBService:
                 kb_name,
                 kb_config,
                 is_create=True,
-                taken=taken or (pending_paths or frozenset()),
-                taken_keys=taken_keys or (pending_keys or frozenset()),
+                taken=pending_paths or frozenset(),
+                taken_keys=pending_keys or frozenset(),
             )
         except FileExistsError as e:
             # #391 cold read round 2: the exists() check in _prepare and this
@@ -1947,8 +1948,8 @@ class KBService:
                     resolved = repo._resolve_file_path(
                         entry,
                         repo._infer_subdir(entry),
-                        taken=frozenset(would_create_paths),
-                        taken_keys=frozenset(would_create_keys),
+                        taken=would_create_paths,
+                        taken_keys=would_create_keys,
                     )
                     would_create_paths.add(resolved)
                     would_create_keys.add(entry_paths.folded_path_key(kb_config.path, resolved))
