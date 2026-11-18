@@ -483,3 +483,16 @@ def test_a_verified_key_and_a_live_cookie_keep_their_access(make_world, tier):
     assert c.get("/api/admin/usage", params={"api_key": ADMIN_KEY}).status_code == 200
     r = c.get("/api/admin/usage", headers={"Cookie": f"{SESSION_COOKIE}={world.live}"})
     assert r.status_code == 200
+
+
+@pytest.mark.control(reason=_UNCHANGED)
+def test_mcp_never_reads_the_api_key_query_parameter(make_world):
+    """``/mcp`` does not take a key from the URL: ``?api_key`` is not a
+    credential there, so it is neither accepted nor refused as one."""
+    world = make_world(tier="read")
+    c = world.client()
+    r = c.get("/mcp/info", params={"api_key": WRONG})
+    assert r.status_code == 200
+    assert r.json()["tier"] == "unauthenticated"
+    r = c.get("/mcp/info", params={"api_key": ADMIN_KEY})
+    assert r.json()["tier"] == "unauthenticated"
