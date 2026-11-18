@@ -536,10 +536,16 @@ def kb_reindex(
             # (#1547); the reconcile refused before planning, rows kept.
             _kb_error(e, output_format)
 
+        from ..utils.errors import exit_unless_whole
+        from .index_commands import _could_not_reach, _print_unreadable_folders
+
         data = {"name": kb_name, **result}
         formatted = _format_output(data, output_format)
         if formatted is not None:
             typer.echo(formatted)
+            # Folders or files it could not reach: rows kept, named in the
+            # output, and the exit says the reindex was not whole (#1546).
+            exit_unless_whole(_could_not_reach(result), 1)
             return
 
         console.print(f"[green]Reindexed:[/green] {kb_name}")
@@ -567,6 +573,8 @@ def kb_reindex(
         from .index_commands import _print_file_links
 
         _print_file_links(result)
+        _print_unreadable_folders(result)
+        exit_unless_whole(_could_not_reach(result), 1)
 
 
 @kb_app.command("health")

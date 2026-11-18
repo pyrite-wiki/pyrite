@@ -81,7 +81,9 @@ class TestCsvImporter:
     def test_import_with_importance(self):
         data = "title,importance\nTest,7\n"
         entries = import_csv(data)
-        assert entries[0]["importance"] == 7
+        # The cell's text, as given: the write's one rule judges it and stores 7
+        # (#1588; test_a_csv_import_judges_the_cell_as_given_and_keeps_its_siblings).
+        assert entries[0]["importance"] == "7"
 
 
 class TestMarkdownImporter:
