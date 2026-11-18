@@ -523,7 +523,7 @@ def _error_fields(exc: PyriteError) -> dict:
     if isinstance(exc, QuerySyntaxError):
         return build_error(
             str(exc),
-            "QUERY_SYNTAX",
+            exc.error_code,
             suggestion=(
                 "quote tokens containing - : . yourself when your query "
                 "uses AND/OR/NOT or phrase quotes"
