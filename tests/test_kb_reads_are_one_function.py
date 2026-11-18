@@ -266,6 +266,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo.present": 1},
         "present, then read_id",
     ),
+    ("pyrite/storage/markdown_links.py", "markdown_link_targets"): (
+        {"KBFiles.resolved": 3, "KBFiles.present": 1},
+        "where a Markdown link in an entry body leads (#1723): KBFiles.resolved (symbolic links followed, a link out is None and gives no row) and, only then, KBFiles.present for a bare link's <path>.md. Nothing is read; the answer is only whether a link row exists and the KB-relative path it names",
+    ),
     ("pyrite/storage/repository.py", "KBRepository._in_kb_link"): (
         {"KBFiles.resolved": 1, "os.path.islink": 1},
         "where an in-KB link leads (#1262): the name is decided under the root lexically first; islink is the lstat of that name itself, never followed; where it leads, and whether that is out of the KB, is KBFiles.resolved (the rule behind contains). Nothing is read",
@@ -723,7 +727,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 57,
+    "DECIDED_INSIDE": 58,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

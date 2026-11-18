@@ -939,6 +939,86 @@ class TestOneRowPerWrittenLink:
         assert [(e["source_id"], e["target_id"]) for e in graph["edges"]] == [("s", "x")]
 
 
+class TestMarkdownLinkRows:
+    """A Markdown link row keeps its path and names the entry at that path now,
+    on both backends' syncs and through the one shared resolver (#1723). The
+    entries are given as the indexer passes them: an absolute ``file_path``
+    under the KB root, the root as ``_kb_root``, and each path link with its
+    KB-relative ``path``."""
+
+    ROOT = "/kb"
+
+    @classmethod
+    def _entry(cls, entry_id, rel, links=()):
+        return _make_entry(
+            entry_id,
+            file_path=f"{cls.ROOT}/{rel}",
+            _kb_root=cls.ROOT,
+            links=[
+                {
+                    "target": path,
+                    "kb": "test",
+                    "prefix": None,
+                    "relation": "markdown_link",
+                    "note": note,
+                    "path": path,
+                }
+                for path, note in links
+            ],
+        )
+
+    @staticmethod
+    def _out(backend, source="s"):
+        return sorted(
+            (r["id"], r["relation"], r["note"])
+            for r in backend.get_outlinks(source, "test", readable_kbs=UNSCOPED)
+        )
+
+    def test_the_row_names_the_entry_at_its_path_in_any_write_order(self, backend):
+        backend.upsert_entry(self._entry("s", "s.md", [("notes/a.md", "#H")]))
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        backend.upsert_entry(self._entry("a", "notes/a.md"))
+        assert self._out(backend) == [("a", "markdown_link", "#H")]
+        # A rename: the new id is written at the same file, then the old row goes.
+        backend.upsert_entry(self._entry("a2", "notes/a.md"))
+        backend.delete_entry("a", "test")
+        assert self._out(backend) == [("a2", "markdown_link", "#H")]
+        # A move: the same id at another file; the path now names nothing.
+        backend.upsert_entry(self._entry("a2", "notes/moved.md"))
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        backend.upsert_entry(self._entry("b", "notes/a.md"))
+        backend.delete_entry("b", "test")
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        assert [
+            (r["id"], r["forward_relation"])
+            for r in backend.get_backlinks("a2", "test", readable_kbs=UNSCOPED)
+        ] == []
+
+    def test_a_markdown_link_and_a_wikilink_to_one_entry_are_two_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        entry = self._entry("s", "s.md", [("a.md", "")])
+        entry["links"].append(
+            {"target": "a", "kb": "test", "prefix": None, "relation": "wikilink", "note": ""}
+        )
+        backend.upsert_entry(entry)
+        assert self._out(backend) == [("a", "markdown_link", ""), ("a", "wikilink", "")]
+
+    def test_rewriting_the_same_links_keeps_the_resolved_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", ""), ("gone.md", "")]))
+        first = self._out(backend)
+        assert first == [("a", "markdown_link", ""), ("gone.md", "markdown_link", "")]
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", ""), ("gone.md", "")]))
+        assert self._out(backend) == first
+
+    def test_a_write_without_the_root_leaves_the_markdown_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", "")]))
+        from_read = backend.get_entry("s", "test")
+        backend.upsert_entry(from_read)
+        assert self._out(backend) == [("a", "markdown_link", "")]
+
+
 # =========================================================================
 # Embeddings (basic — only tests interface, not actual model)
 # =========================================================================

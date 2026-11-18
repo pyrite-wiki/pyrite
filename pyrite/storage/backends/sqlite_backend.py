@@ -20,6 +20,7 @@ from .base_backend import (
     DeclaredFieldTypes,
     LinkKey,
     _link_rows,
+    _row_key,
     shape_entry_row,
     shape_entry_rows,
 )
@@ -188,17 +189,27 @@ class SQLiteBackend(BaseBackend):
     # _sync_links (diff-based — SQLite-specific)
     # =====================================================================
 
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
         # One row per written link, keyed by (target, kb, relation, prefix) as
         # the TEXT the columns hold (`_link_rows`, #927, #1009).
         desired = _link_rows(kb_name, links)
 
         # Load existing links from DB
-        existing = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).all()
+        query = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name)
+        if keep_path_rows:
+            query = query.filter(Link.target_path.is_(None))
+        existing = query.all()
 
         existing_keys: dict[LinkKey, Link] = {}
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
+            key = _row_key(row)
             # First row wins the slot: a hand file can hold both `target: 2024`
             # and `target: '2024'`, which are one key once stored, and the
             # spares are deleted below rather than left to accumulate (#927).
@@ -216,7 +227,7 @@ class SQLiteBackend(BaseBackend):
                     row.inverse_relation = attrs["inverse_relation"]
             else:
                 # Insert new link
-                target_id, target_kb, relation, target_prefix = key
+                target_id, target_kb, relation, target_prefix, target_path = key
                 self._session.add(
                     Link(
                         source_id=entry_id,
@@ -228,6 +239,7 @@ class SQLiteBackend(BaseBackend):
                         note=attrs["note"],
                         # The prefix as the file wrote it, beside the resolved KB (#980).
                         target_prefix=target_prefix,
+                        target_path=target_path,
                     )
                 )
 
@@ -237,7 +249,7 @@ class SQLiteBackend(BaseBackend):
         # into one dict slot, so the other was never compared and never
         # deleted, and every sync added another (#927).
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
+            key = _row_key(row)
             if key not in desired or id(row) not in claimed:
                 self._session.delete(row)
 
