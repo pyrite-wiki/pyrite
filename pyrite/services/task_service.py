@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from ..config import PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
+    EntryLoadError,
     EntryNotFoundError,
     PyriteError,
     ValidationError,
@@ -676,7 +677,7 @@ class TaskService:
             return True
         try:
             return KBRepository(kb).load(task["id"]) is not None
-        except Exception:  # noqa: BLE001 - any refusal of the load leaves the task out
+        except EntryLoadError:  # the claim's load refuses this file's type: leave it out
             return False
 
     def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
