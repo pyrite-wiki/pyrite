@@ -1080,6 +1080,60 @@ WRITE_TOOLS = {
             "required": ["task_id", "kb_name"],
         },
     },
+    "task_start": {
+        "description": (
+            "Claim and start an open task in one atomic write: open -> claimed -> in_progress, "
+            "both edges recorded in its status_change_log. Decided by the same compare-and-set "
+            "as task_claim: a lost start returns claimed=false and current_status, and changes "
+            "nothing. A task you already claimed is moved on to in_progress. Returns the task "
+            "with its body and its parent {id, title, body}."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "assignee": {
+                    "type": "string",
+                    "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_finish": {
+        "description": (
+            "Move a held task to done in one write, recording one status_change_log item per "
+            "edge. Finish requires the caller to hold the task (be its assignee); operators have "
+            "an explicit override (operator_override). Without walk only a direct edge (in_progress -> done, review -> done); with "
+            "walk=true it passes through every intermediate state of the task workflow (claimed -> "
+            "in_progress -> done, blocked -> in_progress -> done). A refusal names the path."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "walk": {
+                    "type": "boolean",
+                    "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the change: set as status_reason and on each log item",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
     "task_decompose": {
         "description": "Decompose a parent task into child tasks.",
         "inputSchema": {

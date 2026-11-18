@@ -570,6 +570,104 @@ def task_claim(
     return Outcome.nothing(result, rich=rich)
 
 
+@task_app.command("start")
+def task_start(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    assignee: str = typer.Option(
+        ..., "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Claim and start an open task in one atomic write.
+
+    Decided by the same compare-and-set as `task claim`: of two concurrent
+    starts one wins, and the loser exits 1 with `claimed: false`, as a lost
+    claim does. Records open → claimed → in_progress in the task's
+    status_change_log and returns the task and its parent, with their bodies.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.start_task(task_id, kb_name, assignee)
+    finally:
+        db.close()
+
+    def rich(console, result):
+        if result.get("claimed"):
+            console.print(f"[green]Started:[/green] {task_id}")
+            console.print(f"  Assignee: {assignee}")
+            parent = result.get("parent")
+            if parent:
+                console.print(f"  Parent: {parent['id']}  {parent['title']}")
+            body = (result.get("task") or {}).get("body") or ""
+            if body:
+                console.print(f"\n{body}")
+        else:
+            console.print(f"[red]Failed:[/red] {result.get('error', 'Unknown error')}")
+
+    # A lost start is a lost claim (#526, ADR-0046): `nothing`, exit 1.
+    if result.get("claimed"):
+        return Outcome.done(result, rich=rich)
+    return Outcome.nothing(result, rich=rich)
+
+
+@task_app.command("finish")
+def task_finish(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    walk: bool = typer.Option(
+        False,
+        "--walk",
+        help="Pass through every intermediate state of the task workflow to done, recording each edge",
+    ),
+    reason: str | None = typer.Option(
+        None,
+        "--reason",
+        "--status-reason",
+        help="Reason for the change: set as status_reason and on each log item",
+    ),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is finishing it: must be the task's assignee (finish requires the caller to hold the task)",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, finish a task you do not hold; recorded as by: operator, override: true",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Move a held task to done in one write.
+
+    Finish requires the caller to hold the task: --by names the caller, who
+    must be its assignee. Operators have an explicit override,
+    --operator-override. Without --walk only a direct edge is taken
+    (in_progress → done, review → done); the refusal names the path --walk
+    would take. Each edge is judged by the task's workflow and recorded in
+    its status_change_log.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.finish_task(
+            task_id,
+            kb_name,
+            walk=walk,
+            reason=reason or "",
+            by=by or "",
+            operator_override=operator_override,
+        )
+    finally:
+        db.close()
+
+    def rich(console, result):
+        console.print(f"[green]Finished:[/green] {task_id} ({' → '.join(result['path'])})")
+
+    return Outcome.done(result, rich=rich)
+
+
 @task_app.command("reset")
 def task_reset(
     task_id: str = typer.Argument(..., help="Task entry ID"),

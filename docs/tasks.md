@@ -48,6 +48,45 @@ pyrite task create "Write outro" -k test-kb --priority 8
 pyrite task list -k test-kb --dispatchable --fields id,priority
 ```
 
+## Start and finish in one call
+
+An agent working a queue makes the same walk on every task. `task start` claims
+an open task and starts it in one write: the same compare-and-set as `task
+claim` decides it, so a lost start exits 1 with `claimed: false`, like a lost
+claim, and changes nothing. It records open → claimed → in_progress in the
+task's `status_change_log` and returns the task with its body and its parent's.
+Retrying `start` on a task you already claimed moves it on to in_progress. Only
+the holder moves a claimed task on: if the claim changes hands meanwhile, the
+retry is refused, naming who holds it now, and their claim stays.
+
+`task finish` moves a held task to `done` in one write. Without `--walk` it
+takes only a direct edge (in_progress → done, review → done); with `--walk` it
+passes through every intermediate state of the task workflow and records each
+edge, so no state is skipped. A refusal names the path `--walk` would take. A
+task nothing holds (open) is not finished; cancel it instead.
+
+Finish requires the caller to hold the task; operators have an explicit
+override. The caller is `--by` (MCP: the signed-in account, or `by` with no
+signed-in user) and must be the task's assignee; anyone else, or no caller at
+all, is refused with `FORBIDDEN` and nothing is written. The operator (the
+CLI, stdio MCP, an operator key) can finish a task it does not hold with
+`--operator-override` (MCP `operator_override: true`); its log items record
+`by: operator` and `override: true`.
+
+Every edge is judged by the task workflow that applies to every update: the
+KB's own `state_machine` where its `kb.yaml` declares one for tasks, else the
+core table. `--walk` follows that same workflow, so a declared table's
+intermediate states are walked and recorded too.
+
+```bash
+pyrite task create "Fix typo" -k test-kb
+pyrite task start fix-typo -k test-kb --assignee alice
+pyrite task finish fix-typo -k test-kb --by alice --reason "Typo fixed"
+pyrite task create "Fix link" -k test-kb
+pyrite task claim fix-link -k test-kb --assignee bob
+pyrite task finish fix-link -k test-kb --by bob --walk --reason "Link fixed"
+```
+
 ## Record progress and release a stale claim
 
 A checkpoint records work without pretending the task is complete. Reset is an
@@ -75,7 +114,9 @@ pyrite task get publish-guide -k test-kb
 ```
 
 The normal stored-state path is open → claimed → in_progress → done (or failed,
-blocked or review). Follow the transition refusal rather than skipping states.
+blocked or review). Follow the transition refusal rather than skipping states;
+`task start` and `task finish --walk` walk the same states in one call and
+record each one.
 A parent's completion is derived from its children. Completing the children
 makes the derived result complete without rewriting the parent's stored
 status. Read both the stored status and `derived`; do not infer parent
@@ -118,6 +159,8 @@ task's dependency IDs. Use full KB names for tool arguments.
 | List | task list | task_list | read |
 | Inspect | task get | task_status | read |
 | Claim | task claim | task_claim | write |
+| Claim and start | task start | task_start | write |
+| Finish (walk to done) | task finish | task_finish | write |
 | Update status | task update | task_update | write |
 | Release claim | task reset | — (operator CLI) | — |
 | Checkpoint | task checkpoint | task_checkpoint | write |

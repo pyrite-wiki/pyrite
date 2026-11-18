@@ -289,6 +289,9 @@ MCP_OWN_DICTS: dict[str, dict[str, Any] | None] = {
     "list_edge_types": {},
     "kb_list": {},
     "kb_schema": {"kb_name": KB},
+    # A write: needs an open task, and would change the shared world. Its
+    # `task` is KBService.get_entry's read, the one kb_get returns (#1685).
+    "task_start": None,
 }
 
 #: Tools whose result carries no entry rows: writes, registry, QA, admin.
@@ -313,6 +316,7 @@ MCP_NO_ENTRY_ROWS = {
     "task_create": "write",
     "task_update": "write",
     "task_claim": "write",
+    "task_finish": "write: returns the status path walked",
     "task_checkpoint": "write",
     "task_decompose": "write",
     "sw_create_adr": "write",

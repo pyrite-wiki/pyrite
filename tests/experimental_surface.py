@@ -276,6 +276,9 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "extensions/journalism-investigation/tests/test_bulk_tools_write_through_the_pipeline.py::*read_only*": AUTHZ,
     "extensions/journalism-investigation/tests/test_cli_writes_through_the_pipeline.py::TestAReadOnlyKBIsRefusedAndNothingIsWritten::*": AUTHZ,
     "tests/test_kb_bulk_create_description.py::*unavailable_kb_still_rejects_whole_batch*": AUTHZ,
+    # finish requires the caller to hold the task; operators have an explicit override
+    "tests/test_task_finish_walk.py::*hold*": AUTHZ,
+    "tests/test_task_finish_walk.py::*override*": AUTHZ,
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_does_not_have*": AUTHZ,
@@ -454,6 +457,7 @@ REVIEWED_EXPERIMENTAL: dict[str, str] = {
     "tests/test_demo_seed_public_kbs.py::test_seeded_kbs_are_public": "the demo seed opens its KBs on purpose; which KBs a deploy opens is the operator's choice, read back through the policy, not the policy itself",
     "tests/test_task_cli_create_fields.py::test_conductor_desk_recipe_creates_a_task_in_one_step": "a tag named 'outside'",
     "tests/test_task_service.py::TestListTasks::test_list_preserves_priority": "'readable' in a docstring; priority round-trip",
+    "tests/test_task_start.py::test_start_refuses_a_file_its_type_cannot_load_before_the_compare_and_set": "an unloadable file (ADR-0042 8a), a data-integrity refusal; no access decision. tests/test_unloadable_file_is_never_written.py pins it for task start too",
 }
 
 

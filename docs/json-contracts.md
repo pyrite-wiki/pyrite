@@ -1597,8 +1597,8 @@ decision 8a). Pyrite reads such a file partially and writes it not at all.
 exit 1, REST 422, MCP `error_code`), and nothing is written: an update (REST
 `PUT`/`PATCH`, MCP `kb_update`, CLI `update`), an echo of a read (it carries
 `load_problems`, which is set aside, and is refused like any other update), a
-delete, a link from it, a rename of it, a task claim, update, checkpoint or
-reset, and a plugin's write through `ctx.kb_service`. A request that would
+delete, a link from it, a rename of it, a task claim, start, finish, update,
+checkpoint or reset, and a plugin's write through `ctx.kb_service`. A request that would
 change nothing is refused the same way. No validator or hook is run, so none
 judges a value the file does not hold. The message names the file by its path
 relative to the KB, the declared type, the refused fields and the loader's
@@ -1710,6 +1710,76 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 `false`. A target that a change set created and then deleted is unresolved
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
+
+## Task start and finish
+
+`task start` (CLI), `task_start` (MCP) and `POST /api/tasks/{id}/start` (REST)
+return one dict, `TaskService.start_task`'s (#1685). A start that won:
+
+```json
+{
+  "claimed": true,
+  "task_id": "fix-typo",
+  "assignee": "alice",
+  "status": "in_progress",
+  "task": {"id": "fix-typo", "title": "Fix typo", "body": "...", "...": "the single-entry read"},
+  "parent": {"id": "docs", "title": "Docs", "body": "..."}
+}
+```
+
+`parent` is `null` for a task with none. The two bodies share one response
+budget and are bounded as in [Body truncation](#body-truncation). A lost start
+is a lost claim's dict unchanged: `{"claimed": false, "error": "...",
+"current_status": "in_progress"}`, CLI outcome `nothing` and exit 1, MCP and
+REST a result (not an error); an id the index does not hold is answered the
+same way (`claimed: false`, `error`, no `current_status`), as claim answers it.
+A retry of a task the caller holds as `claimed` moves it on only while the
+caller still holds it: a claim someone else took meanwhile is a lost start
+whose `error` names the current holder, and nothing is written.
+Refusals that are errors, not results: an entry that is not a task
+(`VALIDATION_FAILED`), a task held by another account (`FORBIDDEN`, claim's
+holder rule), a file its type cannot load (`ENTRY_UNREADABLE`) and an unknown
+KB (`KB_NOT_FOUND`). The file write records two `status_change_log` items,
+`{date, from, to, by}`: open → claimed and claimed → in_progress, `by` the
+assignee.
+
+`task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
+dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
+"in_progress", "done"], "status_reason", "by", "override"}`, with one
+`status_change_log` item
+per edge of `path` (`comment` is the reason, when one was given).
+
+Finish requires the caller to hold the task; operators have an explicit
+override. The caller is `--by` (MCP: `by`, else the signed-in account) and
+must be the task's assignee; the items record it as `by`. The operator (the
+CLI, stdio MCP, an operator key) may finish a task it does not hold with
+`--operator-override` (MCP `operator_override: true`): the items record `by:
+"operator"` and `override: true`, and the result `"by": "operator",
+"override": true`. The override is never implied by a missing or empty
+caller, and is refused for anyone but the operator.
+
+A refusal writes nothing and is (CLI exit 1):
+
+- `FORBIDDEN`: the caller does not hold the task (another caller, or none),
+  or asked for the operator override without being the operator. The message
+  names the holder rule and who holds the task. The write also rechecks the
+  holder in the file it replaces, so a task that changed hands meanwhile is
+  refused (`VALIDATION_FAILED`, naming the holder).
+
+- `VALIDATION_FAILED`: the task is already `done`; a status with no path to
+  `done`; a task nothing holds (`open`, or a path through it, as from
+  `failed`); a path of more than one edge without `--walk` (`walk: true`; the
+  message names the path); an edge the workflow refuses (the KB's declared
+  `state_machine` where it has one, else the core table); an entry that is
+  not a task; and a stale read: the task's status changed between the read and
+  the write ("the file's status is ...; read the task again and retry").
+  Retry after a stale read; the others need a different request.
+- `ENTRY_NOT_FOUND`: no task with that id in the KB.
+- `ENTRY_UNREADABLE`: a file its type cannot load.
+
+The holder rule guards `task finish` on the CLI and MCP. REST has no finish
+route yet (see #1745); the generic `PATCH /api/entries/{id}` is unchanged and
+is not `task finish`.
 
 ## Entry row shape
 
@@ -1969,7 +2039,7 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
 
   Single-effect commands that fail answer `1`: `kb commit` when the commit was
   rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
-  when the claim is lost (in `--format json` too), `social reputation` when it
+  and `task start` when the claim is lost (in `--format json` too), `social reputation` when it
   cannot compute the reputation, `investigation network` and `evidence-chain`
   when the answer is an error.
 

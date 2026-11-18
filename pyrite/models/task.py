@@ -364,6 +364,50 @@ def resolve_workflow_for_type(entry_type: str, kb_schema: Any) -> dict:
     return TASK_WORKFLOW
 
 
+def status_walk(workflow: dict, from_status: str, to_status: str) -> list[str] | None:
+    """The shortest path of states from ``from_status`` to ``to_status``.
+
+    ``[from_status, ..., to_status]``, or None when the workflow has no path.
+    A strict workflow's edges are its declared transitions (for the write
+    role); a relaxed one's are any move to a declared state, so its walk is
+    the direct edge. Structure only: a reason an edge requires is not judged
+    here. The walk is an input to ``validate_status_change``, which judges
+    every edge of it on the write (``_task_validate_transition``); computing
+    a path never permits one. Ties go to the table's order.
+    """
+    if from_status == to_status:
+        return [from_status]
+    if workflow.get("enforce_transitions", True):
+
+        def nexts(state: str) -> list[str]:
+            return [t["to"] for t in get_allowed_transitions(workflow, state, "write")]
+    else:
+        states = list(workflow.get("states", []))
+
+        def nexts(state: str) -> list[str]:
+            return [s for s in states if s != state]
+
+    previous: dict[str, str] = {}
+    frontier = [from_status]
+    seen = {from_status}
+    while frontier:
+        following: list[str] = []
+        for state in frontier:
+            for nxt in nexts(state):
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                previous[nxt] = state
+                if nxt == to_status:
+                    path = [nxt]
+                    while path[-1] != from_status:
+                        path.append(previous[path[-1]])
+                    return path[::-1]
+                following.append(nxt)
+        frontier = following
+    return None
+
+
 def validate_status_change(
     workflow: dict,
     old_status: str,

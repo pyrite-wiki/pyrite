@@ -431,11 +431,13 @@ KB_ARGUMENT_NAMES = (
 # protect a task another account holds.
 CORE_PERSON_ARGUMENTS: dict[str, dict[str, str]] = {
     "task_claim": {"assignee": CALLER},
+    "task_start": {"assignee": CALLER},
+    "task_finish": {"by": OPTIONAL},
     "task_create": {"assignee": OPTIONAL},
     "task_update": {"assignee": OPTIONAL},
     "task_decompose": {"children[].assignee": OPTIONAL},
 }
-CORE_ACTING_KEYWORD = frozenset({"task_update"})
+CORE_ACTING_KEYWORD = frozenset({"task_update", "task_finish"})
 
 #: Admin actions that write no file of the KB they name, so a read-only KB
 #: still takes them: tool -> its actions (None: every call). Everything else
@@ -2153,6 +2155,33 @@ class PyriteMCPServer:
             kb_name=args["kb_name"],
             assignee=args["assignee"],
         )
+
+    def _task_start(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Claim and start an open task in one write (`TaskService.start_task`,
+        #1685). `assignee` is a person argument the dispatcher has set from the
+        session (`CORE_PERSON_ARGUMENTS`)."""
+        result: dict[str, Any] = self.task_svc.start_task(
+            args["task_id"], args["kb_name"], args["assignee"]
+        )
+        return result
+
+    def _task_finish(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
+        """Move a held task to done in one write (`TaskService.finish_task`,
+        #1685). Finish requires the caller to hold the task: the caller is `by`
+        (a person argument, so a signed-in caller may name only themselves),
+        else the signed-in caller (`acting`); with neither there is no caller.
+        Operators have an explicit override (`operator_override: true`), which
+        the service honours only for the operator.
+        A refusal is raised and answered by the dispatcher's error contract."""
+        result: dict[str, Any] = self.task_svc.finish_task(
+            args["task_id"],
+            args["kb_name"],
+            walk=bool(args.get("walk", False)),
+            reason=args.get("reason") or "",
+            by=args.get("by") or acting or "",
+            operator_override=args.get("operator_override") is True,
+        )
+        return result
 
     def _task_decompose(self, args: dict[str, Any]) -> dict[str, Any]:
         """Decompose a parent task into children. Each child's `assignee` is a

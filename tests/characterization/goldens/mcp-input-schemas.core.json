@@ -1549,6 +1549,45 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -1592,6 +1631,33 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },
@@ -3931,6 +3997,45 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -3974,6 +4079,33 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },

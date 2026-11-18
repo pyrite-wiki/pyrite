@@ -38,9 +38,9 @@ from tests.characterization.surfaces import (
 )
 
 PINNED_REST_TOTAL_ROUTE_COUNT = (
-    132  # 143 until #953 removed the /site, /viewer, SEO and render routes
+    133  # 132 until #1685 added POST /api/tasks/{task_id}/start; 143 until #953
 )
-PINNED_MCP_TOTAL_TOOL_COUNT = 106  # 112 until #953 deleted cascade's six tools
+PINNED_MCP_TOTAL_TOOL_COUNT = 108  # 106 until #1685 added task_start, task_finish; 112 until #953
 
 
 def _all_rest_routes(app) -> set[tuple[str, str]]:
