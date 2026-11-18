@@ -13,4 +13,4 @@ effort: M
 rank: 0
 ---
 
-One pure derived view, classify_tasks in pyrite/models/task_queue.py, decides which tasks are dispatchable and why the rest are not, and TaskService.list_tasks asks it for the CLI, MCP and REST. task list gains --dispatchable (priority order, counts) and --fields, and without them its output is unchanged.
+One pure derived view, classify_tasks in pyrite/models/task_queue.py, decides which tasks are dispatchable and why the rest are not; TaskService.task_listing asks it and builds the task-list body the CLI, MCP and REST return. Every task it lists is one task claim accepts now. task list gains --dispatchable (priority order, counts, excluded) and --fields, and without them its output is unchanged.
