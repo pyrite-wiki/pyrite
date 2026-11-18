@@ -365,6 +365,9 @@ def test_q1_claim_in_a_relaxed_reasons_required_kb_is_refused(world_for, route):
 # -- a kb.yaml that does not load: bulk create answers as it did before -------
 
 
+@pytest.mark.control(
+    reason="answers exactly as on dev: passing before the fix is the property, the schema must not change it"
+)
 def test_a_bulk_create_on_a_kb_yaml_that_does_not_load_fails_per_item(world_for):
     """`bulk_create_entries` used to build its hook context without the schema,
     so an unloadable kb.yaml was refused per item inside the batch. Carrying
@@ -378,3 +381,48 @@ def test_a_bulk_create_on_a_kb_yaml_that_does_not_load_fails_per_item(world_for)
     assert "error_code" not in answer, answer
     assert (answer["total"], answer["created"], answer["failed"]) == (1, 0, 1)
     assert answer["results"][0]["error_code"] == "KB_CONFIG_INVALID"
+
+
+@pytest.mark.control(
+    reason="answers exactly as on dev: passing before the fix is the property, the schema must not change it"
+)
+def test_an_import_on_a_kb_yaml_that_does_not_load_fails_per_record(world_for, tmp_path):
+    world = world_for(NO_MACHINE_YAML)
+    (world.kb_path(KB) / "kb.yaml").write_bytes(b"name: work\ntypes: {note: [unclosed\n")
+    source = tmp_path / "in.json"
+    source.write_text(json.dumps([{"entry_type": "note", "title": "A"}]), encoding="utf-8")
+    result = world.cli("import", str(source), "-k", KB, "--format", "json")
+    assert result.exit_code == 1
+    assert "[KB_CONFIG_INVALID]" in result.output
+    assert "Imported 0 entries (1 failed)" in result.output
+
+
+# -- a declared `states` that omits a status already in use --------------------
+
+
+@pytest.mark.control(
+    reason="the core table also refuses and allows these moves, so it passes before the fix; it pins relaxed as built"
+)
+def test_relaxed_leaves_a_task_in_an_undeclared_status_free_to_move_to_a_declared_one(world_for):
+    """Relaxed mode checks the TARGET against `states` only: a task sitting in
+    `review` (not declared) can move to `done` with a reason, and cannot move
+    to another undeclared status."""
+    world = world_for(RELAXED_YAML)
+    _set_file_status(world, "review")
+    _update(world, "cli_task_update", "blocked", reason="blocked is not declared")
+    assert _file_status(world) == "review"
+    _update(world, "cli_task_update", "done", reason="leaving the undeclared status")
+    assert _file_status(world) == "done"
+
+
+@pytest.mark.control(
+    reason="the core table also refuses claimed to review, so it passes before the fix; it pins strict as built"
+)
+def test_strict_leaves_a_task_in_an_undeclared_status_with_no_way_out(world_for):
+    """A strict declared table has no edge out of a status it does not name
+    (here `claimed`), so a task already in it cannot move on any surface that
+    judges by the table, including to a status the table does name."""
+    world = world_for(STRICT_YAML)
+    _set_file_status(world, "claimed")
+    _update(world, "cli_task_update", "review")
+    assert _file_status(world) == "claimed"

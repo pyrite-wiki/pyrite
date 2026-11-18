@@ -51,7 +51,16 @@ For code-defined types, protocols and plugins see
    applies to EVERY update of a task in that KB (CLI `task update` and
    `pyrite update`, MCP, REST, and `task claim` / `task reset`, which write
    through the same update), exactly as the core `TASK_WORKFLOW` applies where
-   none is declared (#1709). **decided** [[adr-0027]].
+   none is declared (#1709). As built: `task claim` passes no reason, so a
+   relaxed KB with `require_reason_on_transition: true` refuses
+   `open -> claimed`; the hook judges any type whose kb.yaml declares a
+   `state_machine` and whose entry class carries a `status` (a generic custom
+   type has none, so it is not judged), not only `task`, and reads
+   `status_reason` from the entry class; and where a declared machine omits a
+   status already in use, a strict table leaves a task in it with no way out
+   and a relaxed machine refuses a move to it but lets a task in it move to a
+   declared state. **decided**
+   [[adr-0027]].
 9. A relationship that carries data is an edge type: declared endpoints,
    optional `accepts`, all endpoints required, derived backlinks in the index
    only, a deleted endpoint leaves a broken reference and a QA warning.
