@@ -410,8 +410,10 @@ class BaseBackend(ABC):
 
     def upsert_entry(self, entry_data: dict[str, Any]) -> None:
         """Insert or update an entry with tags, sources, links, refs, blocks."""
-        entry_id = entry_data.get("id")
-        kb_name = entry_data.get("kb_name")
+        # Read from an untyped row dict; a missing key reaches the ORM as None
+        # and is refused there, as before.
+        entry_id: Any = entry_data.get("id")
+        kb_name: Any = entry_data.get("kb_name")
         try:
             self._upsert_entry_main(entry_id, kb_name, entry_data)
             self._sync_tags(entry_id, kb_name, entry_data.get("tags", []))
