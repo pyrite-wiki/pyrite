@@ -18,6 +18,81 @@ repeat.
   `params`** is now refused by the tools that read the board (0.26.3 loaded it
   and never ran the checker). Remove the key, or drop `type` to make the
   criterion a checker.
+- **Exit codes that scripts match on change (#1563, #1564).** `pyrite ci
+  --tier` and `pyrite qa assess --tier` out of range is now `USAGE_ERROR`,
+  exit 2, where it was `INVALID_TIER`, exit 1. REST and MCP still answer
+  `INVALID_TIER`. `qa assess --max-age` below 0 is refused.
+- **`pyrite index sync` and `index build` exit 3 (1 when nothing synced)**
+  where 0.26.2 and 0.26.3 exited 0, when a registered KB is unreadable, its
+  `kb.yaml` does not load, or a folder cannot be listed (#1542, #1546, #1547).
+  `pyrite kb reindex` does the same for a folder or file it cannot reach, and
+  `pyrite qa duplicates` exits 3 when it leaves a KB out. `pyrite index
+  health` is unhealthy (exit 1) for `unreadable_folders`, `unreadable_kbs`
+  and `schema_errors` rows. Those rows use a new error code,
+  `KB_CONFIG_INVALID`, for a `kb.yaml` that does not load. A bad `kb.yaml`
+  now stops only its own KB.
+- **`importance` must be a whole number from 1 to 10 on every entry type and
+  every surface (#1537, #1588).** `create -f importance=10.7`, `=high` and
+  `=true` are now refused, where they stored 10, 5 and 1; `update -f
+  importance=5.5` is refused; a CSV import row with a bad cell is refused and
+  the other rows are imported. REST answers 400 `VALIDATION_FAILED` where
+  `POST` and `PUT` answered 422. A value already in a file is kept, with a
+  warning. In a journalism-investigation KB the refusal is
+  `VALIDATION_FAILED`, no longer `SCHEMA_VIOLATION`.
+- **Numbers read as numbers, and `metadata` as an object (#1503).** A field
+  declared `number` or `checkbox` reads as a number or a boolean on every
+  reader, where it read as text before. A task's `priority` is a number on
+  `kb_get`. MCP `kb_find_*` and `kb_search`, `search --fields '*'` and REST
+  search return `metadata` as an object, not JSON text, and `aliases` as a
+  list: a client that ran `json.loads` on `metadata` must stop. A write-back
+  unquotes `"7"` in a number field and rewrites `1`/`0` as `true`/`false` in a
+  checkbox field. `pyrite qa validate` reports `number_as_text` for the rest.
+- **REST `PATCH` and `PUT` answer 422, not 400,** when an update would produce
+  an entry that cannot be loaded (#1472); the message says the file is
+  unchanged.
+- **A folder named `_Templates` (any letter case) is skipped by the index walk
+  (#1552).** Its entries lose their index rows at the next sync, and `pyrite
+  index health` names its files that state an `id:` under
+  `unlisted_entry_files`. Rename the folder, or move the entries out, before
+  you sync.
+- **A create stores the type you named (#468).** In software, zettelkasten,
+  encyclopedia and social KBs, `-t note`, `document` and `person` are no
+  longer stored as `adr`, `literature_note`, `article`, `writeup`,
+  `design_doc` or `user_profile`. Entries already on disk keep their type. An
+  out-of-tree plugin that relied on the old inference must declare
+  `get_type_mappings()`. In a journalism-investigation KB, `-t event` and
+  `-t document` now store `investigation_event` and `document_source` instead
+  of being refused (#1526); `--allow-undeclared` no longer keeps `event`.
+- **An existing known-entities KB must change `guidelines: <text>` to
+  `guidelines: {canonical_records: <text>}` in its `kb.yaml`** (#468);
+  otherwise `kb_schema` fails with `INTERNAL`. Pyrite does not edit the file.
+- **The `research-queue` template is new** (`pyrite init -t research-queue`,
+  #1663); it changes nothing for an existing KB.
+- **`pyrite orient --format markdown` and `csv` are usage errors** (exit 2,
+  #1501). `pyrite search --format rich` has an `ID` column and no fixed
+  widths (#1519): this matters only if you screen-scrape it.
+- **Typer 0.29 is allowed (#1432).** The wording of an out-of-range message
+  changes; the exit code stays 2.
+- **`orient` has new `kb_authored` and `pyrite_guidance` blocks (#1369).** The
+  mixed keys they replace are deprecated; see "Still deprecated" below.
+- **On Python 3.11.5 or newer, run `pip install -U "soupsieve>=4.0.0"`** (or
+  `uv sync`); on 3.11.0 to 3.11.4, upgrade Python (#1536).
+- **`pyrite delete` no longer removes a symlink to the entry;** it names the
+  link in `links_left` (#1262). A dangling in-KB link is a `dangling_links`
+  warning, no longer an unreadable file.
+- **Smaller new refusals:** `kb create --ttl` below 0 (#1407), `wiki stubs
+  --limit` below 1 (#1560), `sw` list `--limit` or `--offset` below 0 (#1565),
+  an invalid `--sort`, `--sort-by` or `--sort-order` (#1387), and `qa assess
+  --entry <missing>`, which exits 1 with `ENTRY_NOT_FOUND` (#1499).
+
+## Upgrading from 0.26.2 to 0.26.3
+
+The steps are in the [0.26.3 changelog](../CHANGELOG.md) under **Upgrade
+notes**: a private repository reached over REST or MCP needs a
+`git_credentials` entry, a proxy needs `git_proxy`, `git_identity` replaces
+the global-identity fallback, and an invalid `default_role` stops the config
+load. The settings are in
+[configuration: Upgrading to 0.26.3](configuration.md#upgrading-to-0263-network-git).
 
 ## Upgrading from 0.25.8 to 0.26.0
 
@@ -394,6 +469,12 @@ a warning once per class.
   `db.execute_sql()` for read-only queries.
 - **`FRONTMATTER_ALIASES`** leaves in 0.27. Declare `field_aliases` in the
   type's schema instead.
+- **`pyrite sw standards`** leaves in 0.27.0. Use the validations and
+  conventions commands instead.
+- **The global git identity for network commits** leaves in 0.27.0. With
+  `git_identity` unset, commits made for network callers use the server
+  account's global `user.name` and `user.email`; set `git_identity`
+  (`name`, `email`) in `config.yaml` (added in 0.26.3).
 - **orient's `schema.guidelines`**, `schema.goals`, `schema.evaluation_rubric`,
   the per-type `ai_instructions`, `guidelines`, `goals` and
   `evaluation_rubric` under `schema.types`, and the top-level `guidelines`
