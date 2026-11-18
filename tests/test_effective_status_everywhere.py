@@ -385,6 +385,87 @@ def _cli_status_commands() -> set[str]:
     return found
 
 
+#: Literal: the tasks of this tree a worker can take now (#1686). `p` says
+#: `open` in its file but is done by its children (`not_open`); `q` is open
+#: with an open child (`has_children`); `qa-done` is done by its child.
+DISPATCHABLE = {"q-a", "qa-open"}
+
+
+def _all_ids(rows):
+    return {r["id"] for r in rows}
+
+
+def mcp_task_list_dispatchable(cfg):
+    return _all_ids(_mcp(cfg, "task_list", {"dispatchable": True, "kb_name": KB})["tasks"])
+
+
+def rest_tasks_dispatchable(cfg):
+    return _all_ids(_rest_get(cfg, "/api/tasks", {"kb": KB, "dispatchable": "true"})["tasks"])
+
+
+def cli_task_list_dispatchable(cfg):
+    out = _cli(cfg, ["task", "list", "-k", KB, "--dispatchable", "--format", "json"])
+    return _all_ids(out["tasks"])
+
+
+#: Every filter named `dispatchable`: one derived view (`classify_tasks`,
+#: through `TaskService.list_tasks`), filtering on the effective status.
+DISPATCHABLE_SURFACES = {
+    "mcp:task_list": mcp_task_list_dispatchable,
+    "rest:GET /api/tasks": rest_tasks_dispatchable,
+    "cli:task list": cli_task_list_dispatchable,
+}
+
+
+@pytest.mark.parametrize("surface", list(DISPATCHABLE_SURFACES))
+def test_dispatchable_filter_matches_the_effective_status(config, surface):
+    assert DISPATCHABLE_SURFACES[surface](config) == DISPATCHABLE
+
+
+def _mcp_dispatchable_tools() -> set[str]:
+    with mcp_server() as server:
+        return {
+            f"mcp:{name}"
+            for name, meta in server.tools.items()
+            if "dispatchable" in (meta.get("inputSchema") or {}).get("properties", {})
+        }
+
+
+def _rest_dispatchable_routes() -> set[str]:
+    pytest.importorskip("fastapi")
+    from pyrite.server.api import create_app
+
+    found = set()
+    for path, route in _walk_routes(create_app().routes):
+        if any(p.name == "dispatchable" for p in route.dependant.query_params):
+            found |= {f"rest:{m} {path}" for m in route.methods or ()}
+    return found
+
+
+def _cli_dispatchable_commands() -> set[str]:
+    import click
+    import typer.main
+
+    found = set()
+
+    def walk(cmd, path):
+        if hasattr(cmd, "list_commands"):
+            ctx = click.Context(cmd)
+            for name in cmd.list_commands(ctx):
+                walk(cmd.get_command(ctx, name), [*path, name])
+        elif any("--dispatchable" in (getattr(p, "opts", None) or []) for p in cmd.params):
+            found.add("cli:" + " ".join(path))
+
+    walk(typer.main.get_command(app), [])
+    return found
+
+
+def test_every_dispatchable_filter_is_in_the_matrix():
+    """A new `dispatchable` parameter fails here until the matrix runs it."""
+    found = _mcp_dispatchable_tools() | _rest_dispatchable_routes() | _cli_dispatchable_commands()
+    assert found == set(DISPATCHABLE_SURFACES)
+
+
 @pytest.mark.control(reason="structural inventory: guards future status filters, not this fix")
 @pytest.mark.parametrize(
     ("surface", "discover", "classified"),
