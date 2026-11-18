@@ -177,6 +177,7 @@ class TestCLIQACommand:
     def test_qa_json(self, setup, monkeypatch):
         svc = setup["svc"]
         svc.create_entry("test", "src-1", "Source 1", "document_source", reliability="high")
+        svc.create_entry("test", "c-1", "C1", "claim", assertion="X")
         monkeypatch.setattr(
             "pyrite_journalism_investigation.cli.load_config", lambda: setup["svc"].config
         )
@@ -185,14 +186,30 @@ class TestCLIQACommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "quality_score" in data
+        assert data["claims"]["stale_unverified"] == 0
+
+        # --stale-days changes unverified claim counts (#1566)
+        result_stale = runner.invoke(
+            investigation_app, ["qa", "-k", "test", "--json", "--stale-days", "0"]
+        )
+        assert result_stale.exit_code == 0
+        data_stale = json.loads(result_stale.output)
+        assert data_stale["claims"]["stale_unverified"] == 1
 
     def test_qa_table(self, setup, monkeypatch):
+        svc = setup["svc"]
+        svc.create_entry("test", "c-1", "C1", "claim", assertion="X")
         monkeypatch.setattr(
             "pyrite_journalism_investigation.cli.load_config", lambda: setup["svc"].config
         )
         result = runner.invoke(investigation_app, ["qa", "-k", "test"])
         assert result.exit_code == 0
         assert "Quality Score" in result.output
+
+        # Table output prints stale unverified claims with --stale-days (#1566)
+        table_stale = runner.invoke(investigation_app, ["qa", "-k", "test", "--stale-days", "0"])
+        assert table_stale.exit_code == 0
+        assert "Unverified, not updated in 0 days: 1" in table_stale.output
 
 
 class TestStaleUnverifiedClaims:
@@ -251,21 +268,3 @@ class TestStaleUnverifiedClaims:
 
         assert handler({"kb_name": "test"})["claims"]["stale_unverified"] == 0
         assert handler({"kb_name": "test", "stale_days": 0})["claims"]["stale_unverified"] == 1
-
-    def test_cli_option_changes_the_answer(self, setup, monkeypatch):
-        setup["svc"].create_entry("test", "c-1", "C1", "claim", assertion="X")
-        monkeypatch.setattr(
-            "pyrite_journalism_investigation.cli.load_config", lambda: setup["svc"].config
-        )
-
-        def stale(*extra):
-            result = runner.invoke(investigation_app, ["qa", "-k", "test", "--json", *extra])
-            assert result.exit_code == 0, result.output
-            return json.loads(result.output)["claims"]["stale_unverified"]
-
-        assert stale() == 0
-        assert stale("--stale-days", "0") == 1
-
-        table = runner.invoke(investigation_app, ["qa", "-k", "test", "--stale-days", "0"])
-        assert table.exit_code == 0
-        assert "Unverified, not updated in 0 days: 1" in table.output
