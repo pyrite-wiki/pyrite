@@ -324,6 +324,15 @@ class TestACallerWithNoIdentityNamesThePerson:
         assert row["assignee"] == "bob"
 
 
+def _status_log(config, task_id="open-task") -> list[dict]:
+    """The task file's `status_change_log`, read from the file."""
+    import yaml
+
+    [path] = list(config.get_kb(TASKS).path.rglob(f"{task_id}.md"))
+    front = yaml.safe_load(path.read_text().split("---", 2)[1])
+    return front.get("status_change_log") or []
+
+
 def _task(config, task_id="open-task") -> dict:
     [row] = _rows(config, "SELECT status, assignee FROM entry WHERE id = ?", task_id)
     return row
@@ -405,6 +414,44 @@ class TestCoreTaskToolsRecordTheCaller:
         result = _call(client, world, _alice(world), "task_decompose", args)
         assert _refused(result), result
         assert _rows(config, "SELECT id FROM entry WHERE title = 'Child for bob'") == []
+
+    def test_a_finish_records_the_account_that_finished_never_the_assignee(self, env):
+        """alice starts the task; bob finishes it with no `by`: the log item
+        records bob's account, the one who made the change (#1685)."""
+        client, world, config = env
+        task = {"task_id": "open-task", "kb_name": TASKS}
+        started = _call(client, world, _alice(world), "task_start", task)
+        assert started.get("claimed") is True, started
+        finished = _call(client, world, _as(world, "bob"), "task_finish", task)
+        assert finished.get("finished") is True, finished
+        log = _status_log(config)
+        assert [(i["from"], i["to"], i["by"]) for i in log] == [
+            ("open", "claimed", _key(world, "alice")),
+            ("claimed", "in_progress", _key(world, "alice")),
+            ("in_progress", "done", _key(world, "bob")),
+        ]
+
+    def test_a_finish_naming_another_account_is_refused_and_writes_nothing(self, env):
+        client, world, config = env
+        task = {"task_id": "open-task", "kb_name": TASKS}
+        assert _call(client, world, _alice(world), "task_start", task).get("claimed")
+        result = _call(
+            client, world, _as(world, "bob"), "task_finish", {**task, "by": _key(world, "alice")}
+        )
+        assert _refused(result), result
+        assert _task(config)["status"] == "in_progress"
+        assert [i["to"] for i in _status_log(config)] == ["claimed", "in_progress"]
+
+    def test_an_operator_key_finish_with_no_by_records_the_operator(self, env):
+        client, world, config = env
+        task = {"task_id": "open-task", "kb_name": TASKS}
+        started = _call(
+            client, world, _bearer(OPERATOR_KEY), "task_start", {**task, "assignee": "agent:w"}
+        )
+        assert started.get("claimed") is True, started
+        finished = _call(client, world, _bearer(OPERATOR_KEY), "task_finish", task)
+        assert finished.get("finished") is True, finished
+        assert _status_log(config)[-1]["by"] == "operator"
 
     @pytest.mark.control(reason="an operator key has no session identity: the argument is a label")
     def test_an_operator_key_claim_records_the_named_label(self, env):

@@ -624,7 +624,7 @@ class TaskService:
         def edge(old: str, new: str):
             return _log_item(old, new, assignee)
 
-        result = self.kb_svc.claim_entry(
+        result: dict[str, Any] = self.kb_svc.claim_entry(
             task_id,
             kb_name,
             assignee,
@@ -737,7 +737,10 @@ class TaskService:
                 f"Cannot move task '{task_id}' from '{current}' to '{target}' in one step. "
                 f"`--walk` (MCP `walk: true`) would pass through: {' → '.join(path)}."
             )
-        who = by or getattr(entry, "assignee", "") or "operator"
+        # Who made the change, never a guess: the caller's identity where the
+        # surface has one (MCP passes the signed-in key), else the operator,
+        # as update_task records it. Never the assignee by default (#1685).
+        who = by or "operator"
         ops: list[Any] = [Set("status", target)]
         if reason:
             ops.append(Set("status_reason", reason))

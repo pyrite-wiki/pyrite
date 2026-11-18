@@ -596,7 +596,7 @@ def task_finish(
     walk: bool = typer.Option(
         False,
         "--walk",
-        help="Pass through every declared intermediate state to done, recording each edge",
+        help="Pass through every intermediate state of the task workflow to done, recording each edge (the core table judges, #1709)",
     ),
     reason: str | None = typer.Option(
         None,
@@ -605,7 +605,7 @@ def task_finish(
         help="Reason for the change: set as status_reason and on each log item",
     ),
     by: str | None = typer.Option(
-        None, "--by", help="Who finished it, for the status_change_log items (default: assignee)"
+        None, "--by", help="Who finished it, for the status_change_log items (default: operator)"
     ),
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,

@@ -108,7 +108,9 @@ def test_finish_walk_from_each_declared_status(world, start):
     assert front["assignee"] == WHO
     assert _edges(front) == _pairs(expected)
     for item in front["status_change_log"]:
-        assert item["by"] == WHO
+        # No --by and no signed-in caller: the operator made the change. The
+        # assignee is who holds the task, not who finished it.
+        assert item["by"] == "operator"
         assert item["comment"] == "shipped"
 
 
@@ -158,6 +160,22 @@ def test_finish_by_names_who_in_each_log_item(world):
     code, data = _finish(world, "t", "--by", "reviewer")
     assert code == 0, data
     assert [i["by"] for i in _front(path)["status_change_log"]] == ["reviewer"]
+
+
+def test_b_finishing_as_task_records_b_never_a(world):
+    """agent:b finishes agent:a's task: each item records b; and with no --by
+    the operator, never the assignee a."""
+    named = world.add_entry(KB, _task("n", "status: claimed\nassignee: agent:a\n"))
+    unnamed = world.add_entry(KB, _task("u", "status: claimed\nassignee: agent:a\n"))
+
+    code, data = _finish(world, "n", "--walk", "--by", "agent:b")
+    assert code == 0, data
+    code, data = _finish(world, "u", "--walk")
+    assert code == 0, data
+
+    assert [i["by"] for i in _front(named)["status_change_log"]] == ["agent:b", "agent:b"]
+    assert [i["by"] for i in _front(unnamed)["status_change_log"]] == ["operator", "operator"]
+    assert _front(named)["assignee"] == _front(unnamed)["assignee"] == "agent:a"
 
 
 # -- workflows: core (above), a KB's strict state machine, a relaxed one ---------
