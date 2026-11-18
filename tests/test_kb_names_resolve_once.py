@@ -47,6 +47,17 @@ Two properties are pinned here.
    fail the run until the entry is deleted. CLI commands load the config afresh
    per process and resolve with the database open, so the probes for the CLI and
    the extension group find no failing shape today; they pass, and keep it so.
+
+Not followed. The fence is not total: the scan reads each file's AST for the
+literal name ``get_kb`` and follows nothing else. It does not see
+``getattr(x, <variable>)`` (only a literal ``"get_kb"``), nor
+``operator.methodcaller("get_kb")``, nor a computed attribute name (a name built
+or looked up at run time). It does not follow a wrapper inside the registry
+module that calls ``.get_kb`` and is imported elsewhere: the registry module is
+exempt whole, so a caller outside it reaches ``get_kb`` through the wrapper
+unseen. And it reads only ``pyrite/`` and ``extensions/*/src``, so a call in
+``scripts/`` or any other path outside those roots is not counted. Review a
+change that adds such a path to ``get_kb`` by hand.
 """
 
 from __future__ import annotations
