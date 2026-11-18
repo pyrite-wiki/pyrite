@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..config import PyriteConfig
@@ -644,18 +643,20 @@ class TaskService:
         ]
 
     def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
-        """Whether the task's file is still on disk. A row that records no
-        path cannot be checked and is not called orphaned."""
+        """Whether the task's file is still there, as its KB answers it
+        (``KBFiles.present``). A row that records no path, a KB no longer
+        configured, or a folder the OS will not answer for cannot be checked,
+        and such a task is not called orphaned: a listing never fails on it."""
+        from ..utils.kb_files import KBFiles, KBPresenceUnknownError
+
         file_path = row.get("file_path")
-        if not file_path:
+        kb = self.config.get_kb(task["kb_name"])
+        if not file_path or kb is None:
             return True
-        path = Path(file_path)
-        if not path.is_absolute():
-            kb = self.config.get_kb(task["kb_name"])
-            if kb is None:
-                return True
-            path = Path(kb.path) / path
-        return path.exists()
+        try:
+            return KBFiles(kb.path).present(file_path)
+        except KBPresenceUnknownError:
+            return True
 
     # -- Protocol finders (ADR-0017) -------------------------------------
     # Cross-type queries over the protocol columns. The MCP `kb_find_*`
