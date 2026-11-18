@@ -660,7 +660,8 @@ def test_a_network_row_never_names_a_file_the_walk_does_not_index(world, surface
     _seed_mixed(world)
     rows = _mcp_rows(world) if surface == "mcp" else _rest_rows(world)
 
-    text = json.dumps(rows)
+    # Everything but `name`, which is the caller's own words echoed back.
+    text = json.dumps([{k: v for k, v in r.items() if k != "name"} for r in rows])
 
     assert ".hidden" not in text
     assert "dup-b.md" not in text
@@ -760,11 +761,12 @@ def _unasked(world, *args: str, monkeypatch):
 
 
 def test_an_unknown_kb_with_no_format_asked_is_dev_s_error_line(world, monkeypatch):
-    result = _unasked(world, "-k", "nope", monkeypatch=monkeypatch)
+    # A name close to none, so no "Did you mean" is added (dev's run had none).
+    result = _unasked(world, "-k", "zzzz", monkeypatch=monkeypatch)
 
     assert result.exit_code == 1, result.output
     assert plain(result.stdout).splitlines() == [
-        "ERROR [KB_NOT_FOUND]: KB 'nope' not found",
+        "ERROR [KB_NOT_FOUND]: KB 'zzzz' not found",
         "    hint: To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) "
         "with no KB name.",
     ]

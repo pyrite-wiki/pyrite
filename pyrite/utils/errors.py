@@ -808,7 +808,14 @@ class PyriteCLIGroup(TyperGroup):
         try:
             # Still watched: serialising a payload can print or raise too.
             try:
-                answer = self._decide(guard, fmt, result, raised, self._outcome_format(guard, fmt))
+                answer = self._decide(
+                    guard,
+                    fmt,
+                    result,
+                    raised,
+                    self._outcome_format(guard, fmt),
+                    self._refusal_format(guard, fmt, raised),
+                )
             except KeyboardInterrupt:
                 raise
             except BaseException as exc:
@@ -846,22 +853,38 @@ class PyriteCLIGroup(TyperGroup):
         return UNASKED_OUTCOME_FORMAT if guard.unasked else fmt
 
     @staticmethod
+    def _refusal_format(guard: _BodyGuard, fmt: str, raised: BaseException | None) -> str:
+        """The format a refusal is printed in: ``fmt``, unless the command
+        declared ``OUTPUT_FORMAT_UNASKED`` and no format was asked for. Then it
+        is the shape the command printed before it joined the contract: its own
+        refusals as one ``ERROR [CODE]`` line, and a storage fault, which only
+        this root printed, in ``fmt`` (the JSON error shape) (#1691)."""
+        from ..cli.output import UNASKED_REFUSAL_FORMAT
+        from ..exceptions import StorageError
+
+        if guard.unasked and not isinstance(raised, StorageError):
+            return UNASKED_REFUSAL_FORMAT
+        return fmt
+
+    @staticmethod
     def _decide(
         guard: _BodyGuard,
         fmt: str,
         result: Any,
         raised: BaseException | None,
         outcome_fmt: str | None = None,
+        refusal_fmt: str | None = None,
     ) -> _Answer:
         """The allow-list. Each branch names something accepted; the last
-        lines are everything else. A refusal is printed in ``fmt``, a
-        returned outcome in ``outcome_fmt`` (``fmt`` unless given)."""
+        lines are everything else. A refusal is printed in ``refusal_fmt``,
+        a returned outcome in ``outcome_fmt``, each ``fmt`` unless given;
+        anything else (``NO_OUTCOME``) in ``fmt``."""
         from ..cli.outcome import Outcome
 
         if isinstance(raised, KeyboardInterrupt):
             raise raised
         if isinstance(raised, PyriteError | ValueError):
-            return _error_answer(_refusal_payload(raised), fmt)
+            return _error_answer(_refusal_payload(raised), refusal_fmt or fmt)
         if raised is None and type(result) is Outcome and result is guard.returned:
             return _outcome_answer(result, outcome_fmt or fmt)
 

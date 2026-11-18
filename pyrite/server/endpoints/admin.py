@@ -114,7 +114,6 @@ def sync_index(
             )
         if not kb:
             raise ValidationError("confirm needs kb: the KB the entries are in")
-        confirm = [name for name in confirm if name.strip()]
     if wait:
         result = index_mgr.sync_incremental(kb)
 
@@ -134,6 +133,13 @@ def sync_index(
 
         broadcast_event("kb_synced", entry_id="", kb_name="")
 
+        if confirm is not None:
+            from ...services.index_confirm import confirm_entries
+
+            result["confirm"] = confirm_entries(index_mgr, kb, confirm, result)
+        # What a network caller gets of the result (#1546, #1552), the confirm
+        # block included: one place decides it.
+        shaped = network_shape(result)
         response = SyncResponse(
             synced=True,
             added=result.get("added", 0),
@@ -142,16 +148,11 @@ def sync_index(
             skipped=result.get("skipped", []),
             unreadable_kbs=result.get("unreadable_kbs", []),
             # Folders it could not list, rows kept: a count, never a path (#1546).
-            unreadable_folders=network_shape(result)["unreadable_folders"],
+            unreadable_folders=shaped["unreadable_folders"],
         )
         if confirm is None:
             return response
-        from ...services.index_confirm import confirm_entries
-
-        return {
-            **response.model_dump(),
-            "confirm": confirm_entries(index_mgr, kb, confirm, result),
-        }
+        return {**response.model_dump(), "confirm": shaped["confirm"]}
 
     job_id = worker.submit_sync(kb)
     return {"job_id": job_id, "status": "submitted"}

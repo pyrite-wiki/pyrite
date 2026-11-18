@@ -31,7 +31,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..exceptions import PyriteError
+from ..exceptions import KBNotFoundError, PyriteError
 
 if TYPE_CHECKING:
     from ..storage.index import IndexManager
@@ -54,6 +54,15 @@ _FINDING_KEYS = ("rule", "severity", "field", "message")
 #: common one from reading the whole KB.
 _PAGE, _PAGES = 100, 10
 
+#: The ``reason`` of an entry the keyword lookup did not return. It names
+#: the bound: past it, a real entry with a common id and a common title in a
+#: large KB reads ``not_indexed`` (exit 3: the confirm fails safe, never
+#: claiming an entry it did not see).
+_NOT_RETURNED = (
+    f"a keyword search for its id or its title did not return it "
+    f"in the first {_PAGE * _PAGES} results"
+)
+
 
 def confirm_entries(
     index_mgr: IndexManager,
@@ -63,20 +72,31 @@ def confirm_entries(
 ) -> dict[str, Any]:
     """The confirm block for one KB after a sync.
 
-    ``names`` are the ids or KB-relative paths the caller asked about; empty
-    or None confirms every entry ``sync_result`` added or updated in that KB.
-    Returns ``kb``, ``named`` (whether the caller named the entries),
+    ``names`` are the ids or KB-relative paths the caller asked about, as
+    the surface received them: this function, not the surface, decides what
+    they mean. A blank name names nothing; no name left (an empty list, or
+    only blanks) confirms every entry ``sync_result`` added or updated in that
+    KB. Returns ``kb``, ``named`` (whether the caller named the entries),
     ``entries`` (one row per name, in order), the ``confirmed`` and
     ``not_confirmed`` counts, and ``outcome`` (``done`` when every row is
     confirmed, else ``partial``) for a caller that sees no exit code.
+
+    Raises ``KBNotFoundError`` when ``kb_name`` is not a KB this process has
+    loaded: the sync read the same configuration, so it synced nothing there,
+    and nothing confirmed must not read as ``done``. (MCP and REST resolve a
+    KB name through the registry as well; the CLI merges the registry first.)
     """
     config, db = index_mgr.config, index_mgr.db
-    # Every surface refuses a confirm without a KB before it syncs; None here
-    # confirms nothing rather than every KB.
     kb = config.get_kb(kb_name) if kb_name else None
-    named = bool(names)
+    if kb is None:
+        raise KBNotFoundError(
+            f"KB '{kb_name}' is not loaded here, so nothing was synced or confirmed in it",
+            suggestion="Reload the configuration (restart the server), then sync again.",
+        )
+    asked = [name for name in names or [] if name.strip()]
+    named = bool(asked)
     if named:
-        targets = list(dict.fromkeys(names or []))
+        targets = list(dict.fromkeys(asked))
     else:
         targets = list(
             dict.fromkeys(
@@ -85,7 +105,7 @@ def confirm_entries(
                 if row["kb"] == kb_name and row["change"] != "removed"
             )
         )
-    rows = index_mgr.confirm_rows(kb, targets) if kb is not None and targets else []
+    rows = index_mgr.confirm_rows(kb, targets) if targets else []
 
     from .search_service import SearchService
 
@@ -116,7 +136,7 @@ def _confirm_row(row, kb_name, named, db, config, search, embedding) -> dict[str
     if stored is not None:
         searchable = _keyword_returns(search, kb_name, entry_id, stored.get("title"))
         if status == "indexed" and not searchable:
-            status, reason = "not_indexed", "a keyword search for it does not return it"
+            status, reason = "not_indexed", _NOT_RETURNED
         findings = _schema_findings(db, config, kb_name, entry_id)
         embedded = embedding.state(entry_id)
     fails = named and any(f["severity"] == "error" for f in findings)

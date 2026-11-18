@@ -1935,9 +1935,10 @@ checked against each command's Typer signature by
 | `task create` | yes (shared; `-f` deprecated) | `json` |
 
 `index sync` takes the shared option with no default (#1691): asked for
-nothing (no `--format`, no `PYRITE_FORMAT`), it prints its result as text and a
-refusal as the JSON error shape, as it did before it joined the contract; an
-asked-for format applies to both.
+nothing (no `--format`, no `PYRITE_FORMAT`), it answers as it did before it
+joined the contract: its result as text, a refusal as one `ERROR [CODE]` line,
+and a storage fault (`STORAGE_ERROR`) as the JSON error shape. An asked-for
+format applies to the whole answer.
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
@@ -2169,8 +2170,14 @@ entries (#1691): `pyrite index sync -k KB --confirm NAME...`, MCP
 (admin tier, unchanged). A name is an entry id, or a path relative to the KB's
 folder (`notes/a.md`), so a file with no `id:` can be confirmed too. With no
 names (`--confirm` alone, `confirm: []`, a single empty `confirm=`) it confirms
-every entry this sync added or changed. All three return the same `confirm`
-block, decided in one place (`pyrite/services/index_confirm.py`):
+every entry this sync added or changed; a blank name names nothing, on every
+surface. One place decides the block (`pyrite/services/index_confirm.py`), and
+a KB the process has not loaded is refused (`KB_NOT_FOUND`), never answered
+`done`. The local CLI gets the rows whole; MCP and REST get them as index
+health shapes answers for network callers (#1552; `network_shape` in
+`pyrite/services/index_health.py`): a `skipped` name reads `not_found` with no
+path or reason, a `duplicate` row has no `paths`, and a file that could not be
+read is not named:
 
 ```json
 {
@@ -2197,11 +2204,11 @@ block, decided in one place (`pyrite/services/index_confirm.py`):
 | `status` | Meaning |
 |---|---|
 | `indexed` | One parseable file holds the id, its index row points at that file with the file's content hash, and a keyword search returns it. |
-| `not_indexed` | A file holds the id, but the row is missing, points at another file, has another hash, was kept unread (a file it could not read, #1546), or a keyword search does not return it; `reason` says which. Run `pyrite index sync` again, then `pyrite index health`. |
+| `not_indexed` | A file holds the id, but the row is missing, points at another file, has another hash, was kept unread (a file it could not read, #1546), or a keyword search does not return it; `reason` says which. Run `pyrite index sync` again, then `pyrite index health`. **Limit:** the keyword lookup reads the first 1,000 results for the id, then for the title; past that, a real entry with a common id and a common title in a large KB reads `not_indexed` (the confirm fails safe: exit 3, never a false `indexed`). |
 | `not_found` | No file holds the id, or nothing is at the path. |
 | `malformed` | The file does not parse, or could not be read (`reason`, fixed words; the local sync's own list names the parser's error). A malformed file named by id is matched on its file name (`b.md` for the id `b`); name it by its path otherwise. |
-| `duplicate` | More than one file claims the id; `paths` lists them, the indexed one first (ADR-0038). |
-| `skipped` | The walk passes the file by: a dot-prefixed folder, `_templates/`, a README, a file that is not a regular file, an in-KB link (`reason`). |
+| `duplicate` | More than one file claims the id; `paths` lists them, the indexed one first (ADR-0038). Local CLI only; a network row has no `paths`. |
+| `skipped` | The walk passes the file by: a dot-prefixed folder, `_templates/`, a README, a file that is not a regular file, an in-KB link (`reason`). Local CLI only; a network caller gets `not_found`. |
 
 - **`searchable`**: whether the keyword lookup returned the entry (by its id,
   then by its title), or `null` when there is no row to look for.
@@ -2228,8 +2235,10 @@ load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
 
 **Plain `index sync`** is on the outcome contract too (maintainer, 2026-11-17):
 its `--format` is the shared option with no default, so with no format asked
-for a person sees the text they always saw and a refusal is the JSON error
-shape, as before; `--format rich` prints a refusal as one `ERROR [CODE]` line;
+for it answers exactly as before: the text a person always saw, a refusal as
+one `ERROR [CODE]` line, a storage fault as the JSON error shape (plus the
+`outcome` key every refusal on the contract carries). `--format rich` prints
+every refusal as the one line;
 `PYRITE_FORMAT=json` or `--format json` prints the sync result (`added`, `updated`, `removed`, `malformed`,
 `skipped`, `duplicates`, `aliases`, `dangling_links`, `unreadable_kbs`,
 `unreadable_folders`, `unreadable_files`, `changed`, and `embedded` when the

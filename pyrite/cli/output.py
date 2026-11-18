@@ -107,12 +107,18 @@ def _two_answers() -> typer.BadParameter:
 
 
 #: Set when a command declares ``OUTPUT_FORMAT_UNASKED`` and no format was
-#: asked for (no ``--format``, no ``PYRITE_FORMAT``): the root prints its
-#: outcome as ``rich`` and a refusal in the default format, JSON (#1691).
+#: asked for (no ``--format``, no ``PYRITE_FORMAT``): the root prints the
+#: command's answer as it printed before it joined the contract (#1691).
 UNASKED_META_KEY = "pyrite.output_format.unasked"
 
 #: The format an outcome is printed in when ``UNASKED_META_KEY`` is set.
 UNASKED_OUTCOME_FORMAT = "rich"
+
+#: The format a refusal is printed in when ``UNASKED_META_KEY`` is set: one
+#: ``ERROR [CODE]`` line, as the command printed its own refusals. A storage
+#: fault, which only the root printed, stays the default (JSON) error shape
+#: (``PyriteCLIGroup._refusal_format``).
+UNASKED_REFUSAL_FORMAT = "rich"
 
 
 def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str | None) -> str | None:
@@ -175,18 +181,19 @@ OUTPUT_FORMAT = typer.Option(
 )
 
 #: The shared option for a command whose answer, when no format is asked
-#: for, keeps the two shapes it had before it joined the contract: its result
-#: as text for a person, and a refusal as the JSON error shape (``index sync``,
-#: #1691). The same option, check and ``PYRITE_FORMAT``; only the default is
-#: unset, and the root resolves it per half (``UNASKED_META_KEY``). An asked-for
-#: format (``--format`` or ``PYRITE_FORMAT``) applies to both halves.
+#: for, keeps the shapes it had before it joined the contract (``index sync``,
+#: #1691): its result as text for a person, its refusals as one ``ERROR
+#: [CODE]`` line, and a storage fault as the JSON error shape. The same option,
+#: check and ``PYRITE_FORMAT``; only the default is unset, and the root resolves
+#: it (``UNASKED_META_KEY``). An asked-for format (``--format`` or
+#: ``PYRITE_FORMAT``) applies to the whole answer.
 OUTPUT_FORMAT_UNASKED = typer.Option(
     None,
     "--format",
     envvar="PYRITE_FORMAT",
     callback=_record_format,
     show_default=False,
-    help="Output format: json, yaml or rich. Unset: the result as text, a refusal as JSON. "
+    help="Output format: json, yaml or rich. Unset: text, as before (a storage fault as JSON). "
     "PYRITE_FORMAT sets the default.",
 )
 

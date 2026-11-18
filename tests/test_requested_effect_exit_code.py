@@ -1262,7 +1262,7 @@ LEGACY_DIR = Path(__file__).resolve().parent / "legacy_commands"
 # unnoticed. The files are the exact list, so a slice may leave this alone; a
 # reviewer lowers it when a slice migrates commands. Nothing enforces "only
 # goes down" but review.
-LEGACY_COMMANDS_CEILING = 173
+LEGACY_COMMANDS_CEILING = 167
 
 
 def _on_the_contract(cmd) -> bool:

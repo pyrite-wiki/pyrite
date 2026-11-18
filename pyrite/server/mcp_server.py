@@ -246,9 +246,10 @@ def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool
 
 
 def _confirm_names(value: Any, *, kb_name: Any, background: Any) -> list[str] | None:
-    """``kb_index_sync``'s ``confirm``: None when not asked, else the names (an
-    empty list confirms what the sync changed). Refused with a background sync
-    or without ``kb_name``, as ``index sync --confirm`` refuses them (#1691)."""
+    """``kb_index_sync``'s ``confirm``: None when not asked, else the names as
+    given (``confirm_entries`` decides what they mean). Refused with a
+    background sync or without ``kb_name``, as ``index sync --confirm``
+    refuses them (#1691)."""
     if value is None:
         return None
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
@@ -259,7 +260,7 @@ def _confirm_names(value: Any, *, kb_name: Any, background: Any) -> list[str] | 
         )
     if not kb_name:
         raise ValidationError("confirm needs kb_name: the KB the entries are in")
-    return [v for v in value if v.strip()]
+    return list(value)
 
 
 def _error(
@@ -2246,6 +2247,13 @@ class PyriteMCPServer:
         results = self.index_mgr.sync_incremental(kb_name)
         from ..services.index_health import network_shape
 
+        if confirm is not None:
+            from ..services.index_confirm import confirm_entries
+
+            results["confirm"] = confirm_entries(self.index_mgr, kb_name, confirm, results)
+        # What a network caller gets of the result (#1546, #1552), the confirm
+        # block included: one place decides it.
+        shaped = network_shape(results)
         answer = {
             "synced": True,
             "added": results["added"],
@@ -2257,12 +2265,10 @@ class PyriteMCPServer:
             "unreadable_kbs": results.get("unreadable_kbs", []),
             # Folders it could not list, rows kept (#1546): a count, never a
             # path, over the network (``network_shape``).
-            "unreadable_folders": network_shape(results)["unreadable_folders"],
+            "unreadable_folders": shaped["unreadable_folders"],
         }
         if confirm is not None:
-            from ..services.index_confirm import confirm_entries
-
-            answer["confirm"] = confirm_entries(self.index_mgr, kb_name, confirm, results)
+            answer["confirm"] = shaped["confirm"]
         return answer
 
     def _kb_index_job_status(self, args: dict[str, Any]) -> dict[str, Any]:

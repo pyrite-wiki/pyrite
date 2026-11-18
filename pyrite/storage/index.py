@@ -486,6 +486,13 @@ def _kb_relative_text(root: Path, path_text: str | None) -> str | None:
         return path_text
 
 
+#: The fixed ``reason`` of a ``malformed`` confirm row (``confirm_rows``):
+#: never the parser's or the OS's words. A network answer drops the path of
+#: a row with the first (``services.index_health.network_shape``).
+CONFIRM_UNREADABLE = "the file could not be read"
+CONFIRM_DOES_NOT_PARSE = "its frontmatter does not parse"
+
+
 def _looks_like_a_path(name: str) -> bool:
     """A confirm name is a KB-relative path when it has a folder separator or
     names a markdown file; otherwise an id. Ids hold neither (``validate_id``)."""
@@ -1468,9 +1475,7 @@ class IndexManager:
         # sync's own list names the parser's error.
         malformed = {
             rel(m["path"]): (
-                "the file could not be read"
-                if m["path"] in plan.unreadable
-                else "its frontmatter does not parse"
+                CONFIRM_UNREADABLE if m["path"] in plan.unreadable else CONFIRM_DOES_NOT_PARSE
             )
             for m in plan.malformed
         }
