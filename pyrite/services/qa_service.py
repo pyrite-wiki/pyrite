@@ -313,7 +313,6 @@ class QAService:
             self._check_rubric_action_config(issues, kb_name)
             self._check_settled_statuses_config(issues, kb_name)
             self._check_schema_retypes_core_fields(issues, kb_name)
-            self._check_ignored_declarations(issues, kb_name)
             self._check_schema_all(issues, kb_name, sources)
 
             # The bulk SQL checks above do not know a KB's named rubric (#956).
@@ -1751,6 +1750,7 @@ class QAService:
         kb_config = self.config.get_kb(kb_name)
         if not kb_config or not kb_config.kb_yaml_present:
             return
+        self._check_ignored_declarations(issues, kb_name, kb_config)
         for type_name, field_name, expected in _CORE_TYPED_FIELDS:
             type_schema = kb_config.kb_schema.types.get(type_name)
             field_schema = type_schema.fields.get(field_name) if type_schema else None
@@ -1775,9 +1775,10 @@ class QAService:
                 }
             )
 
-    def _check_ignored_declarations(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+    def _check_ignored_declarations(
+        self, issues: list[dict[str, Any]], kb_name: str, kb_config: Any
+    ) -> None:
         """Report any declarations in kb.yaml that Pyrite does not honour because they use reserved names."""
-        kb_config = self.config.get_kb(kb_name)
         schema = kb_config.kb_schema if kb_config else None
         if schema is None or not getattr(schema, "ignored_declarations", None):
             return
