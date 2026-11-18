@@ -2485,6 +2485,13 @@
             ],
             "type": "string"
           },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "title": {
             "description": "ADR title",
             "type": "string"
@@ -7615,6 +7622,13 @@
               "accepted"
             ],
             "type": "string"
+          },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "title": {
             "description": "ADR title",

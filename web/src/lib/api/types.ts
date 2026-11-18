@@ -83,13 +83,16 @@ export interface UserListResponse {
 	users: UserInfo[];
 }
 
+/** A scalar value declared by a KB for an entry column. */
+export type ColumnValue = string | number | boolean | null;
+
 export interface SearchResult {
 	id: string;
 	kb_name: string;
 	entry_type: string;
 	title: string;
 	snippet?: string;
-	date?: string;
+	date?: ColumnValue;
 	importance?: number;
 	tags: string[];
 }
@@ -115,9 +118,9 @@ export interface EntryResponse {
 	title: string;
 	body?: string;
 	summary?: string;
-	date?: string;
+	date?: ColumnValue;
 	importance?: number;
-	status?: string;
+	status?: ColumnValue;
 	tags: string[];
 	participants: string[];
 	sources: Record<string, unknown>[];
@@ -169,6 +172,7 @@ export interface CreateEntryRequest {
 	entry_type?: string;
 	title: string;
 	body?: string;
+	// Client always sends date as an ISO string when creating an entry.
 	date?: string;
 	importance?: number;
 	tags?: string[];

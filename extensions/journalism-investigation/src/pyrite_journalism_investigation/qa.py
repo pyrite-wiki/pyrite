@@ -1,5 +1,6 @@
 """Investigation QA reporting and quality metrics."""
 
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .utils import parse_meta
@@ -11,11 +12,15 @@ def compute_qa_metrics(db: Any, kb_name: str, stale_days: int = 30) -> dict[str,
     Args:
         db: PyriteDB instance
         kb_name: KB name to analyze
-        stale_days: Days after which unverified claims are considered stale
+        stale_days: Days after which unverified claims are considered stale.
+            A claim is stale when its ``updated_at`` is older than this, the
+            rule ``pyrite qa stale`` uses; a missing or unparseable
+            ``updated_at`` counts as stale, as it does there.
 
     Returns:
         Dict with source_tiers, claims, quality_score, and warnings.
     """
+    stale_cutoff = datetime.now(UTC) - timedelta(days=stale_days)
     # --- Source tier distribution ---
     sources = db.list_entries(kb_name=kb_name, entry_type="document_source", limit=10000)
     tier_counts = {"high": 0, "medium": 0, "low": 0, "unknown": 0}
@@ -42,6 +47,7 @@ def compute_qa_metrics(db: Any, kb_name: str, stale_days: int = 30) -> dict[str,
     orphans = 0
     confidence_dist = {"high": 0, "medium": 0, "low": 0}
     status_counts = {}
+    stale_unverified = 0
 
     for c in claims:
         meta = parse_meta(c)
@@ -55,6 +61,8 @@ def compute_qa_metrics(db: Any, kb_name: str, stale_days: int = 30) -> dict[str,
 
         claim_status = meta.get("claim_status", "unverified")
         status_counts[claim_status] = status_counts.get(claim_status, 0) + 1
+        if claim_status == "unverified" and _updated_before(c.get("updated_at"), stale_cutoff):
+            stale_unverified += 1
 
     coverage_pct = ((total_claims - orphans) / total_claims * 100) if total_claims else 100.0
     disputed_count = status_counts.get("disputed", 0) + status_counts.get("retracted", 0)
@@ -67,6 +75,7 @@ def compute_qa_metrics(db: Any, kb_name: str, stale_days: int = 30) -> dict[str,
         "confidence": confidence_dist,
         "status": status_counts,
         "disputed_ratio": round(disputed_ratio, 2),
+        "stale_unverified": stale_unverified,
     }
 
     # --- Quality score (0-100) ---
@@ -96,9 +105,25 @@ def compute_qa_metrics(db: Any, kb_name: str, stale_days: int = 30) -> dict[str,
             f"High dispute ratio: {disputed_ratio:.0f}% of claims disputed or retracted"
         )
 
+    if stale_unverified:
+        warnings.append(
+            f"Stale unverified claims: {stale_unverified} not updated in {stale_days} days"
+        )
+
     return {
         "source_tiers": source_tiers,
         "claims": claims_metrics,
         "quality_score": quality_score,
         "warnings": warnings,
     }
+
+
+def _updated_before(updated_at: Any, cutoff: datetime) -> bool:
+    """True when *updated_at* is before *cutoff*, or is missing or unparseable."""
+    try:
+        updated = datetime.fromisoformat(str(updated_at))
+    except (ValueError, TypeError):
+        return True
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+    return updated < cutoff

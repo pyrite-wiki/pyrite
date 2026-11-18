@@ -397,16 +397,8 @@ def test_a_link_whose_target_cannot_be_stat_ed_syncs_whole_and_healthy(world, tm
     assert body["unreadable_folders"] == []
 
 
-def test_a_name_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
-    """A folder whose listing gives no type, and whose type the OS will not
-    tell (DT_UNKNOWN in a folder this process may not search): the walk
-    cannot know it is a folder, so it keeps the rows under it and names it,
-    rather than reading it as a file and the rows as gone."""
-    import pyrite.storage.repository as repository
-
-    kb.im.sync_incremental(KB)
+def _untyped_listing(untyped_path: str):
     real_scandir = os.scandir
-    untyped = str(kb.root / "sub" / "c")
 
     class Untyped:
         def __init__(self, item):
@@ -425,16 +417,47 @@ def test_a_name_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
             self._it = real_scandir(top)
 
         def __enter__(self):
-            return (Untyped(i) if i.path == untyped else i for i in self._it)
+            return (Untyped(i) if i.path == untyped_path else i for i in self._it)
 
         def __exit__(self, *exc):
             self._it.close()
 
-    monkeypatch.setattr(repository.os, "scandir", Listing)
+    return Listing
+
+
+def test_a_name_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
+    """A folder whose listing gives no type, and whose type the OS will not
+    tell (DT_UNKNOWN in a folder this process may not search): the walk
+    cannot know it is a folder, so it keeps the rows under it and names it,
+    rather than reading it as a file and the rows as gone."""
+    import pyrite.storage.repository as repository
+
+    kb.im.sync_incremental(KB)
+    monkeypatch.setattr(repository.os, "scandir", _untyped_listing(str(kb.root / "sub" / "c")))
     result = kb.im.sync_incremental(KB)
     monkeypatch.undo()
     assert set(_rows(kb)) == SEEDED_IDS
     assert result["unreadable_folders"] == [{"kb": KB, "path": "sub/c", "error": FIXED}]
+    assert result["removed"] == 0
+
+
+def test_a_folder_named_dot_md_the_os_will_not_type_is_named_as_a_folder(kb, monkeypatch):
+    """A folder named *.md whose listing gives DT_UNKNOWN keeps the rows under it
+    and is named under unreadable_folders (#1720)."""
+    import pyrite.storage.repository as repository
+
+    folder_md = kb.root / "sub" / "folder.md"
+    folder_md.mkdir(parents=True, exist_ok=True)
+    (folder_md / "nested.md").write_text(_note("nested", "Nested"))
+
+    kb.im.sync_incremental(KB)
+    assert "nested" in _rows(kb)
+
+    monkeypatch.setattr(repository.os, "scandir", _untyped_listing(str(folder_md)))
+    result = kb.im.sync_incremental(KB)
+    monkeypatch.undo()
+    assert set(_rows(kb)) == SEEDED_IDS | {"nested"}
+    assert result["unreadable_folders"] == [{"kb": KB, "path": "sub/folder.md", "error": FIXED}]
     assert result["removed"] == 0
 
 

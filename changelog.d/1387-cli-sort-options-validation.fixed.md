@@ -1,1 +1,0 @@
-- `pyrite timeline --sort` and `pyrite list-entries --sort-by`/`--sort-order` now validate their values (case-insensitively, accepting uppercase `ASC`/`DESC`), refusing invalid sort columns or directions before running (#1387).

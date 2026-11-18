@@ -968,14 +968,10 @@ class KBRepository:
                             # name ITSELF is (a folder that gives no type,
                             # in one this process may not search) may it be
                             # a folder: the rows under it are kept and it is
-                            # named (#1546). Not a name the walk lists as a
-                            # file (``*.md``, a ``__collection.yaml``): that
-                            # file's own stat names it.
-                            if (
-                                not item.name.endswith(".md")
-                                and item.name != "__collection.yaml"
-                                and _type_unknown(item)
-                            ):
+                            # named (#1546, #1720). Whatever its name (*.md and
+                            # __collection.yaml included, #1720): if it is really
+                            # a file, that file's own stat also names it.
+                            if _type_unknown(item):
                                 could_not_list(os.path.join(top, item.name))
                         if not is_dir:
                             filenames.append(item.name)
@@ -1888,12 +1884,12 @@ class KBRepository:
         yield from self.list_collection_files()
 
     def list_collection_files(self, unreadable: list[str] | None = None) -> Iterator[Path]:
-        """Every ``__collection.yaml`` the walk keeps (not under a hidden part).
+        """Every ``__collection.yaml`` the walk keeps (not under a hidden part
+        or templates folder inside the KB).
         ``unreadable``: as ``_folders``."""
         for yaml_file in self._named("__collection.yaml", unreadable):
-            if any(part.startswith(".") for part in yaml_file.parts):
-                continue
-            yield yaml_file
+            if self._lexically_listed(yaml_file):
+                yield yaml_file
 
     def load_entry_from_bytes(self, file_path: Path, raw: bytes) -> Entry:
         """``load_entry_from_file`` of ``raw``, the file's bytes as already read.
@@ -1946,9 +1942,7 @@ class KBRepository:
                 continue
 
         # Discover __collection.yaml files
-        for yaml_file in self._named("__collection.yaml"):
-            if any(part.startswith(".") for part in yaml_file.parts):
-                continue
+        for yaml_file in self.list_collection_files():
             try:
                 entry = self._load_collection(yaml_file)
                 entry.kb_name = self.name
@@ -1972,11 +1966,7 @@ class KBRepository:
     def count(self) -> int:
         """Count total entries in the KB."""
         md_count = sum(1 for _ in self.list_files())
-        yaml_count = sum(
-            1
-            for f in self._named("__collection.yaml")
-            if not any(part.startswith(".") for part in f.parts)
-        )
+        yaml_count = sum(1 for _ in self.list_collection_files())
         return md_count + yaml_count
 
     def search_files(self, query: str) -> Iterator[tuple[Entry, Path]]:
