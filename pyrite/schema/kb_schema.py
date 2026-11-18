@@ -160,7 +160,8 @@ class KBSchema:
         core < plugin < kb.yaml (#86, #232).
 
         The declaration is the schema, never the model class: ``CORE_TYPES``'s
-        ``fields``, the plugins' ``get_field_schemas()``, then this KB's
+        ``fields`` (a task's from ``TASK_TYPE_METADATA``), the plugins'
+        ``get_field_schemas()``, then this KB's
         ``fields``, each layer replacing a name the one below declared. A name
         kb.yaml lists in ``optional`` or ``required`` without a definition adds
         a text field, unless a lower layer already typed it. A reserved name
@@ -169,9 +170,19 @@ class KBSchema:
         a field a type declares. A type's managed fields are not removed here;
         the create leaves them out itself (``KBService._with_declared_fields``).
         """
+        core = dict(CORE_TYPES.get(entry_type, {}).get("fields", {}))
+        if entry_type == "task":
+            # A built-in type that is not one of the core types: `task`
+            # declares its fields beside its model, as `resolve_type_metadata`
+            # reads its settled statuses (lazy import: models import this
+            # package). Without it a task's `priority` had no declared type
+            # and read as text on every index reader (#1503).
+            from ..models.task import TASK_TYPE_METADATA
+
+            core.update(TASK_TYPE_METADATA.get("fields", {}))
         fields: dict[str, FieldSchema] = {
             name: FieldSchema(name=name, field_type=_core_field_type(spelled))
-            for name, spelled in CORE_TYPES.get(entry_type, {}).get("fields", {}).items()
+            for name, spelled in core.items()
         }
         try:
             from ..plugins import get_registry
