@@ -1262,7 +1262,7 @@ LEGACY_DIR = Path(__file__).resolve().parent / "legacy_commands"
 # unnoticed. The files are the exact list, so a slice may leave this alone; a
 # reviewer lowers it when a slice migrates commands. Nothing enforces "only
 # goes down" but review.
-LEGACY_COMMANDS_CEILING = 173
+LEGACY_COMMANDS_CEILING = 167
 
 
 def _on_the_contract(cmd) -> bool:
@@ -1821,7 +1821,9 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/admin_cli.py", "repo_sync"): ("fixed", "TestAdminRepo"),
     ("pyrite/cli/__init__.py", "import_entries"): ("fixed", "TestImportAndBulkLinks"),
     ("pyrite/cli/index_commands.py", "index_build"): ("fixed", "TestUnreadableKB"),
-    ("pyrite/cli/index_commands.py", "index_sync"): ("fixed", "TestUnreadableKB"),
+    # The text `index sync` prints moved into its renderer when the command
+    # moved onto the outcome contract (#1691); the exit is the Outcome's.
+    ("pyrite/cli/index_commands.py", "render_sync"): ("fixed", "TestUnreadableKB"),
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
         "index health exits 1 when unhealthy, in its caller",

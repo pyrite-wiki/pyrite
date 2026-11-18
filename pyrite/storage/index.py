@@ -492,6 +492,30 @@ def _folder_rows(kb_name: str, folders: list[str]) -> list[dict[str, str]]:
     ]
 
 
+def _kb_relative_text(root: Path, path_text: str | None) -> str | None:
+    """``path_text`` below ``root``, POSIX spelling; as it is when it is not
+    below it (a row written before the KB moved)."""
+    if not path_text:
+        return None
+    try:
+        return Path(path_text).relative_to(root).as_posix()
+    except ValueError:
+        return path_text
+
+
+#: The fixed ``reason`` of a ``malformed`` confirm row (``confirm_rows``):
+#: never the parser's or the OS's words. A network answer drops the path of
+#: a row with the first (``services.index_health.network_shape``).
+CONFIRM_UNREADABLE = "the file could not be read"
+CONFIRM_DOES_NOT_PARSE = "its frontmatter does not parse"
+
+
+def _looks_like_a_path(name: str) -> bool:
+    """A confirm name is a KB-relative path when it has a folder separator or
+    names a markdown file; otherwise an id. Ids hold neither (``validate_id``)."""
+    return "/" in name or "\\" in name or name.endswith(".md")
+
+
 def _file_changed(row: dict[str, Any], stat: os.stat_result) -> bool:
     """THE staleness rule: a known file is re-read when its mtime OR its size
     differs from what was recorded when it was indexed (ADR-0038 decision 4).
@@ -1359,8 +1383,10 @@ class IndexManager:
         ``unreadable_folders`` (``{"kb", "path", "error"}``, KB-relative, the
         fixed ``KB_UNREADABLE`` text), ``unreadable_files`` (``{"kb", "path",
         "error"}``, the walked paths it could not stat, read or hash, each
-        also under ``malformed``) and ``written`` (rows written, counted or
-        not).
+        also under ``malformed``), ``written`` (rows written, counted or
+        not) and ``changed`` (``{"kb", "id", "path", "change"}`` for each row
+        counted in ``added``, ``updated`` or ``removed``, the path KB-relative:
+        the ids and files this reconcile changed, #1691).
 
         Rows are retired only on evidence from the files: the row of a path
         under a folder the walk could not list, or of a file it could not
@@ -1379,6 +1405,7 @@ class IndexManager:
             "unreadable_folders": [],
             "unreadable_files": [],
             "written": 0,
+            "changed": [],
         }
         if not kb_config.path.exists():
             return results
@@ -1446,13 +1473,147 @@ class IndexManager:
             # turns this into the job's `index_progress` event.
             progress_callback(total, total)
 
-        for entry_id in indexed:
+        for entry_id, row in indexed.items():
             if entry_id not in plan.winners or entry_id in unwritable:
                 self.remove_entry(entry_id, kb_config.name)
                 results["removed"] += 1
+                results["changed"].append(
+                    {
+                        "kb": kb_config.name,
+                        "id": entry_id,
+                        "path": _kb_relative_text(kb_config.path, row.get("file_path")),
+                        "change": "removed",
+                    }
+                )
 
         self.db.update_kb_indexed(kb_config.name, len(plan.winners) - len(unwritable))
         return results
+
+    def confirm_rows(self, kb_config: KBConfig, names: Iterable[str]) -> list[dict[str, Any]]:
+        """What the files and the rows say about each named id or KB-relative
+        path, read after a sync (``index sync --confirm``, #1691). Writes
+        nothing.
+
+        One row per name, in order: ``name``, ``id``, ``path`` (KB-relative)
+        and ``status``, one of
+
+        - ``indexed``: a parseable file holds the id alone, and its row points
+          at that file with the file's content hash;
+        - ``not_indexed``: a file holds the id, but the row is missing, points
+          elsewhere, has another hash, or was kept unread (#1546); ``reason``
+          says which;
+        - ``duplicate``: more than one file claims the id (``paths``, the
+          indexed one first);
+        - ``malformed``: the file does not parse (``reason``);
+        - ``skipped``: the walk passes the file by (a dot-folder, a
+          non-regular file, an in-KB link; ``reason``);
+        - ``not_found``: no file holds the id, or nothing is at the path.
+
+        The plan is the reconcile's own (``plan_reconcile``): after a sync it
+        reads only the files the index does not hold, so this costs one stat
+        walk. A malformed file holds no parsed id; named by id, it is matched
+        on its file name's stem (a malformed ``b.md`` whose ``id:`` is ``a`` is
+        found by the path ``b.md``, and the id ``a`` is ``not_found``).
+        """
+        plan = self.plan_reconcile(kb_config)
+        indexed = self._load_indexed_state(kb_config.name)
+        root = kb_config.path
+        repo = KBRepository(kb_config)
+
+        def rel(path: Path | str) -> str:
+            return _kb_relative_text(root, str(path)) or str(path)
+
+        # Fixed words, never the parser's: a network caller is not told them
+        # (ADR-0052 N3), and every surface gives the same row. The local
+        # sync's own list names the parser's error.
+        malformed = {
+            rel(m["path"]): (
+                CONFIRM_UNREADABLE if m["path"] in plan.unreadable else CONFIRM_DOES_NOT_PARSE
+            )
+            for m in plan.malformed
+        }
+        skipped = {rel(m["path"]): m["reason"] for m in plan.skipped}
+        skipped.update({rel(p): reason for p, reason in plan.unlisted})
+        skipped.update(
+            {a["path"]: f"an in-KB link to {a['target']}, indexed there" for a in plan.aliases}
+        )
+        duplicates = {d["id"]: d for d in plan.duplicates}
+        id_at = {c.rel: entry_id for entry_id, cs in plan.holders.items() for c in cs}
+
+        def meant_id(rel_path: str) -> str:
+            """The id a file the reconcile could not use meant to hold: a
+            skipped file's own (the repository's reader, which never opens a
+            FIFO or a link out of the KB), else the file name's stem. A
+            malformed file is not read again: its frontmatter does not parse,
+            so only its name says which id it meant."""
+            path = root / rel_path
+            if rel_path not in malformed:
+                found, _why = repo.read_id(path)
+                held = id_text(found) if found else None
+                if held:
+                    return held
+            return path.stem
+
+        def row_for_id(name: str, entry_id: str) -> dict[str, Any]:
+            if entry_id in duplicates:
+                dup = duplicates[entry_id]
+                return {
+                    "name": name,
+                    "id": entry_id,
+                    "path": dup["winner"],
+                    "status": "duplicate",
+                    "paths": list(dup["paths"]),
+                }
+            claim = plan.winners[entry_id]
+            out: dict[str, Any] = {"name": name, "id": entry_id, "path": claim.rel}
+            row = indexed.get(entry_id)
+            if claim.unreached:
+                reason = "its file could not be read; the row is kept from before"
+            elif row is None:
+                reason = "the index holds no row for it"
+            elif row.get("file_path") != str(claim.path):
+                reason = "its row points at another file"
+            elif _hash_file(claim.path, root) != row.get("content_hash"):
+                reason = "its row's content hash differs from the file's"
+            else:
+                return {**out, "status": "indexed"}
+            return {**out, "status": "not_indexed", "reason": reason}
+
+        def unusable(name: str, rel_path: str, entry_id: str | None) -> dict[str, Any]:
+            if rel_path in malformed:
+                status, reason = "malformed", malformed[rel_path]
+            else:
+                status, reason = "skipped", skipped[rel_path]
+            return {
+                "name": name,
+                "id": entry_id,
+                "path": rel_path,
+                "status": status,
+                "reason": reason,
+            }
+
+        rows: list[dict[str, Any]] = []
+        for name in names:
+            if _looks_like_a_path(name):
+                given = Path(name.replace("\\", "/"))
+                rel_path = rel(given) if given.is_absolute() else given.as_posix()
+                if rel_path in id_at:
+                    rows.append(row_for_id(name, id_at[rel_path]))
+                elif rel_path in malformed or rel_path in skipped:
+                    rows.append(unusable(name, rel_path, None))
+                else:
+                    rows.append({"name": name, "id": None, "path": None, "status": "not_found"})
+                continue
+            if name in duplicates or name in plan.winners:
+                rows.append(row_for_id(name, name))
+                continue
+            for rel_path in [*malformed, *skipped]:
+                if meant_id(rel_path) == name:
+                    rows.append(unusable(name, rel_path, name))
+                    break
+            else:
+                rows.append({"name": name, "id": name, "path": None, "status": "not_found"})
+        return rows
 
     def _write_claim(
         self,
@@ -1492,6 +1653,9 @@ class IndexManager:
         results["written"] += 1
         if counter:
             results[counter] += 1
+            results["changed"].append(
+                {"kb": kb_name, "id": claim.entry_id, "path": claim.rel, "change": counter}
+            )
 
     def index_kb(
         self,
@@ -2515,8 +2679,10 @@ class IndexManager:
         those whose content hash differs.
 
         Returns ``added``, ``updated``, ``removed``, ``malformed``,
-        ``skipped`` non-regular files, ``duplicates`` and ``aliases`` summed
-        over the KBs.
+        ``skipped`` non-regular files, ``duplicates``, ``aliases`` and
+        ``changed`` (the ids and KB-relative paths each reconcile changed,
+        ``reconcile_kb``) summed over the KBs, and ``synced_kbs``, the names
+        of the KBs it reconciled.
         The CLI prints malformed, skipped and duplicate files as a summary
         rather than per-file tracebacks (Tier A 1080).
         """
@@ -2537,6 +2703,13 @@ class IndexManager:
             # read, in the KBs it synced: rows kept, named here (#1546).
             "unreadable_folders": [],
             "unreadable_files": [],
+            # ``{"kb", "id", "path", "change"}`` for each row added, updated
+            # or removed (#1691): what ``index sync --confirm`` confirms when
+            # it names no id.
+            "changed": [],
+            # The KBs this sync reconciled, by name (#1691): a confirm refuses
+            # a KB the sync did not reach rather than answer for it.
+            "synced_kbs": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2571,6 +2744,8 @@ class IndexManager:
             results["dangling_links"].extend(one["dangling_links"])
             results["unreadable_folders"].extend(one["unreadable_folders"])
             results["unreadable_files"].extend(one["unreadable_files"])
+            results["changed"].extend(one["changed"])
+            results["synced_kbs"].append(kb.name)
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))
         return results

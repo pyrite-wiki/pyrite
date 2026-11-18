@@ -2039,6 +2039,12 @@ checked against each command's Typer signature by
 | `task create` | yes (shared; `-f` deprecated) | `json` |
 | `task get` | yes (shared; `-f` deprecated) | `json` |
 
+`index sync` takes the shared option with no default (#1691): asked for
+nothing (no `--format`, no `PYRITE_FORMAT`), it answers as it did before it
+joined the contract: its result as text, a refusal as one `ERROR [CODE]` line,
+and a storage fault (`STORAGE_ERROR`) as the JSON error shape. An asked-for
+format applies to the whole answer.
+
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
 `get` and `delete` do not have the shared option yet: `get` keeps
@@ -2262,6 +2268,92 @@ not parse still loses its row, as before.
   named. A background sync job keeps the rows but does not yet name the
   folders in its job result (#1548); `pyrite index health` does.
 
+## `index sync --confirm`: is each named entry indexed and searchable?
+
+After writing entry files directly, an agent can ask the sync to confirm its
+entries (#1691): `pyrite index sync -k KB --confirm NAME...`, MCP
+`kb_index_sync` with `confirm: [names]`, REST `POST /api/index/sync?wait=true&kb=KB&confirm=a&confirm=b`
+(admin tier, unchanged). A name is an entry id, or a path relative to the KB's
+folder (`notes/a.md`), so a file with no `id:` can be confirmed too. With no
+names (`--confirm` alone, `confirm: []`, a single empty `confirm=`) it confirms
+every entry this sync added or changed; a blank name names nothing, on every
+surface. One place decides the block (`pyrite/services/index_confirm.py`), and
+a KB the process has not loaded is refused (`KB_NOT_FOUND`), never answered
+`done`. The local CLI gets the rows whole; MCP and REST get them as index
+health shapes answers for network callers (#1552; `network_shape` in
+`pyrite/services/index_health.py`): a `skipped` name reads `not_found` with no
+path or reason, a `duplicate` row has no `paths`, and a file that could not be
+read is not named:
+
+```json
+{
+  "kb": "notes",
+  "named": true,
+  "entries": [
+    {"name": "a", "id": "a", "path": "a.md", "status": "indexed", "reason": null,
+     "searchable": true, "findings": [], "embedding": "queued", "confirmed": true},
+    {"name": "b", "id": "b", "path": "b.md", "status": "indexed", "reason": null,
+     "searchable": true,
+     "findings": [{"rule": "schema_violation", "severity": "error", "field": "severity",
+                   "message": "Schema error on 'b': ..."}],
+     "embedding": "queued", "confirmed": false},
+    {"name": "missing", "id": "missing", "path": null, "status": "not_found",
+     "reason": null, "searchable": null, "findings": [], "embedding": null,
+     "confirmed": false}
+  ],
+  "confirmed": 1,
+  "not_confirmed": 2,
+  "outcome": "partial"
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `indexed` | One parseable file holds the id, its index row points at that file with the file's content hash, and a keyword search returns it. |
+| `not_indexed` | A file holds the id, but the row is missing, points at another file, has another hash, was kept unread (a file it could not read, #1546), or a keyword search does not return it; `reason` says which. Run `pyrite index sync` again, then `pyrite index health`. **Limit:** the keyword lookup reads the first 1,000 results for the id, then for the title; past that, a real entry with a common id and a common title in a large KB reads `not_indexed` (the confirm fails safe: exit 3, never a false `indexed`). |
+| `not_found` | No file holds the id, or nothing is at the path. |
+| `malformed` | The file does not parse, or could not be read (`reason`, fixed words; the local sync's own list names the parser's error). A malformed file named by id is matched on its file name (`b.md` for the id `b`); name it by its path otherwise. |
+| `duplicate` | More than one file claims the id; `paths` lists them, the indexed one first (ADR-0038). Local CLI only; a network row has no `paths`. |
+| `skipped` | The walk passes the file by: a dot-prefixed folder, `_templates/`, a README, a file that is not a regular file, an in-KB link (`reason`). Local CLI only; a network caller gets `not_found`. |
+
+- **`searchable`**: whether the keyword lookup returned the entry (by its id,
+  then by its title), or `null` when there is no row to look for.
+- **`findings`**: the schema findings `qa validate` reports for the entry
+  (`schema_violation`, `frontmatter_unmodellable`; the same validator `qa
+  validate` and `index health` share), `{rule, severity, field, message}`.
+- **`embedding`**: `embedded`, `queued` (owed: not embedded yet, or changed
+  since it was; ADR-0035, never waited on) or `unavailable` (no embedding
+  provider here); `null` for a name with no row. It never decides `confirmed`.
+- **`confirmed`**: `status` is `indexed` and, for a NAMED entry, no finding
+  has severity `error`. With no names the findings are reported only.
+
+**Exit and outcome.** `done`, exit `0`, when every row is confirmed (and the
+sync itself was whole); `partial`, exit `3`, when any row is not. The block's
+own `outcome`, for an MCP or REST caller, covers the rows only: a folder or
+file the sync could not reach, and that no name pointed at, makes the CLI
+exit `3` without changing the block's `outcome` (follow-up #1747). A sync that did not run
+(a KB whose files cannot be read, `KB_UNREADABLE`; a `kb.yaml` that does not
+load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
+
+**Refused before anything runs.** `--confirm` with `--background` and
+`--confirm` without `-k` are usage errors (exit `2`); names without
+`--confirm` too. MCP refuses `confirm` with `background: true` or without
+`kb_name`, REST `confirm` without `wait=true` or `kb`, as `VALIDATION_FAILED`
+(REST 422).
+
+**Plain `index sync`** is on the outcome contract too (maintainer, 2026-11-17):
+its `--format` is the shared option with no default, so with no format asked
+for it answers exactly as before: the text a person always saw, a refusal as
+one `ERROR [CODE]` line, a storage fault as the JSON error shape (plus the
+`outcome` key every refusal on the contract carries). `--format rich` prints
+every refusal as the one line;
+`PYRITE_FORMAT=json` or `--format json` prints the sync result (`added`, `updated`, `removed`, `malformed`,
+`skipped`, `duplicates`, `aliases`, `dangling_links`, `unreadable_kbs`,
+`unreadable_folders`, `unreadable_files`, `changed`, `synced_kbs` (the KBs it
+reconciled), and `embedded` when the sync embedded any) plus `outcome`. `changed` lists `{kb, id, path, change}`
+for each row added, updated or removed (`IndexManager.sync_incremental` and
+`reconcile_kb` return it too). The exit codes are unchanged.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"
@@ -2273,7 +2365,7 @@ is the error shape above in one line.
 <!-- orient-operational-contracts -->
 ```json
 {
-  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
   "error_contract": {
     "shape": "{error, error_code, suggestion?, errors?, retryable}",
     "error": "human-readable message",

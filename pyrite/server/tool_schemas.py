@@ -1183,6 +1183,18 @@ ADMIN_TOOLS = {
                     "description": "Run in background (returns job_id for polling). Default: false",
                     "default": False,
                 },
+                "confirm": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "After the sync, say for each entry id or KB-relative path whether it is "
+                        "indexed and searchable: a `confirm` block with one row per name (status "
+                        "indexed, not_indexed, not_found, malformed, duplicate or skipped; schema "
+                        "findings; embedding embedded, queued or unavailable) and `outcome` done "
+                        "or partial. An empty list confirms every entry the sync added or changed. "
+                        "Needs kb_name; refused with background."
+                    ),
+                },
             },
             "required": [],
         },

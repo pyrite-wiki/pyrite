@@ -247,6 +247,14 @@ pyrite index sync
 pyrite search "Directly" -k notes
 ```
 
+To know that the entries you wrote made it, name them: `pyrite index sync -k
+notes --confirm notes/directly.md` reports each named id or KB-relative path
+as `indexed` (its row matches the file and a keyword search finds it) or says
+why not (`not_found`, `malformed`, `duplicate`, `skipped`, `not_indexed`),
+with its schema findings and embedding state, and exits `3` when one is not
+confirmed. MCP `kb_index_sync` takes the same `confirm` list. See
+[`index sync --confirm`](json-contracts.md#index-sync---confirm-is-each-named-entry-indexed-and-searchable).
+
 ## 5. Handle a refusal
 
 A refused write names an `error_code`; match on it, not on the message. The

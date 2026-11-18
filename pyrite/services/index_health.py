@@ -96,8 +96,49 @@ def network_shape(result: dict[str, Any]) -> dict[str, Any]:
     on a reconcile result is the local CLI's (each file is also under its
     ``malformed``, and the exit code counts it), so it is not carried. To give
     network callers rows instead, change only this function.
+
+    A ``confirm`` block (``index sync --confirm``, #1691) is shaped the same
+    way, row by row (``_network_confirm_row``): a file the walk does not index
+    is not described, the files claiming a duplicate id are not listed, and
+    a file that could not be read is not named. The local CLI keeps the rows
+    whole.
     """
     shaped = dict(result)
     shaped["unreadable_folders"] = len(result.get("unreadable_folders") or [])
     shaped.pop("unreadable_files", None)
+    if isinstance(result.get("confirm"), dict):
+        block = result["confirm"]
+        shaped["confirm"] = {
+            **block,
+            "entries": [_network_confirm_row(row) for row in block.get("entries", [])],
+        }
+    return shaped
+
+
+def _network_confirm_row(row: dict[str, Any]) -> dict[str, Any]:
+    """One confirm row as a network caller gets it (``network_shape``).
+
+    - ``skipped`` (a dot-folder, ``_templates``, a README, a file that is not
+      regular, an in-KB link): the walk does not index it, and index health
+      gives network callers only a count of such files, so the name reads as
+      ``not_found``, with no path and no reason, exactly as for a name no file
+      holds.
+    - ``duplicate``: ``paths`` (every file claiming the id) is left out; the
+      row keeps the indexed file's ``path``, which an entry read gives too.
+    - a ``malformed`` file that could not be read: its ``path`` is left out,
+      as ``unreadable_files`` is.
+
+    The status, ``confirmed`` and the counts do not change: a skipped row is
+    never confirmed, and neither is a ``not_found`` one.
+    """
+    from ..storage.index import CONFIRM_UNREADABLE
+
+    shaped = dict(row)
+    status = row.get("status")
+    if status == "skipped":
+        shaped.update({"status": "not_found", "path": None, "reason": None})
+    elif status == "duplicate":
+        shaped.pop("paths", None)
+    elif status == "malformed" and row.get("reason") == CONFIRM_UNREADABLE:
+        shaped["path"] = None
     return shaped
