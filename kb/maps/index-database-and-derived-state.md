@@ -61,7 +61,10 @@ Answers "what can I delete and rebuild?", "where does this row come from?",
   (#1082, #1175); a real id collision is still refused as `ENTRY_EXISTS`.
 
 - I2 after a reconcile the index has a row for exactly the ids that parseable
-  files hold; I3 a second reconcile changes nothing ([[adr-0038]]).
+  files hold, and the rows of paths the process could not reach (under a
+  folder the walk could not list, or a file it could not stat or read),
+  kept as they were; I3 a second reconcile changes nothing ([[adr-0038]];
+  #1546, `tests/test_an_unlisted_folder_keeps_its_rows.py`).
 - S1 every table is declared derived or state; dropping the derived tables and
   rebuilding loses no content and no configuration (ADR-0039).
 - R3 indexing and every entry save change only `last_indexed` and

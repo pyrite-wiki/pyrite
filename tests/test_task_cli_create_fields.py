@@ -166,9 +166,13 @@ def test_conductor_desk_recipe_creates_a_task_in_one_step(desk_env):
     assert fm["priority"] == 3
 
 
+@pytest.mark.control(
+    reason="a JSON array was always stored as sent; the comma cell beside it is red"
+)
 @pytest.mark.cli
 def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
-    """A schema-declared list field uses the shared comma-list parser."""
+    """A schema-declared list field uses the shared value parser: several
+    items as a JSON array; a comma value is never split (#1502)."""
     task_cli_env["config"].get_kb("test-tasks").kb_yaml_path.write_text(
         """name: tasks\ntypes:\n  task:\n    fields:\n      custom_list:\n        type: list\n""",
         encoding="utf-8",
@@ -183,7 +187,7 @@ def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
             "-k",
             "test-tasks",
             "--field",
-            "custom_list=a,b",
+            'custom_list=["a", "b"]',
             "--format",
             "json",
         ],
@@ -192,6 +196,25 @@ def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
     data = json.loads(result.output)
     fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
     assert fm["custom_list"] == ["a", "b"], fm
+
+
+@pytest.mark.cli
+def test_task_create_field_keeps_a_comma_value_as_one_list_item(task_cli_env):
+    """`--field custom_list=a,b` on a declared list is the one item `a,b` (#1502)."""
+    task_cli_env["config"].get_kb("test-tasks").kb_yaml_path.write_text(
+        """name: tasks\ntypes:\n  task:\n    fields:\n      custom_list:\n        type: list\n""",
+        encoding="utf-8",
+    )
+    task_cli_env["config"].get_kb("test-tasks").invalidate_schema_cache()
+    result = runner.invoke(
+        app,
+        ["task", "create", "Parsed", "-k", "test-tasks", "--field", "custom_list=a,b",
+         "--format", "json"],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
+    assert fm["custom_list"] == ["a,b"], fm
 
 
 @pytest.mark.cli
