@@ -1773,7 +1773,6 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "a refused query fills its own slot; exit_unless_whole exits 3 or 1 on any slot",
     ),
-    ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
 }
 
 PRINTS: dict[tuple[str, str], tuple[str, str]] = {
