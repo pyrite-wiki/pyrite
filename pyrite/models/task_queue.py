@@ -81,7 +81,12 @@ def _dependency_resolved(
     """A dependency is resolved when it names a task this listing reads and
     that task's effective status resolves it. An id in the task's own KB
     first; then ``kb:id`` in a KB the listing reads. Anything else -- no such
-    task, a KB the listing does not read -- is not resolved."""
+    task, a KB the listing does not read -- is not resolved.
+
+    This differs from ``TaskService.get_blocked_by``, which skips a
+    dependency it cannot find (so ``task_blocked_by`` reports it as blocking
+    nothing). That method's output is an existing contract, left as it is;
+    #1714 asks for one rule."""
     target = derived.get(own_kb, {}).get(dep)
     if target is None and ":" in dep:
         kb, _, tid = dep.partition(":")
