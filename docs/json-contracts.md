@@ -1346,7 +1346,8 @@ projection (`test_a_slot_equals_the_single_search` compares them). A slot that w
 query over the length cap, an unknown KB, an unknown key, a bad value) has
 `query`, `count: 0`, `results: []` and the canonical error shape
 (`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
-siblings. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
+siblings. Only a refusal (a `PyriteError`) fills a slot; an unexpected fault is not
+caught per slot and ends the command as it would a single search. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
 (`partial`) when some were refused, 1 (`nothing`) when all were. A batch of
 none is `{"count": 0, "searches": []}`, exit 0.
 

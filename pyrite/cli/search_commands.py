@@ -13,7 +13,13 @@ from rich.markup import escape
 from rich.table import Table
 
 from ..config import load_config
-from ..exceptions import QuerySyntaxError, QueryTooLongError, StorageError, ValidationError
+from ..exceptions import (
+    PyriteError,
+    QuerySyntaxError,
+    QueryTooLongError,
+    StorageError,
+    ValidationError,
+)
 from ..services.read_shaping import (
     IDENTITY_FIELDS,
     SEARCH_FIELDS_ENV,
@@ -509,9 +515,9 @@ def _refuse_batch_usage(query, use_files: bool, expand: bool, output_format: str
         )
 
 
-def _error_fields(exc: Exception) -> dict:
+def _error_fields(exc: PyriteError) -> dict:
     """A refusal as the canonical error shape, the one a single search prints."""
-    from ..exceptions import PyriteError, public_text, refusal_fields
+    from ..exceptions import public_text, refusal_fields
     from ..utils.errors import build_error
 
     if isinstance(exc, QuerySyntaxError):
@@ -525,17 +531,15 @@ def _error_fields(exc: Exception) -> dict:
         )
     if isinstance(exc, QueryTooLongError):
         return build_error(str(exc), exc.error_code, suggestion="shorten the query")
-    if isinstance(exc, PyriteError):
-        return {
-            **refusal_fields(exc),
-            **build_error(
-                public_text(exc, log=logger),
-                exc.error_code,
-                suggestion=getattr(exc, "suggestion", None),
-                retryable=bool(getattr(exc, "retryable", False)),
-            ),
-        }
-    return build_error(str(exc), "SEARCH_FAILED")
+    return {
+        **refusal_fields(exc),
+        **build_error(
+            public_text(exc, log=logger),
+            exc.error_code,
+            suggestion=getattr(exc, "suggestion", None),
+            retryable=bool(getattr(exc, "retryable", False)),
+        ),
+    }
 
 
 def _slot_spec(raw, defaults: dict) -> dict:
@@ -739,9 +743,10 @@ def _run_batch(
                     "results": results,
                     **response,
                 }
-            except Exception as e:  # a refused query is its own slot, never the batch's failure
-                if not isinstance(e, QuerySyntaxError | QueryTooLongError | ValidationError):
-                    logger.debug("Batch query %d failed", position, exc_info=True)
+            except PyriteError as e:
+                # A refusal (syntax, length, unknown KB, a bad value) is its own
+                # slot. Anything that is not a PyriteError is a fault, not a
+                # refusal: it is not caught here and ends the command.
                 slot = {**slot, "count": 0, "results": [], **_error_fields(e)}
             searches.append(slot)
     finally:
