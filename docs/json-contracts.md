@@ -2223,7 +2223,9 @@ read is not named:
 
 **Exit and outcome.** `done`, exit `0`, when every row is confirmed (and the
 sync itself was whole); `partial`, exit `3`, when any row is not. The block's
-own `outcome` says the same to an MCP or REST caller. A sync that did not run
+own `outcome`, for an MCP or REST caller, covers the rows only: a folder or
+file the sync could not reach, and that no name pointed at, makes the CLI
+exit `3` without changing the block's `outcome` (follow-up #1747). A sync that did not run
 (a KB whose files cannot be read, `KB_UNREADABLE`; a `kb.yaml` that does not
 load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
 
