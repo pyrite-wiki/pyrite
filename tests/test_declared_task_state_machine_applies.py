@@ -343,12 +343,15 @@ def test_q2_a_reason_never_reaches_a_non_task_type_whose_class_has_no_status_rea
     assert _event_status(world) == "confirmed"
 
 
+@pytest.mark.control(
+    reason="on dev no machine is read, so claim without a reason succeeds there too; the cell pins that the declared relaxed machine keeps it so"
+)
 @pytest.mark.parametrize("route", ["cli", "mcp", "rest"])
-def test_q1_claim_in_a_relaxed_reasons_required_kb_is_refused(world_for, route):
-    """Q1 (open): `claim` passes no `status_reason`, so a relaxed KB with
-    `require_reason_on_transition: true` refuses `open -> claimed`. Pinned as
-    built; the options are accept and document, give claim a reason, or exempt
-    `open -> claimed`. The claim's index change is rolled back."""
+def test_claim_in_a_relaxed_reasons_required_kb_succeeds_without_a_reason(world_for, route):
+    """Maintainer decision on #1709 (Q1 = c, 2026-11-18): `open -> claimed` is
+    exempt from `require_reason_on_transition`, so `task claim` (which passes
+    no reason) keeps working in a relaxed reasons-required KB, as on dev. File
+    and index both end `claimed`."""
     world = world_for(RELAXED_YAML)
     if route == "cli":
         world.cli("task", "claim", "x", "-k", KB, "-a", "bob", "--format", "json")
@@ -358,8 +361,31 @@ def test_q1_claim_in_a_relaxed_reasons_required_kb_is_refused(world_for, route):
         )
     else:
         world.client.post("/api/tasks/x/claim", params={"kb": KB}, json={"assignee": "bob"})
-    assert _file_status(world) == "open"
-    assert _index_status(world) == "open"
+    assert _file_status(world) == "claimed"
+    assert _index_status(world) == "claimed"
+
+
+@pytest.mark.control(
+    reason="on dev no machine is read, so claim without a reason succeeds there too; the cell pins that the declared relaxed machine keeps it so"
+)
+@pytest.mark.parametrize("surface", SURFACES)
+def test_open_to_claimed_by_update_is_the_same_exempt_edge(world_for, surface):
+    """A plain `--status claimed` update from `open` is the same edge, so it is
+    exempt from the reason rule too (decision Q1 = c)."""
+    world = world_for(RELAXED_YAML)
+    _update(world, surface, "claimed")
+    assert _file_status(world) == "claimed"
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+def test_the_exemption_is_only_open_to_claimed(world_for, surface):
+    """Every other move in the relaxed reasons-required KB still needs its
+    reason: `claimed -> in_progress` with none is refused (`open -> done` with
+    none is `test_relaxed_refuses_an_off_table_move_without_a_reason`)."""
+    world = world_for(RELAXED_YAML)
+    _set_file_status(world, "claimed")
+    _update(world, surface, "in_progress")
+    assert _file_status(world) == "claimed"
 
 
 # -- a kb.yaml that does not load: bulk create answers as it did before -------
