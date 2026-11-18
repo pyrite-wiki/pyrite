@@ -23,8 +23,7 @@ from ..exceptions import (
     outside_text,
 )
 from ..storage.errors import storage_error_from
-from ..storage.virtual_tables import KEYWORD_SEARCHED_PARTS
-from .embedding_service import EMBEDDED_PARTS
+from ..storage.virtual_tables import EMBEDDED_PARTS, KEYWORD_SEARCHED_PARTS
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB

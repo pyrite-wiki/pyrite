@@ -207,12 +207,6 @@ def max_body_chars_for_model(model_name: str) -> int:
     return _MODEL_MAX_BODY_CHARS.get(model_name, _DEFAULT_MAX_BODY_CHARS)
 
 
-#: The entry parts a vector is built from (`_entry_text`); the body is cut to the
-#: model's `max_body_chars`, so it is named as a prefix. `search_response` reports
-#: these as ``searched`` when only the vector leg ran (#1757).
-EMBEDDED_PARTS = ("title", "summary", "body_prefix")
-
-
 def _entry_text(entry: dict[str, Any], max_body_chars: int = 500) -> str:
     """Combine entry fields into text for embedding.
 

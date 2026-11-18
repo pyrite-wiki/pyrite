@@ -19,6 +19,12 @@ FTS_COLUMNS = ("id", "kb_name", "entry_type", "title", "body", "summary", "locat
 #: its own keyword search reads through ``keyword_searched_parts``: Postgres
 #: from these, SQLite from ``FTS_COLUMNS``.
 KEYWORD_SEARCHED_WEIGHTS = (("title", "A"), ("summary", "B"), ("body", "C"))
+#: The entry parts a vector is built from (`embedding_service._entry_text`); the body
+#: is cut to the model's `max_body_chars`, so it is named as a prefix. Reported as
+#: ``searched`` when only the vector leg ran (#1757). Kept here, not in
+#: `embedding_service`, so the search service need not import the embedding stack.
+EMBEDDED_PARTS = ("title", "summary", "body_prefix")
+
 KEYWORD_SEARCHED_PARTS = tuple(part for part, _ in KEYWORD_SEARCHED_WEIGHTS)
 
 
