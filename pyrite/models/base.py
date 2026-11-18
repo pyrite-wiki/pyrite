@@ -353,6 +353,10 @@ class Entry(ABC):
         the old `_importance_given` (an init field) along with all other fields.
         If `_importance_given` disagrees with `importance`, clear it to `_ABSENT`
         so `validation_errors` judges the replaced attribute `X`.
+
+        Limit: if an entry loaded an invalid value that read as int N (e.g. "high" as 5)
+        and `replace(importance=N)` sets that same int, the old `_importance_given` is
+        retained and fails safe by refusing.
         """
         if self._importance_given is not _ABSENT:
             expected = importance_value(self._importance_given)
