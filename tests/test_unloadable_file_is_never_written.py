@@ -368,6 +368,24 @@ def w_mcp_task_finish(world):
     )
 
 
+def w_cli_task_park(world):
+    return _cli(world, "task", "park", "x", "-k", "sw", "--reason", "r")
+
+
+def w_mcp_task_park(world):
+    return _mcp(
+        world.mcp()._dispatch_tool("task_park", {"task_id": "x", "kb_name": "sw", "reason": "r"})
+    )
+
+
+def w_cli_task_unpark(world):
+    return _cli(world, "task", "unpark", "x", "-k", "sw")
+
+
+def w_mcp_task_unpark(world):
+    return _mcp(world.mcp()._dispatch_tool("task_unpark", {"task_id": "x", "kb_name": "sw"}))
+
+
 def w_cli_task_update_audited(world):
     # `--comment` reads the old status first (task_service.update_task).
     return _cli(world, "task", "update", "x", "-k", "sw", "-s", "done", "--comment", "c")
@@ -454,6 +472,10 @@ WRITE_METHODS = {
         w_mcp_task_start,
         w_cli_task_finish,
         w_mcp_task_finish,
+        w_cli_task_park,
+        w_mcp_task_park,
+        w_cli_task_unpark,
+        w_mcp_task_unpark,
         w_cli_task_update_audited,
         w_mcp_task_update,
         w_mcp_task_checkpoint,
@@ -684,6 +706,12 @@ CALL_SITES: dict[str, tuple[str, object]] = {
     "pyrite/services/task_service.py::TaskService.finish_task": (
         WRITER,
         ["cli_task_finish", "mcp_task_finish"],
+    ),
+    # task park / unpark load the file through KBRepository.load before any
+    # write (#1688): the strict load refuses, nothing is written.
+    "pyrite/services/task_service.py::TaskService._load_task_for_park": (
+        WRITER,
+        ["cli_task_park", "mcp_task_park", "cli_task_unpark", "mcp_task_unpark"],
     ),
     "pyrite/services/task_service.py::TaskService.update_task": (
         WRITER,

@@ -1615,6 +1615,10 @@
             "description": "Filter by parent task ID",
             "type": "string"
           },
+          "parked": {
+            "description": "true: only parked tasks (parked_awaiting or retest_after set, due rechecks and person parks included); false: only unparked ones. Rows gain park_kind, retest_after and park_state (none/parked/due/person).",
+            "type": "boolean"
+          },
           "status": {
             "description": "Filter by task status",
             "enum": [
@@ -1631,6 +1635,48 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_park": {
+      "arguments": {
+        "kb_name": "example",
+        "reason": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "kind": {
+            "description": "person: a person must act, never handed back to agents; external (default): the world, back to agents on retest_after",
+            "enum": [
+              "person",
+              "external"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "description": "What the task waits on",
+            "type": "string"
+          },
+          "retest_after": {
+            "description": "YYYY-MM-DD: from this date an external park is due",
+            "format": "date",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "reason"
+        ],
         "type": "object"
       }
     },
@@ -1699,6 +1745,29 @@
         },
         "required": [
           "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_unpark": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
         ],
         "type": "object"
       }
@@ -2591,6 +2660,10 @@
           "parent": {
             "description": "Filter by parent task ID",
             "type": "string"
+          },
+          "parked": {
+            "description": "true: only parked tasks (parked_awaiting or retest_after set, due rechecks and person parks included); false: only unparked ones. Rows gain park_kind, retest_after and park_state (none/parked/due/person).",
+            "type": "boolean"
           },
           "status": {
             "description": "Filter by task status",
@@ -4063,6 +4136,10 @@
             "description": "Filter by parent task ID",
             "type": "string"
           },
+          "parked": {
+            "description": "true: only parked tasks (parked_awaiting or retest_after set, due rechecks and person parks included); false: only unparked ones. Rows gain park_kind, retest_after and park_state (none/parked/due/person).",
+            "type": "boolean"
+          },
           "status": {
             "description": "Filter by task status",
             "enum": [
@@ -4079,6 +4156,48 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_park": {
+      "arguments": {
+        "kb_name": "example",
+        "reason": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "kind": {
+            "description": "person: a person must act, never handed back to agents; external (default): the world, back to agents on retest_after",
+            "enum": [
+              "person",
+              "external"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "description": "What the task waits on",
+            "type": "string"
+          },
+          "retest_after": {
+            "description": "YYYY-MM-DD: from this date an external park is due",
+            "format": "date",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "reason"
+        ],
         "type": "object"
       }
     },
@@ -4147,6 +4266,29 @@
         },
         "required": [
           "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_unpark": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
         ],
         "type": "object"
       }

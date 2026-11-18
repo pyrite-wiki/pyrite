@@ -3997,6 +3997,32 @@
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
   },
+  "task_park | granted_user | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_park | granted_user | no-default-role-kb": {
+    "did_you_mean": [],
+    "error": "KB 'no-default-role-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_park | granted_user | private-kb": {
+    "error": "Insufficient permissions on KB 'private-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_park | granted_user | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
   "task_start | granted_user | missing-kb": {
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
@@ -4073,6 +4099,32 @@
   "task_subtree | granted_user | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-granted_user-readable-kb' not found",
     "error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_unpark | granted_user | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_unpark | granted_user | no-default-role-kb": {
+    "did_you_mean": [],
+    "error": "KB 'no-default-role-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_unpark | granted_user | private-kb": {
+    "error": "Insufficient permissions on KB 'private-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_unpark | granted_user | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
     "retryable": false
   },
   "task_update | granted_user | missing-kb": {

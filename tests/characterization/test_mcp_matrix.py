@@ -174,7 +174,7 @@ def test_mcp_tool_principal_matrix(world, mcp_write_world, principal_name):
 
 
 # 106 -> 107: social_reputation filters by the readable set (no longer content-free).
-PINNED_MCP_TOOL_COUNT = 103  # 101 until #1685 added task_start, task_finish; 107 until #953
+PINNED_MCP_TOOL_COUNT = 105  # 103 before #1688 (task_park/unpark); 101 before #1685
 
 
 def test_no_golden_mcp_tool_is_orphaned(world):

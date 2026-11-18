@@ -1060,6 +1060,8 @@ SAFE = {
     "pyrite sw transition": "one transition; failure exits 1",
     "pyrite task checkpoint": "one write",
     "pyrite task create": "one entry",
+    "pyrite task park": "one write; a refusal (no reason, bad kind or date) exits 1",
+    "pyrite task unpark": "one write, or none when nothing is parked; a refusal exits 1",
     "pyrite task migrate-relaxed-mode": "idempotent backfill; 'skipped' means not applicable, not "
     "failed",
     "pyrite task reset": "one transition",

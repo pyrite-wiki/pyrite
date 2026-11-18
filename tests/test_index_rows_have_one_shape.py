@@ -317,6 +317,8 @@ MCP_NO_ENTRY_ROWS = {
     "task_update": "write",
     "task_claim": "write",
     "task_finish": "write: returns the status path walked",
+    "task_park": "write: returns the park written",
+    "task_unpark": "write: returns the keys removed",
     "task_checkpoint": "write",
     "task_decompose": "write",
     "sw_create_adr": "write",

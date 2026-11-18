@@ -315,9 +315,11 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "task_decompose",
         "task_finish",
         "task_list",
+        "task_park",
         "task_start",
         "task_status",
         "task_subtree",
+        "task_unpark",
         "task_update",
         "wiki_assess_quality",
         "wiki_protect",
@@ -331,7 +333,9 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
 )
 # 106 -> 108, maintainer 2026-11-18 (#1685, PR #1708): task_start and task_finish,
 # guarded as task_claim; they migrate with it (ADR-0037 §5, recorded changes).
-MCP_NOT_YET_MIGRATED_SIZE = 108  # lower it with every entry removed; never raise it
+# 108 -> 110 (#1688, PR #1777, per the theme brief): task_park and task_unpark,
+# write tier as task_claim; they migrate with it (ADR-0037 §5, recorded changes).
+MCP_NOT_YET_MIGRATED_SIZE = 110  # lower it with every entry removed; never raise it
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {
