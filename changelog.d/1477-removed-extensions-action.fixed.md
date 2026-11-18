@@ -1,1 +1,0 @@
-- The `index health` documentation for `removed_extensions` no longer advises reinstalling an extension that cannot be installed; it says which `kb.yaml` change clears the notice (#1477).

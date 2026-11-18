@@ -1,1 +1,0 @@
-- `pyrite search --format rich` now includes an `ID` column, renders snippet highlights as bold markup without raw `<mark>` tags, shows `[`...`]` in entry text as written, and drops fixed column widths so columns remain readable at 80 terminal columns (#1519).

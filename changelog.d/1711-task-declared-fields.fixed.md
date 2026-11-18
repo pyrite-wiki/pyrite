@@ -1,1 +1,0 @@
-- `TaskEntry` now reads its declared `date`, `start_date`, `end_date`, and `assigned_at` fields from frontmatter and preserves them in frontmatter output, allowing readers (`pyrite get`, MCP `kb_get`, REST) and index columns to reflect them directly at the field's own name (#1711).
