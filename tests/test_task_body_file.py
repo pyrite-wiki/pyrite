@@ -39,9 +39,22 @@ def test_two_sources_refused(body, body_file, stdin_flag):
     with pytest.raises(ValidationError, match="only one body source"):
         _resolve_task_body(body, body_file, stdin_flag)
 
-def test_frontmatter_refused_names_pyrite_create():
+def test_frontmatter_refused_for_body_file(tmp_path: Path):
+    f = tmp_path / "fm.txt"
+    f.write_text("---\ntitle: x\n---\nbody\n")
     with pytest.raises(ValidationError, match="pyrite create"):
-        _resolve_task_body("---\ntitle: x\n---\nbody\n", None, False)
+        _resolve_task_body(None, f, False)
+
+def test_frontmatter_refused_for_stdin(monkeypatch):
+    monkeypatch.setattr(
+        "pyrite.cli.task_commands._read_stdin", lambda: "---\ntitle: x\n---\nbody\n"
+    )
+    with pytest.raises(ValidationError, match="pyrite create"):
+        _resolve_task_body(None, None, True)
+
+def test_frontmatter_in_body_kept_verbatim():
+    # Review 5948961621 item 2: --body is literal text, kept verbatim.
+    assert _resolve_task_body("---\ntitle: x\n---\nbody\n", None, False) == "---\ntitle: x\n---\nbody\n"
 
 def test_missing_file_refused(tmp_path: Path):
     with pytest.raises((OSError, ValidationError)):
