@@ -242,6 +242,23 @@ def test_a_walk_whose_start_is_not_the_files_status_is_refused(world):
     assert path.read_bytes() == before
 
 
+def test_a_path_that_skips_a_state_is_refused_edge_by_edge(world):
+    """The hook judges every edge of the path it is handed, not only its two
+    ends: claimed -> done is no declared edge, so a path of just those two is
+    refused though it starts at the file's status and ends at the one set."""
+    from pyrite.exceptions import ValidationError
+    from pyrite.services.kb_service import KBService
+    from pyrite.storage.file_operations import Set
+
+    path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))
+    before = path.read_bytes()
+    svc = KBService(world.config, world.db)
+
+    with pytest.raises(ValidationError, match="'claimed' to 'done'"):
+        svc.apply_operations("t", KB, [Set("status", "done")], status_path=("claimed", "done"))
+    assert path.read_bytes() == before
+
+
 # -- one shape on CLI and MCP ----------------------------------------------------
 
 
