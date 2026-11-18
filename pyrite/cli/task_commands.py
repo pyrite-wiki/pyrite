@@ -112,6 +112,7 @@ def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
     Uses the same value parser as `create -f`/`update -f`
     (`_parse_field_value`), and refuses:
 
+    - a key named twice (#1726);
     - a key that already has its own option;
     - `status` (task lifecycle is `task update --status`, not a free-form
       field);
@@ -135,6 +136,14 @@ def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
                 message, errors=[{"field": "--field", "rule": "format", "message": message}]
             )
         k, v = fv.split("=", 1)
+        if k in fields:
+            message = (
+                f"--field {k} is given more than once; send several values as one "
+                f'JSON array: --field \'{k}=["a", "b"]\''
+            )
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "repeated", "message": message}]
+            )
         if k in _FIELD_OWN_OPTION:
             message = f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
             raise ValidationError(

@@ -1,0 +1,1 @@
+- `pyrite task create` now refuses repeated `--field` keys (`VALIDATION_FAILED`, exit 2) with a hint to send several values as one JSON array, aligning with `pyrite create` and preventing silently dropping all but the last value (#1726).
