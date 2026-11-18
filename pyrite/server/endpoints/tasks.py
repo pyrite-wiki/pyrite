@@ -1,4 +1,4 @@
-"""Task claim endpoint.
+"""Task claim and start endpoints.
 
 mcp-rest-tool-parity: ports task_claim (atomic task claim used by the
 conductor pattern) from MCP-only (pyrite/server/mcp_server.py) to
@@ -79,3 +79,23 @@ def claim_task(
         {"assignee": req.assignee}, {"assignee": CALLER}, get_principal(request)
     )
     return svc.claim_task(task_id=task_id, kb_name=kb, assignee=resolved["assignee"])
+
+
+@router.post("/tasks/{task_id}/start", dependencies=[Depends(requires_kb_tier("write"))])
+@limiter.limit("60/minute")
+def start_task(
+    request: Request,
+    task_id: str,
+    req: TaskClaimRequest,
+    kb: str = Query(..., description="KB the task belongs to"),
+    svc: TaskService = Depends(get_task_service),
+):
+    """Claim and start an open task in one write (#1685): the same
+    compare-and-set as claim, open -> claimed -> in_progress recorded in the
+    task's status_change_log. A lost start is claimed=False with
+    current_status (not an HTTP error), as a lost claim is. The body and the
+    assignee rule are claim's."""
+    resolved = resolve_person_arguments(
+        {"assignee": req.assignee}, {"assignee": CALLER}, get_principal(request)
+    )
+    return svc.start_task(task_id=task_id, kb_name=kb, assignee=resolved["assignee"])

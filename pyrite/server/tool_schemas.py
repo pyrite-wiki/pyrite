@@ -1066,6 +1066,55 @@ WRITE_TOOLS = {
             "required": ["task_id", "kb_name"],
         },
     },
+    "task_start": {
+        "description": (
+            "Claim and start an open task in one atomic write: open -> claimed -> in_progress, "
+            "both edges recorded in its status_change_log. Decided by the same compare-and-set "
+            "as task_claim: a lost start returns claimed=false and current_status, and changes "
+            "nothing. A task you already claimed is moved on to in_progress. Returns the task "
+            "with its body and its parent {id, title, body}."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "assignee": {
+                    "type": "string",
+                    "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_finish": {
+        "description": (
+            "Move a held task to done in one write, recording one status_change_log item per "
+            "edge. Without walk only a direct edge (in_progress -> done, review -> done); with "
+            "walk=true it passes through every declared intermediate state (claimed -> "
+            "in_progress -> done, blocked -> in_progress -> done). A refusal names the path."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "walk": {
+                    "type": "boolean",
+                    "description": "Pass through every declared intermediate state to done",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the change: set as status_reason and on each log item (required by a relaxed workflow)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out); default the task's assignee",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
     "task_decompose": {
         "description": "Decompose a parent task into child tasks.",
         "inputSchema": {

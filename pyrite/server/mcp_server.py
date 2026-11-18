@@ -413,6 +413,8 @@ KB_ARGUMENT_NAMES = (
 # protect a task another account holds.
 CORE_PERSON_ARGUMENTS: dict[str, dict[str, str]] = {
     "task_claim": {"assignee": CALLER},
+    "task_start": {"assignee": CALLER},
+    "task_finish": {"by": OPTIONAL},
     "task_create": {"assignee": OPTIONAL},
     "task_update": {"assignee": OPTIONAL},
     "task_decompose": {"children[].assignee": OPTIONAL},
@@ -2171,6 +2173,24 @@ class PyriteMCPServer:
             task_id=args["task_id"],
             kb_name=args["kb_name"],
             assignee=args["assignee"],
+        )
+
+    def _task_start(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Claim and start an open task in one write (`TaskService.start_task`,
+        #1685). `assignee` is a person argument the dispatcher has set from the
+        session (`CORE_PERSON_ARGUMENTS`)."""
+        return self.task_svc.start_task(args["task_id"], args["kb_name"], args["assignee"])
+
+    def _task_finish(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Move a held task to done in one write (`TaskService.finish_task`,
+        #1685). `by` is a person argument; a refusal is raised and answered by
+        the dispatcher's error contract."""
+        return self.task_svc.finish_task(
+            args["task_id"],
+            args["kb_name"],
+            walk=bool(args.get("walk", False)),
+            reason=args.get("reason") or "",
+            by=args.get("by") or "",
         )
 
     def _task_decompose(self, args: dict[str, Any]) -> dict[str, Any]:
