@@ -301,7 +301,9 @@ def kb_validate(
 
     Checks kb.yaml structure and content drift, including malformed
     frontmatter, undeclared types, missing required fields and subdirectory
-    mismatches. A KB name limits the report to that KB.
+    mismatches. Ignored reserved-name declarations in types.<type>.fields
+    are structural errors (exit 1, all_valid=false); required/optional name
+    lists may still name reserved fields. A KB name limits the report to that KB.
 
     Exit code: 0 clean, 1 if any KB has structural errors or the index is
     corrupt (STORAGE_ERROR: the check cannot be made), 2 if only
@@ -344,6 +346,8 @@ def kb_validate(
     any_drift = False
     for kb in kbs:
         errors = kb.validate()
+        if not errors:
+            errors.extend(item["message"] for item in kb.kb_schema.ignored_declarations)
         if errors:
             any_structural_errors = True
 

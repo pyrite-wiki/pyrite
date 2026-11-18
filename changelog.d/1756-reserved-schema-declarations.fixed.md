@@ -1,0 +1,1 @@
+- `kb validate` and `qa validate` now report typed declarations with reserved field names as errors instead of silently accepting an ignored definition. Schema set/add-type writers refuse the same declarations; reserved names in required/optional lists remain valid.
