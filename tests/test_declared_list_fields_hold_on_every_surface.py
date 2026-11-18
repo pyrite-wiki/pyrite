@@ -634,3 +634,137 @@ def test_a_mapping_sent_to_a_list_field_is_refused_under_enforce(tmp_path: Path,
             assert _file_of(world, "seeded").read_bytes() == before
     finally:
         world.close()
+
+
+# --------------------------------------------------------------------------
+# Append to a declared list field holding a scalar refuses with a hint (#1760)
+# --------------------------------------------------------------------------
+
+SW_KB_YAML = f"""name: {KB}
+types:
+  sw:
+    fields:
+      labels:
+        type: list
+"""
+
+SW_SCALAR_FILE = """---
+id: b1
+title: Build One
+type: sw
+labels: firmware
+---
+
+Content.
+"""
+
+
+@pytest.mark.parametrize("surface", ["cli.update", "mcp.kb_update", "rest.patch"])
+def test_append_to_scalar_declared_list_refuses_with_remedy(tmp_path: Path, surface: str):
+    """Appending onto a declared list field that holds a scalar refuses with a
+    message that names the remedy (-f with current and appended values); the
+    file remains byte-identical (#1760)."""
+    world = _world(tmp_path, SW_KB_YAML, rest=surface.startswith("rest"))
+    try:
+        path = world.add_entry(KB, SW_SCALAR_FILE)
+        before = path.read_bytes()
+
+        if surface == "cli.update":
+            result = world.cli(
+                "update", "b1", "-k", KB, "--append", "labels=second", "--format", "json"
+            )
+            assert result.exit_code != 0, result.output
+            out = json.loads(result.stdout)
+            assert out["error_code"] == "VALIDATION_FAILED", out
+            msg = out["error"]
+        elif surface == "mcp.kb_update":
+            server = world.mcp(tier="write")
+            result = server._dispatch_tool(
+                "kb_update",
+                {"kb_name": KB, "entry_id": "b1", "append": {"labels": "second"}},
+            )
+            assert result.get("error_code") == "VALIDATION_FAILED", result
+            msg = result["error"]
+        elif surface == "rest.patch":
+            res = world.client.patch(
+                "/api/entries/b1",
+                json={"kb": KB, "op": "append", "field": "labels", "value": "second"},
+            )
+            assert res.status_code == 400, res.text
+            detail = res.json()["detail"]
+            assert detail["code"] == "VALIDATION_FAILED", detail
+            msg = detail["message"]
+
+        assert "set it as a list first" in msg, msg
+        assert "-f labels=firmware,second" in msg, msg
+        assert path.read_bytes() == before
+    finally:
+        world.close()
+
+
+def test_append_to_scalar_undeclared_field_keeps_generic_message(tmp_path: Path):
+    """An undeclared field holding a scalar keeps the generic refusal (#1760)."""
+    world = _world(tmp_path, SW_KB_YAML, rest=False)
+    try:
+        file_content = """---
+id: b2
+title: Build Two
+type: sw
+extra: scalar_val
+---
+
+Content.
+"""
+        path = world.add_entry(KB, file_content)
+        before = path.read_bytes()
+        result = world.cli("update", "b2", "-k", KB, "--append", "extra=second", "--format", "json")
+        assert result.exit_code != 0, result.output
+        out = json.loads(result.stdout)
+        assert out["error_code"] == "VALIDATION_FAILED", out
+        msg = out["error"]
+        assert "is not a list; cannot append to it" in msg, msg
+        assert "set it as a list first" not in msg, msg
+        assert path.read_bytes() == before
+    finally:
+        world.close()
+
+
+def test_append_to_existing_list_and_absent_field_still_work(tmp_path: Path):
+    """An existing list append and an absent field append continue to work (#1760)."""
+    world = _world(tmp_path, SW_KB_YAML, rest=False)
+    try:
+        # Existing list
+        world.add_entry(
+            KB,
+            """---
+id: b3
+title: Build Three
+type: sw
+labels:
+  - firmware
+---
+
+Content.
+""",
+        )
+        res3 = world.cli("update", "b3", "-k", KB, "--append", "labels=second", "--format", "json")
+        assert res3.exit_code == 0, res3.output
+        assert _stored(world, "b3", "labels") == ["firmware", "second"]
+
+        # Absent field
+        world.add_entry(
+            KB,
+            """---
+id: b4
+title: Build Four
+type: sw
+---
+
+Content.
+""",
+        )
+        res4 = world.cli("update", "b4", "-k", KB, "--append", "labels=first", "--format", "json")
+        assert res4.exit_code == 0, res4.output
+        assert _stored(world, "b4", "labels") == ["first"]
+    finally:
+        world.close()

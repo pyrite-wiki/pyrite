@@ -53,6 +53,7 @@ from ..models.factory import build_entry
 from ..plugins.context import PluginContext
 from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
+from ..schema.field_schema import LIST_FIELD_TYPES
 from ..schema.reserved import RESERVED_FIELD_NAMES
 from ..storage import entry_paths
 from ..storage.database import PyriteDB
@@ -2412,19 +2413,19 @@ class KBService:
             # surface can reach `apply()` another way.
             all_ops: list[Any] = []
             placed: dict[Any, Any] = {}
-            for op in [*_request_operations(updates), *(ops or [])]:
-                resolved = self._resolve_operation(
-                    entry, entry_id, kb_config, file_values, op, restrict, merge_spellings
-                )
-                if isinstance(resolved, Set):
-                    if _same_instant_as_file(file_values, resolved.path, resolved.value):
-                        continue  # the instant the file holds, in another spelling (decision 3)
-                    if resolved.path in placed and placed[resolved.path] == resolved.value:
-                        continue  # the same field named twice with one value
-                    placed[resolved.path] = resolved.value
-                all_ops.append(resolved)
-            self._refuse_conflicting_spellings(entry, updates)
             try:
+                for op in [*_request_operations(updates), *(ops or [])]:
+                    resolved = self._resolve_operation(
+                        entry, entry_id, kb_config, file_values, op, restrict, merge_spellings
+                    )
+                    if isinstance(resolved, Set):
+                        if _same_instant_as_file(file_values, resolved.path, resolved.value):
+                            continue  # the instant the file holds, in another spelling (decision 3)
+                        if resolved.path in placed and placed[resolved.path] == resolved.value:
+                            continue  # the same field named twice with one value
+                        placed[resolved.path] = resolved.value
+                    all_ops.append(resolved)
+                self._refuse_conflicting_spellings(entry, updates)
                 # The file is this KB's: its parser's words go to a reader of it.
                 new_text, _report = apply(text, all_ops, span, origin=kb_origin(kb_config.name))
                 changed = new_text != text
@@ -2920,6 +2921,16 @@ class KBService:
             value = _plain_value(op.value)
             if isinstance(op, Append) and whole_item and field in _ITEM_LISTS:
                 value = _checked_item(entry, field, value)
+            if isinstance(op, Append) and not rest:
+                declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+                if declared is not None and declared.field_type in LIST_FIELD_TYPES:
+                    current = _value_at(file_values, head)
+                    if current is not None and not isinstance(current, list | dict):
+                        msg = (
+                            f"{field} is a single value, not a list; "
+                            f"set it as a list first: -f {field}={current},{value}"
+                        )
+                        raise OperationRefusedError(msg, op)
             return type(op)(path, value)
         if isinstance(op, AddSubkey):
             return AddSubkey(path, op.key, _plain_value(op.value))
