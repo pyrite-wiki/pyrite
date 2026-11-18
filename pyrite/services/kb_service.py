@@ -1658,7 +1658,7 @@ class KBService:
         repo = KBRepository(kb_config)
         existing_title: str | None = None
         base_id: str | None = None
-        if explicit_id is not None:
+        if explicit_id:
             entry_id = explicit_id
         else:
             base_id = generate_entry_id(title)

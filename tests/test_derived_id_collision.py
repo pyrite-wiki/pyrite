@@ -334,3 +334,16 @@ def test_title_of_existing_typing(cli_world):
         kb_svc._title_of_existing("pending-1", repo, pending_ids={"pending-1": "Pending Title"})
         == "Pending Title"
     )
+
+
+def test_empty_string_id_derives_from_title(cli_world):
+    """An empty string id (e.g. from an import without id) derives from title."""
+    world = cli_world()
+    kb_svc = KBService(world.config, world.db)
+    specs = [
+        {"title": "Note with empty id", "entry_type": "note", "body": "test", "id": ""},
+    ]
+    results = kb_svc.bulk_create_entries("test-kb", specs, validate_only=True)
+    assert len(results) == 1
+    assert results[0].get("valid") is True
+    assert results[0]["entry_id"] == "note-with-empty-id"
