@@ -262,10 +262,6 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"repo._inside_bytes": 1},
         "_inside_bytes, absent as FileNotFoundError",
     ),
-    ("pyrite/storage/repository.py", "KBRepository.count"): (
-        {"repo._named": 1},
-        "_named (fixed here: 3.11's literal rglob listed a link only when its target existed)",
-    ),
     ("pyrite/storage/repository.py", "KBRepository.holder_of_path"): (
         {"repo.present": 1},
         "present, then read_id",
@@ -292,7 +288,7 @@ DECIDED_INSIDE: dict[Site, Entry] = {
     ),
     ("pyrite/storage/repository.py", "KBRepository.list_collection_files"): (
         {"repo._named": 1},
-        "_named (fixed here: as count; moved out of list_all_files by #1262)",
+        "_named (3.11's literal rglob listed a link only when its target existed; moved out of list_all_files by #1262)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.present"): (
         {"KBFiles.present": 1},
@@ -341,8 +337,8 @@ SAME_ANSWER: dict[Site, Entry] = {
         "the schema cache's key only (#1547): any change reads kb.yaml again through read_kb_yaml (KBFiles), whose answer, a link out refused, is the same either way",
     ),
     ("pyrite/services/kb_registry_service.py", "KBRegistryService._health_kb"): (
-        {"path.exists": 1, "path.rglob": 1},
-        "the KB's folder itself: the operator's registry entry, not a file in it; rglob('*.md') counts names, a link by its name on every Python",
+        {"path.exists": 1},
+        "the KB's folder itself: the operator's registry entry, not a file in it",
     ),
     ("pyrite/services/kb_service.py", "files_the_index_may_miss"): (
         {"KBFiles.contains": 1, "path.stat": 1},
@@ -385,8 +381,8 @@ SAME_ANSWER: dict[Site, Entry] = {
         "skips what is not a regular file; a link out that is one is refused by _read_inside and skipped",
     ),
     ("pyrite/storage/repository.py", "KBRepository.list_entries"): (
-        {"_is_regular_file": 1, "repo._named": 1},
-        "_named for collections; _is_regular_file skips a non-file, and a link out that is a file is refused by the load and skipped: the same answer",
+        {"_is_regular_file": 1},
+        "list_collection_files for collections; _is_regular_file skips a non-file, and a link out that is a file is refused by the load and skipped: the same answer",
     ),
     ("pyrite/storage/repository.py", "KBRepository.read_for_write"): (
         {"path.stat": 1, "repo._read_inside": 1},
@@ -717,8 +713,8 @@ LOCAL_ONLY: dict[Site, Entry] = {
         "module imported only by the CLI",
     ),
     ("pyrite/services/id_pin_service.py", "scan"): (
-        {"KBFiles.read_bytes": 1, "path.is_file": 1, "repo._inside_text": 1, "repo._named": 1},
-        "module imported only by the CLI",
+        {"KBFiles.read_bytes": 1, "path.is_file": 1, "repo._inside_text": 1},
+        "module imported only by the CLI; collections via list_collection_files",
     ),
     ("pyrite/services/id_pin_service.py", "write_refusal"): (
         {"os.lstat": 1},
@@ -731,7 +727,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 59,
+    "DECIDED_INSIDE": 58,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
@@ -1207,8 +1203,8 @@ MUTATIONS = [
     ),
     (
         "pyrite/storage/repository.py",
-        'for f in self._named("__collection.yaml")',
-        'for f in self.path.rglob("__collection.yaml")',
+        'for yaml_file in self._named("__collection.yaml", unreadable):',
+        'for yaml_file in self.path.rglob("__collection.yaml"):',
     ),
     (
         "pyrite/storage/repository.py",

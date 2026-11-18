@@ -18,6 +18,11 @@ Tasks can also be scheduled with `--due-date <YYYY-MM-DD>` (`-d`) and linked to
 other entries upon creation with `--link <target[:relation]>` (`-l`, repeatable).
 MCP `task_create` accepts optional `due_date` and `links`.
 
+A newly created task always starts in the `open` status. Setting a non-initial
+status on creation (via `pyrite create -f status=...`, a body file's frontmatter,
+MCP `kb_create`, MCP `kb_bulk_create`, or REST `POST /api/entries`) is refused; use `task claim` or `task update --status` to advance
+its status.
+
 A claim is atomic: competing agents do not both acquire an open task. Inspect
 the refusal and choose another task when a claim loses the race. The following
 second claim exits1; do not treat that as successful ownership.
@@ -60,6 +65,31 @@ makes the derived result complete without rewriting the parent's stored
 status. Read both the stored status and `derived`; do not infer parent
 completion from a stored status alone. `task status` is a deprecated alias;
 new workflows use `task get`.
+
+A cancelled child does not count toward its parent's completion. A parent is
+complete by its children only when at least one child is `done` and every
+other child is `done` or `cancelled`; one `done` child and one `cancelled`
+child complete it. A parent whose remaining children are all cancelled, even a
+single cancelled child, is not complete: it keeps its own status and stays in
+`task list --status open`. A grandparent follows the same rule over its
+children's derived completion. To close such a parent on purpose, set its
+status yourself: `cancelled` is allowed from any unfinished state, and `done`
+means walking claimed → in_progress → done (the `open` → `done` shortcut is
+only for a parent already complete by its children). Below, `spike`, whose
+only child is cancelled, reads `complete: false` with `1/1` children resolved
+until it is cancelled itself; `publish-guide` stays complete after a cancelled
+child is added, because its other children are done.
+
+```bash
+pyrite task create "Spike" -k test-kb
+pyrite task decompose spike -k test-kb --child "Try library"
+pyrite task update try-library -k test-kb --status cancelled
+pyrite task get spike -k test-kb
+pyrite task update spike -k test-kb --status cancelled
+pyrite task create "Drop old importer" -k test-kb --parent publish-guide
+pyrite task update drop-old-importer -k test-kb --status cancelled
+pyrite task get publish-guide -k test-kb
+```
 
 ## Dependencies and MCP equivalents
 
