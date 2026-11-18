@@ -12,7 +12,7 @@ import logging
 import re
 import shlex
 from collections import Counter
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from enum import Enum
@@ -2230,7 +2230,13 @@ class KBService:
         )
 
     def apply_operations(
-        self, entry_id: str, kb_name: str, ops: list[Any], *, merge_spellings: bool = False
+        self,
+        entry_id: str,
+        kb_name: str,
+        ops: list[Any],
+        *,
+        merge_spellings: bool = False,
+        status_path: Sequence[str] | None = None,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
         ``file_operations`` operations (``Set``, ``Append``, ``Remove``,
@@ -2241,9 +2247,18 @@ class KBService:
         fix's link and tag repairs) write one item here instead of a list
         read through the model (#955, B6 P3b). ``merge_spellings`` is `qa
         fix`'s own: the one write a doubly spelled field takes (removing a
-        spelling of an equal pair); no surface passes it (#1001 round 4)."""
+        spelling of an equal pair); no surface passes it (#1001 round 4).
+        ``status_path`` is a multi-step status change (`task finish --walk`,
+        #1685): the states the write passes through, first to last, handed
+        to the ``before_save`` hooks, where the workflow judges every edge."""
         return self._update(
-            entry_id, kb_name, {}, ops=list(ops), restrict=False, merge_spellings=merge_spellings
+            entry_id,
+            kb_name,
+            {},
+            ops=list(ops),
+            restrict=False,
+            merge_spellings=merge_spellings,
+            status_path=status_path,
         )
 
     def _update(
@@ -2255,6 +2270,7 @@ class KBService:
         restrict: bool,
         ops: list[Any] | None = None,
         merge_spellings: bool = False,
+        status_path: Sequence[str] | None = None,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2400,7 +2416,11 @@ class KBService:
             warnings = self._validate_write(
                 new_entry, kb_name, kb_config, before=before, existing_entry=entry
             )
-            extra = {"old_status": old_status} if old_status else {}
+            extra: dict[str, Any] = {"old_status": old_status} if old_status else {}
+            if status_path is not None:
+                # Fixed before the read: a retry that finds another status
+                # is refused by the hook, never re-planned (#1685).
+                extra["status_path"] = tuple(status_path)
             hook_ctx = self._hook_ctx(kb_name, kb_config, "update", extra)
             # A before_save hook may refuse (raise); its return value is
             # ignored and nothing it does reaches the file (decision 4). What
@@ -4168,11 +4188,20 @@ class KBService:
         *,
         from_status: str = "open",
         to_status: str = "claimed",
+        via: Sequence[str] = (),
+        ops: Sequence[Any] = (),
     ) -> dict[str, Any]:
         """Atomically claim an Assignable + Statusable entry via CAS.
 
         Uses compare-and-swap on the index to ensure only one agent can claim.
         On success, updates the markdown file to match.
+
+        ``via`` and ``ops`` are `task start`'s (#1685): the states the claim
+        passes through between ``from_status`` and ``to_status``, judged
+        edge by edge by the workflow on the file write, and the item
+        operations (its audit trail) that write carries. The compare-and-set
+        is the same one either way; with neither, the file write is exactly
+        a plain claim's.
 
         Returns:
             Dict with claimed=True on success, or error details.
@@ -4197,9 +4226,13 @@ class KBService:
         )
         if held:
             _refuse_assignee_values(entry_id, held[0].get("assignee") or "", assignee or "")
+        prior_assignee = (held[0].get("assignee") or None) if held else None
+        status_path = (from_status, *via, to_status) if (via or ops) else None
 
         if getattr(self.db, "is_change_set", False):
-            return self._claim_in_change_set(entry_id, kb_name, assignee, from_status, to_status)
+            return self._claim_in_change_set(
+                entry_id, kb_name, assignee, from_status, to_status, ops, status_path
+            )
 
         session = self.db.session
 
@@ -4243,16 +4276,29 @@ class KBService:
 
         # Update the markdown file to match
         try:
-            self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+            self._update(
+                entry_id,
+                kb_name,
+                {"status": to_status, "assignee": assignee},
+                restrict=False,
+                ops=list(ops),
+                status_path=status_path,
+            )
         except Exception as e:
-            # Rollback index CAS on file error
+            # Rollback index CAS on file error: the row's status and holder
+            # as they were before it (no holder for a claim of an open entry).
             logger.warning("File update failed for claim on %s, rolling back: %s", entry_id, e)
             session.execute(
                 text("""UPDATE entry
                    SET status = :from_status,
-                       assignee = NULL
+                       assignee = :prior_assignee
                    WHERE id = :entry_id AND kb_name = :kb_name"""),
-                {"entry_id": entry_id, "kb_name": kb_name, "from_status": from_status},
+                {
+                    "entry_id": entry_id,
+                    "kb_name": kb_name,
+                    "from_status": from_status,
+                    "prior_assignee": prior_assignee,
+                },
             )
             session.commit()
             return {"claimed": False, "error": f"File update failed: {outside_text(e)}"}
@@ -4273,7 +4319,14 @@ class KBService:
         return AccessPolicy(self.config, self.db).lands_in(principal, kb_name)
 
     def _claim_in_change_set(
-        self, entry_id: str, kb_name: str, assignee: str, from_status: str, to_status: str
+        self,
+        entry_id: str,
+        kb_name: str,
+        assignee: str,
+        from_status: str,
+        to_status: str,
+        ops: Sequence[Any] = (),
+        status_path: Sequence[str] | None = None,
     ) -> dict[str, Any]:
         """A claim whose write lands in the claimer's change set (a KB with
         `landing: review`; ADR-0044 §1, decided 2026-10-20: claims follow the
@@ -4291,7 +4344,14 @@ class KBService:
                 "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
                 "current_status": current,
             }
-        self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+        self._update(
+            entry_id,
+            kb_name,
+            {"status": to_status, "assignee": assignee},
+            restrict=False,
+            ops=list(ops),
+            status_path=status_path,
+        )
         return {"claimed": True, "task_id": entry_id, "assignee": assignee, "status": to_status}
 
     # =========================================================================
