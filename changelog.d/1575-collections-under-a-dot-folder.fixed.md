@@ -1,0 +1,1 @@
+- A KB stored under a dot-folder (or with a dot-prefixed name) now discovers and lists its collections and reports correct file counts for `kb health` and `kb validate`, rather than treating parts above the KB root as hidden (#1575).

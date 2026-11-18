@@ -403,10 +403,12 @@ def kb_validate(
             # Count entries — find the matching KB config for path
             matching_kb = config.get_kb(kb_res["name"])
             if matching_kb and matching_kb.path.exists():
+                from ..storage import entry_paths
+
                 count = sum(
                     1
                     for f in matching_kb.path.rglob("*.md")
-                    if not any(p.startswith(".") for p in f.parts)
+                    if entry_paths.is_listed(matching_kb.path, f)
                 )
                 console.print(f"  [green]✓[/green] {count} markdown files found")
 
