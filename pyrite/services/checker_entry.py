@@ -27,8 +27,7 @@ The checkers read ``metadata`` and three derived keys. So the entry is:
 Which fields a type declares is ``schema.field_aliases.declared_fields``,
 the rule the single-entry read uses. A column can hold Pyrite's reading rather
 than a line of the file: a ``backlog_item`` that writes no ``priority`` reads
-``medium`` (#1695), and a task's ``date``, which TaskEntry declares but never
-reads from its file, reads ``''``. The checker sees the same reading.
+``medium`` (#1695). The checker sees the same reading.
 
 The two lookups read the index, so in a gate they run outside
 ``board.evaluating``: a failure keeps its own error and is never reported as

@@ -164,16 +164,18 @@ metadata:
 ---
 body
 """,
-    # A task writes `date`, a field TaskEntry declares (Temporal) but never
-    # reads from its file: the column is '' and the value rides in the bag.
-    # `pyrite get` shows `date: ''` at its own name, so the checker sees it
-    # missing.
-    "task-date": """\
+    # A task writes the four fields TaskEntry declares through Temporal and
+    # Assignable besides due_date. Since #1711 the model reads them from the
+    # file, so each is in its column and `pyrite get` shows it at its own name.
+    "task-dates": """\
 ---
-id: task-date
-title: A task with a date line
+id: task-dates
+title: A task with its date lines
 type: task
 date: "2026-01-02"
+start_date: "2026-01-05"
+end_date: "2026-01-09"
+assigned_at: "2026-01-03"
 ---
 body
 """,
@@ -304,12 +306,15 @@ AS_GET_SHOWS: dict[str, tuple[dict, str, bool, str]] = {
         False,
         "get shows status: '' at its own name",
     ),
-    "declared-but-unread-task-date": (
-        {"checker": "has_field", "params": {"field": "date"}},
-        "task-date",
-        False,
-        "get shows date: '' at its own name: TaskEntry declares date and never reads it",
-    ),
+    **{
+        f"task-{field}": (
+            {"checker": "has_field", "params": {"field": field}},
+            "task-dates",
+            True,
+            f"a task's {field} is read from its file (#1711): get shows it at its own name",
+        )
+        for field in ("date", "start_date", "end_date", "assigned_at")
+    },
     "undeclared-note-status": (
         {"checker": "has_field", "params": {"field": "status"}},
         "note-status",
@@ -523,10 +528,10 @@ def _as_get_shows_cells():
 def test_a_checker_sees_the_value_pyrite_get_shows(answers, name, caller):
     """Where the bag and the column disagree, the checker sees what ``pyrite
     get`` shows: a declared field's column, even when empty, over a ``metadata:``
-    spelling of it; an undeclared field's bag value. A task's ``date`` is a
-    declared field TaskEntry never reads from its file, so ``get`` shows it
-    empty at its own name and so does the checker (the file's value stays
-    under ``metadata``)."""
+    spelling of it; an undeclared field's bag value. A task that writes
+    ``date``, ``start_date``, ``end_date`` or ``assigned_at`` has it (#1711:
+    TaskEntry reads them from its file), in QA as on ``dev``. Gates run on
+    backlog items only, so a task has no gate cell."""
     _criterion, item, holds, why = AS_GET_SHOWS[name]
     assert answers[caller][item][f"seen-{name}"] is holds, (caller, item, why)
 
