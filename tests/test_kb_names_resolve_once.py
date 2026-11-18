@@ -177,7 +177,6 @@ BASELINE: dict[str, int] = {
     "pyrite/cli/qa_commands.py": 2,
     "pyrite/cli/context.py": 2,
     "pyrite/cli/__init__.py": 2,
-    "pyrite/cli/entry_commands.py": 1,
     "pyrite/cli/ids_commands.py": 1,
     "pyrite/cli/init_command.py": 1,
     "pyrite/cli/protocol_commands.py": 1,
