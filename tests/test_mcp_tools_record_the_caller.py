@@ -324,6 +324,11 @@ class TestACallerWithNoIdentityNamesThePerson:
         assert row["assignee"] == "bob"
 
 
+def _task_file(config, task_id="open-task") -> Path:
+    [path] = list(config.get_kb(TASKS).path.rglob(f"{task_id}.md"))
+    return path
+
+
 def _status_log(config, task_id="open-task") -> list[dict]:
     """The task file's `status_change_log`, read from the file."""
     import yaml
@@ -415,21 +420,29 @@ class TestCoreTaskToolsRecordTheCaller:
         assert _refused(result), result
         assert _rows(config, "SELECT id FROM entry WHERE title = 'Child for bob'") == []
 
-    def test_a_finish_records_the_account_that_finished_never_the_assignee(self, env):
-        """alice starts the task; bob finishes it with no `by`: the log item
-        records bob's account, the one who made the change (#1685)."""
+    def test_the_holder_finishes_and_is_recorded(self, env):
+        """Finish requires the caller to hold the task: alice starts it and
+        finishes it with no `by`, and every item records her account."""
         client, world, config = env
         task = {"task_id": "open-task", "kb_name": TASKS}
-        started = _call(client, world, _alice(world), "task_start", task)
-        assert started.get("claimed") is True, started
-        finished = _call(client, world, _as(world, "bob"), "task_finish", task)
+        assert _call(client, world, _alice(world), "task_start", task).get("claimed")
+        finished = _call(client, world, _alice(world), "task_finish", task)
         assert finished.get("finished") is True, finished
-        log = _status_log(config)
-        assert [(i["from"], i["to"], i["by"]) for i in log] == [
-            ("open", "claimed", _key(world, "alice")),
-            ("claimed", "in_progress", _key(world, "alice")),
-            ("in_progress", "done", _key(world, "bob")),
+        assert [(i["to"], i["by"]) for i in _status_log(config)] == [
+            ("claimed", _key(world, "alice")),
+            ("in_progress", _key(world, "alice")),
+            ("done", _key(world, "alice")),
         ]
+
+    def test_another_account_cannot_finish_the_task_and_nothing_is_written(self, env):
+        client, world, config = env
+        task = {"task_id": "open-task", "kb_name": TASKS}
+        assert _call(client, world, _alice(world), "task_start", task).get("claimed")
+        before = _task_file(config).read_bytes()
+        result = _call(client, world, _as(world, "bob"), "task_finish", task)
+        assert result.get("error_code") == "FORBIDDEN", result
+        assert "finish requires the caller to hold the task" in result.get("error", "")
+        assert _task_file(config).read_bytes() == before
 
     def test_a_finish_naming_another_account_is_refused_and_writes_nothing(self, env):
         client, world, config = env
@@ -442,16 +455,42 @@ class TestCoreTaskToolsRecordTheCaller:
         assert _task(config)["status"] == "in_progress"
         assert [i["to"] for i in _status_log(config)] == ["claimed", "in_progress"]
 
-    def test_an_operator_key_finish_with_no_by_records_the_operator(self, env):
+    def test_a_signed_in_account_cannot_use_the_operator_override(self, env):
+        client, world, config = env
+        task = {"task_id": "open-task", "kb_name": TASKS}
+        assert _call(client, world, _alice(world), "task_start", task).get("claimed")
+        before = _task_file(config).read_bytes()
+        result = _call(
+            client, world, _as(world, "bob"), "task_finish", {**task, "operator_override": True}
+        )
+        assert result.get("error_code") == "FORBIDDEN", result
+        assert _task_file(config).read_bytes() == before
+
+    def test_an_operator_key_with_no_caller_and_no_override_is_refused(self, env):
         client, world, config = env
         task = {"task_id": "open-task", "kb_name": TASKS}
         started = _call(
             client, world, _bearer(OPERATOR_KEY), "task_start", {**task, "assignee": "agent:w"}
         )
         assert started.get("claimed") is True, started
-        finished = _call(client, world, _bearer(OPERATOR_KEY), "task_finish", task)
+        before = _task_file(config).read_bytes()
+        result = _call(client, world, _bearer(OPERATOR_KEY), "task_finish", task)
+        assert result.get("error_code") == "FORBIDDEN", result
+        assert _task_file(config).read_bytes() == before
+
+    def test_an_operator_key_finishes_by_the_override_recorded_as_the_operator(self, env):
+        client, world, config = env
+        task = {"task_id": "open-task", "kb_name": TASKS}
+        started = _call(
+            client, world, _bearer(OPERATOR_KEY), "task_start", {**task, "assignee": "agent:w"}
+        )
+        assert started.get("claimed") is True, started
+        finished = _call(
+            client, world, _bearer(OPERATOR_KEY), "task_finish", {**task, "operator_override": True}
+        )
         assert finished.get("finished") is True, finished
-        assert _status_log(config)[-1]["by"] == "operator"
+        last = _status_log(config)[-1]
+        assert (last["by"], last["override"]) == ("operator", True)
 
     @pytest.mark.control(reason="an operator key has no session identity: the argument is a label")
     def test_an_operator_key_claim_records_the_named_label(self, env):

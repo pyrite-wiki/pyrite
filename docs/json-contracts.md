@@ -1641,10 +1641,26 @@ assignee.
 
 `task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
 dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
-"in_progress", "done"], "status_reason"}`, with one `status_change_log` item
-per edge of `path` (`comment` is the reason, when one was given; `by` is
-`--by`, else the signed-in MCP caller, else `operator`, never the assignee by
-default). A refusal writes nothing and is (CLI exit 1):
+"in_progress", "done"], "status_reason", "by", "override"}`, with one
+`status_change_log` item
+per edge of `path` (`comment` is the reason, when one was given).
+
+Finish requires the caller to hold the task; operators have an explicit
+override. The caller is `--by` (MCP: `by`, else the signed-in account) and
+must be the task's assignee; the items record it as `by`. The operator (the
+CLI, stdio MCP, an operator key) may finish a task it does not hold with
+`--operator-override` (MCP `operator_override: true`): the items record `by:
+"operator"` and `override: true`, and the result `"by": "operator",
+"override": true`. The override is never implied by a missing or empty
+caller, and is refused for anyone but the operator.
+
+A refusal writes nothing and is (CLI exit 1):
+
+- `FORBIDDEN`: the caller does not hold the task (another caller, or none),
+  or asked for the operator override without being the operator. The message
+  names the holder rule and who holds the task. The write also rechecks the
+  holder in the file it replaces, so a task that changed hands meanwhile is
+  refused (`VALIDATION_FAILED`, naming the holder).
 
 - `VALIDATION_FAILED`: the task is already `done`; a status with no path to
   `done`; a task nothing holds (`open`, or a path through it, as from

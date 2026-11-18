@@ -53,7 +53,7 @@ def test_a_hand_edit_between_read_and_write_refuses_the_walk(tmp_path, monkeypat
         monkeypatch.setattr(kb_service, "publish_entry_text", racing)
 
         with pytest.raises(ValidationError, match="the file's status is 'blocked'"):
-            TaskService(world.config, world.db).finish_task("t", KB, walk=True)
+            TaskService(world.config, world.db).finish_task("t", KB, walk=True, by="agent:w")
         assert calls["n"] == 1
         assert path.read_text() == edited
     finally:

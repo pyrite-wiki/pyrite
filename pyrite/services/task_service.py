@@ -692,8 +692,20 @@ class TaskService:
         walk: bool = False,
         reason: str = "",
         by: str = "",
+        operator_override: bool = False,
     ) -> dict[str, Any]:
         """Move a held task to ``done`` in one write (#1685).
+
+        Finish requires the caller to hold the task; operators have an
+        explicit override. The caller is ``by`` (the surface sets it: the
+        signed-in account, or the label a caller with no account names), and
+        must be the task's current assignee. A caller who is not, or no caller
+        at all, is refused (``Forbidden``) before any write. With
+        ``operator_override`` the operator (``acting() is OPERATOR``: the local
+        process, an operator key) finishes a task it does not hold; the log
+        items record ``by: operator`` and ``override: true``. The override is
+        never implied, and anyone but the operator asking for it is refused.
+        The write rechecks the holder in the bytes it replaces.
 
         The path is the workflow's shortest declared one (``status_walk``);
         without ``walk`` only a direct edge is taken and the refusal names
@@ -718,6 +730,8 @@ class TaskService:
                 f"'{task_id}' is a {entry.entry_type!r}, not a task: "
                 "`task finish` moves tasks only."
             )
+        holder = getattr(entry, "assignee", "") or ""
+        who, override = _finisher(task_id, holder, by, operator_override)
         workflow = resolve_workflow_for_type("task", getattr(kb_config, "kb_schema", None))
         initial = workflow.get("initial", "open")
         target = "done"
@@ -741,23 +755,24 @@ class TaskService:
                 f"Cannot move task '{task_id}' from '{current}' to '{target}' in one step. "
                 f"`--walk` (MCP `walk: true`) would pass through: {' → '.join(path)}."
             )
-        # Who made the change, never a guess: the caller's identity where the
-        # surface has one (MCP passes the signed-in key), else the operator,
-        # as update_task records it. Never the assignee by default (#1685).
-        who = by or "operator"
         ops: list[Any] = [Set("status", target)]
         if reason:
             ops.append(Set("status_reason", reason))
         ops.extend(
-            _log_item(old, new, who, reason) for old, new in zip(path, path[1:], strict=False)
+            _log_item(old, new, who, reason, override=override)
+            for old, new in zip(path, path[1:], strict=False)
         )
-        written = self.kb_svc.apply_operations(task_id, kb_name, ops, status_path=path)
+        written = self.kb_svc.apply_operations(
+            task_id, kb_name, ops, status_path=path, expect_holder=holder
+        )
         return {
             "finished": True,
             "task_id": task_id,
             "status": getattr(written.entry, "status", target),
             "path": path,
             "status_reason": getattr(written.entry, "status_reason", "") or "",
+            "by": who,
+            "override": override,
         }
 
     def reset_task(
@@ -1206,7 +1221,36 @@ class TaskService:
         return result
 
 
-def _log_item(old: str, new: str, by: str, comment: str = ""):
+def _finisher(task_id: str, holder: str, by: str, operator_override: bool) -> tuple[str, bool]:
+    """Who finishes the task and whether by override: finish requires the
+    caller to hold the task; operators have an explicit override."""
+    from ..exceptions import Forbidden
+    from .acting import OPERATOR, acting
+
+    if by and holder and by == holder:
+        return by, False
+    if operator_override:
+        if acting() is not OPERATOR:
+            raise Forbidden(
+                f"Task '{task_id}': only the operator may finish a task it does not hold "
+                "(the operator override). Nothing was written."
+            )
+        return "operator", True
+    who = f"'{by}'" if by else "a caller with no identity"
+    held = f"held by '{holder}'" if holder else "held by no one"
+    refusal = Forbidden(
+        f"Task '{task_id}' is {held}: finish requires the caller to hold the task, "
+        f"and {who} does not. Nothing was written."
+    )
+    refusal.suggestion = (
+        "Finish it as its holder (`--by <holder>`; MCP: sign in as the holder or pass `by`), "
+        "or, as the operator, pass the explicit override (`--operator-override`; "
+        "MCP `operator_override: true`)."
+    )
+    raise refusal
+
+
+def _log_item(old: str, new: str, by: str, comment: str = "", *, override: bool = False):
     """One ``status_change_log`` item for the edge ``old`` -> ``new``, as an
     ``Append`` (the earlier items keep their bytes). ``comment`` only when
     there is one: nothing is written that was not asked for."""
@@ -1220,6 +1264,8 @@ def _log_item(old: str, new: str, by: str, comment: str = ""):
     }
     if comment:
         item["comment"] = comment
+    if override:
+        item["override"] = True
     return Append("status_change_log", item)
 
 

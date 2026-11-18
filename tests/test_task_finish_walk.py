@@ -90,7 +90,7 @@ def test_finish_walk_from_each_declared_status(world, start):
     path = world.add_entry(KB, _task("t", f"status: {start}\nassignee: {WHO}\n"))
     before = path.read_bytes()
 
-    code, data = _finish(world, "t", "--walk", "--reason", "shipped")
+    code, data = _finish(world, "t", "--walk", "--reason", "shipped", "--by", WHO)
 
     expected = EXPECTED_WALK[start]
     if expected is REFUSED:
@@ -108,10 +108,9 @@ def test_finish_walk_from_each_declared_status(world, start):
     assert front["assignee"] == WHO
     assert _edges(front) == _pairs(expected)
     for item in front["status_change_log"]:
-        # No --by and no signed-in caller: the operator made the change. The
-        # assignee is who holds the task, not who finished it.
-        assert item["by"] == "operator"
+        assert item["by"] == WHO  # the holder, who finished it
         assert item["comment"] == "shipped"
+        assert "override" not in item
 
 
 def test_finish_keeps_the_earlier_log_items_and_appends_one_per_edge(world):
@@ -123,7 +122,7 @@ def test_finish_keeps_the_earlier_log_items_and_appends_one_per_edge(world):
             "- {date: '2026-01-01T00:00:00Z', from: open, to: claimed, by: x, comment: c}\n",
         ),
     )
-    code, data = _finish(world, "t", "--walk", "--reason", "r")
+    code, data = _finish(world, "t", "--walk", "--reason", "r", "--by", WHO)
     assert code == 0, data
     assert _edges(_front(path)) == [
         ("open", "claimed"),
@@ -134,7 +133,7 @@ def test_finish_keeps_the_earlier_log_items_and_appends_one_per_edge(world):
 
 def test_finish_without_walk_takes_a_direct_edge(world):
     path = world.add_entry(KB, _task("t", f"status: in_progress\nassignee: {WHO}\n"))
-    code, data = _finish(world, "t")
+    code, data = _finish(world, "t", "--by", WHO)
     assert code == 0, data
     assert data["path"] == ["in_progress", "done"]
     front = _front(path)
@@ -147,7 +146,7 @@ def test_finish_without_walk_from_claimed_is_refused_and_names_the_path(world):
     path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))
     before = path.read_bytes()
 
-    code, data = _finish(world, "t", "--reason", "r")
+    code, data = _finish(world, "t", "--reason", "r", "--by", WHO)
 
     assert code == 1, data
     assert "claimed → in_progress → done" in data["error"]
@@ -155,27 +154,52 @@ def test_finish_without_walk_from_claimed_is_refused_and_names_the_path(world):
     assert path.read_bytes() == before
 
 
-def test_finish_by_names_who_in_each_log_item(world):
+# -- finish requires the caller to hold the task; operators have an override ----
+
+
+def test_the_holder_finishes(world):
     path = world.add_entry(KB, _task("t", "status: review\nassignee: agent:x\n"))
-    code, data = _finish(world, "t", "--by", "reviewer")
+    code, data = _finish(world, "t", "--by", "agent:x")
     assert code == 0, data
-    assert [i["by"] for i in _front(path)["status_change_log"]] == ["reviewer"]
+    assert (data["by"], data["override"]) == ("agent:x", False)
+    assert [(i["by"], i.get("override")) for i in _front(path)["status_change_log"]] == [
+        ("agent:x", None)
+    ]
 
 
-def test_b_finishing_as_task_records_b_never_a(world):
-    """agent:b finishes agent:a's task: each item records b; and with no --by
-    the operator, never the assignee a."""
-    named = world.add_entry(KB, _task("n", "status: claimed\nassignee: agent:a\n"))
-    unnamed = world.add_entry(KB, _task("u", "status: claimed\nassignee: agent:a\n"))
+@pytest.mark.parametrize(
+    "extra",
+    [("--by", "agent:b"), (), ("--by", "")],
+    ids=["another-agent", "no-caller", "empty-caller"],
+)
+def test_a_caller_who_does_not_hold_the_task_is_refused_and_nothing_is_written(world, extra):
+    path = world.add_entry(KB, _task("t", "status: claimed\nassignee: agent:a\n"))
+    before = path.read_bytes()
 
-    code, data = _finish(world, "n", "--walk", "--by", "agent:b")
+    code, data = _finish(world, "t", "--walk", *extra)
+
+    assert code == 1, data
+    assert data["error_code"] == "FORBIDDEN", data
+    assert "finish requires the caller to hold the task" in data["error"]
+    assert path.read_bytes() == before
+
+
+def test_the_operator_finishes_a_task_it_does_not_hold_only_by_the_override(world):
+    """The CLI is the operator: with --operator-override it finishes agent:a's
+    task, and each log item records the operator and the override."""
+    path = world.add_entry(KB, _task("t", "status: claimed\nassignee: agent:a\n"))
+
+    code, data = _finish(world, "t", "--walk", "--operator-override")
+
     assert code == 0, data
-    code, data = _finish(world, "u", "--walk")
-    assert code == 0, data
-
-    assert [i["by"] for i in _front(named)["status_change_log"]] == ["agent:b", "agent:b"]
-    assert [i["by"] for i in _front(unnamed)["status_change_log"]] == ["operator", "operator"]
-    assert _front(named)["assignee"] == _front(unnamed)["assignee"] == "agent:a"
+    assert (data["by"], data["override"]) == ("operator", True)
+    front = _front(path)
+    assert front["status"] == "done"
+    assert front["assignee"] == "agent:a"
+    assert [(i["by"], i["override"]) for i in front["status_change_log"]] == [
+        ("operator", True),
+        ("operator", True),
+    ]
 
 
 # -- workflows: core (above), a KB's strict state machine, a relaxed one ---------
@@ -200,7 +224,7 @@ def test_finish_walk_follows_a_kb_strict_state_machine(world):
     )
     path = world.add_entry(KB, _task("t", f"status: in_progress\nassignee: {WHO}\n"))
 
-    code, data = _finish(world, "t", "--walk")
+    code, data = _finish(world, "t", "--walk", "--by", WHO)
 
     assert code == 0, data
     assert data["path"] == ["in_progress", "testing", "done"]
@@ -219,7 +243,7 @@ def test_finish_walk_under_a_relaxed_workflow_takes_one_edge_with_its_reason(wor
     _schema(world, _RELAXED)
     path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))
 
-    code, data = _finish(world, "t", "--walk", "--reason", "done early")
+    code, data = _finish(world, "t", "--walk", "--reason", "done early", "--by", WHO)
 
     assert code == 0, data
     front = _front(path)
@@ -234,7 +258,7 @@ def test_finish_under_a_relaxed_workflow_without_a_reason_is_refused(world):
     path = world.add_entry(KB, _task("t", f"status: claimed\nassignee: {WHO}\n"))
     before = path.read_bytes()
 
-    code, data = _finish(world, "t", "--walk")
+    code, data = _finish(world, "t", "--walk", "--by", WHO)
 
     assert code == 1, data
     assert "reason" in data["error"]
@@ -284,9 +308,9 @@ def test_cli_and_mcp_finish_return_one_shape(world):
     world.add_entry(KB, _task("c", f"status: claimed\nassignee: {WHO}\n"))
     world.add_entry(KB, _task("m", f"status: claimed\nassignee: {WHO}\n"))
 
-    _code, cli = _finish(world, "c", "--walk", "--reason", "r")
+    _code, cli = _finish(world, "c", "--walk", "--reason", "r", "--by", WHO)
     mcp = world.mcp("write")._dispatch_tool(
-        "task_finish", {"task_id": "m", "kb_name": KB, "walk": True, "reason": "r"}
+        "task_finish", {"task_id": "m", "kb_name": KB, "walk": True, "reason": "r", "by": WHO}
     )
 
     cli.pop("outcome")
@@ -296,6 +320,54 @@ def test_cli_and_mcp_finish_return_one_shape(world):
 
 def test_mcp_finish_refusal_names_the_path(world):
     world.add_entry(KB, _task("m", f"status: claimed\nassignee: {WHO}\n"))
-    result = world.mcp("write")._dispatch_tool("task_finish", {"task_id": "m", "kb_name": KB})
+    result = world.mcp("write")._dispatch_tool(
+        "task_finish", {"task_id": "m", "kb_name": KB, "by": WHO}
+    )
     assert result["error_code"] == "VALIDATION_FAILED", result
     assert "claimed → in_progress → done" in result["error"]
+
+
+# -- the holder rule over MCP (no signed-in user; tests/test_mcp_tools_record_the_caller.py
+# has the signed-in cells) -----------------------------------------------------
+
+
+def _mcp_finish(world, args: dict, principal=None) -> dict:
+    return world.mcp("write")._dispatch_tool(
+        "task_finish", {"task_id": "t", "kb_name": KB, "walk": True, **args}, principal=principal
+    )
+
+
+def test_mcp_the_holder_finishes(world):
+    path = world.add_entry(KB, _task("t", "status: claimed\nassignee: agent:a\n"))
+    result = _mcp_finish(world, {"by": "agent:a"})
+    assert result.get("finished") is True, result
+    assert [i["by"] for i in _front(path)["status_change_log"]] == ["agent:a", "agent:a"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [{"by": "agent:b"}, {}, {"operator_override": True}],
+    ids=["another-agent", "no-caller", "override-without-the-operator"],
+)
+def test_mcp_a_caller_who_does_not_hold_the_task_is_refused(world, args):
+    """No principal is nobody, never the operator: the override is refused too."""
+    path = world.add_entry(KB, _task("t", "status: claimed\nassignee: agent:a\n"))
+    before = path.read_bytes()
+    result = _mcp_finish(world, args)
+    assert result.get("error_code") == "FORBIDDEN", result
+    assert path.read_bytes() == before
+
+
+def test_mcp_the_operator_finishes_by_the_override(world):
+    """The local process (stdio) is the operator: with the override it
+    finishes a task it does not hold, recorded as the operator."""
+    from pyrite.services.access_policy import Principal
+
+    path = world.add_entry(KB, _task("t", "status: claimed\nassignee: agent:a\n"))
+    result = _mcp_finish(world, {"operator_override": True}, principal=Principal.local())
+    assert result.get("finished") is True, result
+    assert (result["by"], result["override"]) == ("operator", True)
+    assert [(i["by"], i["override"]) for i in _front(path)["status_change_log"]] == [
+        ("operator", True),
+        ("operator", True),
+    ]

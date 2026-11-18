@@ -42,9 +42,15 @@ retry is refused, naming who holds it now, and their claim stays.
 takes only a direct edge (in_progress → done, review → done); with `--walk` it
 passes through every intermediate state of the task workflow and records each
 edge, so no state is skipped. A refusal names the path `--walk` would take. A
-task nothing holds (open) is not finished; cancel it instead. Each log item
-records who made the change: `--by`, or `operator` (MCP: the signed-in caller),
-never the assignee by default.
+task nothing holds (open) is not finished; cancel it instead.
+
+Finish requires the caller to hold the task; operators have an explicit
+override. The caller is `--by` (MCP: the signed-in account, or `by` with no
+signed-in user) and must be the task's assignee; anyone else, or no caller at
+all, is refused with `FORBIDDEN` and nothing is written. The operator (the
+CLI, stdio MCP, an operator key) can finish a task it does not hold with
+`--operator-override` (MCP `operator_override: true`); its log items record
+`by: operator` and `override: true`.
 
 Every edge is judged by the core task workflow, also in a KB whose `kb.yaml`
 declares its own `state_machine` for tasks: updates do not apply a declared
@@ -55,10 +61,10 @@ written.
 ```bash
 pyrite task create "Fix typo" -k test-kb
 pyrite task start fix-typo -k test-kb --assignee alice
-pyrite task finish fix-typo -k test-kb --reason "Typo fixed"
+pyrite task finish fix-typo -k test-kb --by alice --reason "Typo fixed"
 pyrite task create "Fix link" -k test-kb
 pyrite task claim fix-link -k test-kb --assignee bob
-pyrite task finish fix-link -k test-kb --walk --reason "Link fixed"
+pyrite task finish fix-link -k test-kb --by bob --walk --reason "Link fixed"
 ```
 
 ## Record progress and release a stale claim

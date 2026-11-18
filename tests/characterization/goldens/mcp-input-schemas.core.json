@@ -1550,12 +1550,16 @@
       "inputSchema": {
         "properties": {
           "by": {
-            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out: you are recorded); with no signed-in user, default operator",
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
             "type": "string"
           },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
           },
           "reason": {
             "description": "Reason for the change: set as status_reason and on each log item",
@@ -3972,12 +3976,16 @@
       "inputSchema": {
         "properties": {
           "by": {
-            "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out: you are recorded); with no signed-in user, default operator",
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
             "type": "string"
           },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
           },
           "reason": {
             "description": "Reason for the change: set as status_reason and on each log item",

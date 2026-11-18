@@ -714,11 +714,13 @@ class TestTasks:
         cli.pyrite("task", "claim", "f1", "-k", "demo", "-a", "me")
         # claimed -> done is two edges: without --walk it is refused, writing nothing.
         for fmt in ("json", "rich"):
-            out = cli.pyrite("task", "finish", "f1", "-k", "demo", "--format", fmt)
+            out = cli.pyrite("task", "finish", "f1", "-k", "demo", "--by", "me", "--format", fmt)
             assert out.returncode == REFUSED, (fmt, out.stdout + out.stderr)
-        refused = cli.pyrite("task", "finish", "f1", "-k", "demo", "--format", "json")
+        refused = cli.pyrite("task", "finish", "f1", "-k", "demo", "--by", "me", "--format", "json")
         assert json.loads(refused.stdout)["error_code"] == "VALIDATION_FAILED"
-        walked = cli.pyrite("task", "finish", "f1", "-k", "demo", "--walk", "--format", "json")
+        walked = cli.pyrite(
+            "task", "finish", "f1", "-k", "demo", "--walk", "--by", "me", "--format", "json"
+        )
         assert walked.returncode == 0, walked.stdout + walked.stderr
 
     def test_children_that_failed_to_create_are_partial(self, cli):

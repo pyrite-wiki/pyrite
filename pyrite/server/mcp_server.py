@@ -2186,9 +2186,11 @@ class PyriteMCPServer:
 
     def _task_finish(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
         """Move a held task to done in one write (`TaskService.finish_task`,
-        #1685). The log items record who did it: `by` (a person argument, so
-        a signed-in caller may name only themselves), else the signed-in
-        caller (`acting`), else the operator; never the assignee by default.
+        #1685). Finish requires the caller to hold the task: the caller is `by`
+        (a person argument, so a signed-in caller may name only themselves),
+        else the signed-in caller (`acting`); with neither there is no caller.
+        Operators have an explicit override (`operator_override: true`), which
+        the service honours only for the operator.
         A refusal is raised and answered by the dispatcher's error contract."""
         result: dict[str, Any] = self.task_svc.finish_task(
             args["task_id"],
@@ -2196,6 +2198,7 @@ class PyriteMCPServer:
             walk=bool(args.get("walk", False)),
             reason=args.get("reason") or "",
             by=args.get("by") or acting or "",
+            operator_override=args.get("operator_override") is True,
         )
         return result
 

@@ -2277,6 +2277,7 @@ class KBService:
         *,
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
+        expect_holder: str | None = None,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
         ``file_operations`` operations (``Set``, ``Append``, ``Remove``,
@@ -2290,7 +2291,9 @@ class KBService:
         spelling of an equal pair); no surface passes it (#1001 round 4).
         ``status_path`` is a multi-step status change (`task finish --walk`,
         #1685): the states the write passes through, first to last, handed
-        to the ``before_save`` hooks, where the workflow judges every edge."""
+        to the ``before_save`` hooks, where the workflow judges every edge.
+        ``expect_holder`` refuses the write unless the bytes it replaces name
+        that assignee (`task start`'s retry and `task finish`, #1685)."""
         return self._update(
             entry_id,
             kb_name,
@@ -2299,6 +2302,7 @@ class KBService:
             restrict=False,
             merge_spellings=merge_spellings,
             status_path=status_path,
+            expect_holder=expect_holder,
         )
 
     def _update(

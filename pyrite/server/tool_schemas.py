@@ -1090,7 +1090,8 @@ WRITE_TOOLS = {
     "task_finish": {
         "description": (
             "Move a held task to done in one write, recording one status_change_log item per "
-            "edge. Without walk only a direct edge (in_progress -> done, review -> done); with "
+            "edge. Finish requires the caller to hold the task (be its assignee); operators have "
+            "an explicit override (operator_override). Without walk only a direct edge (in_progress -> done, review -> done); with "
             "walk=true it passes through every intermediate state of the task workflow (claimed -> "
             "in_progress -> done, blocked -> in_progress -> done). A refusal names the path."
         ),
@@ -1109,7 +1110,11 @@ WRITE_TOOLS = {
                 },
                 "by": {
                     "type": "string",
-                    "description": "Who finished it, for the log items: over a signed-in session it must be you (leave it out: you are recorded); with no signed-in user, default operator",
+                    "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
                 },
             },
             "required": ["task_id", "kb_name"],

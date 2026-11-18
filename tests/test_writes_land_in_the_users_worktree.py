@@ -444,8 +444,10 @@ MCP_CASES: dict[str, Case] = {
     ),
     "task_finish": Case(
         WRITES,
+        # Finish requires the caller to hold the task: each principal's seed
+        # is held by that principal's own account.
         lambda s: {"kb_name": NOTES, "task_id": s[0], "reason": "shipped"},
-        seeds=((NOTES, "task", "status: in_progress\n"),),
+        seeds=((NOTES, "task", "status: in_progress\nassignee: {holder}\n"),),
     ),
     "task_decompose": Case(
         WRITES,
@@ -735,11 +737,19 @@ def _all_cases():
         yield f"plain-mcp:{name}", case
 
 
+#: The account key each principal is seeded as holder under, for a seed that
+#: writes `{holder}` (a task only its holder may finish). Seeds are written
+#: before the accounts exist, so these are the keys the world's accounts get
+#: in creation order -- root, then alice -- and the world fixture asserts it.
+HOLDER_KEYS = {"a": "user:1", "u": "user:2"}
+
+
 def _write_seeds(repos: dict[str, Path]) -> None:
     for name, case in _all_cases():
         for who in ("a", "u"):
             seeds = Seeds(name, who, len(case.seeds))
             for (kb, entry_type, extra), entry_id in zip(case.seeds, seeds.ids, strict=True):
+                extra = extra.replace("{holder}", HOLDER_KEYS[who])
                 path = repos[kb] / "seeds" / f"{entry_id}.md"
                 path.parent.mkdir(exist_ok=True)
                 path.write_text(
@@ -921,6 +931,12 @@ def world(request):
             seed_and_sign_in(client, "root", "password123", role="admin")
             w = _World(app, config)
             alice_id = w.auth(lambda a: a.create_user(USER, "password123", role="write"))["id"]
+            root_id = w.auth(
+                lambda a: next(u for u in a.list_users() if u["username"] == "root")["id"]
+            )
+            assert {"a": f"user:{root_id}", "u": f"user:{alice_id}"} == HOLDER_KEYS, (
+                "the {holder} seeds name the wrong accounts: update HOLDER_KEYS"
+            )
             world = World(client, w, repos, tmp)
             world.alice_id = alice_id
             world.landing = landing

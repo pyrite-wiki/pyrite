@@ -603,20 +603,37 @@ def task_finish(
         help="Reason for the change: set as status_reason and on each log item",
     ),
     by: str | None = typer.Option(
-        None, "--by", help="Who finished it, for the status_change_log items (default: operator)"
+        None,
+        "--by",
+        help="Who is finishing it: must be the task's assignee (finish requires the caller to hold the task)",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, finish a task you do not hold; recorded as by: operator, override: true",
     ),
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Move a held task to done in one write.
 
-    Without --walk only a direct edge is taken (in_progress → done, review →
-    done); the refusal names the path --walk would take. Each edge is judged
-    by the task's workflow and recorded in its status_change_log.
+    Finish requires the caller to hold the task: --by names the caller, who
+    must be its assignee. Operators have an explicit override,
+    --operator-override. Without --walk only a direct edge is taken
+    (in_progress → done, review → done); the refusal names the path --walk
+    would take. Each edge is judged by the task's workflow and recorded in
+    its status_change_log.
     """
     svc, db = _get_service(kb_name)
     try:
-        result = svc.finish_task(task_id, kb_name, walk=walk, reason=reason or "", by=by or "")
+        result = svc.finish_task(
+            task_id,
+            kb_name,
+            walk=walk,
+            reason=reason or "",
+            by=by or "",
+            operator_override=operator_override,
+        )
     finally:
         db.close()
 
