@@ -204,9 +204,9 @@ FRONTMATTER = "---\nstatus: done\npriority: 1\n---\nReal body\n"
 def test_frontmatter_body_is_refused_on_create(world, tmp_path, source):
     extra, stdin = _args(source, FRONTMATTER.encode(), tmp_path)
     r = _run(world, ["task", "create", "fm", "-k", "test-kb", *extra], stdin)
-    assert r.exit_code == 2, r.output
+    assert r.exit_code == 1, r.output
     err = _error(r)
-    assert err["error_code"] == "USAGE_ERROR"
+    assert err["error_code"] == "VALIDATION_FAILED"
     assert "pyrite create -t task --body-file" in err["error"]
     assert not _task_file(world, "fm").exists()
 
@@ -217,7 +217,7 @@ def test_frontmatter_body_is_refused_on_update(world, tmp_path, source):
     before = _task_file(world, "fm-up").read_bytes()
     extra, stdin = _args(source, FRONTMATTER.encode(), tmp_path)
     r = _run(world, ["task", "update", "fm-up", "-k", "test-kb", *extra], stdin)
-    assert r.exit_code == 2, r.output
+    assert r.exit_code == 1, r.output
     assert "pyrite create -t task --body-file" in _error(r)["error"]
     assert _task_file(world, "fm-up").read_bytes() == before
 

@@ -191,85 +191,70 @@ _FRONTMATTER_REFUSAL = (
 )
 
 
-def _resolve_task_body(
-    body: str | None, body_file: Path | None, stdin_flag: bool, ctx: typer.Context
-) -> str | None:
-    """The one body a task command was given, or None when it got none (#1687).
-
-    Reuses the readers ``pyrite create`` uses (``read_input_file``, ``_read_stdin``);
-    ``-`` as the path reads stdin. Two sources are a usage error, before anything
-    is read or written. A file or stdin body that opens with frontmatter is refused
-    (it would write a second frontmatter-looking block); ``--body`` stays literal text.
-    """
-    from ..exceptions import PyriteError
-    from .context import read_input_file, require_input_file
-    from .entry_commands import _read_stdin
-
-    dash = body_file is not None and str(body_file) == "-"
-    from_stdin = stdin_flag or dash
-    given = [
-        flag
-        for flag, on in (
-            ("--body", body is not None),
-            ("--body-file", body_file is not None and not dash),
-            ("--stdin", from_stdin),
-        )
-        if on
-    ]
-    if len(given) > 1:
-        raise typer.BadParameter(f"give one body source, not {' and '.join(given)}", ctx=ctx)
-    if body is not None:
-        return body
-    if from_stdin:
-        text = _read_stdin()
-    elif body_file is not None:
-        try:
-            require_input_file(body_file, "Body file")
-        except PyriteError as exc:
-            raise typer.BadParameter(f"--body-file: {exc}", ctx=ctx) from None
-        text = read_input_file(body_file, "Body file")
-    else:
-        return None
-    if text.startswith("---"):
-        from ..utils.frontmatter import Frontmatter, split_frontmatter
-
-        if isinstance(split_frontmatter(text), Frontmatter):
-            raise typer.BadParameter(_FRONTMATTER_REFUSAL, ctx=ctx)
-    return text
-
-
-def _task_body(ctx: typer.Context) -> str | None:
-    """The body ``_BodySourceCommand`` resolved, or the refusal it set aside."""
-    if "task_body_error" in ctx.meta:
-        raise ctx.meta["task_body_error"]
-    return ctx.meta.get("task_body")
-
-
 class _BodySourceCommand(TyperCommand):
-    """A task command that takes ``--body``/``--body-file``/``--stdin``.
+    """A task command that takes ``--body``/``--body-file``/``--stdin`` (#1687).
 
-    The body is resolved while click parses, so a bad source is a usage error
-    (``USAGE_ERROR``, exit 2) before any KB is opened or anything is written
-    (ADR-0046: the command body has no usage errors). The text is left in
-    ``ctx.meta["task_body"]`` for the command (``None`` when none was given)."""
+    What can be judged without reading is judged while click parses, so it is a
+    usage error (``USAGE_ERROR``, exit 2) before any KB is opened or anything is
+    written (ADR-0046: the command body has no usage errors): two body sources,
+    and a ``--body-file`` that is missing or not a file."""
 
     def parse_args(self, ctx, args):
         rest = super().parse_args(ctx, args)
         p = ctx.params
-        try:
-            ctx.meta["task_body"] = _resolve_task_body(
-                p.get("body"), p.get("body_file"), bool(p.get("stdin_flag")), ctx
+        body_file = p.get("body_file")
+        dash = body_file is not None and str(body_file) == "-"
+        given = [
+            flag
+            for flag, on in (
+                ("--body", p.get("body") is not None),
+                ("--body-file", body_file is not None and not dash),
+                ("--stdin", bool(p.get("stdin_flag")) or dash),
             )
-        except UnicodeDecodeError as exc:
-            # Not a usage error: `pyrite create` answers undecodable bytes from the
-            # command body, so this one is raised there too, still before any write.
-            ctx.meta["task_body_error"] = exc
+            if on
+        ]
+        if len(given) > 1:
+            raise typer.BadParameter(f"give one body source, not {' and '.join(given)}", ctx=ctx)
+        if body_file is not None and not dash:
+            from ..exceptions import PyriteError
+            from .context import require_input_file
+
+            try:
+                require_input_file(body_file, "Body file")
+            except PyriteError as exc:
+                raise typer.BadParameter(f"--body-file: {exc}", ctx=ctx) from None
         return rest
+
+
+def _task_body(body: str | None, body_file: Path | None, stdin_flag: bool) -> str | None:
+    """The one body a task command was given, or None when it got none (#1687).
+
+    Reuses the readers ``pyrite create`` uses (``read_input_file``, ``_read_stdin``;
+    ``-`` as the path reads stdin), so undecodable bytes are refused as ``create``
+    refuses them. Text read from a file or stdin that opens with frontmatter is
+    refused (it would write a second frontmatter-looking block); ``--body`` stays
+    literal text, as ``task create --body`` always was.
+    """
+    from ..exceptions import ValidationError
+    from ..utils.frontmatter import Frontmatter, split_frontmatter
+    from .context import read_input_file
+    from .entry_commands import _read_stdin
+
+    if body is not None:
+        return body
+    if stdin_flag or (body_file is not None and str(body_file) == "-"):
+        text = _read_stdin()
+    elif body_file is not None:
+        text = read_input_file(body_file, "Body file")
+    else:
+        return None
+    if isinstance(split_frontmatter(text), Frontmatter):
+        raise ValidationError(_FRONTMATTER_REFUSAL)
+    return text
 
 
 @task_app.command("create", cls=_BodySourceCommand)
 def task_create(
-    ctx: typer.Context,
     title_arg: str | None = typer.Argument(
         None, metavar="TITLE", help="Task title (or use --title)"
     ),
@@ -320,7 +305,7 @@ def task_create(
 
     from .entry_commands import _parse_link_option
 
-    resolved_body = _task_body(ctx)
+    resolved_body = _task_body(body, body_file, stdin_flag)
     link_specs = [_parse_link_option(spec) for spec in link or []]
     links_payload = [{"target": t, "relation": r} for t, r in link_specs] if link else None
 
@@ -558,7 +543,6 @@ def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
 
 @task_app.command("update", cls=_BodySourceCommand)
 def task_update(
-    ctx: typer.Context,
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     status: str | None = typer.Option(None, "--status", "-s", help="New status"),
@@ -598,7 +582,7 @@ def task_update(
 ) -> Outcome:
     """Update task fields (status, assignee, priority, body, reason)."""
     updates: dict[str, Any] = {}
-    resolved_body = _task_body(ctx)
+    resolved_body = _task_body(body, body_file, stdin_flag)
     if resolved_body is not None:
         updates["body"] = resolved_body
     if status is not None:
