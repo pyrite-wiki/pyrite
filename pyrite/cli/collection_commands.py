@@ -70,7 +70,7 @@ def query_entries(
         ..., help="Query string, e.g. 'type:backlog_item status:proposed'"
     ),
     kb: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB name"),
-    limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=1000, help="Max results"),
     output_format: str = typer.Option(
         "json",
         "--format",
