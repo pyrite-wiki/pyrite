@@ -216,6 +216,20 @@ def register_search_command(app: typer.Typer):
         if query is None:
             raise typer.BadParameter("Missing argument 'QUERY' (or use --batch FILE).")
 
+        for name, value in (("query", query), ("kb", kb_name)):
+            if value is not None:
+                try:
+                    value.encode("utf-8")
+                except UnicodeEncodeError:
+                    from ..utils.errors import cli_error
+
+                    cli_error(
+                        f"{name} holds text that is not valid UTF-8 (a lone surrogate, or bytes that were not UTF-8)",
+                        output_format,
+                        error_code="VALIDATION_FAILED",
+                        retryable=False,
+                    )
+
         asked = bool(
             parse_fields_param(fields) or parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV))
         )
@@ -767,6 +781,12 @@ def _run_batch(
     exit_unless_whole(failed, len(searches) - failed)
 
 
+def _safe_rich(val: object) -> str:
+    if val is None:
+        return ""
+    return str(val).encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _print_batch(data: dict, output_format: str) -> None:
     if output_format != "rich":
         from ..formats import format_response
@@ -774,17 +794,20 @@ def _print_batch(data: dict, output_format: str) -> None:
         typer.echo(format_response(data, output_format)[0])
         return
     for position, slot in enumerate(data["searches"], start=1):
-        console.print(f"[bold]{position}. {escape(str(slot['query']))}[/bold]")
+        query_str = _safe_rich(slot.get("query"))
+        console.print(f"[bold]{position}. {escape(query_str)}[/bold]")
         if "error" in slot:
-            console.print(f"  [red]{escape(slot['error_code'])}:[/red] {escape(slot['error'])}")
+            err_code = _safe_rich(slot.get("error_code", ""))
+            err_msg = _safe_rich(slot.get("error", ""))
+            console.print(f"  [red]{escape(err_code)}:[/red] {escape(err_msg)}")
             continue
         if not slot["results"]:
             console.print("  [yellow]No results found.[/yellow]")
         for r in slot["results"]:
-            console.print(
-                f"  [cyan]{escape(str(r.get('kb_name', '')))}[/cyan] "
-                f"[dim]{escape(str(r.get('id', '')))}[/dim] {escape(str(r.get('title', '')))}"
-            )
+            kb = _safe_rich(r.get("kb_name", ""))
+            rid = _safe_rich(r.get("id", ""))
+            title = _safe_rich(r.get("title", ""))
+            console.print(f"  [cyan]{escape(kb)}[/cyan] [dim]{escape(rid)}[/dim] {escape(title)}")
 
 
 def _warn_fields_not_applied(fields):

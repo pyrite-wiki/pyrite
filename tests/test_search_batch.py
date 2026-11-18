@@ -285,6 +285,36 @@ def test_text_that_is_not_utf8_encodable_is_refused_in_its_own_slot(b, spec):
     assert slot["count"] == 0 and slot["results"] == []
 
 
+@pytest.mark.parametrize(
+    "spec",
+    [{"query": "fal\ud800con"}, {"query": "falcon", "kb": "bi\udcffrds"}],
+    ids=["query", "kb"],
+)
+def test_batch_rich_text_that_is_not_utf8_encodable_does_not_traceback(b, spec):
+    result = b.batch([spec, {"query": "falcon", "kb": KB}], "--format", "rich")
+
+    assert result.exit_code == 3, result.output
+    assert "Traceback" not in result.output and "UnicodeEncodeError" not in result.output
+    assert "VALIDATION_FAILED" in result.output
+    assert "kestrel" in result.output
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("fal\ud800con", "-k", KB),
+        ("falcon", "-k", "bi\udcffrds"),
+    ],
+    ids=["query", "kb"],
+)
+def test_single_search_refuses_non_utf8_text_in_every_format(b, args):
+    for fmt in ("json", "rich", "yaml", "markdown", "csv"):
+        result = b.world.cli("search", *args, "--format", fmt)
+        assert result.exit_code == 1, (fmt, result.output)
+        assert "Traceback" not in result.output and "UnicodeEncodeError" not in result.output
+        assert "VALIDATION_FAILED" in result.output
+
+
 def test_an_unknown_key_is_named_in_the_refusal(b):
     body = payload(b.batch([{"query": "falcon", "bogus": 1}]))
 
