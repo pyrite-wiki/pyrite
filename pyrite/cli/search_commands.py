@@ -617,7 +617,7 @@ def _read_batch(source: str, output_format: str) -> list:
             error_code="VALIDATION_FAILED",
             suggestion=f"split the file into batches of {MAX_BATCH_QUERIES} or fewer, as batch-read does",
         )
-    return items
+    return list(items)
 
 
 def _run_batch(
