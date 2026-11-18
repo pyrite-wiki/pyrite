@@ -25,11 +25,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import HTTPException, WebSocket
+from fastapi import WebSocket
 from starlette.requests import HTTPConnection
 
 from ..config import PyriteConfig
-from ..services.access_policy import AccessPolicy, Principal, resolve_api_key_role
+from ..services.access_policy import AccessPolicy, Principal
 from ..services.credential_events import CredentialChange
 from ..storage.database import PyriteDB
 from .client_key import client_key
@@ -173,48 +173,45 @@ def resolve_socket_scope(conn: HTTPConnection, config: PyriteConfig, db: PyriteD
     session that admitted it, if any.
 
     Synchronous and may touch the DB (session lookup, grants): run it off the
-    event loop. Outcomes match REST's ``verify_api_key``:
+    event loop. The credential is decided by the one resolver REST and
+    ``/mcp`` ask (``server/credentials.py``, #1754), reading the ``api_key``
+    query parameter too, since a browser cannot set headers on a WebSocket:
 
-    - an operator API key (header, or the ``api_key`` query parameter, since
-      a browser cannot set headers on a WebSocket) -- unscoped;
+    - an operator API key -- unscoped;
     - a valid session (cookie, or Bearer) -- scoped to that user;
-    - no usable credential, auth enabled with an ``anonymous_tier`` -- scoped
-      to what an anonymous visitor may read;
     - auth disabled and no keys configured -- unscoped (the default local
       install, unchanged);
+    - a credential presented that does not verify -- ``HandshakeRejectedError``,
+      whatever ``anonymous_tier`` says;
+    - no credential, auth enabled with an ``anonymous_tier`` -- scoped to what
+      an anonymous visitor may read;
     - otherwise ``HandshakeRejectedError``.
 
-    Identity comes from ``mcp_routes._resolve_credential`` and the rule from
-    the access policy (``AccessPolicy.read_scope``) -- no third
-    implementation of either.
+    The rule comes from the access policy (``AccessPolicy.read_scope``) -- no
+    second implementation of either.
     """
-    from .mcp_routes import _resolve_credential
+    from .credentials import Outcome, resolve_credential
 
     settings = config.settings
     policy = AccessPolicy(config, db)
+    resolution = resolve_credential(conn, config, policy, query_key=True)
 
-    # An operator key, which `resolve_api_key_role` accepts only when keys are
-    # configured or auth is disabled (#331).
-    key = conn.query_params.get("api_key")
-    if key and resolve_api_key_role(key, config) is not None:
-        return SocketScope(readable=None)
-
-    try:
-        ctx = _resolve_credential(conn, config, db, policy)
-    except HTTPException:
-        ctx = None
-
-    if ctx is not None and ctx.get("user_id") is not None:
-        return SocketScope(
-            readable=policy.read_scope(Principal.user(ctx["user_id"], ctx["role"])).as_set(),
-            user_id=ctx["user_id"],
-            session_hash=ctx.get("session_hash"),
-            expires_at=ctx.get("session_expires_at"),
-        )
-    if ctx is not None:
+    if resolution.outcome is Outcome.VERIFIED:
+        ctx = resolution.ctx
+        if ctx.get("user_id") is not None:
+            return SocketScope(
+                readable=policy.read_scope(Principal.user(ctx["user_id"], ctx["role"])).as_set(),
+                user_id=ctx["user_id"],
+                session_hash=ctx.get("session_hash"),
+                expires_at=ctx.get("session_expires_at"),
+            )
         return SocketScope(readable=None)  # an operator key, or auth disabled with no keys
 
-    if settings.auth.enabled and settings.auth.anonymous_tier:
+    if (
+        resolution.outcome is Outcome.NONE
+        and settings.auth.enabled
+        and settings.auth.anonymous_tier
+    ):
         return SocketScope(
             readable=policy.read_scope(Principal.anonymous(settings.auth.anonymous_tier)).as_set(),
             anonymous=True,

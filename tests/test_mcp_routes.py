@@ -229,11 +229,14 @@ class TestBearerAuthResolution:
         assert resp.status_code == 200
         assert resp.json()["tier"] == "admin"
 
-    def test_bearer_wrong_key_gets_unauthenticated(self, tmpdir):
-        """Wrong Bearer token falls back to unauthenticated tier in /mcp/info."""
+    def test_bearer_wrong_key_is_refused(self, tmpdir):
+        """A wrong Bearer token is refused on /mcp/info (#1754); it used to be
+        shown the unauthenticated view. No credential still is."""
         app, _, _ = _make_app(tmpdir, api_key="test-key-42")
         client = TestClient(app)
         resp = client.get("/mcp/info", headers={"Authorization": "Bearer wrong"})
+        assert resp.status_code == 401
+        resp = client.get("/mcp/info")
         assert resp.status_code == 200
         assert resp.json()["tier"] == "unauthenticated"
 

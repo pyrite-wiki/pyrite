@@ -82,17 +82,20 @@ class TestResolversRefuseUnconfiguredKeys:
 
 class TestBogusKeyOverRest:
     def test_bogus_key_does_not_reveal_the_private_kb(self, auth_env):
+        """Not admin, and since #1754 not the anonymous visitor either: a key
+        that does not verify is refused, even with an anonymous tier."""
         anon = TestClient(auth_env["app"])
         r = anon.get("/api/kbs", headers={"X-API-Key": BOGUS})
-        assert r.status_code == 200, r.text
-        assert {k["name"] for k in r.json()["kbs"]} == {PUBLIC}
+        assert r.status_code == 401, r.text
+        assert PRIVATE not in r.text
 
     def test_bogus_key_cannot_read_a_private_entry(self, auth_env):
         anon = TestClient(auth_env["app"])
         r = anon.get(
             "/api/entries/secret-note", params={"kb": PRIVATE}, headers={"X-API-Key": BOGUS}
         )
-        assert r.status_code == 404, r.text
+        assert r.status_code == 401, r.text  # 404 (served as anonymous) before #1754
+        assert "hidden" not in r.text
 
     def test_bogus_key_cannot_write_into_the_private_kb(self, auth_env):
         anon = TestClient(auth_env["app"])
@@ -109,14 +112,17 @@ class TestBogusKeyOverRest:
         r = TestClient(create_app(config=config)).get("/api/kbs", headers={"X-API-Key": BOGUS})
         assert r.status_code == 401, r.text
 
-    def test_bogus_key_beside_a_valid_session_cookie_falls_through_to_the_user(self, auth_env):
-        """A bad key must not shadow a good cookie: the user keeps their own scope."""
+    def test_bogus_key_beside_a_valid_session_cookie_is_refused(self, auth_env):
+        """The key is the credential presented first; it does not verify, so
+        the request is refused rather than falling through to the cookie
+        (#1754: a failing credential never falls through to a weaker one).
+        It never reached past the user's own scope either way."""
         user = TestClient(auth_env["app"])
         r = user.post("/auth/register", json={"username": "peer", "password": "password123"})
         assert r.status_code == 200, r.text
         r = user.get("/api/kbs", headers={"X-API-Key": BOGUS})
-        assert r.status_code == 200, r.text
-        assert {k["name"] for k in r.json()["kbs"]} == {PUBLIC}
+        assert r.status_code == 401, r.text
+        assert user.get("/api/kbs").status_code == 200  # the cookie alone still works
 
 
 class TestBogusBearerOverMcp:
@@ -124,13 +130,14 @@ class TestBogusBearerOverMcp:
         r = TestClient(auth_env["app"]).get(
             "/mcp/info", headers={"Authorization": f"Bearer {BOGUS}"}
         )
-        assert r.status_code == 200, r.text
-        assert r.json()["tier"] == "unauthenticated"
+        # Refused since #1754 (it was shown the unauthenticated view).
+        assert r.status_code == 401, r.text
+        assert "tools_count" not in r.text
 
     def test_bogus_x_api_key_is_not_admin_on_mcp_info(self, auth_env):
         r = TestClient(auth_env["app"]).get("/mcp/info", headers={"X-API-Key": BOGUS})
-        assert r.status_code == 200, r.text
-        assert r.json()["tier"] == "unauthenticated"
+        assert r.status_code == 401, r.text  # the unauthenticated view before #1754
+        assert "tools_count" not in r.text
 
     def test_real_session_token_as_bearer_resolves_the_user_on_mcp(self, auth_env):
         """The session lookup on /mcp used to crash: the routes were handed the

@@ -10,7 +10,6 @@ Endpoints:
     GET  /mcp/info      — connection metadata for frontends
 """
 
-import hashlib
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -24,8 +23,12 @@ from ..config import PyriteConfig
 from ..services import credential_events
 from ..services.access_policy import ROLES, AccessPolicy, Principal, resolve_api_key_role
 from ..storage.database import PyriteDB
+from .credentials import Outcome, Resolution, presented_credential, resolve_credential
 
 logger = logging.getLogger(__name__)
+
+# `/mcp`'s 401 detail: no credential, or one that does not verify.
+_REFUSED = "Invalid or missing authentication. Provide Authorization: Bearer <token> header."
 
 
 def _resolve_bearer_auth(
@@ -72,33 +75,6 @@ def _principal_of(ctx: dict[str, Any]) -> Principal:
     return Principal.from_api_key(ctx["role"])
 
 
-def _session_ctx(user: dict, session: dict) -> dict[str, Any]:
-    """A session credential's ctx. ``session_hash`` and ``session_expires_at``
-    let a live-update socket be closed when that session ends (ADR-0036)."""
-    return {
-        "role": user["role"],
-        "username": user["username"],
-        "user_id": user["id"],
-        "session_hash": session["token_hash"],
-        "session_expires_at": session["expires_at"],
-        "principal_kind": "user",
-        "principal_id": str(user["id"]),
-    }
-
-
-def _key_ctx(key: str, role: str) -> dict[str, Any]:
-    """An operator key's ctx. ``principal_id`` is the key's whole hash:
-    ``username`` shows only a prefix, and is a name a user could register."""
-    digest = hashlib.sha256(key.encode()).hexdigest()
-    return {
-        "role": role,
-        "username": f"apikey-{digest[:8]}",
-        "user_id": None,
-        "principal_kind": "operator_key",
-        "principal_id": digest,
-    }
-
-
 def _resolve_credential(
     request: HTTPConnection,
     config: PyriteConfig,
@@ -108,9 +84,11 @@ def _resolve_credential(
     """The credential half of `_resolve_bearer_auth`: role, username, user_id
     (and, for a session, ``session_hash`` and ``session_expires_at``).
 
-    Reads only headers and cookies, so it takes any `HTTPConnection` -- a
-    `Request` here, a `WebSocket` handshake in `websocket.resolve_socket_scope`
-    (#218). One credential resolver for both transports, not two.
+    The decision is the one resolver's (``server/credentials.py``, #1754),
+    which REST and the live-update socket ask too: Bearer (a key or a
+    session), then ``X-API-Key``, then the session cookie; the first one
+    presented decides, and one that does not verify is 401. ``/mcp`` never
+    reads the ``api_key`` query parameter.
 
     Synchronous and may query the DB (session lookup): callers on the event
     loop run it in a threadpool. Sessions are verified through the access
@@ -118,54 +96,12 @@ def _resolve_credential(
     """
     if policy is None:
         policy = AccessPolicy(config, db)
-    # 1. Bearer token in Authorization header
-    auth_header = request.headers.get("authorization", "")
-    if auth_header.lower().startswith("bearer "):
-        token = auth_header[7:].strip()
-        if token:
-            role = _resolve_api_key_role(token, config)
-            if role is not None:
-                return _key_ctx(token, role)
-
-            # Check against session tokens (for web-authenticated users)
-            if config.settings.auth.enabled:
-                found = policy.auth_service.verify_session_detail(token)
-                if found:
-                    return _session_ctx(*found)
-
-    # 2. X-API-Key header (fallback for clients that use it)
-    api_key = request.headers.get("x-api-key")
-    if api_key:
-        role = _resolve_api_key_role(api_key, config)
-        if role is not None:
-            return _key_ctx(api_key, role)
-
-    # 3. Session cookie
-    if config.settings.auth.enabled:
-        session_token = request.cookies.get("pyrite_session")
-        if session_token:
-            found = policy.auth_service.verify_session_detail(session_token)
-            if found:
-                return _session_ctx(*found)
-
-    # 4. No auth configured — open access
-    if (
-        not config.settings.api_key
-        and not config.settings.api_keys
-        and not config.settings.auth.enabled
-    ):
-        return {
-            "role": "admin",
-            "username": "anonymous",
-            "user_id": None,
-            "principal_kind": "operator_key",
-            "principal_id": "open-access",
-        }
-
-    raise HTTPException(
-        status_code=401,
-        detail="Invalid or missing authentication. Provide Authorization: Bearer <token> header.",
-    )
+    resolution = resolve_credential(request, config, policy)
+    if resolution.outcome is Outcome.VERIFIED:
+        return resolution.ctx
+    # A credential that does not verify, or none (there is no anonymous
+    # principal on `/mcp`, ADR-0043 decision 9): both are 401 here.
+    raise HTTPException(status_code=401, detail=_REFUSED)
 
 
 def _resolve_api_key_role(key: str, config: PyriteConfig) -> str | None:
@@ -195,17 +131,14 @@ async def _authenticate(request: Request, config: PyriteConfig, shared_db: Pyrit
     return await run_in_threadpool(_run)
 
 
-async def _identify(request: Request, config: PyriteConfig, shared_db: PyriteDB) -> dict | None:
-    """The credential half only (no KB scope), off the event loop; None when
-    the request carries no credential this server accepts."""
+async def _identify(request: Request, config: PyriteConfig, shared_db: PyriteDB) -> Resolution:
+    """The credential half only (no KB scope), off the event loop: what the
+    one resolver decided for this request."""
     from starlette.concurrency import run_in_threadpool
 
-    def _run() -> dict | None:
+    def _run() -> Resolution:
         with shared_db.request_handle() as db:
-            try:
-                return _resolve_credential(request, config, db)
-            except HTTPException:
-                return None
+            return resolve_credential(request, config, AccessPolicy(config, db))
 
     return await run_in_threadpool(_run)
 
@@ -414,13 +347,18 @@ def mount_mcp_routes(
     # The SDK's handle_post_message is a raw ASGI app. Every POST carries its
     # own credential; `_session_owner` puts its principal where the SDK's
     # same-owner check compares it with the session's (P-M3). A POST with no
-    # accepted credential has no owner, and is refused as an unknown session.
+    # credential has no owner, and is refused as an unknown session; a POST
+    # whose credential does not verify is refused as that, 401 (#1754).
 
     async def handle_messages(scope, receive, send) -> None:
         if scope["type"] == "http":
-            ctx = await _identify(Request(scope), app_get_config(), app_get_db())
-            if ctx is not None:
-                scope["user"] = _session_owner(ctx)
+            resolution = await _identify(Request(scope), app_get_config(), app_get_db())
+            if resolution.outcome is Outcome.FAILED:
+                refused = JSONResponse(status_code=401, content={"detail": _REFUSED})
+                await refused(scope, receive, send)
+                return
+            if resolution.outcome is Outcome.VERIFIED:
+                scope["user"] = _session_owner(resolution.ctx)
         await sse_transport.handle_post_message(scope, receive, send)
 
     # -----------------------------------------------------------------
@@ -440,13 +378,18 @@ def mount_mcp_routes(
         }
 
         # Try to resolve user context for tier-specific info
+        presented = presented_credential(request, config, query_key=False)
         try:
             user_ctx = await _authenticate(request, config, app_get_db())
             tier = user_ctx["role"] if user_ctx["role"] in ROLES else "read"
             mcp_server = _get_mcp_server(tier)
             info["tools_count"] = len(mcp_server.tools)
             info["tier"] = tier
-        except HTTPException:
+        except HTTPException as exc:
+            if presented is not None:
+                # A credential that does not verify is refused, not shown
+                # the unauthenticated view (#1754); only no credential is.
+                return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
             # Unauthenticated — show basic info
             read_server = _get_mcp_server("read")
             info["tools_count"] = len(read_server.tools)

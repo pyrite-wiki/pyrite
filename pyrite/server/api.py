@@ -34,7 +34,7 @@ from ..services.access_policy import (
     authorize_tier,
     is_operator,
     named_kb,
-    resolve_api_key_role,
+    resolve_api_key_role,  # noqa: F401  (re-exported: callers import it from here)
 )
 from ..services.block_service import BlockService
 from ..services.ephemeral_service import EphemeralKBService
@@ -566,65 +566,75 @@ async def verify_api_key(
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ):
-    """Verify API key, session cookie, or anonymous tier. Stores role in request.state.
+    """Resolve the caller and store its role in ``request.state``.
 
-    Checks in order:
-    1. X-API-Key header / api_key query param (existing behaviour)
-    2. Session cookie (web UI auth)
-    3. Anonymous tier (configurable public access)
-    4. No auth configured → admin (backwards-compatible)
+    The credential is decided by the one resolver every surface asks
+    (``server/credentials.py``, #1754): an API key (``Authorization: Bearer``,
+    ``X-API-Key`` or ``?api_key``) or a session (Bearer, or the
+    ``pyrite_session`` cookie). Then:
+
+    1. a credential that verifies -> its principal;
+    2. a credential that is presented and does not verify -> 401, whatever
+       ``anonymous_tier`` says (only "no credential" is the anonymous
+       visitor, ADR-0043 §2). When it was the session cookie, the 401 also
+       clears it: it is ``httponly``, so the web client cannot;
+    3. no credential, auth enabled with an ``anonymous_tier`` -> anonymous;
+    4. no credential, auth disabled and no keys -> admin (backwards-compatible,
+       decided by the resolver);
+    5. otherwise 401.
 
     This dependency is ``async``, so its body runs on the event-loop thread.
-    Everything here must therefore be non-blocking — the one synchronous DB
-    call (``AuthService.verify_session``) is offloaded with
-    ``run_in_threadpool`` below (#131 criterion 4). Calling it inline both
-    blocked the loop for the duration of the query and put event-loop DB work
-    in the same session as the threadpool handlers' — the second, distinct
-    exposure of the shared-session bug, specifically on the auth-enabled path.
+    Everything here must therefore be non-blocking -- a session lookup (the
+    one synchronous DB call) is offloaded with ``run_in_threadpool`` below
+    (#131 criterion 4). Calling it inline both blocked the loop for the
+    duration of the query and put event-loop DB work in the same session as
+    the threadpool handlers' -- the second, distinct exposure of the
+    shared-session bug, specifically on the auth-enabled path.
     """
-    # 1. API key (header or query param)
-    key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    if key:
-        role = resolve_api_key_role(key, config)
-        if role is not None:
-            request.state.api_role = role
-            return
+    from starlette.concurrency import run_in_threadpool
 
-    # 2. Session cookie (when auth enabled)
-    if config.settings.auth.enabled:
-        token = request.cookies.get("pyrite_session")
-        if token:
-            from starlette.concurrency import run_in_threadpool
+    from .credentials import (
+        SESSION_COOKIE,
+        Outcome,
+        needs_threadpool,
+        presented_credential,
+        resolve_credential,
+    )
 
-            from ..services.auth_service import AuthService
+    presented = presented_credential(request, config, query_key=True)
 
-            def _verify() -> dict | None:
-                # Runs on a worker thread. `db` is this request's handle, so
-                # the lookup uses this request's session — no scope to open,
-                # and nothing shared with a concurrent request.
-                auth_service = AuthService(db, config.settings.auth)
-                return auth_service.verify_session(token)
+    def _resolve():
+        # `db` is this request's handle, so a session lookup on a worker
+        # thread uses this request's session -- nothing shared with a
+        # concurrent request.
+        policy = AccessPolicy(config, db)
+        return resolve_credential(request, config, policy, query_key=True, presented=presented)
 
-            user = await run_in_threadpool(_verify)
-            if user:
-                request.state.api_role = user["role"]
-                request.state.auth_user = user
-                return
+    if needs_threadpool(presented, config):
+        resolution = await run_in_threadpool(_resolve)
+    else:
+        resolution = _resolve()
 
-    # 3. Anonymous tier
+    if resolution.outcome is Outcome.VERIFIED:
+        ctx = resolution.ctx
+        request.state.api_role = ctx["role"]
+        if ctx.get("user") is not None:
+            request.state.auth_user = ctx["user"]
+        return
+
+    if resolution.outcome is Outcome.FAILED:
+        headers = None
+        if resolution.failed_cookie:
+            clear = Response()
+            clear.delete_cookie(key=SESSION_COOKIE, path="/")
+            headers = {"set-cookie": clear.headers["set-cookie"]}
+        raise HTTPException(status_code=401, detail="Invalid or missing API key", headers=headers)
+
+    # No credential presented.
     if config.settings.auth.enabled and config.settings.auth.anonymous_tier:
         request.state.api_role = config.settings.auth.anonymous_tier
         # Not an operator key: per-KB roles apply (a private KB is hidden).
         request.state.anonymous = True
-        return
-
-    # 4. No auth configured → admin (existing behavior)
-    if (
-        not config.settings.api_key
-        and not config.settings.api_keys
-        and not config.settings.auth.enabled
-    ):
-        request.state.api_role = "admin"
         return
 
     raise HTTPException(status_code=401, detail="Invalid or missing API key")

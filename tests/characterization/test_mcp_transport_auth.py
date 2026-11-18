@@ -444,7 +444,9 @@ class TestMCPMessagesScopeFixedAtConnect:
                 3,
                 headers={"Authorization": "Bearer this-key-does-not-exist-anywhere"},
             )
-            assert resp.status_code == 404, resp.text
+            # A credential that does not verify is refused as one, 401 (#1754);
+            # it was answered as an unknown session (404) before.
+            assert resp.status_code == 401, resp.text
         finally:
             _drop_fake_session(world.app, session_id)
 
