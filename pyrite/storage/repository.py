@@ -968,9 +968,9 @@ class KBRepository:
                             # name ITSELF is (a folder that gives no type,
                             # in one this process may not search) may it be
                             # a folder: the rows under it are kept and it is
-                            # named (#1546, #1720). A folder named *.md whose
-                            # type the OS will not give keeps the rows under it
-                            # whatever its suffix, and the file's stat names it too.
+                            # named (#1546, #1720). Whatever its name (*.md and
+                            # __collection.yaml included, #1720): if it is really
+                            # a file, that file's own stat also names it.
                             if _type_unknown(item):
                                 could_not_list(os.path.join(top, item.name))
                         if not is_dir:

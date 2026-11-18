@@ -1,1 +1,1 @@
-- A folder named `*.md` whose type the OS will not give (e.g. DT_UNKNOWN) now keeps the rows under it and is reported under `unreadable_folders` (#1720).
+- A folder named `*.md` whose type the OS will not give (e.g. DT_UNKNOWN) now keeps the rows under it and is reported under `unreadable_folders` (#1720). In an unsearchable folder on an untyped filesystem, real files (`*.md`, `__collection.yaml`) are also named under `unreadable_folders` as well as `unreadable_files`.

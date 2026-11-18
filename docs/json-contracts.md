@@ -2118,8 +2118,9 @@ not parse still loses its row, as before.
   tried to list and could not (its listing failed, or failed part way), and
   a name whose own type the operating system will not give (in a folder
   Pyrite may not search, on a filesystem that does not say a name's type),
-  unless its name ends in `.md` or is `__collection.yaml` (then it is that
-  file's own stat that names it). A symbolic link is never one: the walk
+  whatever its name; when that name is really a file (`*.md`,
+  `__collection.yaml`), the file's own stat also names it under
+  `unreadable_files`. A symbolic link the OS reports as one is never one: the walk
   never enters a link, so a link whose target cannot be reached (a link to
   itself, a link into a folder Pyrite may not search, a link through a
   file) is not named, and a sync that meets one still exits `0` and health
