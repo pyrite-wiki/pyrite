@@ -55,6 +55,15 @@ describe('EntryMeta source URLs', () => {
 	});
 });
 
+describe('EntryMeta scalar fields', () => {
+	it('renders numeric dates and false statuses', () => {
+		const entry = baseEntry({ date: 0, status: false });
+		const { container } = render(EntryMeta, { entry });
+		expect(container.textContent).toContain('Date: 0');
+		expect(container.textContent).toContain('Status: false');
+	});
+});
+
 describe('EntryMeta on a partial read (ADR-0042 8a)', () => {
 	it('renders when a refused tags or participants column is absent', () => {
 		// REST leaves a column the file's type refused out of the reply.

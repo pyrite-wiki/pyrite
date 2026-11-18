@@ -89,7 +89,7 @@ export interface SearchResult {
 	entry_type: string;
 	title: string;
 	snippet?: string;
-	date?: string;
+	date?: string | number | boolean;
 	importance?: number;
 	tags: string[];
 }
@@ -115,9 +115,9 @@ export interface EntryResponse {
 	title: string;
 	body?: string;
 	summary?: string;
-	date?: string;
+	date?: string | number | boolean;
 	importance?: number;
-	status?: string;
+	status?: string | number | boolean;
 	tags: string[];
 	participants: string[];
 	sources: Record<string, unknown>[];

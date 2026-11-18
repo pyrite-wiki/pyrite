@@ -17,8 +17,10 @@
 		return plain.length > maxLen ? plain.slice(0, maxLen) + '...' : plain;
 	}
 
-	function formatDate(dateStr?: string): string {
-		if (!dateStr) return '';
+	function formatDate(value?: string | number | boolean): string {
+		if (value == null) return '';
+		if (typeof value !== 'string') return String(value);
+		const dateStr = value;
 		try {
 			return new Date(dateStr).toLocaleDateString(undefined, {
 				year: 'numeric',
@@ -59,7 +61,7 @@
 							{entry.entry_type}
 						</span>
 					{/if}
-					{#if cardFields.includes('date') && (entry.date || entry.updated_at)}
+					{#if cardFields.includes('date') && (entry.date != null || entry.updated_at)}
 						<span class="text-xs text-zinc-400 dark:text-zinc-500">
 							{formatDate(entry.date ?? entry.updated_at)}
 						</span>

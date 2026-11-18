@@ -37,8 +37,10 @@
 		}
 	}
 
-	function formatDate(dateStr?: string): string {
-		if (!dateStr) return '';
+	function formatDate(value?: string | number | boolean): string {
+		if (value == null) return '';
+		if (typeof value !== 'string') return String(value);
+		const dateStr = value;
 		try {
 			return new Date(dateStr).toLocaleDateString();
 		} catch {
@@ -91,7 +93,7 @@
 									{/if}
 								</div>
 							{:else if col === 'updated_at' || col === 'created_at' || col === 'date'}
-								<span class="text-zinc-500">{formatDate(entry[col] as string | undefined)}</span>
+								<span class="text-zinc-500">{formatDate(entry[col] as string | number | boolean | undefined)}</span>
 							{:else if col === 'importance'}
 								{#if entry.importance}
 									<span class="text-zinc-500">{entry.importance}</span>

@@ -20,13 +20,13 @@
 		<span class="text-zinc-500">KB:</span>
 		<span class="ml-2">{entry.kb_name}</span>
 	</div>
-	{#if entry.date}
+	{#if entry.date != null}
 		<div>
 			<span class="text-zinc-500">Date:</span>
 			<span class="ml-2">{entry.date}</span>
 		</div>
 	{/if}
-	{#if entry.status}
+	{#if entry.status != null}
 		<div>
 			<span class="text-zinc-500">Status:</span>
 			<span class="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">

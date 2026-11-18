@@ -37,7 +37,9 @@
 		return safe.replace(pattern, '<mark class="bg-gold-500/30 text-gold-300 rounded px-0.5">$1</mark>');
 	}
 
-	function formatRelativeDate(dateStr: string): string {
+	function formatRelativeDate(value: string | number | boolean): string {
+		if (typeof value !== 'string') return String(value);
+		const dateStr = value;
 		const date = new Date(dateStr);
 		if (isNaN(date.getTime())) return dateStr;
 		const now = new Date();
@@ -405,7 +407,7 @@
 							</span>
 
 							<!-- Date -->
-							{#if result.date}
+							{#if result.date != null}
 								<span class="ml-auto text-xs text-zinc-400">{formatRelativeDate(result.date)}</span>
 							{/if}
 						</div>

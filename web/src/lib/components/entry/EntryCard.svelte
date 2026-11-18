@@ -42,7 +42,7 @@
 	<div class="mb-1 flex items-center justify-between">
 		<div class="flex items-center gap-2">
 			<h3 class="font-medium">{entry.title}</h3>
-			{#if entry.status}
+			{#if entry.status != null}
 				<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
 					{entry.status}
 				</span>

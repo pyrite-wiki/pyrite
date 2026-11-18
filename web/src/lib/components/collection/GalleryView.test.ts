@@ -37,6 +37,12 @@ describe('GalleryView', () => {
 		expect(screen.getByText('note')).toBeInTheDocument();
 	});
 
+	it('renders boolean dates as their original value', () => {
+		const entry = { ...sampleEntry, date: false, updated_at: undefined };
+		render(GalleryView, { props: { entries: [entry] } });
+		expect(screen.getByText('false')).toBeInTheDocument();
+	});
+
 	it('shows body excerpt with markdown chars stripped', () => {
 		render(GalleryView, { props: { entries: [sampleEntry] } });
 		expect(screen.getByText('Hello world markdown link(url) code')).toBeInTheDocument();
