@@ -168,6 +168,29 @@ def ensure_schema(engine) -> None:
         # The link's `kb:` prefix as written (#980): create_all never alters an
         # existing table, so a database from before it gets the column here.
         conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_prefix TEXT"))
+        # The path a Markdown link names (#1723), the same way. A database
+        # from before it holds no Markdown link rows for files whose stat is
+        # unchanged, and a sync never re-reads those: so when the column is
+        # new here, the recorded stat is cleared and the next sync reads every
+        # file once (SQLite's migration v30 does the same, decision D3).
+        had_target_path = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()"
+                " AND table_name = 'link' AND column_name = 'target_path'"
+            )
+        ).first()
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_path TEXT"))
+        # Whether a Markdown link row's path matched an entry file; added with
+        # target_path (one release), so the re-read below covers both.
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_resolved INTEGER"))
+        if had_target_path is None:
+            conn.execute(text("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)")
+        )
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)")
+        )
         # GIN index for FTS
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")
@@ -315,11 +338,21 @@ class PostgresBackend(BaseBackend):
     # _sync_links (delete-all-reinsert — Postgres-specific)
     # =====================================================================
 
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
         # The same rows as SQLite's diff, one per written link (`_link_rows`,
         # #1009), written by delete and re-insert.
-        self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).delete()
-        for (target_id, target_kb, relation, target_prefix), attrs in _link_rows(
+        query = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name)
+        if keep_path_rows:
+            query = query.filter(Link.target_path.is_(None))
+        query.delete()
+        for (target_id, target_kb, relation, target_prefix, target_path), attrs in _link_rows(
             kb_name, links
         ).items():
             self._session.add(
@@ -332,6 +365,7 @@ class PostgresBackend(BaseBackend):
                     inverse_relation=attrs["inverse_relation"],
                     note=attrs["note"],
                     target_prefix=target_prefix,
+                    target_path=target_path,
                 )
             )
 

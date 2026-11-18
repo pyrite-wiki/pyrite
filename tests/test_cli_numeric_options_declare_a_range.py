@@ -318,11 +318,6 @@ NOT_YET: set[tuple[str, str]] = {
     #
     # pyrite/cli/task_commands.py
     ("pyrite task list", "priority"),
-    #
-    # pyrite/read_cli.py
-    ("pyrite-read timeline", "min_importance"),
-    ("pyrite-read timeline", "limit"),
-    # extensions/social/src/pyrite_social/cli.py
 }
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"

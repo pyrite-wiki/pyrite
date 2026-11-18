@@ -749,6 +749,35 @@ def test_an_assignment_is_judged_as_assigned():
     assert [r for r in entry.validation_errors() if r["field"] == "importance"]
 
 
+@pytest.mark.parametrize("cls", _every_class())
+@pytest.mark.parametrize("value", [99, 5.5, "high"])
+def test_every_entry_class_judges_dataclasses_replace_importance(cls, value):
+    """Building an entry with dataclasses.replace(entry, importance=X) makes the
+    rule judge X (#1703)."""
+    import dataclasses
+
+    entry = cls.from_frontmatter(
+        {"id": "x", "title": "X", "type": "event", "date": "2026-01-02", "importance": 5}, ""
+    )
+    replaced = dataclasses.replace(entry, importance=value)
+    rows = [r for r in replaced.validation_errors() if r.get("field") == "importance"]
+    assert rows, f"{cls.__name__} accepted replace(importance={value!r})"
+    assert rows[0]["rule"] == "range"
+
+
+@pytest.mark.parametrize("cls", _every_class())
+def test_every_entry_class_accepts_valid_dataclasses_replace_importance(cls):
+    """Replacing 5 with 7 produces no importance validation error (#1703)."""
+    import dataclasses
+
+    entry = cls.from_frontmatter(
+        {"id": "x", "title": "X", "type": "event", "date": "2026-01-02", "importance": 5}, ""
+    )
+    replaced = dataclasses.replace(entry, importance=7)
+    rows = [r for r in replaced.validation_errors() if r.get("field") == "importance"]
+    assert not rows, f"{cls.__name__} refused replace(importance=7): {rows}"
+
+
 # -- bulk create and import go through the same rule ----------------------------------------
 
 
