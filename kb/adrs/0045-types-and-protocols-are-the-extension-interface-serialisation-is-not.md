@@ -240,6 +240,16 @@ a side effect of a write:
 A parent's `status` means what a person or an explicit operation set. Files
 that already say `done` because the hook wrote it stay as they are.
 
+**Refined (maintainer, 2026-11-17, #1683, option A): a cancelled child does
+not count toward its parent's completion.** A task with children and a
+non-terminal own status is complete by its children only when at least one
+child is `done` (or is itself complete by its children) and every other child
+is `done` or `cancelled`. A parent whose remaining children are all cancelled
+is not complete: it keeps its own status. A grandparent applies the same rule
+to its children's derived completion; a parent whose own status is terminal is
+unaffected. Completion stays derived (`derive_completion`,
+`pyrite/models/task_completion.py`), and no parent file is written.
+
 **What spike 2 found, and what it makes required.** Of the writers in this
 decision, only `_parent_rollup` left values in real files: 37 parent tasks in
 the research KB (83 parents) are `done` with no `status_change_log` entry and

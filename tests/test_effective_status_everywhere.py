@@ -74,8 +74,71 @@ FILES.update(
     }
 )
 NOTES = {n: f"---\nid: {n}\ntitle: {n}\ntype: note\n---\n\nA note.\n" for n in ("note-y", "note-z")}
-#: Literal: the effective status of each top-level task.
-EFFECTIVE = {"p": "done", "q": "open"}
+
+
+def _top(tid, status="open"):
+    """A top-level task every surface in the matrix can find: assigned to
+    `agent:x`, overdue, dated for the timeline and holding `zephyr`."""
+    return _task(tid, status, extra=TOP + TIMELINE_DATE).replace(
+        f"Work for {tid}.", f"Work for {tid}, zephyr."
+    )
+
+
+#: #1683 (maintainer, 2026-11-17, option A; ADR-0045 decision 7 as refined
+#: then): a cancelled child does not count toward its parent's completion. A
+#: parent is complete by its children only when at least one child is `done`
+#: and every other child is `done` or `cancelled`; otherwise it keeps its own
+#: status. `p` above is the mixed shape (one done, one cancelled).
+FILES.update(
+    {
+        # all done
+        "d": _top("d"),
+        "d-a": _task("d-a", "done", "d"),
+        "d-b": _task("d-b", "done", "d"),
+        # all cancelled
+        "c": _top("c"),
+        "c-a": _task("c-a", "cancelled", "c"),
+        "c-b": _task("c-b", "cancelled", "c"),
+        # one cancelled child alone (the issue's reproduction)
+        "s": _top("s"),
+        "s-a": _task("s-a", "cancelled", "s"),
+        # a grandparent over each of those four parent shapes
+        "g-d": _top("g-d"),
+        "g-d-m": _task("g-d-m", "open", "g-d"),
+        "g-d-m-a": _task("g-d-m-a", "done", "g-d-m"),
+        "g-d-m-b": _task("g-d-m-b", "done", "g-d-m"),
+        "g-x": _top("g-x"),
+        "g-x-m": _task("g-x-m", "open", "g-x"),
+        "g-x-m-a": _task("g-x-m-a", "done", "g-x-m"),
+        "g-x-m-b": _task("g-x-m-b", "cancelled", "g-x-m"),
+        "g-c": _top("g-c"),
+        "g-c-m": _task("g-c-m", "open", "g-c"),
+        "g-c-m-a": _task("g-c-m-a", "cancelled", "g-c-m"),
+        "g-c-m-b": _task("g-c-m-b", "cancelled", "g-c-m"),
+        "g-s": _top("g-s"),
+        "g-s-m": _task("g-s-m", "open", "g-s"),
+        "g-s-m-a": _task("g-s-m-a", "cancelled", "g-s-m"),
+        # a parent whose own status is terminal: its file decides (basis status)
+        "t": _top("t", "done"),
+        "t-a": _task("t-a", "cancelled", "t"),
+    }
+)
+#: Literal, written by hand from the property: the effective status of each
+#: top-level task.
+EFFECTIVE = {
+    "p": "done",
+    "q": "open",
+    "d": "done",
+    "c": "open",
+    "s": "open",
+    "g-d": "done",
+    "g-x": "done",
+    "g-c": "open",
+    "g-s": "open",
+    "t": "done",
+}
+#: The tops whose answer #1683 changed: on dev each counted as `done`.
+CHANGED_BY_1683 = {"c", "s", "g-c", "g-s"}
 
 
 @pytest.fixture(scope="module")
@@ -258,10 +321,53 @@ def test_status_filter_matches_the_effective_status(config, surface, status):
     assert EFFECTIVE_SURFACES[surface](config, status) == want
 
 
+@pytest.fixture(scope="module")
+def listed(config):
+    """One call per (surface, status), shared by the per-shape cells below."""
+    memo: dict[tuple[str, str], set] = {}
+
+    def get(surface: str, status: str) -> set:
+        if (surface, status) not in memo:
+            memo[surface, status] = EFFECTIVE_SURFACES[surface](config, status)
+        return memo[surface, status]
+
+    return get
+
+
+def _shape_param(tid: str):
+    if tid in CHANGED_BY_1683:
+        return tid
+    return pytest.param(
+        tid, marks=pytest.mark.control(reason="this shape's answer did not change with #1683")
+    )
+
+
+@pytest.mark.parametrize("tid", [_shape_param(t) for t in EFFECTIVE])
+@pytest.mark.parametrize("surface", list(EFFECTIVE_SURFACES))
+def test_each_shape_is_listed_under_its_effective_status_only(listed, surface, tid):
+    """#1683: every status filter agrees, shape by shape: a parent whose
+    remaining children are all cancelled is `open`, not `done`."""
+    assert {s for s in ("open", "done") if tid in listed(surface, s)} == {EFFECTIVE[tid]}
+
+
+@pytest.mark.control(reason="reads never wrote a parent's file; this keeps it so (#1683)")
+def test_reads_leave_every_parent_file_byte_identical(config):
+    """Completion stays derived: asking every surface about every shape
+    writes no file, the parents whose only children are cancelled included."""
+    kb_path = config.knowledge_bases[0].path
+    before = {p.name: p.read_bytes() for p in kb_path.rglob("*.md")}
+    for surface in EFFECTIVE_SURFACES.values():
+        for status in ("open", "done"):
+            surface(config, status)
+    for tid in EFFECTIVE:
+        _cli(config, ["task", "get", tid, "-k", KB, "--format", "json"])
+    assert {p.name: p.read_bytes() for p in kb_path.rglob("*.md")} == before
+
+
 def test_overdue_skips_a_task_done_by_its_children(config):
     """kb_find_overdue reports what is not done; `p` is done."""
     out = _mcp(config, "kb_find_overdue", {"kb_name": KB, "as_of": "2026-01-01"})
-    assert _ids(out["entries"]) == {"q"}
+    assert _ids(out["entries"]) == {"q", "c", "s", "g-c", "g-s"}
 
 
 def test_qa_queue_skips_a_qa_task_done_by_its_children(config):
@@ -284,7 +390,13 @@ def test_duplicate_scan_skips_a_task_done_by_its_children_by_default(config):
         result = QAService(config, db).find_duplicates("task", readable_kbs=UNSCOPED, threshold=0)
     finally:
         db.close()
-    assert _ids([entry for pair in result["pairs"] for entry in (pair["a"], pair["b"])]) == {"q"}
+    assert _ids([entry for pair in result["pairs"] for entry in (pair["a"], pair["b"])]) == {
+        "q",
+        "c",
+        "s",
+        "g-c",
+        "g-s",
+    }
 
 
 # -- The inventory ----------------------------------------------------------
