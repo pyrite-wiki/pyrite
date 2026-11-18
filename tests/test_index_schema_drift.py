@@ -12,7 +12,7 @@ The shapes are what three real builds left on disk
 from each tree's own code):
 
 * ``v0.25.8``: schema 27, no ``entry.aliases``, no ``link.target_prefix``;
-* ``v0.26.0``: schema 29, the current columns;
+* ``v0.26.0``: schema 29, every column before ``link.target_path`` (v30, #1723);
 * ``arch-df6372f2``: schema 28 recorded, ``entry.aliases`` present and
   ``link.target_prefix`` absent. On ``arch/2026-10`` between df6372f2 and the
   sprint merge, migration 28 meant aliases; on dev it means the prefix, so dev
