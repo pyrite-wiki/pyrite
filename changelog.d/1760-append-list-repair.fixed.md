@@ -1,0 +1,1 @@
+- Appending to a declared list field that contains a string now names a repair command that preserves the current value, on CLI, MCP and REST. A refused append leaves the file unchanged.
