@@ -292,18 +292,18 @@ class SQLiteBackend(BaseBackend):
         status: str | None = None,
         non_empty: bool = False,
     ) -> list[dict[str, Any]]:
-        sql = f"""
+        sql = """
             SELECT
                 e.id, e.kb_name, e.entry_type, e.title, e.body, e.summary,
                 e.file_path, e.date, e.importance, e.status, e.location,
                 e.lifecycle, e.metadata, e.created_at, e.updated_at, e.indexed_at,
                 e.created_by, e.modified_by,
-                snippet(entry_fts, {_BODY_COLUMN}, '<mark>', '</mark>', '...', 32) as snippet,
+                snippet(entry_fts, @BODY_COLUMN@, '<mark>', '</mark>', '...', 32) as snippet,
                 bm25(entry_fts) as rank
             FROM entry_fts
             JOIN entry e ON entry_fts.rowid = e.rowid
             WHERE entry_fts MATCH ?
-        """
+        """.replace("@BODY_COLUMN@", str(_BODY_COLUMN))
         params: list[Any] = [query]
         if lifecycle:
             sql += " AND e.lifecycle = ?"
