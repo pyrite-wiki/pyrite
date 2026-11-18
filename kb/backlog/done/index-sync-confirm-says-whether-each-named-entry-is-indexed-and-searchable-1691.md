@@ -6,7 +6,7 @@ tags:
 - enhancement
 importance: 5
 kind: feature
-status: in_progress
+status: done
 priority: medium
 assignee: agent:cloud-worker
 effort: M
