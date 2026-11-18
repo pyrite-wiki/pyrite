@@ -37,7 +37,7 @@ from ..models.core_types import (
 from ..schema import CORE_TYPES, expand_subdirectory_template
 from ..utils.atomic_write import HardLinked
 from ..utils.frontmatter import Frontmatter, describe, split_frontmatter
-from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles
+from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles, KBPresenceUnknownError
 from ..utils.yaml import load_yaml
 from . import entry_paths
 from .entry_writer import (
@@ -214,6 +214,17 @@ def _rewrite_as_values(
     span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
     new_text, _report = apply(text, ops, span)
     return new_text, total
+
+
+def _type_unknown(item: os.DirEntry) -> bool:
+    """Whether the OS will not say what the name ``item`` itself is, a link
+    not followed (``is_dir(follow_symlinks=False)`` raises): the walk's one
+    sign that a name may be a folder it could not list (#1546)."""
+    try:
+        item.is_dir(follow_symlinks=False)
+    except OSError:
+        return True
+    return False
 
 
 def _is_regular_file(path: Path) -> bool:
@@ -907,17 +918,98 @@ class KBRepository:
                 if self.present(yaml_path):
                     yield yaml_path
 
-    def _named(self, name: str) -> Iterator[Path]:
+    def _named(self, name: str, unreadable: list[str] | None = None) -> Iterator[Path]:
         """Every path under the KB whose last component is ``name``, found
         by the name alone: a link (to a file, to a folder, or dangling) is
         listed as the name it is, never followed or checked, and a folder
         that is a link is not walked into (``os.walk``). On Python 3.11
         ``Path.rglob`` with a literal name lists a link only when its target
         exists, so a listing would differ by what lies outside the KB; 3.12
-        and later list it either way. One rule on every Python."""
-        for dirpath, dirnames, filenames in os.walk(self.path):
+        and later list it either way. One rule on every Python.
+
+        ``unreadable``: as ``_folders``."""
+        for dirpath, dirnames, filenames in self._folders(unreadable):
             if name in filenames or name in dirnames:
                 yield Path(dirpath) / name
+
+    def _folders(self, unreadable: list[str] | None = None) -> Iterator[tuple[str, list, list]]:
+        """The one walk of the KB's folders, behind both listings
+        (``walk_files`` and ``_named``): what ``os.walk`` yields top-down,
+        ``(dirpath, dirnames, filenames)``, a folder that is a link listed in
+        ``dirnames`` but not walked into.
+
+        A folder the walk could not list says nothing about the files in it,
+        so it is never read as "no files" (#1546). ``unreadable``, when
+        given, receives the KB-relative path (POSIX spelling) of each folder
+        the walk could not list, or list to the end, once, in walk order:
+        the path the walk asked for, never text from the error. Not the root
+        (the KB gate, ``KBConfig.check_readable``, answers for it: #1551),
+        and not a folder the walk's own rule would never list anything in
+        (under a hidden or ``_templates`` part,
+        ``entry_paths.reason_for_folders``), so it never changes what a sync
+        reports. Only the outermost of nested folders can be named: the walk
+        cannot see past it."""
+
+        def could_not_list(folder: str) -> None:
+            if unreadable is None:
+                return
+            parts = entry_paths.parts_below(self.path, folder)
+            if parts is None or entry_paths.reason_for_folders(parts) is not None:
+                return
+            rel = "/".join(parts)
+            if rel not in unreadable:
+                unreadable.append(rel)
+
+        stack = [os.fspath(self.path)]
+        while stack:
+            top = stack.pop()
+            dirnames: list[str] = []
+            filenames: list[str] = []
+            into: list[str] = []
+            try:
+                with os.scandir(top) as listing:
+                    for item in listing:
+                        # As os.walk: a probe that fails is "not a folder",
+                        # and a link to a folder is listed, never entered.
+                        try:
+                            is_dir = item.is_dir()
+                        except OSError:
+                            is_dir = False
+                            # ``is_dir`` follows a link, so it raises for a
+                            # link whose TARGET cannot be stat-ed (a loop, a
+                            # link into a folder this process may not search,
+                            # one through a file). That is a link the walk
+                            # never enters, so nothing lies under it: not
+                            # named. Only when the OS will not say what the
+                            # name ITSELF is (a folder that gives no type,
+                            # in one this process may not search) may it be
+                            # a folder: the rows under it are kept and it is
+                            # named (#1546). Not a name the walk lists as a
+                            # file (``*.md``, a ``__collection.yaml``): that
+                            # file's own stat names it.
+                            if (
+                                not item.name.endswith(".md")
+                                and item.name != "__collection.yaml"
+                                and _type_unknown(item)
+                            ):
+                                could_not_list(os.path.join(top, item.name))
+                        if not is_dir:
+                            filenames.append(item.name)
+                            continue
+                        dirnames.append(item.name)
+                        try:
+                            is_link = item.is_symlink()
+                        except OSError:
+                            is_link = False
+                        if not is_link:
+                            into.append(item.name)
+            except OSError:
+                # Not listed, or not to the end: as os.walk, nothing of it is
+                # yielded, and the rows under it are kept.
+                could_not_list(top)
+                continue
+            yield top, dirnames, filenames
+            stack.extend(os.path.join(top, name) for name in reversed(into))
 
     def id_of_file(self, file_path: Path) -> str | None:
         """The id ``file_path`` holds, by the loader's rule; None when it is
@@ -1644,7 +1736,9 @@ class KBRepository:
                 yield md_file
 
     def walk_files(
-        self, unlisted: list[tuple[Path, str]] | None = None
+        self,
+        unlisted: list[tuple[Path, str]] | None = None,
+        unreadable: list[str] | None = None,
     ) -> Iterator[tuple[Path, Path | None]]:
         """Every markdown path the walk's lexical rules keep, with the walked
         file it is an alias of (``alias_target``), or None for an entry file.
@@ -1654,13 +1748,28 @@ class KBRepository:
         ``unlisted``, when given, receives ``(path, reason)`` for each path
         the same pass meets and the rule skips (``entry_paths.HEALTH_REASONS``:
         a README, a hidden part, ``_templates``), unread: ``index health``
-        asks which of them state an ``id:`` (``unlisted_entry_rows``, #1552)."""
-        for md_file in self.path.rglob("*.md"):
-            reason = entry_paths.unlisted_reason(self.path, md_file)
-            if reason is None:
-                yield md_file, self.alias_target(md_file)
-            elif unlisted is not None and reason in entry_paths.HEALTH_REASONS:
-                unlisted.append((md_file, reason))
+        asks which of them state an ``id:`` (``unlisted_entry_rows``, #1552).
+
+        ``unreadable``, when given, receives each folder the walk could not
+        list (``_folders``, #1546): the reconcile keeps the rows under it.
+
+        The names are those ``rglob("*.md")`` matched: a file, a link, or a
+        folder whose name ends in ``.md`` (the reconcile skips a folder as
+        "not a regular file", #1119); a folder that is a link is not walked
+        into."""
+        root = os.fspath(self.path)
+        for dirpath, dirnames, filenames in self._folders(unreadable):
+            for name in (*filenames, *dirnames):
+                if not name.endswith(".md"):
+                    continue
+                # Joined as text and asked as text: one Path per kept name
+                # (a lookup's walk of a 2,000-file KB, #135).
+                joined = os.path.join(dirpath, name)
+                reason = entry_paths.unlisted_reason(root, joined)
+                if reason is None:
+                    yield Path(joined), self.alias_target(joined)
+                elif unlisted is not None and reason in entry_paths.HEALTH_REASONS:
+                    unlisted.append((Path(joined), reason))
 
     def unlisted_entry_rows(self, unlisted: list[tuple[Path, str]]) -> list[dict[str, str]]:
         """``{kb, path, reason}`` for each skipped path (from ``walk_files``)
@@ -1692,7 +1801,7 @@ class KBRepository:
         rows.sort(key=lambda r: r["path"])
         return rows
 
-    def alias_target(self, md_file: Path) -> Path | None:
+    def alias_target(self, md_file: Path | str) -> Path | None:
         """The walked entry file ``md_file`` is another name for, or None.
 
         An alias (#1262) is a path that is itself a symbolic link whose fully
@@ -1729,13 +1838,25 @@ class KBRepository:
         reconcile reports it as a dangling link, not as an unreadable file.
         None for anything else: a link out of the KB, a loop (its target is
         there, and unreadable), a path that is not a link. ``lexists`` is a
-        probe of a name ``KBFiles`` placed inside the root; nothing is read."""
+        probe of a name ``KBFiles`` placed inside the root; nothing is read.
+
+        "Nothing there" is ``KBFiles.present``'s answer first: where it cannot
+        tell (a folder this process cannot search), the link is not dangling
+        and the reconcile reports it as unreadable (#1546). ``lexists`` then
+        keeps a link loop (absent to ``present``, ELOOP) "there", as before."""
         target = self._in_kb_link(md_file)
-        if target is None or os.path.lexists(target):
+        if target is None:
+            return None
+        try:
+            if KBFiles(self.path).present(target):
+                return None
+        except KBPresenceUnknownError:
+            return None
+        if os.path.lexists(target):
             return None
         return target
 
-    def _in_kb_link(self, md_file: Path) -> Path | None:
+    def _in_kb_link(self, md_file: Path | str) -> Path | None:
         """Where ``md_file`` leads, spelled under ``self.path``, when it is a
         symbolic link under the root that does not lead out of the KB; None
         otherwise. Where it leads is ``KBFiles.resolved`` (the rule behind
@@ -1794,9 +1915,10 @@ class KBRepository:
         yield from self.list_files()
         yield from self.list_collection_files()
 
-    def list_collection_files(self) -> Iterator[Path]:
-        """Every ``__collection.yaml`` the walk keeps (not under a hidden part)."""
-        for yaml_file in self._named("__collection.yaml"):
+    def list_collection_files(self, unreadable: list[str] | None = None) -> Iterator[Path]:
+        """Every ``__collection.yaml`` the walk keeps (not under a hidden part).
+        ``unreadable``: as ``_folders``."""
+        for yaml_file in self._named("__collection.yaml", unreadable):
             if any(part.startswith(".") for part in yaml_file.parts):
                 continue
             yield yaml_file

@@ -57,6 +57,7 @@ from ..utils.kb_files import (
     KBPresenceUnknownError,
 )
 from ..utils.metadata import parse_metadata
+from . import entry_paths
 from .database import PyriteDB
 from .errors import driver_error, storage_error_from
 from .repository import KBRepository
@@ -122,6 +123,22 @@ _FENCED_CODE_RE = re.compile(r"^(```|~~~).*?^\1\s*$", re.MULTILINE | re.DOTALL)
 # Matches inline code spans: `...` or ``...`` (spans that could contain a literal backtick).
 # Matches the shorter form only on a single line to avoid eating multi-paragraph text.
 _INLINE_CODE_RE = re.compile(r"``[^`\n]+?``|`[^`\n]+?`")
+
+
+# A `prefix:` naming another KB at the front of a reference value, the shape
+# the wikilink grammar (`_WIKILINK_RE` group 1) accepts.
+_REF_PREFIX_RE = re.compile(r"^([a-z0-9-]+):(.+)$", re.DOTALL)
+
+
+def _strip_wikilink_brackets(value: str) -> str:
+    """``[[target]]`` -> ``target``, once, trimming space inside and outside the
+    brackets; any other text is returned trimmed. Shared by every frontmatter
+    value that names an entry (object-ref fields, edge endpoints), so a value
+    spelled ``x`` and ``[[x]]`` is one id. An empty ``[[]]`` returns ``""``."""
+    text = value.strip()
+    if text.startswith("[[") and text.endswith("]]"):
+        text = text[2:-2].strip()
+    return text
 
 
 def _strip_code_regions(text: str) -> str:
@@ -403,8 +420,13 @@ class _Claim:
     rel: str  # KB-relative path, POSIX spelling: the duplicate tiebreaker
     path: Path
     entry_id: str
-    stat: os.stat_result
+    stat: os.stat_result | None  # None only for an unreached claim
     entry: Entry | None = None  # None: a known file whose stat matched, not read
+    # A claim built from the row of a path the reconcile could not reach (a
+    # folder it could not list, a file it could not stat or read): the row is
+    # kept as it is, neither rewritten nor removed (#1546). Never a winner
+    # over a file read now.
+    unreached: bool = False
 
 
 @dataclass
@@ -442,7 +464,31 @@ class ReconcilePlan:
     # health reports these as ``unreadable_files`` (#593). Content that reads
     # but does not parse stays only in ``malformed``.
     unreadable: dict[str, str] = field(default_factory=dict)
+    # KB-relative folders the walk could not list (``KBRepository._folders``):
+    # the rows under them are kept, and the reconcile and health name them
+    # (``unreadable_folders``, #1546).
+    unreadable_folders: list[str] = field(default_factory=list)
+    # ``{"kb", "path", "error"}`` for each walked path that could not be
+    # stat-ed, read or hashed (an ``OSError``, not "absent"; never a file that
+    # read and did not parse): the reconcile's ``unreadable_files`` (#1546).
+    unreadable_files: list[dict[str, str]] = field(default_factory=list)
+    # id -> the claim built from the row of each path the reconcile could not
+    # reach (``_Claim.unreached``). It wins its id only when no file read now
+    # holds it; ``holders`` never contains one.
+    kept: dict[str, _Claim] = field(default_factory=dict)
     walked: int = 0
+
+
+def _folder_rows(kb_name: str, folders: list[str]) -> list[dict[str, str]]:
+    """``unreadable_folders`` rows: ``{"kb", "path", "error"}``, the path
+    KB-relative and the error Pyrite's fixed ``KB_UNREADABLE`` text, never the
+    OS's words (#1546). One shape for the reconcile's result and health,
+    sorted by path: the walk meets folders in the directory's own order,
+    which differs between filesystems."""
+    return [
+        {"kb": kb_name, "path": folder, "error": KBFilesUnreadableError.MESSAGE}
+        for folder in sorted(folders)
+    ]
 
 
 def _file_changed(row: dict[str, Any], stat: os.stat_result) -> bool:
@@ -549,6 +595,25 @@ class IndexManager:
         backlinks, the graph and the broken-link count agree with
         `resolve_entry` (#979)."""
         return self.config.link_kb(prefix, kb_name)
+
+    def _object_ref_target(self, value: str, kb_name: str) -> tuple[str, str]:
+        """The entry an object-ref value names, as ``(id, kb)``: brackets
+        stripped, and a ``prefix:`` read as a KB only when it names a registered
+        KB (by full name, then shortname: the check ``resolve_entry`` makes), so
+        ``x``, ``[[x]]``, ``other:x`` and ``[[other:x]]`` index as the id they
+        name (#1693). Any other value is the whole id in this KB, as it was
+        before and as ``resolve_entry`` reads it: a colon is legal in an entry
+        id, so ``doi:10.1000-x`` and ``https://ex.org/x`` name entries of those
+        ids, not the KBs ``doi`` and ``https``. The id is ``""`` when the value
+        names nothing (``[[]]``)."""
+        text = _strip_wikilink_brackets(value)
+        match = _REF_PREFIX_RE.match(text)
+        if match is not None:
+            kb = self.config.readable_kb_named(match.group(1), readable_kbs=None)
+            rest = match.group(2).strip()
+            if kb is not None and rest:
+                return rest, kb.name
+        return text, kb_name
 
     def _frontmatter_link(self, link: dict[str, Any], kb_name: str) -> dict[str, Any]:
         """A frontmatter ``links:`` item as the index stores it: its ``kb`` is
@@ -867,20 +932,19 @@ class IndexManager:
                             value = fm.get(field_name)
                             if value:
                                 target_type = field_schema.constraints.get("target_type")
-                                if isinstance(value, list):
-                                    for v in value:
-                                        if isinstance(v, str):
-                                            refs.append(
-                                                {
-                                                    "target_id": v,
-                                                    "field_name": field_name,
-                                                    "target_type": target_type,
-                                                }
-                                            )
-                                elif isinstance(value, str):
+                                named: set[tuple[str, str]] = set()
+                                for v in value if isinstance(value, list) else [value]:
+                                    if not isinstance(v, str):
+                                        continue
+                                    target_id, target_kb = self._object_ref_target(v, kb_name)
+                                    # `[x, "[[x]]"]` names one entry: one row.
+                                    if not target_id or (target_id, target_kb) in named:
+                                        continue
+                                    named.add((target_id, target_kb))
                                     refs.append(
                                         {
-                                            "target_id": value,
+                                            "target_id": target_id,
+                                            "target_kb": target_kb,
                                             "field_name": field_name,
                                             "target_type": target_type,
                                         }
@@ -904,9 +968,7 @@ class IndexManager:
                         value = fm.get(endpoint_spec.field)
                         if value and isinstance(value, str):
                             # Strip wikilink brackets if present: [[target]] -> target
-                            endpoint_id = value.strip()
-                            if endpoint_id.startswith("[[") and endpoint_id.endswith("]]"):
-                                endpoint_id = endpoint_id[2:-2].strip()
+                            endpoint_id = _strip_wikilink_brackets(value)
                             if endpoint_id:
                                 edge_endpoints.append(
                                     {
@@ -1013,6 +1075,17 @@ class IndexManager:
             file_values=source,
             agrees=_read_value_is_the_bags,
         )
+        # A column field read by its declared type, as every reader of index
+        # rows reads it (`shape_entry_row`, #1503): the single read and the
+        # rows agree, and `priority: 7` declared a number reads 7, so a value
+        # read and written back leaves the file as it is. After
+        # `read_metadata`, which compares the read's values as the TEXT
+        # column holds them.
+        from .backends.base_backend import DeclaredFieldTypes, cast_declared_columns
+
+        cast_declared_columns(
+            result, DeclaredFieldTypes(self.db.session)(kb_name, entry.entry_type)
+        )
         # As _sync_tags stores them: falsy skipped, duplicates (by ==, so
         # ``1`` and ``true`` are one) dropped first-wins, names as TEXT.
         result["tags"] = [_one_text(t) for t in dict.fromkeys(t for t in data["tags"] if t)]
@@ -1065,8 +1138,8 @@ class IndexManager:
 
         files = []
         walk = itertools.chain(
-            repo.walk_files(unlisted=plan.unlisted),
-            ((y, None) for y in repo.list_collection_files()),
+            repo.walk_files(unlisted=plan.unlisted, unreadable=plan.unreadable_folders),
+            ((y, None) for y in repo.list_collection_files(plan.unreadable_folders)),
         )
         for file_path, alias_of in walk:
             try:
@@ -1091,6 +1164,29 @@ class IndexManager:
         # via ``KBRepository._read_inside``), which refuses both again on the
         # descriptor it reads. tests/test_indexed_bytes_stay_inside_the_kb.py.
         inside = KBFiles(kb_config.path)
+
+        def keep(rel: str, file_path: Path, error: str) -> None:
+            """A walked path the reconcile could not stat, read or hash: named,
+            and its row (if it has one) kept from the row, as it is (#1546).
+
+            Unless the files say it is gone: ``KBFiles.present`` is the one
+            answer, and it counts a link loop (ELOOP) and a file removed while
+            walking (ENOENT) as absent, so their rows are retired, as before,
+            and they stay reported under ``malformed`` only. "There" (a file
+            this process may not read) and "could not tell" (a folder it may
+            not search) keep the row."""
+            try:
+                if not inside.present(file_path):
+                    return
+            except KBPresenceUnknownError:
+                pass
+            plan.unreadable_files.append(
+                {"kb": kb_config.name, "path": str(file_path), "error": error}
+            )
+            known = path_to_row.get(str(file_path))
+            if known is not None:
+                plan.kept[known[0]] = _Claim(rel, file_path, known[0], None, unreached=True)
+
         for rel, file_path in files:
             plan.walked += 1
             if not inside.contains(file_path):
@@ -1119,11 +1215,12 @@ class IndexManager:
                 # Not "removed while walking": a symlink loop or a folder this
                 # process cannot search is listed by the walk and cannot be
                 # read. Health must say so (#1119); sync reports it as
-                # malformed.
+                # malformed, and its row is kept (#1546).
                 logger.warning("Could not stat %s: %s", file_path, e)
                 error = f"{type(e).__name__}: {outside_text(e, already_logged=True)}"
                 plan.malformed.append({"path": str(file_path), "error": error})
                 plan.unreadable[str(file_path)] = error
+                keep(rel, file_path, error)
                 continue
             if not stat_module.S_ISREG(file_stat.st_mode):
                 plan.skipped.append({"path": str(file_path), "reason": "not a regular file"})
@@ -1144,8 +1241,7 @@ class IndexManager:
                     )
                     plan.malformed.append({"path": str(file_path), "error": error})
                     logger.warning("%s: %s", error, file_path)
-                    claim = _Claim(rel, file_path, known[0], file_stat)
-                    plan.holders.setdefault(claim.entry_id, []).append(claim)
+                    keep(rel, file_path, error)
                     continue
                 must_read = current_hash != known[1].get("content_hash")
             if known and not must_read and not stat_changed:
@@ -1166,12 +1262,39 @@ class IndexManager:
                     plan.malformed.append({"path": str(file_path), "error": why})
                     if isinstance(e, OSError | UnicodeError):
                         plan.unreadable[str(file_path)] = f"{type(e).__name__}: {why}"
+                    if isinstance(e, OSError | KBFilesUnreadableError):
+                        # Could not read: not "read, and does not parse" (a
+                        # UnicodeError is that), so the row is kept (#1546).
+                        keep(rel, file_path, f"{type(e).__name__}: {why}")
                     continue
                 claim = _Claim(rel, file_path, id_text(entry.id), file_stat, entry)
             plan.holders.setdefault(claim.entry_id, []).append(claim)
 
-        for entry_id, claims in plan.holders.items():
-            # `files` was sorted, so the first claim is the first path.
+        # A row is retired only on evidence from the files (principle 5). A
+        # known path the walk did not meet is under a folder whose listing
+        # worked, which says the file is gone, so its row is retired, as
+        # before; or under a folder the walk could not list (named in
+        # ``unreadable_folders``), which says nothing, so its row is kept
+        # (#1546). The walk's listing is the one answer here: no other probe.
+        walked_paths = {str(file_path) for _rel, file_path in files}
+        shut = {tuple(folder.split("/")) for folder in plan.unreadable_folders}
+        for path_text, (entry_id, _row) in path_to_row.items():
+            if path_text in walked_paths or entry_id in plan.kept:
+                continue
+            parts = entry_paths.parts_below(kb_config.path, path_text)
+            if parts is None or not any(parts[:i] in shut for i in range(1, len(parts))):
+                continue
+            plan.kept[entry_id] = _Claim(
+                "/".join(parts), Path(path_text), entry_id, None, unreached=True
+            )
+
+        for entry_id in sorted(set(plan.holders) | set(plan.kept)):
+            # `files` was sorted, so the first claim is the first path. A row
+            # kept on faith stands only for an id no file read now holds:
+            # otherwise the file read now takes the id's row, the kept row is
+            # not kept, and its path is no duplicate (its folder or file is
+            # named in ``unreadable_folders`` or ``unreadable_files``).
+            claims = plan.holders.get(entry_id) or [plan.kept[entry_id]]
             plan.winners[entry_id] = claims[0]
             if len(claims) > 1:
                 plan.duplicates.append(
@@ -1211,8 +1334,17 @@ class IndexManager:
         (``{"path", "error"}``), ``skipped`` (non-regular paths and reasons),
         ``duplicates`` (``{"kb", "id", "winner", "paths"}``, KB-relative
         paths, the winner first), ``aliases`` (``{"kb", "path", "target"}``,
-        in-KB links to an entry file, indexed once at the target: #1262) and
-        ``written`` (rows written, counted or not).
+        in-KB links to an entry file, indexed once at the target: #1262),
+        ``unreadable_folders`` (``{"kb", "path", "error"}``, KB-relative, the
+        fixed ``KB_UNREADABLE`` text), ``unreadable_files`` (``{"kb", "path",
+        "error"}``, the walked paths it could not stat, read or hash, each
+        also under ``malformed``) and ``written`` (rows written, counted or
+        not).
+
+        Rows are retired only on evidence from the files: the row of a path
+        under a folder the walk could not list, or of a file it could not
+        stat or read, is kept as it is (#1546). A file that reads and does
+        not parse holds no id, and its row is retired.
         """
         results: dict[str, Any] = {
             "added": 0,
@@ -1223,6 +1355,8 @@ class IndexManager:
             "duplicates": [],
             "aliases": [],
             "dangling_links": [],
+            "unreadable_folders": [],
+            "unreadable_files": [],
             "written": 0,
         }
         if not kb_config.path.exists():
@@ -1252,6 +1386,8 @@ class IndexManager:
         results["duplicates"] = plan.duplicates
         results["aliases"] = plan.aliases
         results["dangling_links"] = plan.dangling
+        results["unreadable_folders"] = _folder_rows(kb_config.name, plan.unreadable_folders)
+        results["unreadable_files"] = plan.unreadable_files
 
         total = len(plan.winners)
         unwritable: set[str] = set()
@@ -1307,6 +1443,9 @@ class IndexManager:
         results: dict[str, Any],
     ) -> None:
         """Write one winning file's row if the reconcile rule says so."""
+        # Only a claim read now is written, and a read claim always has its
+        # stat; an unreached claim (stat None) is never passed here (#1546).
+        assert claim.stat is not None
         content_hash = _hash_file(claim.path, self._root_of(kb_name, claim.path))
         if row is None:
             counter = "added"
@@ -1334,10 +1473,16 @@ class IndexManager:
             results[counter] += 1
 
     def index_kb(
-        self, kb_name: str, progress_callback: Callable[[int, int], None] | None = None
+        self,
+        kb_name: str,
+        progress_callback: Callable[[int, int], None] | None = None,
+        *,
+        report: dict[str, Any] | None = None,
     ) -> int:
         """Rebuild a KB's rows from its files: ``reconcile_kb`` reading every
         file. Returns the number of entries indexed (one per id, not per file).
+        ``report``, when given, receives the reconcile's result (what it could
+        not reach among it: ``pyrite index build``, #1546).
         """
         kb_config = self.config.get_kb(kb_name)
         if not kb_config:
@@ -1345,6 +1490,8 @@ class IndexManager:
         result = self.reconcile_kb(kb_config, force=True, progress_callback=progress_callback)
         if result["malformed"]:
             logger.warning("%d files could not be parsed", len(result["malformed"]))
+        if report is not None:
+            report.update(result)
         return result["written"]
 
     def index_all(
@@ -1635,6 +1782,11 @@ class IndexManager:
           ``{"kb", "path", "reason"}``: an entry an earlier version wrote where
           the walk does not list it. A warning; never indexed or repaired
           (#1552).
+        - unreadable_folders: folders the walk could not list, ``{"kb",
+          "path", "error"}`` with ``path`` KB-relative and the fixed
+          ``KB_UNREADABLE`` text: the rows under them are kept, so unhealthy
+          (#1546). Not a folder the walk never lists (under a hidden or
+          ``_templates`` part).
         """
         health: dict[str, Any] = {
             "missing_files": [],
@@ -1668,6 +1820,9 @@ class IndexManager:
             # process cannot search, #1542): named, with a fixed reason, so
             # it is never silently dropped from the report.
             "unreadable_kbs": [],
+            # Folders the walk could not list (#1546): the rows under them are
+            # kept, so the index cannot be compared with what is there.
+            "unreadable_folders": [],
         }
 
         # The file's own value of each protocol column, per (kb, id), read
@@ -1756,6 +1911,7 @@ class IndexManager:
             health["aliases"].extend(plan.aliases)
             # A warning, not unreadable: no entry is there to miss (#1262).
             health["dangling_links"].extend(plan.dangling)
+            health["unreadable_folders"].extend(_folder_rows(kb.name, plan.unreadable_folders))
             # Read now, and only these: the walk skipped them unread (#1552).
             health["unlisted_entry_files"].extend(
                 KBRepository(kb).unlisted_entry_rows(plan.unlisted)
@@ -1810,6 +1966,12 @@ class IndexManager:
             from ..schema.field_aliases import double_spellings
 
             for entry_id, claim in sorted(plan.winners.items()):
+                if claim.unreached:
+                    # Its row kept as it is; the path is reported below (the
+                    # row check) or with its folder (#1546).
+                    continue
+                # Every claim but an unreached one carries its stat.
+                assert claim.stat is not None
                 file_path = claim.path
                 entry = claim.entry
                 source = getattr(entry, "_source_frontmatter", None) or {}
@@ -2349,6 +2511,10 @@ class IndexManager:
             # rows kept, named here. Only a sync of every KB collects them; a
             # sync of one named KB raises ``KBFilesUnreadableError``.
             "unreadable_kbs": [],
+            # Folders the walk could not list, and files it could not stat or
+            # read, in the KBs it synced: rows kept, named here (#1546).
+            "unreadable_folders": [],
+            "unreadable_files": [],
         }
         kbs = [self.config.get_kb(kb_name)] if kb_name else self.config.all_kbs()
         kbs = [kb for kb in kbs if kb and kb.path.exists()]
@@ -2381,6 +2547,8 @@ class IndexManager:
             results["duplicates"].extend(one["duplicates"])
             results["aliases"].extend(one["aliases"])
             results["dangling_links"].extend(one["dangling_links"])
+            results["unreadable_folders"].extend(one["unreadable_folders"])
+            results["unreadable_files"].extend(one["unreadable_files"])
             if progress_callback and len(kbs) > 1:
                 progress_callback(n, len(kbs))
         return results
@@ -2421,6 +2589,8 @@ class IndexManager:
         git_service: Any = None,
         since_commit: str | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        *,
+        report: dict[str, Any] | None = None,
     ) -> int:
         """
         Index a KB with git attribution.
@@ -2439,6 +2609,7 @@ class IndexManager:
             git_service: GitService instance (or duck-typed equivalent)
             since_commit: Only process files changed since this commit
             progress_callback: Optional callback(current, total)
+            report: when given, receives the reconcile's result (``index_kb``)
 
         Returns:
             Number of entries whose history was read
@@ -2539,7 +2710,9 @@ class IndexManager:
 
             return write_versions
 
-        self.reconcile_kb(kb_config, force=force, enrich=enrich)
+        result = self.reconcile_kb(kb_config, force=force, enrich=enrich)
+        if report is not None:
+            report.update(result)
         return attributed
 
 

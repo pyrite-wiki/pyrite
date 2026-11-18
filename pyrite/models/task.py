@@ -46,6 +46,10 @@ _TASK_KNOWN_KEYS = {
     "evidence",
     "priority",
     "due_date",
+    "date",
+    "start_date",
+    "end_date",
+    "assigned_at",
     "agent_context",
     "status_change_log",
 }
@@ -145,8 +149,15 @@ def task_priority_problem(value: Any) -> str | None:
 TASK_RESOLVED_STATUSES = ("done", "cancelled")
 
 #: The task type's metadata as `resolve_type_metadata` reads it: what ends a
-#: task's live work is what resolves it (one definition; #934).
-TASK_TYPE_METADATA = {"settled_statuses": list(TASK_RESOLVED_STATUSES)}
+#: task's live work is what resolves it (one definition; #934). ``fields``
+#: is what `KBSchema.type_fields` declares for a task, spelled as
+#: `CORE_TYPES` spells a field: a task's `priority` is a number, so every
+#: reader of the index returns it as one (#1503, decision (a) of 2026-11-17).
+#: No default is declared, so a create adds nothing to the file.
+TASK_TYPE_METADATA: dict[str, Any] = {
+    "settled_statuses": list(TASK_RESOLVED_STATUSES),
+    "fields": {"priority": "int"},
+}
 
 # =========================================================================
 # Workflow
@@ -372,8 +383,8 @@ def validate_status_change(
       - **relaxed** (``enforce_transitions=False``): any ``new_status``
         that's a member of ``workflow["states"]`` is accepted, IFF
         ``status_reason`` is non-empty (when
-        ``require_reason_on_transition=True``, the default for relaxed
-        mode). Loosens transitions but NOT state membership — typos in
+        ``require_reason_on_transition=True``; the one exception is
+        ``open → claimed``, which never needs a reason). Loosens transitions but NOT state membership — typos in
         status still fail, which keeps the index queryable.
 
     The atomic ``open→claimed`` invariant lives at the repo/db
@@ -428,7 +439,11 @@ def validate_status_change(
             f"({', '.join(states) or '(empty)'}). Relaxed mode loosens "
             f"transitions, not state membership — check for typos.",
         )
-    if require_reason and not status_reason.strip():
+    # `open -> claimed` is exempt from the reason rule (maintainer decision on
+    # #1709): `task claim` passes no reason, and a claim keeps working in a
+    # relaxed reasons-required KB as it did before a declared machine applied.
+    claim_edge = old_status == "open" and new_status == "claimed"
+    if require_reason and not claim_edge and not status_reason.strip():
         return (
             False,
             f"Relaxed-mode transition '{old_status}' → '{new_status}' "
@@ -531,6 +546,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             meta["parked_awaiting"] = self.parked_awaiting
         if self.assignee:
             meta["assignee"] = self.assignee
+        if self.assigned_at:
+            meta["assigned_at"] = self.assigned_at
         if self.parent:
             meta["parent"] = self.parent
         if self.dependencies:
@@ -538,6 +555,12 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         if self.evidence:
             meta["evidence"] = self.evidence
         meta["priority"] = self.priority
+        if self.date:
+            meta["date"] = self.date
+        if self.start_date:
+            meta["start_date"] = self.start_date
+        if self.end_date:
+            meta["end_date"] = self.end_date
         if self.due_date:
             meta["due_date"] = self.due_date
         if self.agent_context:
@@ -585,10 +608,14 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             status_reason=meta.get("status_reason", "") or "",
             parked_awaiting=meta.get("parked_awaiting", "") or "",
             assignee=meta.get("assignee", ""),
+            assigned_at=meta.get("assigned_at", "") or "",
             parent=parent,
             dependencies=meta.get("dependencies", []) or [],
             evidence=meta.get("evidence", []) or [],
             priority=coerce_task_priority(meta.get("priority"), kwargs["id"]),
+            date=meta.get("date", "") or "",
+            start_date=meta.get("start_date", "") or "",
+            end_date=meta.get("end_date", "") or "",
             due_date=meta.get("due_date", ""),
             agent_context=meta.get("agent_context", {}) or {},
             status_change_log=meta.get("status_change_log", []) or [],

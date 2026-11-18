@@ -1687,7 +1687,15 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "embedding is owed, not failed (ADR-0035)",
     ),
+    ("pyrite/cli/init_command.py", "available_templates"): (
+        "safe",
+        "optional plugin preset discovery: built-in templates still resolve if plugin loading fails",
+    ),
     ("pyrite/cli/init_command.py", "init_kb"): ("fixed", "TestInitIndexing"),
+    ("pyrite/cli/init_command.py", "resolve_template"): (
+        "safe",
+        "optional plugin preset resolution: falls back to built-in templates if plugin loading fails",
+    ),
     ("pyrite/cli/kb_commands.py", "kb_discover"): ("safe", "already registered is not a failure"),
     ("pyrite/cli/mcp_setup_command.py", "_restore_unavailable_reason"): (
         "safe",
@@ -1806,6 +1814,12 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
         "index health exits 1 when unhealthy, in its caller",
+    ),
+    ("pyrite/cli/index_commands.py", "_print_unreadable_folders"): (
+        "safe",
+        "its callers (index sync, index build, kb reindex) count each folder as failed "
+        "through _could_not_reach and exit 3, or 1 when nothing synced (#1546; "
+        "tests/test_an_unlisted_folder_keeps_its_rows.py)",
     ),
     ("pyrite/cli/kb_commands.py", "kb_gc"): ("safe", "'red' is colour: each removal is reported"),
     ("pyrite/cli/kb_commands.py", "kb_health"): (

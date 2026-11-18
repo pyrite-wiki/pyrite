@@ -11,7 +11,6 @@ import dataclasses
 import logging
 import re
 import shlex
-from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
@@ -816,26 +815,42 @@ class KBService:
         refusal (:meth:`_keep_on_disk_enum_values`). Create passes none and
         is always strict.
         """
-        # Keep the full message so another invalid value remains a new error.
-        prior_model_errors = Counter(
-            existing_entry.validate()
+        # A model row is the file's ("kept") only when the loaded entry has the
+        # same row (field, rule, message) AND the value the rule judged is the
+        # same YAML value, type included (#1588 fix round 1). Pairing by the
+        # message alone let a different value whose row prints the same pass
+        # as kept and be written: `importance: 5.5` updated with "5.5".
+        prior_rows = (
+            [
+                (row, existing_entry.rule_input(row.get("field", "")))
+                for row in existing_entry.validation_errors()
+            ]
             if existing_entry is not None and type(existing_entry) is type(entry)
             else []
         )
         model_errors = []
         model_warnings = []
         # The structured rows (#1284) are what a refusal carries: one per
-        # refused field, so REST, MCP and the CLI name the field. The message
-        # stays the same sentence `validate()` produces, which is what the
-        # on-disk comparison below keys on.
+        # refused field, so REST, MCP and the CLI name the field.
         for row in entry.validation_errors():
             message = row["message"]
-            if prior_model_errors[message]:
-                prior_model_errors[message] -= 1
+            judged = entry.rule_input(row.get("field", ""))
+            match = next(
+                (
+                    i
+                    for i, (prior, value) in enumerate(prior_rows)
+                    if (prior.get("field"), prior.get("rule"), prior["message"])
+                    == (row.get("field"), row.get("rule"), message)
+                    and _same_yaml_value(value, judged)
+                ),
+                None,
+            )
+            if match is not None:
+                del prior_rows[match]
                 model_warnings.append(
                     {
                         "field": row.get("field", ""),
-                        "rule": "model_validation",
+                        "rule": row.get("rule", "model_validation"),
                         "severity": "warning",
                         "message": message,
                         "note": "violation already on disk; kept",
@@ -1442,6 +1457,10 @@ class KBService:
     def _hook_ctx(
         self, kb_name: str, kb_config: KBConfig, operation: str, extra: dict | None = None
     ) -> PluginContext:
+        # `kb_schema` is what lets a before_save hook judge by the KB's own
+        # declarations: `_task_validate_transition` reads the task
+        # `state_machine` a kb.yaml declares from it, and with no schema it
+        # falls back to the core TASK_WORKFLOW (#1709).
         return PluginContext(
             config=self.config,
             db=self.db,
@@ -1449,6 +1468,7 @@ class KBService:
             user="",
             operation=operation,
             kb_type=kb_config.kb_type,
+            kb_schema=kb_config.kb_schema,
             **({"extra": extra} if extra else {}),
         )
 
@@ -1698,7 +1718,9 @@ class KBService:
         The declaration is ``KBSchema.type_fields`` (core < plugin < kb.yaml),
         never the class's dataclass fields (the maintainer on #86, 2026-10-20).
         A field the caller sent, at any spelling and empty or not, is the
-        caller's (ADR-0042 #720). One not sent is added before the entry is
+        caller's (ADR-0042 #720), as the declared type stores it
+        (``FieldSchema.coerce``: a scalar sent to a list is ``[scalar]``,
+        #1502). One not sent is added before the entry is
         built, so the entry that is validated, given to the hooks, indexed,
         returned and written is one entry:
 
@@ -1722,7 +1744,8 @@ class KBService:
         model = {f.name for f in dataclasses.fields(cls) if f.init and not f.name.startswith("_")}
         aliases = class_field_aliases(cls, entry_type)
         envelope = fields.get("metadata")
-        envelope = envelope if isinstance(envelope, Mapping) else {}
+        envelope = dict(envelope) if isinstance(envelope, Mapping) else {}
+        fields = dict(fields)
         added: dict[str, Any] = {}
         attributes: dict[str, str | None] = {}
         for name, schema in kb_config.kb_schema.type_fields(entry_type).items():
@@ -1731,10 +1754,14 @@ class KBService:
             field, _rest = field_at(cls, entry_type, (name,))
             if field in skip or field in added or field in attributes:
                 continue
-            sent = any(
-                path[-1] in (envelope if len(path) > 1 else fields)
-                for path in spellings_of(cls, entry_type, field)
-            )
+            sent = False
+            for path in spellings_of(cls, entry_type, field):
+                where = envelope if len(path) > 1 else fields
+                if path[-1] in where:
+                    sent = True
+                    # A value sent for a declared list is stored as a list,
+                    # at the spelling it was sent at (#1502).
+                    where[path[-1]] = schema.coerce(where[path[-1]])
             attribute = field if field in model else None
             if attribute is None:
                 attribute = next((a for a, t in aliases.items() if t == field and a in model), None)
@@ -1746,6 +1773,8 @@ class KBService:
                 added[field] = schema.empty_value()
             if attribute is None:
                 attributes[field] = None
+        if envelope:
+            fields["metadata"] = envelope
         return {**fields, **added}, attributes
 
     def _prepare_and_save(
@@ -1917,7 +1946,10 @@ class KBService:
             kb_config = self.require_kb(kb_name)
         else:
             kb_config = self._writable_kb(kb_name)
-        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
+        # Built on the first item that writes, inside its try: `_hook_ctx`
+        # reads the KB's schema, and a kb.yaml that does not load must refuse
+        # each item (as `_prepare` does), not the whole call (#1709).
+        hook_ctx: PluginContext | None = None
 
         results: list[dict[str, Any]] = []
         created_ids: list[tuple[str, str]] = []  # (entry_id, kb_name) for batch embed
@@ -1955,6 +1987,8 @@ class KBService:
                     would_create_keys.add(entry_paths.folded_path_key(kb_config.path, resolved))
                     item: dict[str, Any] = {"created": False, "valid": True, "entry_id": entry.id}
                 else:
+                    if hook_ctx is None:
+                        hook_ctx = self._hook_ctx(kb_name, kb_config, "create")
                     written = self._prepare_and_save(
                         kb_name,
                         kb_config,
@@ -2178,7 +2212,8 @@ class KBService:
         ``importance: high`` read as 5 became ``importance: 5``, and a task
         grew the ``importance``/``priority`` defaults it never had. A request
         naming fields on its own (``{importance: 5}``) is the caller's values,
-        each written as sent; the CLI's ``-f`` never passes through here.
+        each written as sent (an accepted ``importance`` as its int,
+        ``Entry.file_value``); the CLI's ``-f`` never passes through here.
         """
         # `kb_get` answers `{"entry": {...}}`; sent back whole, that is one
         # undeclared key holding the read, which an update would write into
@@ -2217,7 +2252,9 @@ class KBService:
         for key, value in fields.items():
             if key in not_written or (value is None and key not in updatable):
                 ignored.append(key)
-            elif key in reading and reading[key] == value:
+            elif key in reading and _same_yaml_value(reading[key], value):
+                # The same YAML value, type included (#1588 fix round 1):
+                # `true` is not an echo of a reading of 1, so it is judged.
                 unchanged.append(key)
             else:
                 updates[key] = value
@@ -2691,7 +2728,9 @@ class KBService:
         An appended link or source item is checked as one before anything is
         written (``check_link_target``: what the index could not store).
         Values are validated as the field's type (``_value_for_file``) and
-        written as the caller sent them, never as the model's reading.
+        written as the caller sent them, never as the model's reading,
+        except where the model names a storage form (``Entry.file_value``:
+        an accepted ``importance`` is written as its int).
         """
         from ..schema.field_aliases import (
             NotAFieldError,
@@ -2800,9 +2839,15 @@ class KBService:
         # `status_change_log[0]` re-read as a list index).
         path: tuple[Any, ...] = (*head, *rest)
         if isinstance(op, Set):
-            value = (
-                self._value_for_file(entry, field, op.value) if not rest else _plain_value(op.value)
-            )
+            sent = op.value
+            if not rest:
+                # A value set on a declared list field is stored as a list
+                # (#1502): the same coercion a create makes, on the resolved
+                # field (an alias or `metadata.k` is its target here).
+                declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+                if declared is not None:
+                    sent = declared.coerce(sent)
+            value = self._value_for_file(entry, field, sent) if not rest else _plain_value(sent)
             spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
             if _same_instant_as_file(file_values, spelled, value):
                 return Set(path, file_values[spelled])  # the same instant: no change
@@ -2860,6 +2905,9 @@ class KBService:
                     ],
                 )
             value = TimestampText(spelled)
+        # The model says what form a field's accepted value is stored in
+        # (`importance`: the int the one rule reads, #1588); this path adds none.
+        value = entry.file_value(key, value)
         if hasattr(entry, key):
             _as_field_type(entry, key, value)  # validation only: refuses before any write
         return _plain_value(value)
@@ -4882,6 +4930,22 @@ def _frontmatter_span(text: str) -> FrontmatterSpan:
     split = split_frontmatter(text)
     assert isinstance(split, Frontmatter), split  # apply() just produced it
     return FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+
+
+def _same_yaml_value(a: Any, b: Any) -> bool:
+    """``values_identical`` (the same YAML value, type included: ``True`` is not
+    ``1``, ``"5.5"`` is not ``5.5``), and ``.nan`` is the same value as itself.
+
+    What "the update sent the value the file holds" means for a kept model row
+    and for an echo's unchanged key (#1588 fix round 1). ``values_identical``
+    compares a float with ``==``, so ``.nan`` never equals itself there and a
+    file's own ``importance: .nan`` would stop an update of another field.
+    """
+    from ..schema.field_aliases import values_identical
+
+    if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
+        return True
+    return values_identical(a, b)
 
 
 def _nested_block_is_all_equal_pairs(entry: Entry, file_values: dict[str, Any]) -> bool:

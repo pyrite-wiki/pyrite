@@ -1,0 +1,290 @@
+# tests/test_a_failure_is_never_a_success.py: four shrink-only baselines (T4-1, #1531).
+# Never add or raise a line: lower or delete it when a site is removed. One line per file (or
+# per handler group), so two honest pull requests never touch the same line (#1608).
+#
+# http_exception | <count> | <path>   HTTPException( calls outside server/errors.py and
+#                                     server/endpoints/write_refusal.py (target 0)
+# error_dict     | <count> | <path>   dict literals with an "error" key and no "error_code"
+# unknown_code   | <count> | <path>   upper-case code literals handed to an error builder that
+#                                     no PyriteError subclass carries (target 0)
+# broad_except   | <path> | <function> | <class> | <count> | <reason>
+#                                     every handler `ruff --select BLE001 --ignore-noqa` finds,
+#                                     classified: swallow-to-default, logs-and-re-raises or
+#                                     boundary-backstop (a reason for the last two)
+# Counts are dev's at the commit this file was written; the commands are in the test's docstring.
+
+http_exception | 8 | pyrite/server/api.py
+http_exception | 25 | pyrite/server/auth_endpoints.py
+http_exception | 1 | pyrite/server/auth_rate_limit.py
+http_exception | 2 | pyrite/server/authz.py
+http_exception | 1 | pyrite/server/branding_endpoints.py
+http_exception | 21 | pyrite/server/endpoints/admin.py
+http_exception | 7 | pyrite/server/endpoints/ai_ep.py
+http_exception | 1 | pyrite/server/endpoints/blocks.py
+http_exception | 6 | pyrite/server/endpoints/clipper.py
+http_exception | 3 | pyrite/server/endpoints/collections.py
+http_exception | 2 | pyrite/server/endpoints/daily.py
+http_exception | 27 | pyrite/server/endpoints/entries.py
+http_exception | 10 | pyrite/server/endpoints/git_ops.py
+http_exception | 6 | pyrite/server/endpoints/kbs.py
+http_exception | 14 | pyrite/server/endpoints/repos.py
+http_exception | 5 | pyrite/server/endpoints/reviews.py
+http_exception | 2 | pyrite/server/endpoints/search.py
+http_exception | 2 | pyrite/server/endpoints/settings_ep.py
+http_exception | 2 | pyrite/server/endpoints/starred.py
+http_exception | 5 | pyrite/server/endpoints/templates.py
+http_exception | 2 | pyrite/server/endpoints/versions.py
+http_exception | 9 | pyrite/server/endpoints/worktree.py
+http_exception | 1 | pyrite/server/mcp_routes.py
+http_exception | 1 | pyrite/server/static.py
+
+error_dict | 2 | extensions/encyclopedia/src/pyrite_encyclopedia/plugin.py
+error_dict | 2 | extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py
+error_dict | 1 | extensions/journalism-investigation/src/pyrite_journalism_investigation/investigation_setup.py
+error_dict | 11 | extensions/journalism-investigation/src/pyrite_journalism_investigation/plugin.py
+error_dict | 10 | extensions/journalism-investigation/src/pyrite_journalism_investigation/promote.py
+error_dict | 2 | extensions/journalism-investigation/src/pyrite_journalism_investigation/queries.py
+error_dict | 29 | extensions/software-kb/src/pyrite_software_kb/plugin.py
+error_dict | 2 | extensions/zettelkasten/src/pyrite_zettelkasten/plugin.py
+error_dict | 1 | pyrite/cli/__init__.py
+error_dict | 2 | pyrite/cli/entry_commands.py
+error_dict | 3 | pyrite/cli/qa_commands.py
+error_dict | 1 | pyrite/cli/search_commands.py
+error_dict | 1 | pyrite/server/api.py
+error_dict | 2 | pyrite/server/endpoints/repos.py
+error_dict | 1 | pyrite/server/endpoints/worktree.py
+error_dict | 1 | pyrite/server/mcp_server.py
+error_dict | 4 | pyrite/services/export_service.py
+error_dict | 13 | pyrite/services/git_service.py
+error_dict | 10 | pyrite/services/kb_service.py
+error_dict | 1 | pyrite/services/qa_analytics_service.py
+error_dict | 17 | pyrite/services/repo_service.py
+error_dict | 3 | pyrite/services/schema_service.py
+error_dict | 2 | pyrite/services/task_service.py
+error_dict | 1 | pyrite/services/url_checker.py
+error_dict | 12 | pyrite/storage/index.py
+
+unknown_code | 1 | extensions/journalism-investigation/src/pyrite_journalism_investigation/investigation_setup.py
+unknown_code | 1 | extensions/software-kb/src/pyrite_software_kb/cli.py
+unknown_code | 7 | pyrite/admin_cli.py
+unknown_code | 4 | pyrite/cli/__init__.py
+unknown_code | 2 | pyrite/cli/db_commands.py
+unknown_code | 5 | pyrite/cli/entry_commands.py
+unknown_code | 3 | pyrite/cli/extension_commands.py
+unknown_code | 1 | pyrite/cli/ids_commands.py
+unknown_code | 4 | pyrite/cli/index_commands.py
+unknown_code | 1 | pyrite/cli/init_command.py
+unknown_code | 3 | pyrite/cli/kb_commands.py
+unknown_code | 5 | pyrite/cli/repo_commands.py
+unknown_code | 1 | pyrite/read_cli.py
+unknown_code | 54 | pyrite/server/mcp_server.py
+unknown_code | 6 | pyrite/services/repo_service.py
+unknown_code | 2 | pyrite/utils/errors.py
+
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py | bulk_edges | logs-and-re-raises | 1 | prints the failure and exits 1
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/ftm.py | import_ftm | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/investigation_setup.py | build_investigation_status | swallow-to-default | 2 |
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/plugin.py | JournalismInvestigationPlugin._mcp_create_claim | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/plugin.py | JournalismInvestigationPlugin._mcp_create_entity | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/plugin.py | JournalismInvestigationPlugin._mcp_create_event | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/plugin.py | JournalismInvestigationPlugin._mcp_log_source | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | extensions/journalism-investigation/src/pyrite_journalism_investigation/promote.py | promote_claim_to_edge | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | extensions/social/src/pyrite_social/cli.py | social_reputation | logs-and-re-raises | 1 | prints the failure and exits 1
+broad_except | extensions/social/src/pyrite_social/cli.py | social_vote | logs-and-re-raises | 1 | prints the failure and exits 1
+broad_except | extensions/social/src/pyrite_social/hooks.py | after_delete_adjust_reputation | swallow-to-default | 1 |
+broad_except | extensions/social/src/pyrite_social/hooks.py | after_save_update_counts | swallow-to-default | 1 |
+broad_except | extensions/software-kb/src/pyrite_software_kb/adr_listing.py | resolve_adr_kb | swallow-to-default | 1 |
+broad_except | extensions/software-kb/src/pyrite_software_kb/cli.py | sw_migrate_standards | swallow-to-default | 1 |
+broad_except | extensions/software-kb/src/pyrite_software_kb/plugin.py | SoftwareKBPlugin._mcp_context_for_item | swallow-to-default | 1 |
+broad_except | extensions/software-kb/src/pyrite_software_kb/plugin.py | SoftwareKBPlugin._mcp_create_backlog_item | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | extensions/software-kb/src/pyrite_software_kb/plugin.py | SoftwareKBPlugin._mcp_prioritize | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | extensions/software-kb/src/pyrite_software_kb/plugin.py | SoftwareKBPlugin._mcp_review_queue | swallow-to-default | 1 |
+broad_except | extensions/software-kb/src/pyrite_software_kb/plugin.py | SoftwareKBPlugin.get_orient_supplement | swallow-to-default | 2 |
+broad_except | pyrite/cli/__init__.py | _LazyPluginTyper._mount_plugin_cli | swallow-to-default | 1 |
+broad_except | pyrite/cli/__init__.py | import_entries | boundary-backstop | 1 | reports through the CLI error path
+broad_except | pyrite/cli/export_commands.py | _follow_links | swallow-to-default | 1 |
+broad_except | pyrite/cli/export_commands.py | _load_entry_with_reason | boundary-backstop | 2 | returns a failure value the caller reports
+broad_except | pyrite/cli/export_commands.py | export_collection | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/cli/extension_commands.py | extension_install | swallow-to-default | 1 |
+broad_except | pyrite/cli/extension_commands.py | extension_list | swallow-to-default | 3 |
+broad_except | pyrite/cli/index_commands.py | index_build | swallow-to-default | 1 |
+broad_except | pyrite/cli/index_commands.py | index_sync | swallow-to-default | 1 |
+broad_except | pyrite/cli/init_command.py | available_templates | swallow-to-default | 1 |
+broad_except | pyrite/cli/init_command.py | init_kb | swallow-to-default | 1 |
+broad_except | pyrite/cli/init_command.py | resolve_template | swallow-to-default | 1 |
+broad_except | pyrite/cli/kb_commands.py | kb_commit | boundary-backstop | 1 | reports through the CLI error path
+broad_except | pyrite/cli/kb_commands.py | kb_push | boundary-backstop | 1 | reports through the CLI error path
+broad_except | pyrite/cli/link_commands.py | links_bulk_create | logs-and-re-raises | 1 | re-raises as a ValidationError
+broad_except | pyrite/cli/mcp_setup_command.py | _setup_claude_code | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/cli/mcp_setup_command.py | _setup_claude_code.holds | swallow-to-default | 1 |
+broad_except | pyrite/cli/mcp_setup_command.py | _setup_claude_code.run | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/cli/mcp_setup_command.py | mcp_setup | boundary-backstop | 4 | returns a failure value the caller reports
+broad_except | pyrite/cli/protocol_commands.py | protocol_check | swallow-to-default | 1 |
+broad_except | pyrite/cli/protocol_commands.py | protocol_list | swallow-to-default | 1 |
+broad_except | pyrite/cli/schema_commands.py | _parse_frontmatter | boundary-backstop | 2 | returns a failure value the caller reports
+broad_except | pyrite/cli/search_commands.py | _warn_if_stale | swallow-to-default | 1 |
+broad_except | pyrite/cli/search_commands.py | register_search_command.search | logs-and-re-raises | 1 | logs, then prints a zero-result body with an error key (T4-7) and exits
+broad_except | pyrite/config.py | GitHubAuth.has_valid_token | swallow-to-default | 1 |
+broad_except | pyrite/config.py | PyriteConfig.from_dict | swallow-to-default | 1 |
+broad_except | pyrite/config.py | _untrusted_save_data | swallow-to-default | 1 |
+broad_except | pyrite/config.py | auto_discover_kbs | swallow-to-default | 1 |
+broad_except | pyrite/github_auth.py | check_github_auth | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/github_auth.py | get_github_user_info | swallow-to-default | 1 |
+broad_except | pyrite/github_auth.py | load_github_auth | swallow-to-default | 1 |
+broad_except | pyrite/github_auth.py | start_oauth_flow | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/github_auth.py | start_oauth_flow | swallow-to-default | 1 |
+broad_except | pyrite/logging.py | _takes_a_value | swallow-to-default | 1 |
+broad_except | pyrite/migrations.py | load_plugin_migrations | swallow-to-default | 1 |
+broad_except | pyrite/models/base.py | _pristine_frontmatter | swallow-to-default | 1 |
+broad_except | pyrite/models/base.py | capture_extra_frontmatter | swallow-to-default | 1 |
+broad_except | pyrite/models/base.py | parse_datetime | swallow-to-default | 1 |
+broad_except | pyrite/models/core_types.py | entry_id_from_markdown | swallow-to-default | 1 |
+broad_except | pyrite/models/core_types.py | explicit_entry_id | swallow-to-default | 1 |
+broad_except | pyrite/models/core_types.py | get_entry_class | swallow-to-default | 1 |
+broad_except | pyrite/models/protocols.py | check_protocol_satisfaction | swallow-to-default | 1 |
+broad_except | pyrite/plugins/context.py | PluginContext.search_semantic | swallow-to-default | 2 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._aggregate_dict | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._aggregate_dict_for_kb | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._aggregate_dict_of_lists | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._aggregate_dict_of_lists_for_kb | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._aggregate_list | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._aggregate_list_for_kb | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._conformance_for | swallow-to-default | 2 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._plugin_kb_types | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry._plugin_matches_kb_type | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.get_all_field_schemas | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.get_all_protocols | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.get_all_type_metadata | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.get_orient_supplements | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.mcp_tools_by_tier | swallow-to-default | 2 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.run_validators | swallow-to-default | 1 |
+broad_except | pyrite/plugins/registry.py | PluginRegistry.set_context | swallow-to-default | 1 |
+broad_except | pyrite/schema/core_types.py | resolve_type_metadata | swallow-to-default | 1 |
+broad_except | pyrite/schema/field_aliases.py | _class_keys | swallow-to-default | 1 |
+broad_except | pyrite/schema/field_aliases.py | _type_names_of | swallow-to-default | 1 |
+broad_except | pyrite/schema/field_aliases.py | field_aliases | swallow-to-default | 1 |
+broad_except | pyrite/schema/field_aliases.py | field_aliases_findings | swallow-to-default | 1 |
+broad_except | pyrite/schema/kb_schema.py | KBSchema.type_fields | swallow-to-default | 1 |
+broad_except | pyrite/schema/kb_schema.py | KBSchema.validate_entry | swallow-to-default | 1 |
+broad_except | pyrite/schema/provenance.py | get_all_relationship_types | swallow-to-default | 1 |
+broad_except | pyrite/server/api.py | create_app | swallow-to-default | 1 |
+broad_except | pyrite/server/auth_endpoints.py | github_connection_status | swallow-to-default | 1 |
+broad_except | pyrite/server/endpoints/admin.py | get_plugin_detail | swallow-to-default | 4 |
+broad_except | pyrite/server/endpoints/admin.py | list_plugins | swallow-to-default | 5 |
+broad_except | pyrite/server/endpoints/ai_ep.py | ai_chat | swallow-to-default | 1 |
+broad_except | pyrite/server/endpoints/ai_ep.py | ai_suggest_links | swallow-to-default | 1 |
+broad_except | pyrite/server/endpoints/collections.py | create_collection | swallow-to-default | 1 |
+broad_except | pyrite/server/endpoints/entries.py | import_entries | logs-and-re-raises | 1 | re-raises as the HTTP 400 refusal
+broad_except | pyrite/server/endpoints/entries.py | list_type_schemas | swallow-to-default | 1 |
+broad_except | pyrite/server/endpoints/worktree.py | merge_queue | swallow-to-default | 1 |
+broad_except | pyrite/server/endpoints/worktree.py | worktree_status | swallow-to-default | 1 |
+broad_except | pyrite/server/mcp_routes.py | _TrackedSend.finish | swallow-to-default | 1 |
+broad_except | pyrite/server/mcp_routes.py | _sdk_checks_session_owner | swallow-to-default | 1 |
+broad_except | pyrite/server/mcp_server.py | PyriteMCPServer.__init__ | swallow-to-default | 1 |
+broad_except | pyrite/server/mcp_server.py | PyriteMCPServer._register_plugin_tools | swallow-to-default | 1 |
+broad_except | pyrite/server/websocket.py | ConnectionManager._close_quietly | swallow-to-default | 1 |
+broad_except | pyrite/server/websocket.py | ConnectionManager.broadcast | swallow-to-default | 1 |
+broad_except | pyrite/server/worktree_resolver.py | WorktreeResolver.invalidate_diff_cache | swallow-to-default | 1 |
+broad_except | pyrite/services/auth_service.py | AuthService.get_github_token_for_user | swallow-to-default | 1 |
+broad_except | pyrite/services/auth_service.py | AuthService.get_user_api_key | swallow-to-default | 1 |
+broad_except | pyrite/services/embedding_service.py | EmbeddingService.embed_all | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/embedding_service.py | EmbeddingService.prewarm | swallow-to-default | 1 |
+broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker._entry_is_gone | swallow-to-default | 1 |
+broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker._get_embedding_svc | swallow-to-default | 1 |
+broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker.has_pending | swallow-to-default | 1 |
+broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker.process_batch | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/embedding_worker.py | settle_embed_queue_by_kb | swallow-to-default | 1 |
+broad_except | pyrite/services/export_service.py | ExportService.commit_kb | swallow-to-default | 1 |
+broad_except | pyrite/services/file_search.py | search_kb_files | swallow-to-default | 1 |
+broad_except | pyrite/services/id_pin_service.py | scan | swallow-to-default | 1 |
+broad_except | pyrite/services/index_worker.py | IndexWorker._run_rebuild | swallow-to-default | 1 |
+broad_except | pyrite/services/index_worker.py | IndexWorker._run_sync | swallow-to-default | 1 |
+broad_except | pyrite/services/index_worker.py | IndexWorker._update_progress | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_registry_service.py | KBRegistryService._apply_preset | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._auto_embed | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._drop_managed_for_import | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._extract_frontmatter | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._get_embedding_svc | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._get_embedding_worker | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._kb_source | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._queue_can_see_our_writes | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._refuse_conflicting_create_spellings | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._schema_result | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService._update | logs-and-re-raises | 1 | re-raises as EntryNotFoundError
+broad_except | pyrite/services/kb_service.py | KBService.add_links | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/kb_service.py | KBService.bulk_create_entries | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/kb_service.py | KBService.claim_entry | boundary-backstop | 1 | returns an {error} dict to the caller (shape 2)
+broad_except | pyrite/services/kb_service.py | KBService.orient | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | KBService.publish_changes | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/kb_service.py | KBService.reconcile_templated_subdirectories | boundary-backstop | 2 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/kb_service.py | _holds_id | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | _load_link_source | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | _refuse_unmodellable | swallow-to-default | 1 |
+broad_except | pyrite/services/kb_service.py | _yaml_reads_a_timestamp | swallow-to-default | 1 |
+broad_except | pyrite/services/llm_service.py | LLMService.test_connection | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/services/qa_fix_service.py | QAFixService._file_value | swallow-to-default | 1 |
+broad_except | pyrite/services/qa_fix_service.py | QAFixService.fix_kb.attempt | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/qa_service.py | QAService._check_file_values | swallow-to-default | 1 |
+broad_except | pyrite/services/qa_service.py | QAService._check_llm_rubric_all | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/qa_service.py | QAService._check_non_string_titles | swallow-to-default | 1 |
+broad_except | pyrite/services/qa_service.py | QAService._check_rubric_evaluation | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/qa_service.py | QAService._maybe_create_task | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/qa_service.py | QAService.assess_kb | swallow-to-default | 1 |
+broad_except | pyrite/services/query_expansion_service.py | QueryExpansionService.expand | swallow-to-default | 1 |
+broad_except | pyrite/services/repo_service.py | RepoService.discover_kbs | swallow-to-default | 1 |
+broad_except | pyrite/services/schema_service.py | SchemaService.migrate_entries | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/services/search_service.py | SearchService._index_has_entries | swallow-to-default | 1 |
+broad_except | pyrite/services/starred_service.py | StarredService._resolve_titles | swallow-to-default | 1 |
+broad_except | pyrite/services/task_service.py | TaskService.list_tasks | swallow-to-default | 1 |
+broad_except | pyrite/services/url_checker.py | URLChecker.check_url | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/services/user_service.py | UserService.get_current_user | swallow-to-default | 1 |
+broad_except | pyrite/services/version_service.py | VersionService.get_entry_at_version | swallow-to-default | 1 |
+broad_except | pyrite/storage/alembic/versions/002_collaboration_tables.py | upgrade | swallow-to-default | 4 |
+broad_except | pyrite/storage/backends/base_backend.py | DeclaredFieldTypes._kb_path | swallow-to-default | 1 |
+broad_except | pyrite/storage/backends/base_backend.py | DeclaredFieldTypes._schema | swallow-to-default | 2 |
+broad_except | pyrite/storage/backends/postgres_backend.py | _announce_experimental | swallow-to-default | 4 |
+broad_except | pyrite/storage/connection.py | ConnectionMixin._create_plugin_tables | swallow-to-default | 1 |
+broad_except | pyrite/storage/connection.py | ConnectionMixin._dispose_after_failed_open | swallow-to-default | 2 |
+broad_except | pyrite/storage/connection.py | ConnectionMixin._load_extensions | swallow-to-default | 1 |
+broad_except | pyrite/storage/connection.py | ConnectionMixin._load_extensions | boundary-backstop | 2 | puts the failure in an error list or entry of its result
+broad_except | pyrite/storage/connection.py | ConnectionMixin.close | swallow-to-default | 1 |
+broad_except | pyrite/storage/connection.py | ConnectionMixin.request_handle | swallow-to-default | 1 |
+broad_except | pyrite/storage/connection.py | ConnectionMixin.session_scope | swallow-to-default | 1 |
+broad_except | pyrite/storage/connection.py | _FallbackSessionHolder.__del__ | swallow-to-default | 2 |
+broad_except | pyrite/storage/crud.py | query_tag_text | swallow-to-default | 1 |
+broad_except | pyrite/storage/document_manager.py | DocumentManager._remove_old_file | swallow-to-default | 1 |
+broad_except | pyrite/storage/document_manager.py | DocumentManager._uses_templated_subdir | swallow-to-default | 1 |
+broad_except | pyrite/storage/file_operations.py | _final_check | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/storage/file_operations.py | _scalar_of | swallow-to-default | 1 |
+broad_except | pyrite/storage/file_operations.py | frontmatter_refusal | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/storage/file_operations.py | unmodellable_reason | swallow-to-default | 1 |
+broad_except | pyrite/storage/index.py | IndexManager._check_invalid_status | swallow-to-default | 1 |
+broad_except | pyrite/storage/index.py | IndexManager._check_off_list_values | swallow-to-default | 1 |
+broad_except | pyrite/storage/index.py | IndexManager._entry_to_dict | swallow-to-default | 4 |
+broad_except | pyrite/storage/index.py | IndexManager._load_schemas | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/storage/index.py | IndexManager.check_health.validators_for | swallow-to-default | 1 |
+broad_except | pyrite/storage/index.py | IndexManager.plan_reconcile | swallow-to-default | 1 |
+broad_except | pyrite/storage/index.py | IndexManager.reconcile_kb | boundary-backstop | 1 | puts the failure in an error list or entry of its result
+broad_except | pyrite/storage/index.py | _storage_error_for_write | swallow-to-default | 1 |
+broad_except | pyrite/storage/index.py | unmodellable_files | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository._holds | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository._publish_rewrite | boundary-backstop | 2 | returns a failure value the caller reports
+broad_except | pyrite/storage/repository.py | KBRepository._write_refusal | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository.delete | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository.list_entries | swallow-to-default | 2 |
+broad_except | pyrite/storage/repository.py | KBRepository.load | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository.load_for_read | logs-and-re-raises | 1 | re-raises the refusal the loader named
+broad_except | pyrite/storage/repository.py | KBRepository.read_id | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/storage/repository.py | KBRepository.rename | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository.search_files | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | KBRepository.unlisted_entry_rows | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | _loader_refuses | boundary-backstop | 1 | returns a failure value the caller reports
+broad_except | pyrite/storage/repository.py | _refused_fields | swallow-to-default | 1 |
+broad_except | pyrite/storage/repository.py | _rewrite_wikilinks | swallow-to-default | 1 |
+broad_except | pyrite/utils/errors.py | PyriteCLIGroup._invoke | boundary-backstop | 2 | the CLI root's own backstop for a command's exception
+broad_except | pyrite/utils/errors.py | PyriteCLIGroup._invoke | swallow-to-default | 1 |
+broad_except | pyrite/utils/errors.py | _emit | boundary-backstop | 1 | the CLI root's own backstop for a command's exception
+broad_except | pyrite/utils/errors.py | _flush | swallow-to-default | 1 |
+broad_except | pyrite/utils/errors.py | _flush_c_stdio | swallow-to-default | 1 |
+broad_except | pyrite/utils/errors.py | _named | swallow-to-default | 1 |
+broad_except | pyrite/utils/frontmatter.py | leaked_frontmatter_line | swallow-to-default | 1 |
