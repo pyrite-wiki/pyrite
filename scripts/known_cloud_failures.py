@@ -96,4 +96,4 @@ if __name__ == "__main__":
     )
     text = render(path)
     sys.stdout.write(text)
-    sys.exit(2 if text == MALFORMED else 0)
+    sys.exit(2 if text in (MALFORMED, MISSING) else 0)
