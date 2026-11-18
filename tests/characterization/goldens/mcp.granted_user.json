@@ -2848,6 +2848,11 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
+    ],
+    "searched": [
+      "title",
+      "summary",
+      "body"
     ]
   },
   "kb_search | granted_user | readable-kb": {
@@ -2865,6 +2870,11 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "title",
+      "summary",
+      "body"
     ]
   },
   "kb_stats | granted_user | missing-kb": {

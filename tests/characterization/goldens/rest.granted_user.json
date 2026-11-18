@@ -4908,6 +4908,11 @@
           "id": "private-note",
           "kb_name": "private-kb"
         }
+      ],
+      "searched": [
+        "title",
+        "summary",
+        "body"
       ]
     },
     "status": 200
@@ -4927,6 +4932,11 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "title",
+        "summary",
+        "body"
       ]
     },
     "status": 200

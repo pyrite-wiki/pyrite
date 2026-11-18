@@ -693,7 +693,7 @@ class TestMcpContract:
 # ---------------------------------------------------------------------------
 
 _ENVELOPE = {"query", "count", "results"}
-_VERDICT = {"match", "match_basis", "legs_run"}
+_VERDICT = {"match", "match_basis", "legs_run", "searched"}
 
 
 class TestResponseShape:
@@ -766,6 +766,7 @@ class TestResponseShape:
             "match",
             "match_basis",
             "legs_run",
+            "searched",
             "keyword_match",
             "warnings",
         }
@@ -774,7 +775,14 @@ class TestResponseShape:
         assert {"similarity", "legs"} <= set(SearchResult.model_fields)
         with pytest.raises(ValueError):
             SearchResponse(
-                query="q", count=0, results=[], match="none", match_basis="", legs_run=[], new_key=1
+                query="q",
+                count=0,
+                results=[],
+                match="none",
+                match_basis="",
+                legs_run=[],
+                searched=[],
+                new_key=1,
             )
 
     @pytest.mark.control(reason="search() keeps its return type for the internal callers")
@@ -822,7 +830,7 @@ _OLD_ROW_KEYS = {
     "updated_at", "indexed_at", "created_by", "modified_by", "snippet", "rank",
 }  # fmt: skip
 _LEAN_KEYWORD = {"id", "kb_name", "entry_type", "title", "snippet", "rank"}
-_VERDICT_KEYS = {"query", "count", "match", "match_basis", "legs_run", "keyword_match"}
+_VERDICT_KEYS = {"query", "count", "match", "match_basis", "legs_run", "searched", "keyword_match"}
 
 
 @pytest.fixture(params=["pyrite", "pyrite-read"])

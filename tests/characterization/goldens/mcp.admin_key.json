@@ -3629,6 +3629,11 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
+    ],
+    "searched": [
+      "title",
+      "summary",
+      "body"
     ]
   },
   "kb_search | admin_key | private-kb": {
@@ -3646,6 +3651,11 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
+    ],
+    "searched": [
+      "title",
+      "summary",
+      "body"
     ]
   },
   "kb_search | admin_key | readable-kb": {
@@ -3663,6 +3673,11 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "title",
+      "summary",
+      "body"
     ]
   },
   "kb_stats | admin_key | missing-kb": {

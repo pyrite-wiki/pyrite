@@ -1,0 +1,1 @@
+Every search response (CLI `--format json`, MCP `kb_search`, REST `GET /api/search`) carries `searched`, the entry parts searched (`title`, `summary`, `body`), read from the code that builds the index. Tags and declared field values are not indexed yet, so a miss on one is not an absence (#1757).

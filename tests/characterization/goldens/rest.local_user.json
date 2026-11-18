@@ -3429,6 +3429,11 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "title",
+        "summary",
+        "body"
       ]
     },
     "status": 200

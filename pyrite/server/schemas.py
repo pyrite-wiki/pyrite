@@ -171,6 +171,9 @@ class SearchResponse(BaseModel):
     #: search with ``["keyword"]`` here was a keyword search. Not the
     #: per-result ``legs``, which says which legs returned that result.
     legs_run: list[str]
+    #: The entry parts searched: ``title``, ``summary``, ``body``. Tags and
+    #: declared field values are not indexed, so a miss on one is not an absence.
+    searched: list[str]
     #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
     #: or ``none``.
     keyword_match: str | None = None

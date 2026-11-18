@@ -23,6 +23,7 @@ from ..exceptions import (
     outside_text,
 )
 from ..storage.errors import storage_error_from
+from ..storage.virtual_tables import KEYWORD_SEARCHED_PARTS
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB
@@ -1005,7 +1006,7 @@ class SearchService:
 
         Takes what ``search`` takes. Returns a mapping with ``results`` (the
         rows ``search`` returns), ``match`` and ``match_basis``, ``legs_run`` (the
-        legs that ran), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
+        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
         are any (absent otherwise; see ``search``'s docstring, which states
         what each key means).
 
@@ -1051,6 +1052,10 @@ class SearchService:
             "match_basis": basis,
             # Not `legs`: that is the per-row key (which legs returned the row).
             "legs_run": legs_run,
+            # The entry parts searched, from the constant that builds the index
+            # (#1757). Tags and declared field values are not indexed, so a
+            # miss on one of them is not an absence.
+            "searched": list(KEYWORD_SEARCHED_PARTS),
         }
         if "keyword_match" in signal:
             response["keyword_match"] = signal["keyword_match"]
