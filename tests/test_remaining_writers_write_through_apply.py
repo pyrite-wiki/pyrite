@@ -366,13 +366,18 @@ def software_plugin():
     from pyrite.plugins import get_registry
     from pyrite_software_kb.plugin import SoftwareKBPlugin
 
+    registry = get_registry()
     plugin = SoftwareKBPlugin()
-    get_registry().register(plugin)
+    previous = registry._plugins.get(plugin.name)
+    registry.register(plugin)
     cli_app._plugins_mounted = False
     try:
         yield plugin
     finally:
-        get_registry()._plugins.pop(plugin.name, None)
+        if previous is None:
+            registry._plugins.pop(plugin.name, None)
+        else:
+            registry._plugins[plugin.name] = previous
         cli_app._plugins_mounted = False
 
 
