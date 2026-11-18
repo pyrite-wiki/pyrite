@@ -1,0 +1,1 @@
+- `pyrite kb create --ephemeral --ttl` now refuses negative values with exit 2 and a usage error, instead of creating an already-expired KB (#1407).

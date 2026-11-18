@@ -75,6 +75,9 @@ BOARD_FILE = "board.yaml"
 POLICIES = ("warn", "enforce")
 CRITERION_TYPES = ("checker", "judgment", "agent_responsibility")
 #: Checkers ``_evaluate_gate`` runs itself rather than through NAMED_CHECKERS.
+#: ``no_open_blockers`` reads the KB's index, not the file, so ``_evaluate_gate``
+#: runs it outside ``evaluating``: a failed lookup keeps its own error, never
+#: the board's refusal, which is for a cause in board.yaml's content (#1585).
 PLUGIN_CHECKERS = frozenset({"no_open_blockers"})
 #: The keys Pyrite reads at each level. Any other key is refused: a misspelt
 #: ``gates`` or ``wip_limit`` would otherwise be a gate or limit that is
@@ -83,6 +86,15 @@ TOP_KEYS = ("lanes", "wip_policy", "gates")
 LANE_KEYS = ("name", "statuses", "wip_limit")
 GATE_KEYS = ("name", "policy", "criteria")
 CRITERION_KEYS = ("text", "type", "checker", "params", "hint")
+#: The keys a criterion of each type reads. ``judgment`` and
+#: ``agent_responsibility`` are never run, so ``checker`` and ``params`` on one
+#: would be a key Pyrite does not read: refused when the key is present,
+#: whatever its value (#1586).
+CRITERION_KEYS_BY_TYPE = {
+    "checker": CRITERION_KEYS,
+    "judgment": ("text", "type", "hint"),
+    "agent_responsibility": ("text", "type", "hint"),
+}
 
 
 class BoardConfigError(ValidationError):
@@ -374,6 +386,9 @@ def check_criterion(where: str, criterion: object) -> None:
         raise BoardConfigError(
             f"{where}: 'type' must be one of {', '.join(repr(t) for t in CRITERION_TYPES)}"
         )
+    keys = CRITERION_KEYS_BY_TYPE[kind]
+    if _unknown_key(criterion, keys):
+        raise BoardConfigError(f"{where} has a key Pyrite does not read ({', '.join(keys)})")
     if kind != "checker":
         return
     checker = criterion.get("checker")

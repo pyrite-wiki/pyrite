@@ -145,8 +145,15 @@ def task_priority_problem(value: Any) -> str | None:
 TASK_RESOLVED_STATUSES = ("done", "cancelled")
 
 #: The task type's metadata as `resolve_type_metadata` reads it: what ends a
-#: task's live work is what resolves it (one definition; #934).
-TASK_TYPE_METADATA = {"settled_statuses": list(TASK_RESOLVED_STATUSES)}
+#: task's live work is what resolves it (one definition; #934). ``fields``
+#: is what `KBSchema.type_fields` declares for a task, spelled as
+#: `CORE_TYPES` spells a field: a task's `priority` is a number, so every
+#: reader of the index returns it as one (#1503, decision (a) of 2026-11-17).
+#: No default is declared, so a create adds nothing to the file.
+TASK_TYPE_METADATA: dict[str, Any] = {
+    "settled_statuses": list(TASK_RESOLVED_STATUSES),
+    "fields": {"priority": "int"},
+}
 
 # =========================================================================
 # Workflow

@@ -117,6 +117,7 @@ tests](../../../CONTRIBUTING.md#running-the-tests)).
 | The tests guard the change (every branch that changes code, `feat` included) | `scripts/verify-red.sh`, once (CI's `verify-red` job runs the same code) | `verify-red: N red · 0 import-only · 0 unexpected pass · 0 n/a`; paste its summary line into the report |
 | Each guard is tested | delete that guard alone, run the tests | a test fails, for every guard you added |
 | A new error class, refusal message, result key or error code obeys the contracts (the tests that read the source, which your own tests never run) | the tests named in [gotchas.md](gotchas.md), "A New Error Class or Message: Run the Source-Reading Tests", and the rest its `grep` finds | all pass, before the push; CI is otherwise the first place they fail (#1542) |
+| A new CLI command or option passes the tests that walk the CLI tree | the tests named in [gotchas.md](gotchas.md), "A new CLI option" | all pass before the push |
 | Frontend passes | `cd web && npm run check && npm run test:unit && npm run build` | all green |
 | Lint passes | `.venv/bin/ruff check . && .venv/bin/ruff format --check .` | clean |
 
