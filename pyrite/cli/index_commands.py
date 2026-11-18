@@ -419,8 +419,7 @@ def index_sync(
         # After the embed, so each row's embedding state is what it now is.
         from ..services.index_confirm import confirm_entries
 
-        # `--confirm` needs `-k` (refused while click parses), so `resolved` is a KB.
-        assert resolved is not None
+        # None for a blank `-k " "`: the confirm refuses it (KB_NOT_FOUND).
         results["confirm"] = confirm_entries(index_mgr, resolved, names, results)
 
     # A KB whose files could not be read was not synced and kept its rows

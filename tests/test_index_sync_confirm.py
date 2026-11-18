@@ -901,3 +901,25 @@ def test_a_storage_fault_with_no_format_asked_is_the_json_error_shape(corrupt_in
 def test_a_refusal_under_pyrite_format_json_is_json(corrupt_index):
     result = _invoke("index", "sync", env={"PYRITE_FORMAT": "json"})
     assert _json(result)["error_code"] == "STORAGE_ERROR"
+
+
+# --------------------------------------------------------------------------
+# A blank KB name: refused KB_NOT_FOUND on the CLI and MCP, as in round 1
+# (#1747's gap 2 is a stated limit: unchanged until that ticket)
+# --------------------------------------------------------------------------
+
+
+def test_a_blank_kb_name_with_confirm_is_kb_not_found_on_the_cli(world):
+    result = world.cli(
+        "index", "sync", "-k", "  ", "--no-embed", "--format", "json", "--confirm", "x"
+    )
+
+    assert result.exit_code == 1, result.output
+    assert _json(result)["error_code"] == "KB_NOT_FOUND", result.output
+
+
+def test_a_blank_kb_name_with_confirm_is_kb_not_found_over_mcp(world):
+    res = world.mcp("admin")._dispatch_tool("kb_index_sync", {"kb_name": "  ", "confirm": ["x"]})
+
+    assert res.get("error_code") == "KB_NOT_FOUND", res
+    assert res.get("retryable") is False, res

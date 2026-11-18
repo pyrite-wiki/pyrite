@@ -2214,9 +2214,9 @@ class PyriteMCPServer:
             # is unscoped: a scoped caller is refused this tool before the
             # handler runs (fail closed; tests/test_mcp_tool_registry_is_scoped.py,
             # OPTIONAL_KB_TOOLS), and declaring a readable set here would turn
-            # that refusal off. `_confirm_names` has refused an absent name.
+            # that refusal off. `_confirm_names` has refused an absent name;
+            # a blank one resolves to None, which the confirm refuses.
             resolved = self.svc.resolve_kb(kb_name, readable_kbs=None)
-            assert resolved is not None
             results["confirm"] = confirm_entries(self.index_mgr, resolved, confirm, results)
         # What a network caller gets of the result (#1546, #1552), the confirm
         # block included: one place decides it.

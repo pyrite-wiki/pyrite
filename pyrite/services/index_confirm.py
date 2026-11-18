@@ -74,7 +74,7 @@ _NOT_RETURNED = (
 
 def confirm_entries(
     index_mgr: IndexManager,
-    kb: ResolvedKB,
+    kb: ResolvedKB | None,
     names: list[str] | None,
     sync_result: dict[str, Any],
 ) -> dict[str, Any]:
@@ -91,13 +91,20 @@ def confirm_entries(
     and ``outcome`` (``done`` when every row is confirmed, else ``partial``)
     for a caller that sees no exit code.
 
-    Raises ``KBNotFoundError`` when the sync did not reach ``kb``
+    Raises ``KBNotFoundError`` when ``kb`` is None (a blank KB name resolves
+    to none: refused ``KB_NOT_FOUND``, as in round 1, until #1747 settles one
+    code for every surface) or when the sync did not reach ``kb``
     (``sync_result["synced_kbs"]``): MCP and REST resolve a KB through the
     registry as well as the loaded configuration, the sync reads the
     configuration, and nothing synced must not read as ``done``. A fault
     reading the index (the embedding state included) raises ``StorageError``.
     """
     config, db = index_mgr.config, index_mgr.db
+    if kb is None:
+        raise KBNotFoundError(
+            "No KB was named, so nothing was synced or confirmed",
+            suggestion="Name the KB the entries are in with -k / kb_name.",
+        )
     kb_name = kb.name
     if kb_name not in sync_result.get("synced_kbs", []):
         raise KBNotFoundError(
