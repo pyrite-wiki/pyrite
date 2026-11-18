@@ -345,6 +345,13 @@ def task_list(
         "task claim accepts): open, unassigned, unparked, unblocked, no children; "
         "highest priority first. Adds counts and excluded.",
     ),
+    parked: bool | None = typer.Option(
+        None,
+        "--parked/--unparked",
+        help="Only parked tasks (parked_awaiting or retest_after set; due rechecks and "
+        "person parks included), or only unparked ones. Rows gain park_kind, "
+        "retest_after and park_state.",
+    ),
     fields: str | None = typer.Option(
         None,
         "--fields",
@@ -364,6 +371,7 @@ def task_list(
             parent=parent,
             priority=priority,
             dispatchable=dispatchable,
+            parked=parked,
             fields=fields_list,
         )
     finally:
@@ -695,6 +703,77 @@ def task_reset(
     def rich(console, result):
         console.print(f"[green]Reset:[/green] {task_id} ({result['prior_status']} → open)")
         console.print(f"  Reason: {result['reason']}")
+
+    return Outcome.done(result, rich=rich)
+
+
+@task_app.command("park")
+def task_park(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    reason: str = typer.Option(..., "--reason", help="What the task waits on"),
+    kind: str | None = typer.Option(
+        None,
+        "--kind",
+        help="person (a person must act: never handed back to agents) or external "
+        "(the world: back to agents on --retest-after). Absent means external.",
+    ),
+    retest_after: str | None = typer.Option(
+        None,
+        "--retest-after",
+        help="YYYY-MM-DD: from this date an external park is due for a recheck",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Park a task until a date, because of a reason. The status does not change.
+
+    Writes parked_awaiting, park_kind and retest_after in one write; a new
+    park replaces the old one. `task list --dispatchable` leaves a parked
+    task out until its date, then lists it as a recheck.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.park_task(task_id, kb_name, reason, kind=kind, retest_after=retest_after)
+    finally:
+        db.close()
+
+    def rich(console, result):
+        console.print(f"[green]Parked:[/green] {task_id} ({result['park_state']})")
+        console.print(f"  Awaiting: {result['parked_awaiting']}", markup=False)
+        if result["park_kind"]:
+            console.print(f"  Kind: {result['park_kind']}")
+        if result["retest_after"]:
+            console.print(f"  Retest after: {result['retest_after']}")
+
+    return Outcome.done(result, rich=rich)
+
+
+@task_app.command("unpark")
+def task_unpark(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Unpark a task: remove parked_awaiting, park_kind and retest_after.
+
+    The keys are removed, never left empty; the status does not change. A
+    task that is not parked is left as it is.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.unpark_task(task_id, kb_name)
+    finally:
+        db.close()
+
+    def rich(console, result):
+        if result["removed"]:
+            console.print(
+                f"[green]Unparked:[/green] {task_id} (removed {', '.join(result['removed'])})"
+            )
+        else:
+            console.print(f"{task_id} was not parked; nothing changed.")
 
     return Outcome.done(result, rich=rich)
 

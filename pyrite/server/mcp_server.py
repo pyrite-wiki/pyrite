@@ -1941,6 +1941,7 @@ class PyriteMCPServer:
             assignee=args.get("assignee"),
             parent=args.get("parent"),
             dispatchable=bool(args.get("dispatchable")),
+            parked=None if args.get("parked") is None else bool(args["parked"]),
             fields=parse_fields_param(args.get("fields")),
         )
         return listing
@@ -2163,6 +2164,24 @@ class PyriteMCPServer:
         result: dict[str, Any] = self.task_svc.start_task(
             args["task_id"], args["kb_name"], args["assignee"]
         )
+        return result
+
+    def _task_park(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Park a task (`TaskService.park_task`, #1688): the service's dict,
+        the shape `task park` prints."""
+        result: dict[str, Any] = self.task_svc.park_task(
+            args["task_id"],
+            args["kb_name"],
+            args.get("reason") or "",
+            kind=args.get("kind"),
+            retest_after=args.get("retest_after"),
+        )
+        return result
+
+    def _task_unpark(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Unpark a task (`TaskService.unpark_task`, #1688): the three park
+        keys removed; the service's dict, the shape `task unpark` prints."""
+        result: dict[str, Any] = self.task_svc.unpark_task(args["task_id"], args["kb_name"])
         return result
 
     def _task_finish(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:

@@ -22,6 +22,8 @@ other check, whether the claim's loader loads it (``file_loads``).
 
 from __future__ import annotations
 
+import datetime as _dt
+from collections.abc import Mapping
 from typing import Any
 
 from .task import TASK_RESOLVED_STATUSES
@@ -40,7 +42,8 @@ from .task import TASK_RESOLVED_STATUSES
 #: - ``has_children``: its work is in its children (``parent`` or the legacy
 #:   ``parent_task``); the children are listed instead.
 #: - ``assigned``: it names an assignee, of any kind (#1686, question 1).
-#: - ``parked``: ``parked_awaiting`` says why it waits (:func:`is_parked`).
+#: - ``parked``: its park state (:func:`parked_state`) is ``parked`` or
+#:   ``person``; a ``due`` task is listed, marked as a recheck.
 #: - ``blocked``: a dependency is unresolved, or names no task this listing
 #:   can read.
 #: - ``unreadable``: everything else says dispatchable, but the claim's loader
@@ -83,6 +86,98 @@ def is_parked(value: Any) -> bool:
     return True
 
 
+def park_reason(value: Any) -> Any:
+    """A ``parked_awaiting`` value as a listing returns it: ``""`` when it
+    does not park (:func:`is_parked`), a string stripped, anything else as
+    written. Every read path of ``TaskService.list_tasks`` returns this, so
+    whitespace means the same on all of them (#1688)."""
+    if not is_parked(value):
+        return ""
+    return value.strip() if isinstance(value, str) else value
+
+
+#: A task's park state (#1688), one of these. ``none``: not parked.
+#: ``parked``: waiting, not yet due. ``due``: waiting on the world and its
+#: ``retest_after`` has come, so it is an agent's recheck. ``person``: waiting
+#: on a person; it never comes back by date.
+PARK_STATES: tuple[str, ...] = ("none", "parked", "due", "person")
+
+#: The ``park_kind`` values ``task park`` writes. Absent counts as
+#: ``external``; any other value is read as ``person`` (never handed to an
+#: agent) and reported by ``qa validate``.
+PARK_KINDS: tuple[str, ...] = ("person", "external")
+
+
+def park_kind(value: Any) -> str:
+    """A ``park_kind`` value as :func:`parked_state` reads it: ``external``
+    when absent or empty, ``person`` or ``external`` (any case, spaces
+    around), and ``person`` for anything else, so an unknown kind is never
+    handed to an agent."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "external"
+    text = str(value).strip().lower()
+    return text if text in PARK_KINDS else "person"
+
+
+def retest_date(value: Any) -> _dt.date | None:
+    """A ``retest_after`` value as a date, or None when it names none.
+
+    A YAML date, a datetime (its date), an ISO date string, or an ISO
+    datetime string (its date). Anything else -- empty, ``next week``,
+    ``2026-13-01`` -- names no date."""
+    if isinstance(value, _dt.datetime):
+        return value.date()
+    if isinstance(value, _dt.date):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    try:
+        return _dt.date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        return _dt.datetime.fromisoformat(text.replace("Z", "+00:00")).date()
+    except ValueError:
+        return None
+
+
+def _has_value(value: Any) -> bool:
+    return value is not None and not (isinstance(value, str) and not value.strip())
+
+
+def parked_state(task: Mapping[str, Any], today: _dt.date) -> str:
+    """The one park predicate (#1688): one of :data:`PARK_STATES`.
+
+    A pure function of ``task``'s ``parked_awaiting``, ``park_kind`` and
+    ``retest_after`` and the ``today`` the caller gives; it never reads the
+    clock, and never reads the body. Every view reads it: ``task list
+    --dispatchable`` and ``--parked``, and the stale-claim view (#1689),
+    for which a parked claim (any state but ``none``) holds no lease
+    (ADR-0029 section 4).
+
+    - Parked when ``parked_awaiting`` parks (:func:`is_parked`) or
+      ``retest_after`` holds anything: a file with only a date is parked
+      until that date (``qa validate`` reports the missing reason).
+    - A ``person`` park (:func:`park_kind`) is ``person`` on every date.
+    - Otherwise ``due`` when ``retest_after`` names a date on or before
+      ``today``, else ``parked`` -- no date, or one that does not parse,
+      stays parked until it is unparked.
+
+    "Due" is derived and never written back (kb/design.md principle 4).
+    """
+    reason = task.get("parked_awaiting")
+    retest = task.get("retest_after")
+    if not is_parked(reason) and not _has_value(retest):
+        return "none"
+    if park_kind(task.get("park_kind")) == "person":
+        return "person"
+    day = retest_date(retest)
+    if day is not None and day <= today:
+        return "due"
+    return "parked"
+
+
 def dependency_ids(value: Any) -> list[str]:
     """A ``dependencies`` value as a list of ids: a bare string is one id."""
     if isinstance(value, str):
@@ -111,11 +206,15 @@ def _dependency_resolved(
     return target is not None and target["effective_status"] in TASK_RESOLVED_STATUSES
 
 
-def classify_task(row: dict[str, Any], derived: dict[str, dict[str, dict[str, Any]]]) -> str | None:
+def classify_task(
+    row: dict[str, Any], derived: dict[str, dict[str, dict[str, Any]]], *, today: _dt.date
+) -> str | None:
     """``None`` when ``row`` is dispatchable, else its one reason.
 
     ``row`` is a ``list_tasks`` row (``id``, ``kb_name``, ``assignee``,
-    ``parked_awaiting``, ``derived``) plus ``index_status`` (the index's
+    ``parked_awaiting``, ``derived``) plus ``park_kind`` and
+    ``retest_after`` (read by :func:`parked_state` at ``today``),
+    ``index_status`` (the index's
     own status column, which the claim compares), ``dependencies``,
     ``file_present`` and ``file_loads`` (both default true). ``derived`` maps each KB this listing reads to its
     :func:`~pyrite.models.task_completion.derive_completion` result, which
@@ -132,7 +231,7 @@ def classify_task(row: dict[str, Any], derived: dict[str, dict[str, dict[str, An
         return "has_children"
     if str(row.get("assignee") or "").strip():
         return "assigned"
-    if is_parked(row.get("parked_awaiting")):
+    if parked_state(row, today) in ("parked", "person"):
         return "parked"
     kb = row["kb_name"]
     if not all(
@@ -152,10 +251,45 @@ def dispatch_order(row: dict[str, Any]) -> tuple:
 
 
 def classify_tasks(
-    rows: list[dict[str, Any]], derived: dict[str, dict[str, dict[str, Any]]]
+    rows: list[dict[str, Any]],
+    derived: dict[str, dict[str, dict[str, Any]]],
+    *,
+    today: _dt.date,
 ) -> list[tuple[dict[str, Any], str | None]]:
     """Every row with its reason (``None``: dispatchable), in :func:`dispatch_order`."""
-    return [(row, classify_task(row, derived)) for row in sorted(rows, key=dispatch_order)]
+    return [
+        (row, classify_task(row, derived, today=today)) for row in sorted(rows, key=dispatch_order)
+    ]
+
+
+#: Effective statuses whose work is over: a park on such a task is never a
+#: recheck. Every other status is live (open, claimed, in_progress, blocked,
+#: review, and a KB's own states).
+_NOT_LIVE = ("done", "cancelled", "failed")
+
+
+def due_recheck_order(row: dict[str, Any]) -> tuple:
+    """``due_rechecks``' order: priority highest first, then the recheck date
+    (oldest first), then KB and id."""
+    day = retest_date(row.get("retest_after"))
+    return (-int(row["priority"]), day or _dt.date.max, row["kb_name"], row["id"])
+
+
+def due_rechecks(
+    classified: list[tuple[dict[str, Any], str | None]], *, today: _dt.date
+) -> list[dict[str, Any]]:
+    """Every live task whose park is ``due`` and that the dispatchable list
+    does not already give (#1688): a park whose date has come returns as a
+    recheck in ANY live status -- in progress, claimed, blocked, or open but
+    assigned. In :func:`due_recheck_order`."""
+    rows = [
+        row
+        for row, reason in classified
+        if reason is not None
+        and row["derived"]["effective_status"] not in _NOT_LIVE
+        and parked_state(row, today) == "due"
+    ]
+    return sorted(rows, key=due_recheck_order)
 
 
 def count_reasons(classified: list[tuple[dict[str, Any], str | None]]) -> dict[str, int]:

@@ -288,18 +288,21 @@ def test_only_retest_after_is_parked_until_its_date():
     assert _state(ON, parked_awaiting="", park_kind="", retest_after="") == "none"
 
 
-def test_the_predicate_never_reads_the_clock(monkeypatch):
-    """The same inputs give the same answer whatever the clock says."""
+def test_the_predicate_never_reads_the_clock():
+    """Today is an argument: the predicate and what it calls name no clock.
+
+    A source read, because a clock read cannot be monkeypatched out of the
+    ``datetime`` built-ins; the matrix above proves the answers follow the
+    ``today`` given."""
+    import inspect
+
     import pyrite.models.task_queue as tq
 
-    class _Exploding(dt.date):
-        @classmethod
-        def today(cls):
-            raise AssertionError("parked_state read the clock")
-
-    monkeypatch.setattr(tq, "date", _Exploding, raising=False)
-    monkeypatch.setattr(tq, "datetime", _Exploding, raising=False)
-    assert tq.parked_state({"parked_awaiting": "x", "retest_after": "2026-12-10"}, ON) == "due"
+    for fn in (tq.parked_state, tq.retest_date, tq.park_kind, tq.is_parked):
+        source = inspect.getsource(fn)
+        for clock in ("today(", "now(", "utcnow(", "time.time", "date.today"):
+            assert clock not in source, (fn.__name__, clock)
+    assert "today" in inspect.signature(tq.parked_state).parameters
 
 
 # -- The listing views, on every surface ------------------------------------------
@@ -512,6 +515,7 @@ def test_a_new_park_replaces_the_old_one(wworld):
 
 def test_unpark_removes_the_keys_and_leaves_no_empty_values(wworld):
     path = wworld.kb_path(KB) / "ip.md"
+    before_bytes = path.read_bytes()
     before = _front(path)
     _cli(wworld, "park", "ip", "--reason", "r", "--kind", "person", "--retest-after", "2026-12-10")
     code, data = _cli(wworld, "unpark", "ip")
@@ -521,6 +525,7 @@ def test_unpark_removes_the_keys_and_leaves_no_empty_values(wworld):
     after.pop("updated_at", None)
     before.pop("updated_at", None)
     assert after == before  # status, assignee and everything else as before the park
+    assert path.read_bytes() == before_bytes  # the keys left with their own lines
     assert sorted(data["removed"]) == ["park_kind", "parked_awaiting", "retest_after"]
 
 
@@ -576,7 +581,8 @@ def test_park_refuses_an_entry_that_is_not_a_task(wworld):
 def test_park_a_missing_task_is_entry_not_found(wworld):
     code, data = _cli(wworld, "park", "nope", "--reason", "r")
     assert code != 0
-    assert data["error_code"] == "ENTRY_NOT_FOUND", data
+    # The CLI's spelling of a missing entry (docs/json-contracts.md).
+    assert data["error_code"] == "NOT_FOUND", data
 
 
 def _mcp(world, tool, **args):
@@ -656,7 +662,7 @@ def test_qa_reports_bad_park_fields_and_writes_nothing(tmp_path):
     try:
         root = w.kb_path(KB)
         before = {p.name: p.read_bytes() for p in root.glob("*.md")}
-        result = w.cli("qa", "validate", "-k", KB, "--format", "json")
+        result = w.cli("qa", "validate", KB, "--format", "json")
         data = json.loads(result.stdout)
         found = {
             (i["entry_id"], i["field"]) for i in data["issues"] if i.get("rule") == "task_park"

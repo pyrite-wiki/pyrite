@@ -636,6 +636,13 @@ READ_TOOLS = {
                     "Adds `counts` (per reason) and `excluded` (each open task left out, with "
                     "its reason).",
                 },
+                "parked": {
+                    "type": "boolean",
+                    "description": "true: only parked tasks (parked_awaiting or retest_after "
+                    "set, due rechecks and person parks included); false: only unparked ones. "
+                    "Rows gain park_kind, retest_after and park_state "
+                    "(none/parked/due/person).",
+                },
                 "fields": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -1097,6 +1104,50 @@ WRITE_TOOLS = {
                     "type": "string",
                     "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
                 },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_park": {
+        "description": (
+            "Park a task: what it waits on (reason), who must act (kind: person keeps it from "
+            "agents; external, the default, gives it back on its date) and when to recheck "
+            "(retest_after, YYYY-MM-DD). One write; a new park replaces the old one; the status "
+            "does not change. task_list dispatchable leaves it out until the date, then lists it "
+            "with recheck: true (or under due_rechecks when it is not open)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "reason": {"type": "string", "description": "What the task waits on"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["person", "external"],
+                    "description": "person: a person must act, never handed back to agents; "
+                    "external (default): the world, back to agents on retest_after",
+                },
+                "retest_after": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD: from this date an external park is due",
+                },
+            },
+            "required": ["task_id", "kb_name", "reason"],
+        },
+    },
+    "task_unpark": {
+        "description": (
+            "Unpark a task: remove parked_awaiting, park_kind and retest_after (the keys, never "
+            "an empty value) in one write. The status does not change; a task that is not parked "
+            "is left as it is (removed: [])."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
             },
             "required": ["task_id", "kb_name"],
         },

@@ -34,7 +34,12 @@ def list_tasks(
     dispatchable: bool = Query(
         False,
         description="Only tasks a worker can take now, highest priority first; "
-        "adds counts and excluded",
+        "adds counts, excluded and due_rechecks",
+    ),
+    parked: bool | None = Query(
+        None,
+        description="true: only parked tasks (due rechecks and person parks included); "
+        "false: only unparked ones. Rows gain park_kind, retest_after and park_state",
     ),
     fields: str | None = Query(
         None, description="Comma-separated fields per task; id and kb_name are always kept"
@@ -57,6 +62,7 @@ def list_tasks(
         parent=parent,
         kb_names=None if kb else scope.as_set(),
         dispatchable=dispatchable,
+        parked=parked,
         fields=parse_fields_param(fields),
     )
 

@@ -1697,6 +1697,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_task_park(issues, kb_name, entry, shown)
             self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
@@ -1809,6 +1810,60 @@ class QAService:
                 ),
             }
         )
+
+    @staticmethod
+    def _check_task_park(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """Report a task park the views read conservatively (#1688), from the
+        file's own values; nothing is rewritten.
+
+        - a ``park_kind`` other than ``person`` or ``external``: read as
+          ``person``, so the task never returns to agents by date;
+        - a ``retest_after`` that names no date: the task stays parked;
+        - a ``retest_after`` with no ``parked_awaiting``: parked until the
+          date, but nothing says why.
+        """
+        from ..models.task_queue import PARK_KINDS, is_parked, retest_date
+
+        if entry.entry_type != "task":
+            return
+        source = entry._source_frontmatter or {}
+
+        def finding(field: str, message: str) -> None:
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "task_park",
+                    "severity": "warning",
+                    "field": field,
+                    "message": f"{shown}: {message}",
+                }
+            )
+
+        kind = source.get("park_kind")
+        if kind not in (None, "") and str(kind).strip().lower() not in PARK_KINDS:
+            finding(
+                "park_kind",
+                f"park_kind {kind!r} is not one of {', '.join(PARK_KINDS)}; Pyrite reads "
+                "it as person, so the task never returns to agents by date.",
+            )
+        retest = source.get("retest_after")
+        if retest in (None, "") or (isinstance(retest, str) and not retest.strip()):
+            return
+        if retest_date(retest) is None:
+            finding(
+                "retest_after",
+                f"retest_after {retest!r} is not a date (YYYY-MM-DD); the task stays "
+                "parked until it is unparked.",
+            )
+        if not is_parked(source.get("parked_awaiting")):
+            finding(
+                "parked_awaiting",
+                "retest_after is set but parked_awaiting is not; the task is parked "
+                "until that date with no reason given (`pyrite task park` sets both).",
+            )
 
     def _check_number_as_text(
         self,

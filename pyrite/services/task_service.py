@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as _dt
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -18,7 +20,17 @@ from ..exceptions import (
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
-from ..models.task_queue import classify_tasks, count_reasons, dependency_ids
+from ..models.task_queue import (
+    PARK_KINDS,
+    classify_tasks,
+    count_reasons,
+    dependency_ids,
+    due_rechecks,
+    is_parked,
+    park_reason,
+    parked_state,
+    retest_date,
+)
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
@@ -30,6 +42,29 @@ if TYPE_CHECKING:
     from .hook_runner import HookRunner
 
 logger = logging.getLogger(__name__)
+
+#: The three keys of a park (#1688), in the order `task unpark` reports them.
+PARK_FIELDS: tuple[str, ...] = ("parked_awaiting", "park_kind", "retest_after")
+
+
+def _today() -> _dt.date:
+    """Today's date: the one clock read behind every park view (#1688).
+
+    ``parked_state`` takes today as an argument and never reads the clock;
+    the listing asks here once per call. Tests replace this function to put
+    every surface on the same day."""
+    return _dt.date.today()
+
+
+def _retest_text(value: Any) -> str:
+    """A ``retest_after`` value as a listing returns it: a date as
+    ``YYYY-MM-DD``, a datetime in ISO form, anything else as text, and
+    ``""`` when absent."""
+    if value is None:
+        return ""
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    return str(value)
 
 
 class TaskService:
@@ -555,7 +590,11 @@ class TaskService:
                     # still fall through to the hydration pass below, which
                     # reads the file directly and stays as a safety net.
                     # See: issue-pyrite-task-update-strips-non-schema-frontmatter-fields-silently-unparks-monitors
-                    "parked_awaiting": meta.get("parked_awaiting", ""),
+                    #
+                    # Read through `park_reason`, as the hydration pass is:
+                    # whitespace, '' and null are no reason on every path
+                    # (#1688).
+                    "parked_awaiting": park_reason(meta.get("parked_awaiting")),
                     "updated_at": row.get("updated_at") or "",
                 }
             )
@@ -583,7 +622,7 @@ class TaskService:
                     continue
                 if entry:
                     # A declared field of a task (#1025), read at its own name.
-                    t["parked_awaiting"] = (entry.get("parked_awaiting") or "").strip()
+                    t["parked_awaiting"] = park_reason(entry.get("parked_awaiting"))
 
         return tasks
 
@@ -605,22 +644,32 @@ class TaskService:
         priority: int | None = None,
         *,
         dispatchable: bool = False,
+        parked: bool | None = None,
         fields: list[str] | None = None,
     ) -> dict[str, Any]:
         """The body of `task list` on every surface: ``{"count", "tasks"}``.
 
         The CLI ``task list``, the MCP ``task_list`` tool and REST ``GET
-        /tasks`` return this and nothing else. Without ``dispatchable`` and
-        ``fields`` it is exactly :meth:`list_tasks` under ``tasks``, as before
-        #1686.
+        /tasks`` return this and nothing else. Without ``dispatchable``,
+        ``parked`` and ``fields`` it is exactly :meth:`list_tasks` under
+        ``tasks``, as before #1686.
 
         ``dispatchable`` keeps only the tasks a worker can take now -- each
         one a task ``claim_task`` accepts now -- as
         :func:`~pyrite.models.task_queue.classify_tasks` decides (the one
         place that is decided), in its order: priority highest first, then
         oldest. It adds ``counts`` (every task the other filters matched, per
-        reason, ``dispatchable`` included) and ``excluded`` (each open task
-        left out, with its one reason, in the same order). Nothing is written.
+        reason, ``dispatchable`` included), ``excluded`` (each open task
+        left out, with its one reason, in the same order) and
+        ``due_rechecks`` (#1688: every other live task whose park has come
+        due). A listed task whose park is due carries ``recheck: true``.
+        Nothing is written.
+
+        ``parked`` (#1688) keeps the tasks whose park state
+        (:func:`~pyrite.models.task_queue.parked_state`) is anything but
+        ``none`` (true) or exactly ``none`` (false), and each row gains
+        ``park_kind``, ``retest_after`` and ``park_state``. Today is read
+        once, from :func:`_today`.
 
         ``fields`` projects each ``tasks`` row through
         :func:`~pyrite.services.read_shaping.project_fields`.
@@ -634,35 +683,105 @@ class TaskService:
             priority=priority,
         )
         out: dict[str, Any] = {}
-        if dispatchable:
-            classified = self._classify_for_dispatch(tasks, kb_name, kb_names)
-            tasks = [row for row, reason in classified if reason is None]
-            out["counts"] = count_reasons(classified)
-            out["excluded"] = [
-                {"id": row["id"], "kb_name": row["kb_name"], "reason": reason}
-                for row, reason in classified
-                if reason not in (None, "not_open")
-            ]
+        if dispatchable or parked is not None:
+            today = _today()
+            extra = self._index_extras(tasks)
+            park = {key: self._park_of(row) for key, row in extra.items()}
+            if parked is not None:
+                kept = []
+                for t in tasks:
+                    row = {**t, **park.get(_key(t), _NO_PARK)}
+                    state = parked_state(row, today)
+                    if (state != "none") == parked:
+                        kept.append({**row, "park_state": state})
+                tasks = kept
+            if dispatchable:
+                classified = self._classify_for_dispatch(
+                    tasks, kb_name, kb_names, extra=extra, park=park, today=today
+                )
+                listed = []
+                for row, reason in classified:
+                    if reason is not None:
+                        continue
+                    fields_of_park = park.get(_key(row), _NO_PARK)
+                    if parked_state({**row, **fields_of_park}, today) == "due":
+                        row = {**row, **fields_of_park, "recheck": True}
+                    listed.append(row)
+                tasks = listed
+                out["counts"] = count_reasons(classified)
+                out["excluded"] = [
+                    {"id": row["id"], "kb_name": row["kb_name"], "reason": reason}
+                    for row, reason in classified
+                    if reason not in (None, "not_open")
+                ]
+                out["due_rechecks"] = [
+                    {
+                        "id": row["id"],
+                        "kb_name": row["kb_name"],
+                        "status": row["status"],
+                        "priority": row["priority"],
+                        "assignee": row["assignee"],
+                        "parked_awaiting": row["parked_awaiting"],
+                        **park.get(_key(row), _NO_PARK),
+                    }
+                    for row in due_rechecks(
+                        [({**r, **park.get(_key(r), _NO_PARK)}, why) for r, why in classified],
+                        today=today,
+                    )
+                ]
         if fields:
             tasks = [project_fields(row, fields) for row in tasks]
         return {"count": len(tasks), "tasks": tasks, **out}
+
+    def _index_extras(self, tasks: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, Any]]:
+        """One index read of what a ``list_tasks`` row leaves out, for each
+        KB the rows name: ``status`` (the column itself), ``created_at``,
+        ``file_path`` and ``metadata``, by ``(kb_name, id)``."""
+        if not tasks:
+            return {}
+        listed_kbs = sorted({t["kb_name"] for t in tasks})
+        params: dict[str, Any] = {}
+        in_listed = kb_names_clause("kb_name", listed_kbs, params)
+        rows = self._query(
+            "SELECT kb_name, id, status, created_at, file_path, metadata FROM entry "
+            f"WHERE entry_type = 'task' AND {in_listed}",
+            params,
+        )
+        return {(r["kb_name"], r["id"]): r for r in rows}
+
+    @staticmethod
+    def _park_of(index_row: dict[str, Any]) -> dict[str, Any]:
+        """``park_kind`` and ``retest_after`` as an index row's metadata holds
+        them (#1688), as text; ``parked_awaiting`` is already on the
+        ``list_tasks`` row."""
+        meta = parse_metadata(index_row.get("metadata"))
+        kind = meta.get("park_kind")
+        return {
+            "park_kind": "" if kind is None else str(kind),
+            "retest_after": _retest_text(meta.get("retest_after")),
+        }
 
     def _classify_for_dispatch(
         self,
         tasks: list[dict[str, Any]],
         kb_name: str | None,
         kb_names: set[str] | list[str] | None,
+        *,
+        extra: dict[tuple[str, str], dict[str, Any]],
+        park: dict[tuple[str, str], dict[str, Any]],
+        today: _dt.date,
     ) -> list[tuple[dict[str, Any], str | None]]:
         """Gather what :func:`classify_tasks` reads beyond a ``list_tasks``
         row, ask it, and hand back the rows as ``list_tasks`` shaped them.
 
-        The I/O is here, so the classifier stays pure: one index read for
-        each row's ``created_at``, ``file_path`` and ``dependencies``, a
-        stat of the file of each task whose effective status is open, a load
-        through the claim's loader of each task every other check lists, and
-        the derived completion of a KB a ``kb:id`` dependency names -- only
-        when this listing reads that KB, so a dependency on a KB the caller
-        may not read stays unresolved (blocked) and reveals nothing.
+        The I/O is here, so the classifier stays pure: the index read of
+        each row's ``created_at``, ``file_path`` and ``dependencies``
+        (``extra``) and its park fields (``park``), a stat of the file of
+        each task whose effective status is open, a load through the claim's
+        loader of each task every other check lists, and the derived
+        completion of a KB a ``kb:id`` dependency names -- only when this
+        listing reads that KB, so a dependency on a KB the caller may not
+        read stays unresolved (blocked) and reveals nothing.
         """
         if not tasks:
             return []
@@ -673,24 +792,17 @@ class TaskService:
         else:
             scope = {kb.name for kb in self.config.all_kbs()}
         listed_kbs = sorted({t["kb_name"] for t in tasks})
-        params: dict[str, Any] = {}
-        in_listed = kb_names_clause("kb_name", listed_kbs, params)
-        extra_rows = self._query(
-            "SELECT kb_name, id, status, created_at, file_path, metadata FROM entry "
-            f"WHERE entry_type = 'task' AND {in_listed}",
-            params,
-        )
-        extra = {(r["kb_name"], r["id"]): r for r in extra_rows}
 
         derived = {kb: self.derived_completion(kb) for kb in listed_kbs}
         inputs = []
         for task in tasks:
-            row = extra.get((task["kb_name"], task["id"]), {})
+            row = extra.get(_key(task), {})
             deps = parse_metadata(row.get("metadata")).get("dependencies")
             open_now = task["derived"]["effective_status"] == "open"
             inputs.append(
                 {
                     **task,
+                    **park.get(_key(task), _NO_PARK),
                     # The column the claim's compare-and-swap reads, not the
                     # row's `status` (which reads an empty one as `open`).
                     "index_status": row.get("status"),
@@ -707,14 +819,14 @@ class TaskService:
         # The one check that reads a file runs last and only on the rows every
         # other check lists, so its cost is the listed set: does the claim's
         # own loader load the file? A row it does not is `unreadable`.
-        for row, reason in classify_tasks(inputs, derived):
+        for row, reason in classify_tasks(inputs, derived, today=today):
             if reason is None:
                 row["file_loads"] = self._claim_can_load(row)
 
-        by_key = {(t["kb_name"], t["id"]): t for t in tasks}
+        by_key = {_key(t): t for t in tasks}
         return [
-            (by_key[(row["kb_name"], row["id"])], reason)
-            for row, reason in classify_tasks(inputs, derived)
+            (by_key[_key(row)], reason)
+            for row, reason in classify_tasks(inputs, derived, today=today)
         ]
 
     def _row_kb(self, kb_name: str):
@@ -1006,6 +1118,94 @@ class TaskService:
             "by": who,
             "override": override,
         }
+
+    def _load_task_for_park(self, task_id: str, kb_name: str, verb: str) -> Any:
+        """The task file, loaded as a write would load it; refuses a missing
+        entry and one that is not a task."""
+        from ..storage.repository import KBRepository
+
+        kb_config = self.config.require_kb(kb_name, db=self.db)
+        entry = KBRepository(kb_config).load(task_id)
+        if not entry:
+            raise EntryNotFoundError(f"Task '{task_id}' not found in KB '{kb_name}'")
+        if entry.entry_type != "task":
+            raise ValidationError(
+                f"'{task_id}' is a {entry.entry_type!r}, not a task: `task {verb}` "
+                "parks tasks only."
+            )
+        return entry
+
+    def park_task(
+        self,
+        task_id: str,
+        kb_name: str,
+        reason: str,
+        kind: str | None = None,
+        retest_after: str | None = None,
+    ) -> dict[str, Any]:
+        """Park a task (#1688): why it waits, who must act, when to recheck.
+
+        One write (``apply_operations``): ``parked_awaiting`` is set, and
+        ``park_kind`` and ``retest_after`` are set when given and removed
+        when not -- a park replaces the previous one whole. The status does
+        not change. Refused, writing nothing: a reason that is empty or only
+        whitespace or quote marks, a kind other than ``person`` or
+        ``external``, a ``retest_after`` that is not a ``YYYY-MM-DD`` date,
+        an entry that is not a task.
+        """
+        from ..storage.file_operations import Set, Unset
+
+        if not is_parked(reason):
+            raise ValidationError("`task park` needs a reason: say what the task waits on.")
+        reason = reason.strip()
+        if kind is not None and kind not in PARK_KINDS:
+            raise ValidationError(
+                f"Park kind {kind!r} is not one of {', '.join(PARK_KINDS)}: `person` keeps "
+                "the task from agents; `external` gives it back on its retest date."
+            )
+        day = None
+        if retest_after is not None:
+            day = retest_date(retest_after) if _ISO_DAY.fullmatch(retest_after) else None
+            if day is None:
+                raise ValidationError(
+                    f"retest_after {retest_after!r} is not a date: give YYYY-MM-DD."
+                )
+        entry = self._load_task_for_park(task_id, kb_name, "park")
+        present = _park_keys_present(entry)
+        ops: list[Any] = [Set("parked_awaiting", reason)]
+        for key, value in (("park_kind", kind), ("retest_after", day)):
+            if value is not None:
+                ops.append(Set(key, value))
+            elif key in present:
+                ops.append(Unset(key))
+        written = self.kb_svc.apply_operations(task_id, kb_name, ops).entry
+        result = {
+            "task_id": task_id,
+            "kb_name": kb_name,
+            "status": getattr(written, "status", ""),
+            "parked_awaiting": reason,
+            "park_kind": kind or "",
+            "retest_after": day.isoformat() if day else "",
+        }
+        result["park_state"] = parked_state(result, _today())
+        return result
+
+    def unpark_task(self, task_id: str, kb_name: str) -> dict[str, Any]:
+        """Unpark a task (#1688): remove ``parked_awaiting``, ``park_kind``
+        and ``retest_after`` -- the keys, never an empty value -- in one
+        write. The status does not change. A task with none of them is left
+        as it is (``removed`` is empty)."""
+        from ..storage.file_operations import Unset
+
+        entry = self._load_task_for_park(task_id, kb_name, "unpark")
+        removed = [key for key in PARK_FIELDS if key in _park_keys_present(entry)]
+        status = getattr(entry, "status", "")
+        if removed:
+            written = self.kb_svc.apply_operations(
+                task_id, kb_name, [Unset(key) for key in removed]
+            ).entry
+            status = getattr(written, "status", status)
+        return {"task_id": task_id, "kb_name": kb_name, "status": status, "removed": removed}
 
     def reset_task(
         self,
@@ -1451,6 +1651,26 @@ class TaskService:
             result.append(_task_dependency_summary(tasks[next_id], derived))
             next_id = next_dependency[next_id]
         return result
+
+
+#: The one spelling `task park --retest-after` takes.
+_ISO_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _park_keys_present(entry: Any) -> set[str]:
+    """The park keys the task's file spells, at the top level or nested
+    under ``metadata:``, whatever their value (an empty one included)."""
+    source = getattr(entry, "_source_frontmatter", None) or {}
+    nested = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    return {key for key in PARK_FIELDS if key in source or key in nested}
+
+
+#: The park fields of a task no index row was found for: no park.
+_NO_PARK: dict[str, Any] = {"park_kind": "", "retest_after": ""}
+
+
+def _key(row: dict[str, Any]) -> tuple[str, str]:
+    return (row["kb_name"], row["id"])
 
 
 def _finisher(task_id: str, holder: str, by: str, operator_override: bool) -> tuple[str, bool]:
