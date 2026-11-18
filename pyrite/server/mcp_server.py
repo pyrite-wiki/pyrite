@@ -1914,7 +1914,7 @@ class PyriteMCPServer:
         from ..services.read_shaping import parse_fields_param
 
         kb_name = args.get("kb_name")
-        return self.task_svc.task_listing(
+        listing: dict[str, Any] = self.task_svc.task_listing(
             kb_name=kb_name,
             kb_names=None if kb_name else readable_kbs,
             status=args.get("status"),
@@ -1923,6 +1923,7 @@ class PyriteMCPServer:
             dispatchable=bool(args.get("dispatchable")),
             fields=parse_fields_param(args.get("fields")),
         )
+        return listing
 
     def _resolve_task_kb(
         self, task_id: str, kb_name: str | None, *, readable_kbs: set[str] | None
