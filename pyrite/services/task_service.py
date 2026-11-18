@@ -470,7 +470,7 @@ class TaskService:
         rows = self._query(query, params)
         tasks = []
         for row in rows:
-            meta = _parse_metadata(row.get("metadata"))
+            meta = parse_metadata(row.get("metadata"))
             tasks.append(
                 {
                     "id": row["id"],
@@ -910,7 +910,7 @@ class TaskService:
 
         unblocked = []
         for row in rows:
-            meta = _parse_metadata(row.get("metadata"))
+            meta = parse_metadata(row.get("metadata"))
             deps = meta.get("dependencies", [])
             if not deps or task_id not in deps:
                 continue
@@ -942,7 +942,7 @@ class TaskService:
         if not task:
             return None
 
-        meta = _parse_metadata(task.get("metadata") or {})
+        meta = parse_metadata(task.get("metadata") or {})
         parent_id = meta.get("parent") or task.get("parent", "")
         if not parent_id:
             return None
@@ -955,7 +955,7 @@ class TaskService:
         if not parent:
             return None
 
-        parent_meta = _parse_metadata(parent.get("metadata") or {})
+        parent_meta = parse_metadata(parent.get("metadata") or {})
         parent_evidence = parent_meta.get("evidence", []) or parent.get("evidence", []) or []
 
         # Only what the parent lacks, each appended as one item in the
@@ -1009,7 +1009,7 @@ class TaskService:
         if not task:
             return {"linked": False, "error": "Task not found"}
 
-        meta = _parse_metadata(task.get("metadata") or {})
+        meta = parse_metadata(task.get("metadata") or {})
         evidence = meta.get("evidence", []) or task.get("evidence", []) or []
 
         if assessment_id not in evidence:
@@ -1077,7 +1077,7 @@ class TaskService:
             if not task:
                 break
 
-            meta = _parse_metadata(task.get("metadata") or {})
+            meta = parse_metadata(task.get("metadata") or {})
             parent_id = meta.get("parent") or task.get("parent", "")
             if not parent_id:
                 break
@@ -1218,7 +1218,7 @@ def _log_item(old: str, new: str, by: str, comment: str = ""):
 
 def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
     """Return a task's dependency IDs in their stored order."""
-    metadata = _parse_metadata(task.get("metadata") or {})
+    metadata = parse_metadata(task.get("metadata") or {})
     dependencies = metadata.get("dependencies") or task.get("dependencies") or []
     if isinstance(dependencies, str):
         return [dependencies] if dependencies else []
@@ -1244,11 +1244,6 @@ def _task_dependency_summary(
         "entry_type": task.get("entry_type", "task"),
         "derived": derived.get(task_id) or no_derived(),
     }
-
-
-def _parse_metadata(raw) -> dict[str, Any]:
-    """Parse metadata JSON from a DB row."""
-    return parse_metadata(raw)
 
 
 # =============================================================================

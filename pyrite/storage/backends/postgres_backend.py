@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from ...exceptions import StorageError
 from ..models import Link
-from .base_backend import BaseBackend, _link_rows
+from .base_backend import BaseBackend, _link_rows, shape_entry_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
@@ -450,7 +450,7 @@ class PostgresBackend(BaseBackend):
         params["limit"] = limit
         params["offset"] = offset
 
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     def search_by_tag(
         self, tag: str, kb_name: str | None = None, limit: int = 50
@@ -467,7 +467,7 @@ class PostgresBackend(BaseBackend):
             params["kb_name"] = kb_name
         sql += " ORDER BY e.date DESC, e.title LIMIT :limit"
         params["limit"] = limit
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     def search_by_date_range(
         self,
@@ -483,7 +483,7 @@ class PostgresBackend(BaseBackend):
             params["kb_name"] = kb_name
         sql += " ORDER BY date ASC LIMIT :limit"
         params["limit"] = limit
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     def search_by_tag_prefix(
         self, prefix: str, kb_name: str | None = None, limit: int = 50
@@ -500,7 +500,7 @@ class PostgresBackend(BaseBackend):
             params["kb_name"] = kb_name
         sql += " ORDER BY e.date DESC, e.title LIMIT :limit"
         params["limit"] = limit
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     # =====================================================================
     # Semantic search (pgvector embeddings)
@@ -635,7 +635,7 @@ class PostgresBackend(BaseBackend):
         params["vec2"] = vec_str
         params["limit"] = limit
 
-        rows = self._exec(sql, params)
+        rows = shape_entry_rows(self._exec(sql, params), self._session)
         for row in rows:
             # ``distance`` here is already cosine distance (#668).
             row["similarity"] = similarity_from(row.get("distance"))

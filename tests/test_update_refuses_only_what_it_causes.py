@@ -276,6 +276,12 @@ def test_existing_model_and_schema_findings_are_warnings_on_update(env):
     """An unrelated edit keeps the missing date and reports both findings."""
     ok, warnings, text = _request(env, "mcp", "ev2", {"tags": ["x"]})
     assert ok, text
-    assert any(w["rule"] == "model_validation" for w in warnings), warnings
+    # the model's kept row carries its own rule, `required` (#1588 acceptance 5)
+    assert any(
+        w["field"] == "date"
+        and w["rule"] == "required"
+        and w.get("note") == "violation already on disk; kept"
+        for w in warnings
+    ), warnings
     assert any(w["rule"] == "required" and w["field"] == "date" for w in warnings), warnings
     assert all(w["severity"] == "warning" for w in warnings), warnings
