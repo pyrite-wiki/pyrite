@@ -4299,14 +4299,7 @@ class KBService:
 
         # Update the markdown file to match
         try:
-            self._update(
-                entry_id,
-                kb_name,
-                {"status": to_status, "assignee": assignee},
-                restrict=False,
-                ops=list(ops),
-                status_path=status_path,
-            )
+            self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path)
         except Exception as e:
             # Rollback index CAS on file error: the row's status and holder
             # as they were before it (no holder for a claim of an open entry).
@@ -4367,6 +4360,24 @@ class KBService:
                 "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
                 "current_status": current,
             }
+        self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path)
+        return {"claimed": True, "task_id": entry_id, "assignee": assignee, "status": to_status}
+
+    def _write_claim(
+        self,
+        entry_id: str,
+        kb_name: str,
+        assignee: str,
+        to_status: str,
+        ops: Sequence[Any],
+        status_path: Sequence[str] | None,
+    ) -> None:
+        """A claim's one file write. A plain claim is exactly the field update
+        it always was; `task start`'s carries its audit items and the path its
+        edges are judged along (#1685)."""
+        if status_path is None:
+            self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+            return
         self._update(
             entry_id,
             kb_name,
@@ -4375,7 +4386,6 @@ class KBService:
             ops=list(ops),
             status_path=status_path,
         )
-        return {"claimed": True, "task_id": entry_id, "assignee": assignee, "status": to_status}
 
     # =========================================================================
     # Hooks
