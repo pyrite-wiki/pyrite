@@ -10,8 +10,8 @@ Provides a lightweight package for running the Pyrite MCP server without the ful
 release tag, the way the [main README](../README.md) installs Pyrite:
 
 ```bash
-pip install "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.26.3" \
-  "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.26.3#subdirectory=pyrite-mcp"
+pip install "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4" \
+  "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=pyrite-mcp"
 ```
 
 Name both. pyrite-mcp's own requirement is `pyrite` at the same release git

@@ -13,6 +13,24 @@ asserts that `[Unreleased]` stays empty.
 
 ## [Unreleased]
 
+## [0.26.4] - 2026-11-18
+
+Note typing and symlink identity, with the bugs of a short train. A create stores the type you named (#468), and a link to another entry file of the same KB is an alias of that entry, indexed once (#1262). A KB, folder or `kb.yaml` Pyrite cannot read no longer stops every command or empties the index: it is named, and its rows are kept (#1542, #1546, #1547). A write never lands where the index walk does not look (#1552). `importance`, declared numbers and checkboxes, and declared lists have one rule on every write and one JSON type on every read (#1588, #1503, #1502). A `board.yaml` that cannot be loaded refuses instead of turning the gates off (#1538), and a gate's checker sees the item's own fields (#1587). New: `pyrite qa duplicates`, a `research-queue` init template, and `task_create` due dates and links.
+
+**Upgrade notes.**
+- `-f key=a,b` no longer splits on commas: send several values as a JSON array (`-f 'k=["a", "b"]'`). `-f tags=` is refused (use `--tags`), a comma in `--append`/`--remove tags=` is refused, and naming one `-f` key twice is refused (#1502).
+- Exit codes: an out-of-range `pyrite ci --tier` or `pyrite qa assess --tier` is `USAGE_ERROR`, exit 2 (it was `INVALID_TIER`, exit 1) (#1563, #1564). `pyrite index sync`, `index build` and `kb reindex` exit 3 (1 when nothing synced) when a registered KB, a folder or a file cannot be read or a `kb.yaml` does not load, and `index health` is unhealthy (#1542, #1546, #1547).
+- `importance` is a whole number from 1 to 10 on every write and every type; a bad value is refused, not rounded or defaulted. A value already in a file is kept, with a warning (#1537, #1588).
+- `metadata` is an object and `aliases` a list on MCP find/search and REST search. Values written from 0.26.4 on read as their declared type; values already in a file stay as written until that field is written, and `pyrite qa validate` lists them (#1503).
+- REST: an update that would leave the file unloadable answers 422 (it was 400) (#1472). An `importance` refusal on `/api/entries` is HTTP 400 `VALIDATION_FAILED` (#1588).
+- A `board.yaml` that cannot be loaded, or that carries a key Pyrite does not read, is refused by the tools that read the board (#1538, #1586).
+- A folder named `_templates` in any letter case is skipped by the index walk; rename it to keep its entries indexed (#1552).
+- `pyrite orient --format markdown|csv` is refused (#1501).
+- Out-of-tree plugins that relied on core types being stored as their subclass declare `get_type_mappings()` (#468).
+- On Python 3.11.5 or newer, upgrade `soupsieve` to 4.0.0 or later in an existing environment (#1536).
+
+Every step, in order, is in [Upgrade Pyrite](docs/upgrading.md#upgrading-from-0263-to-0264).
+
 ## [0.26.3] - 2026-11-16
 
 Security fixes, continuing 0.26.2. A network call (REST, MCP over HTTP) reaches the entries it holds a grant on and nothing else the server account holds (ADR-0052, proposed):
