@@ -619,6 +619,13 @@ class KBRegistryService:
         """
         self.db.merge_registered_kbs(self.config)
 
+    @classmethod
+    def count_entry_files(cls, kb: KBConfig) -> int:
+        """Count real markdown entry files in a KB, matching the walk's rules."""
+        from ..storage.repository import KBRepository
+
+        return sum(1 for _ in KBRepository(kb).list_files())
+
     def reindex_kb(self, name: str) -> dict[str, Any]:
         """Reindex a specific KB. Works for both config and user KBs.
 
@@ -676,17 +683,17 @@ class KBRegistryService:
         kb_path = Path(kb.path)
         path_exists = kb_path.exists()
 
-        file_count = 0
-        if path_exists:
-            file_count = sum(
-                1 for f in kb_path.rglob("*.md") if not any(p.startswith(".") for p in f.parts)
-            )
+        kb_config = self.get_kb_config(name)
+        file_count = (
+            self.count_entry_files(kb_config or KBConfig(name=name, path=kb_path))
+            if path_exists
+            else 0
+        )
 
         from .index_health import health_verdict, network_shape
 
         stats = self.db.get_kb_stats(name) or {}
         entry_count = stats.get("entry_count", 0)
-        kb_config = self.get_kb_config(name)
         scoped = PyriteConfig(
             knowledge_bases=[kb_config] if kb_config else [], settings=self.config.settings
         )

@@ -427,8 +427,8 @@ def validate_status_change(
       - **relaxed** (``enforce_transitions=False``): any ``new_status``
         that's a member of ``workflow["states"]`` is accepted, IFF
         ``status_reason`` is non-empty (when
-        ``require_reason_on_transition=True``, the default for relaxed
-        mode). Loosens transitions but NOT state membership — typos in
+        ``require_reason_on_transition=True``; the one exception is
+        ``open → claimed``, which never needs a reason). Loosens transitions but NOT state membership — typos in
         status still fail, which keeps the index queryable.
 
     The atomic ``open→claimed`` invariant lives at the repo/db
@@ -483,7 +483,11 @@ def validate_status_change(
             f"({', '.join(states) or '(empty)'}). Relaxed mode loosens "
             f"transitions, not state membership — check for typos.",
         )
-    if require_reason and not status_reason.strip():
+    # `open -> claimed` is exempt from the reason rule (maintainer decision on
+    # #1709): `task claim` passes no reason, and a claim keeps working in a
+    # relaxed reasons-required KB as it did before a declared machine applied.
+    claim_edge = old_status == "open" and new_status == "claimed"
+    if require_reason and not claim_edge and not status_reason.strip():
         return (
             False,
             f"Relaxed-mode transition '{old_status}' → '{new_status}' "

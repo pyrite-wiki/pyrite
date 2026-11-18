@@ -1,1 +1,0 @@
-- `pyrite task list` and `pyrite task get` in rich format now display full task and parent IDs instead of truncating them to 12 characters (#1340).
