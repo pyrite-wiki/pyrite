@@ -2584,11 +2584,14 @@ class KBService:
         with a state machine (#1684). Ingest (add, import, sync) is exempt."""
         from ..models.task import TASK_WORKFLOW, resolve_workflow_for_type
 
-        kb_schema = getattr(kb_config, "kb_schema", None)
-        workflow = resolve_workflow_for_type(entry_type, kb_schema)
-        is_task_or_opted_in = entry_type == "task" or (workflow is not TASK_WORKFLOW)
-        if not is_task_or_opted_in:
-            return
+        # Judge task against the core TASK_WORKFLOW only (#1684 review, #1709 option a)
+        if entry_type == "task":
+            workflow = TASK_WORKFLOW
+        else:
+            kb_schema = getattr(kb_config, "kb_schema", None)
+            workflow = resolve_workflow_for_type(entry_type, kb_schema)
+            if workflow is TASK_WORKFLOW:
+                return
 
         status_field = workflow.get("field", "status")
         initial = workflow.get("initial", "open")

@@ -20,7 +20,7 @@ MCP `task_create` accepts optional `due_date` and `links`.
 
 A newly created task always starts in the `open` status. Setting a non-initial
 status on creation (via `pyrite create -f status=...`, a body file's frontmatter,
-or MCP `kb_create`) is refused; use `task claim` or `task update --status` to advance
+MCP `kb_create`, MCP `kb_bulk_create`, or REST `POST /api/entries`) is refused; use `task claim` or `task update --status` to advance
 its status.
 
 A claim is atomic: competing agents do not both acquire an open task. Inspect

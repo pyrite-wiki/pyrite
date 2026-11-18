@@ -43,10 +43,12 @@ def test_cli_create_task_status_in_progress_is_refused(cli_world):
     body = json.loads(res.output)
     assert body.get("error_code") == "VALIDATION_FAILED"
     assert TASK_REFUSAL in body.get("error", "")
+    assert not list(world.kb_path("test-kb").rglob("body-file-probe.md"))
     assert any(
         err.get("field") == "status" and err.get("rule") == "managed"
         for err in body.get("errors", [])
     )
+    assert not list(world.kb_path("test-kb").rglob("task-in-progress-probe.md"))
 
 
 def test_cli_create_task_status_open_is_accepted(cli_world):
@@ -96,6 +98,7 @@ def test_body_file_frontmatter_status_in_progress_is_refused(cli_world):
     body = json.loads(res.output)
     assert body.get("error_code") == "VALIDATION_FAILED"
     assert TASK_REFUSAL in body.get("error", "")
+    assert not list(world.kb_path("test-kb").rglob("body-file-probe.md"))
 
 
 def test_body_file_frontmatter_status_open_is_accepted(cli_world):
@@ -139,9 +142,9 @@ def test_mcp_kb_create_task_status_in_progress_is_refused(cli_world):
                 "status": "in_progress",
             },
         )
-        assert res.get("isError") is True or not res.get("created")
         assert res.get("error_code") == "VALIDATION_FAILED"
         assert TASK_REFUSAL in res.get("error", "")
+        assert not list(world.kb_path("test-kb").rglob("mcp-task-probe.md"))
     finally:
         server.close()
 
@@ -269,6 +272,7 @@ def test_plugin_type_with_custom_state_machine_refuses_non_initial(cli_world):
     body = json.loads(res_refused.output)
     assert body.get("error_code") == "VALIDATION_FAILED"
     assert "a new ticket is always created proposed" in body.get("error", "")
+    assert not list(world.kb_path("test-kb").rglob("ticket-active-probe.md"))
 
     # Create with initial status -> accepted
     res_accepted = world.cli(
@@ -286,3 +290,111 @@ def test_plugin_type_with_custom_state_machine_refuses_non_initial(cli_world):
         "json",
     )
     assert res_accepted.exit_code == 0, res_accepted.output
+
+
+def test_task_create_cli_field_status_open_is_accepted(cli_world):
+    world = cli_world()
+    res = world.cli(
+        "task",
+        "create",
+        "Task CLI Field Open",
+        "-k",
+        "test-kb",
+        "--field",
+        "status=open",
+        "--format",
+        "json",
+    )
+    assert res.exit_code == 0, res.output
+    body = json.loads(res.output)
+    entry_id = body.get("entry_id")
+    assert entry_id
+    path = next(world.kb_path("test-kb").rglob(f"{entry_id}.md"))
+    fm = _frontmatter(path)
+    assert fm["status"] == "open"
+
+
+def test_task_create_succeeds_in_kb_with_declared_task_state_machine(cli_world):
+    """task create succeeds even if KB declares a custom task state machine with non-open initial (#1684, #1709 option a)."""
+    world = cli_world()
+    kb_path = world.kb_path("test-kb")
+    (kb_path / "kb.yaml").write_text(
+        "name: test-kb\n"
+        "kb_type: generic\n"
+        "types:\n"
+        "  task:\n"
+        "    state_machine:\n"
+        "      states: [backlog, active, done]\n"
+        "      initial: backlog\n"
+        "      field: status\n",
+        encoding="utf-8",
+    )
+    world.config.get_kb("test-kb").invalidate_schema_cache()
+    res = world.cli("task", "create", "New Custom KB Task", "-k", "test-kb", "--format", "json")
+    assert res.exit_code == 0, res.output
+    body = json.loads(res.output)
+    entry_id = body.get("entry_id")
+    assert entry_id
+    path = next(world.kb_path("test-kb").rglob(f"{entry_id}.md"))
+    fm = _frontmatter(path)
+    assert fm["status"] == "open"
+
+
+def test_mcp_kb_bulk_create_task_status_refusal(cli_world):
+    """MCP kb_bulk_create refuses non-initial status on task and writes nothing."""
+    world = cli_world()
+    server = world.mcp()
+    try:
+        res = server._dispatch_tool(
+            "kb_bulk_create",
+            {
+                "kb_name": "test-kb",
+                "entries": [
+                    {
+                        "title": "Bulk Non-Initial Task",
+                        "entry_type": "task",
+                        "status": "in_progress",
+                    }
+                ],
+            },
+        )
+        assert "results" in res
+        first = res["results"][0]
+        assert first.get("created") is False
+        assert first.get("error_code") == "VALIDATION_FAILED"
+        assert TASK_REFUSAL in first.get("error", "")
+        assert not list(world.kb_path("test-kb").rglob("bulk-non-initial-task.md"))
+    finally:
+        server.close()
+
+
+def test_rest_post_task_status_in_progress_is_refused(tmp_path):
+    """REST POST /api/entries refuses non-initial status on task with 400 and writes nothing."""
+    from tests._world import build_world
+    from pyrite.config import KBConfig, KBType
+
+    kb_dir = tmp_path / "test-kb"
+    kb_dir.mkdir(parents=True)
+    world = build_world(
+        tmp_path,
+        kbs=[KBConfig(name="test-kb", path=kb_dir, kb_type=KBType.GENERIC)],
+        settings={"index_path": tmp_path / "index.db"},
+        rest=True,
+    )
+    try:
+        resp = world.client.post(
+            "/api/entries",
+            json={
+                "kb": "test-kb",
+                "entry_type": "task",
+                "title": "REST Task Probe",
+                "status": "in_progress",
+            },
+        )
+        assert resp.status_code == 400, resp.text
+        data = resp.json()
+        assert data.get("detail", {}).get("code") == "VALIDATION_FAILED"
+        assert TASK_REFUSAL in data.get("detail", {}).get("message", "")
+        assert not list(kb_dir.rglob("rest-task-probe.md"))
+    finally:
+        world.close()
