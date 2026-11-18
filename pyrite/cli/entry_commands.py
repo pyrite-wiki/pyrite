@@ -621,6 +621,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             updates["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
+            # The read is kept for its refusals (an ambiguous id, an unnamed
+            # KB), which answer before anything else; its value is no longer
+            # needed, since the CLI applies no schema to `-f` (#1502).
+            svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+
             # --field key=value pairs: syntax only; the service applies the schema.
             updates.update(_parse_field_flags(field or []))
 
