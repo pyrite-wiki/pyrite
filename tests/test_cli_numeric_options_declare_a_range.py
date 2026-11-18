@@ -342,8 +342,6 @@ NOT_YET: set[tuple[str, str]] = {
     #
     #
     # extensions/social/src/pyrite_social/cli.py
-    ("pyrite social newest", "limit"),
-    ("pyrite social top", "limit"),
 }
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"

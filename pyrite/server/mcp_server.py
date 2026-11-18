@@ -2004,58 +2004,17 @@ class PyriteMCPServer:
     def _task_status(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
-        """Get task details with children, deps, evidence."""
-        import json as _json
-
+        """Get task details with children, deps, evidence and body."""
         task_id = args.get("task_id")
         kb_name = args.get("kb_name")
+        body_offset = args.get("body_offset", 0)
+        body_limit = args.get("body_limit")
 
-        task = self.task_svc.get_task(task_id, kb_name, readable_kbs=readable_kbs)
-        if not task:
+        result = self.task_svc.get_task_detail(task_id, kb_name, readable_kbs=readable_kbs)
+        if not result:
             return _error("NOT_FOUND", f"Task '{task_id}' not found")
 
-        meta = task.get("metadata", {})
-        if isinstance(meta, str):
-            try:
-                meta = _json.loads(meta)
-            except (ValueError, TypeError):
-                meta = {}
-
-        children_list = self.task_svc.list_tasks(
-            kb_name=kb_name,
-            kb_names=None if kb_name else readable_kbs,
-            parent=task_id,
-        )
-        children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
-            for c in children_list
-        ]
-        task_kb = task.get("kb_name", kb_name or "")
-        from ..models.task import coerce_task_priority as _coerce_task_priority
-
-        return {
-            "id": task["id"],
-            "title": task["title"],
-            # The index row's columns, as `task get` reads them: `status`
-            # is a column, never in `metadata`, so meta.get("status") said
-            # "open" for every task, whatever its file said.
-            "status": task.get("status") or meta.get("status", "open"),
-            "assignee": task.get("assignee") or meta.get("assignee", ""),
-            # The model's reading, as list_tasks gives it (#554): an index row
-            # may still hold a word such as `medium`.
-            "priority": _coerce_task_priority(
-                task.get("priority") or meta.get("priority", 5), task["id"]
-            ),
-            "parent": meta.get("parent", ""),
-            "dependencies": meta.get("dependencies", []),
-            "evidence": meta.get("evidence", []),
-            "due_date": task.get("due_date") or meta.get("due_date", ""),
-            "agent_context": meta.get("agent_context", {}),
-            "children": children,
-            "kb_name": task_kb,
-            # Computed from the children; never a field of the file.
-            "derived": self.task_svc.derived_for(task_kb, task["id"]),
-        }
+        return self.body_bounds.chunk_body(result, offset=body_offset, limit=body_limit)
 
     def _kb_batch_suggest(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
