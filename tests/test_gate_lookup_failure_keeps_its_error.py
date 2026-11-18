@@ -183,6 +183,47 @@ def test_a_failed_blockers_lookup_keeps_its_own_error(world, raised, tool, regim
     assert _snapshot(world) == before
 
 
+#: A board whose gates name a checker that reads the item's tags: the gate
+#: builds the checker's entry from the index (`checker_entry`, #1587).
+_NAMING_TAGS = "gates:\n" + "".join(
+    f"  {status}:\n    policy: enforce\n    criteria:\n"
+    "      - {text: has tags, checker: has_tags}\n"
+    for status in ("in_progress", "done")
+)
+
+
+@pytest.mark.parametrize("tool", sorted(GATE_OF_TOOL))
+@pytest.mark.parametrize("raised", sorted(RAISED))
+def test_a_failed_checker_entry_lookup_keeps_its_own_error(world, raised, tool, monkeypatch):  # noqa: F811
+    """The entry a named checker sees is read from the index (#1587), so a
+    failure of that read is the index's, never board.yaml's (#1585)."""
+    import pyrite.services.checker_entry as checker_entry_module
+
+    make = RAISED[raised]
+    oracle = _oracle(world, make, monkeypatch)
+    monkeypatch.undo()  # the oracle's blockers lookup works again
+    _write_board(world, _NAMING_TAGS)
+    before = _snapshot(world)
+    calls: list[int] = []
+
+    def raiser(*a, **k):
+        calls.append(1)
+        raise make()
+
+    monkeypatch.setattr(checker_entry_module, "checker_entry", raiser)
+
+    answer = _mcp(world, tool, MCP_CALLS[tool])
+
+    assert calls, "the builder was not reached"
+    assert answer.get("ready") is not True and answer.get("claimed") is not True, answer
+    assert answer.get("transitioned") is not True and answer.get("reviewed") is not True, answer
+    assert answer.get("error_code") == oracle["error_code"], (answer, oracle)
+    assert answer.get("retryable") == oracle["retryable"], (answer, oracle)
+    assert "board.yaml" not in json.dumps(answer), answer
+    _no_exception_text(answer, oracle, raised)
+    assert _snapshot(world) == before
+
+
 #: The `pyrite sw` commands that call a handler which evaluates a gate (the
 #: CLI never reaches `_mcp_claim` or `_mcp_transition`: those commands go
 #: through KBService and do not consult the board, #1288). name -> (argv,

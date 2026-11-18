@@ -2174,6 +2174,7 @@ class SoftwareKBPlugin:
 
         criteria_results = []
         all_checkers_passed = True
+        entry_dict: dict[str, Any] | None = None
 
         for n, criterion in enumerate(gate_config.get("criteria", []), 1):
             where = f"criterion {n} of the gate for this status"
@@ -2214,21 +2215,15 @@ class SoftwareKBPlugin:
             # Standard named checker (check_criterion refused an unknown one)
             checker_fn = gate_checker(checker_name)
 
-            # Build entry dict for the checker
-            entry_dict = dict(row) if not isinstance(row, dict) else row
-            entry_dict["metadata"] = meta
+            # The entry a checker sees, built as QA builds it (#1587): the
+            # item's fields wherever the index keeps them, from the row's own
+            # metadata (`meta` is the same bag, parsed by the caller). Not
+            # inside `evaluating`: the builder reads the KB's index, not
+            # board.yaml, so a failure keeps its own error (#1585).
+            if entry_dict is None:
+                from pyrite.services.checker_entry import checker_entry
 
-            # Enrich with link data for checkers that need it (e.g. not_oversized)
-            if "_links" not in entry_dict:
-                item_id = entry_dict.get("id", "")
-                kb_name = entry_dict.get("kb_name", "")
-                link_rows = db._raw_conn.execute(
-                    "SELECT target_id, relation FROM link WHERE source_id = ? AND source_kb = ?",
-                    (item_id, kb_name),
-                ).fetchall()
-                entry_dict["_links"] = [
-                    {"target": lr["target_id"], "relation": lr["relation"]} for lr in link_rows
-                ]
+                entry_dict = checker_entry(db, row)
 
             params = criterion.get("params")
             # Three outcomes: a failure row, None because it holds, or a
