@@ -12,7 +12,8 @@
   transition table is unchanged. Finish requires the caller to hold the task; operators have
   an explicit override (`--operator-override`, MCP `operator_override: true`), recorded on
   each item as `by: operator`, `override: true`. A caller who does not hold the task, or no
-  caller, is refused (`FORBIDDEN`) and nothing is written. Edges are
+  caller, is refused (`FORBIDDEN`) and nothing is written. Finish is guarded on the CLI and
+  MCP; REST has no finish route yet (see #1745). Edges are
   judged by the core task workflow even where a KB declares its own task `state_machine`
   (#1709). A start whose file write is refused puts the index row back as it was,
   holder included; a plain `task claim`'s rollback is unchanged. MCP adds `task_start`

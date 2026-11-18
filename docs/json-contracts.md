@@ -1673,7 +1673,9 @@ A refusal writes nothing and is (CLI exit 1):
 - `ENTRY_NOT_FOUND`: no task with that id in the KB.
 - `ENTRY_UNREADABLE`: a file its type cannot load.
 
-REST has no finish route; a REST client uses `PATCH /api/entries/{id}`.
+The holder rule guards `task finish` on the CLI and MCP. REST has no finish
+route yet (see #1745); the generic `PATCH /api/entries/{id}` is unchanged and
+is not `task finish`.
 
 ## Entry row shape
 
