@@ -748,7 +748,7 @@ def sw_migrate_standards(
     """Migrate type:standard entries to programmatic_validation or development_convention."""
     from pathlib import Path
 
-    from pyrite.exceptions import EntryLoadError, KBReadOnlyError
+    from pyrite.exceptions import EntryLoadError, KBReadOnlyError, ValidationError
     from pyrite.storage.database import PyriteDB
     from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
     from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
@@ -887,6 +887,10 @@ def sw_migrate_standards(
                             f"  [red]Skip[/red] {row['title']}: ", path, " changed; run again"
                         )
                     )
+                    skipped += 1
+                    continue
+                except ValidationError as e:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {e}", markup=False)
                     skipped += 1
                     continue
                 console.print(path_line(f"  [green]Migrated[/green] {row['title']} -> ", new_path))
