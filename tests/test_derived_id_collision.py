@@ -229,3 +229,15 @@ def test_existing_idless_files_do_not_change_id(cli_world):
     entry = repo.load(expected_id)
     assert entry is not None
     assert entry.title == TITLE_ONE
+
+
+def test_title_of_existing_typing(cli_world):
+    """Direct unit test for _title_of_existing helper and its return types."""
+    world = cli_world()
+    kb_svc = KBService(world.config, world.db)
+    repo = KBRepository(world.config.get_kb("test-kb"))
+    assert kb_svc._title_of_existing("nonexistent-id", repo, pending_ids=None) is None
+    assert (
+        kb_svc._title_of_existing("pending-1", repo, pending_ids={"pending-1": "Pending Title"})
+        == "Pending Title"
+    )

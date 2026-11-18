@@ -1541,12 +1541,14 @@ class KBService:
         from collections.abc import Mapping
 
         if isinstance(pending_ids, Mapping) and entry_id in pending_ids:
-            return pending_ids[entry_id]
+            val = pending_ids[entry_id]
+            return str(val) if isinstance(val, str) else None
         if repo.exists(entry_id):
             try:
                 existing = repo.load(entry_id)
                 if existing is not None:
-                    return getattr(existing, "title", None)
+                    title = getattr(existing, "title", None)
+                    return str(title) if isinstance(title, str) else None
             except Exception:
                 return None
         return None
