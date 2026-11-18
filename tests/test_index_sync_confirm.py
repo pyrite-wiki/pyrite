@@ -710,19 +710,54 @@ def test_a_blank_name_is_no_name_on_every_surface(world, surface, blank):
 
 def test_the_service_refuses_a_kb_this_process_has_not_loaded(world):
     """MCP and REST resolve a KB through the registry as well as the loaded
-    config; the sync and the confirm read the config. A KB only the registry
-    holds is refused, never answered `done` with no rows."""
+    config; the sync reads the config. The service takes the KB the entry
+    point resolved, and a KB the sync did not reach is refused, never
+    answered `done` with no rows."""
     from pyrite.config import PyriteConfig
     from pyrite.exceptions import KBNotFoundError
     from pyrite.services.index_confirm import confirm_entries
     from pyrite.storage.index import IndexManager
 
+    resolved = world.config.knowledge_bases[0]  # what the entry point resolved
     unloaded = PyriteConfig(knowledge_bases=[], settings=world.config.settings)
     index_mgr = IndexManager(world.db, unloaded)
 
     for names in (["unchanged"], []):
         with pytest.raises(KBNotFoundError):
-            confirm_entries(index_mgr, KB, names, index_mgr.sync_incremental(KB))
+            confirm_entries(index_mgr, resolved, names, index_mgr.sync_incremental(KB))
+
+
+# --------------------------------------------------------------------------
+# A fault reading the embedding state is a refusal, never a state (#1531)
+# --------------------------------------------------------------------------
+
+
+def _break_the_vector_table(world, monkeypatch):
+    """A real database fault, no mock: the vector table is gone, so reading
+    which entries are embedded fails in the database itself."""
+    _with_a_model(world, monkeypatch)
+    world.db._raw_conn.execute("DROP TABLE vec_entry")
+    world.db._raw_conn.commit()
+
+
+def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_on_the_cli(world, monkeypatch):
+    _break_the_vector_table(world, monkeypatch)
+
+    result = _sync(world, "--confirm", "unchanged")
+
+    assert result.exit_code == 1, result.output
+    payload = _json(result)
+    assert (payload["outcome"], payload["error_code"]) == ("error", "STORAGE_ERROR")
+    assert "confirm" not in payload
+
+
+def test_a_fault_reading_the_embedding_state_is_a_storage_refusal_over_mcp(world, monkeypatch):
+    _break_the_vector_table(world, monkeypatch)
+
+    res = _mcp_answer(world, {"confirm": ["unchanged"]})
+
+    assert res.get("error_code") == "STORAGE_ERROR", res
+    assert "confirm" not in res
 
 
 def test_mcp_confirm_with_background_is_refused(world):
