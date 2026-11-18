@@ -548,6 +548,15 @@ def _slot_spec(raw, defaults: dict) -> dict:
         raise ValidationError(
             f'each batch item is an object like {{"query": "..."}}, not {type(raw).__name__}'
         )
+    import json
+
+    try:  # a lone surrogate ("\ud800", or stdin bytes under LC_ALL=C) reaches no search (#1728)
+        json.dumps(raw, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        raise ValidationError(
+            "a batch query holds text that is not valid UTF-8 (a lone surrogate, or "
+            "bytes that were not UTF-8)"
+        ) from None
     unknown = sorted(set(raw) - set(_BATCH_KEYS))
     if unknown:
         hint = (
