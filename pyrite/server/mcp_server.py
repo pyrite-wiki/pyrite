@@ -29,6 +29,7 @@ from ..exceptions import (
     EntryLoadError,
     EntryNotFoundError,
     InvalidGitRefError,
+    InvalidParameterError,
     KBNotFoundError,
     KBPathNotAllowedError,
     KBProtectedError,
@@ -188,6 +189,10 @@ _NEW_IN_THIS_THEME = frozenset(
         "KBUnreadableError",
         # ADR-0044 §1 (2026-10-20): a refusal no surface raised before.
         "LandingRefusedError",
+        # #1744: MCP answered INVALID_PARAMETER from a literal at each
+        # handler, never by raising a class; the class carries that same
+        # code, so there is no old code to carry.
+        "InvalidParameterError",
     }
 )
 
@@ -238,7 +243,11 @@ def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool
     """A boolean tool argument; ``None`` when it is neither a bool nor "true"/"false".
 
     A client that sends the string "false" must not get the truthy reading
-    ``bool("false")`` gives (#200).
+    ``bool("false")`` gives (#200). This is the one reader for every
+    declared-boolean MCP argument (#1744): a handler raises
+    ``InvalidParameterError`` (``INVALID_PARAMETER``) on a ``None``, naming
+    the argument, before the tool runs. The
+    contract is stated in docs/json-contracts.md, "Boolean MCP arguments".
     """
     value = args.get(name, default)
     if isinstance(value, bool):
@@ -988,7 +997,12 @@ class PyriteMCPServer:
         query = args.get("query", "")
         limit = args.get("limit", 20)
         fields = args.get("fields")
-        include_body = args.get("include_body", False)
+        include_body = _boolean_arg(args, "include_body")
+        if include_body is None:
+            raise InvalidParameterError("include_body must be true or false")
+        expand = _boolean_arg(args, "expand")
+        if expand is None:
+            raise InvalidParameterError("expand must be true or false")
         # Anything the search could not do as asked lands here; omitted from the
         # response when empty so the happy path costs an agent no tokens, and so
         # an agent can test for the key's presence. See SearchService.search's
@@ -1009,7 +1023,7 @@ class PyriteMCPServer:
                 limit=limit,
                 offset=args.get("offset", 0),
                 mode=args.get("mode", "hybrid"),
-                expand=args.get("expand", False),
+                expand=expand,
                 fips=args.get("fips"),
                 state=args.get("state"),
                 status=args.get("status"),
@@ -1242,7 +1256,10 @@ class PyriteMCPServer:
         prefix = args.get("prefix") or None
         kb_names = None if kb_name else readable_kbs
 
-        if args.get("tree"):
+        tree_arg = _boolean_arg(args, "tree")
+        if tree_arg is None:
+            raise InvalidParameterError("tree must be true or false")
+        if tree_arg:
             tree = self.svc.get_tag_tree(kb_name=kb_name, kb_names=kb_names)
             return {"tree": tree}
 
@@ -1569,7 +1586,9 @@ class PyriteMCPServer:
         kb_name = args["kb_name"]
         entry_id = args.get("entry_id")
         tier = args.get("tier", 1)
-        create_tasks = args.get("create_tasks", False)
+        create_tasks = _boolean_arg(args, "create_tasks")
+        if create_tasks is None:
+            raise InvalidParameterError("create_tasks must be true or false")
 
         if entry_id:
             return qa.assess_entry(
@@ -1597,7 +1616,7 @@ class PyriteMCPServer:
         self,
         entry_id: str,
         kb_name: str,
-        args: dict,
+        should_validate: bool,
         *,
         readable_kbs: set[str] | None,
     ) -> list[dict] | None:
@@ -1605,8 +1624,10 @@ class PyriteMCPServer:
 
         The issues go back to the writer, so their link checks are bounded
         by the writer's readable set, as `kb_qa_validate`'s are.
+        ``should_validate`` is the caller's `validate` argument, read by
+        ``_boolean_arg`` in the handler before the write (#1744): the read
+        cannot live here, because this runs after the entry is written.
         """
-        should_validate = args.get("validate", False)
         if not should_validate:
             kb_config = self.config.get_kb(kb_name)
             if kb_config:
@@ -1763,12 +1784,16 @@ class PyriteMCPServer:
     ) -> dict[str, Any]:
         """Create a new entry. Every create decision is KBService's (#378)."""
         kb_name = args.get("kb_name")
+        allow_undeclared = _boolean_arg(args, "allow_undeclared")
+        if allow_undeclared is None:
+            raise InvalidParameterError("allow_undeclared must be true or false")
+        validate = _boolean_arg(args, "validate")
+        if validate is None:
+            raise InvalidParameterError("validate must be true or false")
         spec = {k: v for k, v in args.items() if k not in _CREATE_CONTROL_KEYS}
         spec.setdefault("entry_type", "note")
         try:
-            written = self.svc.create(
-                kb_name, spec, allow_undeclared=bool(args.get("allow_undeclared"))
-            )
+            written = self.svc.create(kb_name, spec, allow_undeclared=allow_undeclared)
         except KBNotFoundError:
             return _error(
                 "KB_NOT_FOUND",
@@ -1792,7 +1817,7 @@ class PyriteMCPServer:
         }
         if written.warnings:
             result["warnings"] = written.warnings
-        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs=readable_kbs)
+        qa_issues = self._maybe_validate(entry.id, kb_name, validate, readable_kbs=readable_kbs)
         if qa_issues:
             result["qa_issues"] = qa_issues
         return result
@@ -1805,6 +1830,9 @@ class PyriteMCPServer:
         """
         kb_name = args.get("kb_name")
         entries = args.get("entries", [])
+        allow_undeclared = _boolean_arg(args, "allow_undeclared")
+        if allow_undeclared is None:
+            raise InvalidParameterError("allow_undeclared must be true or false")
 
         if not entries:
             return _error("VALIDATION_FAILED", "entries array is required and must not be empty")
@@ -1815,7 +1843,7 @@ class PyriteMCPServer:
 
         try:
             results = self.svc.bulk_create_entries(
-                kb_name, entries, allow_undeclared=bool(args.get("allow_undeclared"))
+                kb_name, entries, allow_undeclared=allow_undeclared
             )
         except KBUnreadableError as e:
             return _refusal(e)  # its own code, never retryable (#1542)
@@ -1847,6 +1875,9 @@ class PyriteMCPServer:
         """
         entry_id = args.get("entry_id")
         kb_name = args.get("kb_name")
+        validate = _boolean_arg(args, "validate")
+        if validate is None:
+            raise InvalidParameterError("validate must be true or false")
 
         # ADR-0034 at any depth, on the raw arguments: the filter below keeps
         # only the type's fields, which would drop a marker nested under any
@@ -1916,7 +1947,7 @@ class PyriteMCPServer:
             result["unchanged"] = unchanged
         if written.warnings:
             result["warnings"] = written.warnings
-        qa_issues = self._maybe_validate(entry.id, kb_name, args, readable_kbs=readable_kbs)
+        qa_issues = self._maybe_validate(entry.id, kb_name, validate, readable_kbs=readable_kbs)
         if qa_issues:
             result["qa_issues"] = qa_issues
         return result
@@ -1955,7 +1986,9 @@ class PyriteMCPServer:
         relation = args.get("relation", "related_to")
         target_kb = args.get("target_kb")
         note = args.get("note", "")
-        allow_dangling = args.get("allow_dangling", False)
+        allow_dangling = _boolean_arg(args, "allow_dangling")
+        if allow_dangling is None:
+            raise InvalidParameterError("allow_dangling must be true or false")
 
         # The spec is checked here, outside the try below, so VALIDATION_FAILED
         # is the answer for this refusal only: a ValidationError subclass
@@ -2021,13 +2054,16 @@ class PyriteMCPServer:
         from ..services.read_shaping import parse_fields_param
 
         kb_name = args.get("kb_name")
+        dispatchable = _boolean_arg(args, "dispatchable")
+        if dispatchable is None:
+            raise InvalidParameterError("dispatchable must be true or false")
         listing: dict[str, Any] = self.task_svc.task_listing(
             kb_name=kb_name,
             kb_names=None if kb_name else readable_kbs,
             status=args.get("status"),
             assignee=args.get("assignee"),
             parent=args.get("parent"),
-            dispatchable=bool(args.get("dispatchable")),
+            dispatchable=dispatchable,
             fields=parse_fields_param(args.get("fields")),
         )
         return listing
@@ -2138,7 +2174,10 @@ class PyriteMCPServer:
 
         include_empty = _boolean_arg(args, "include_empty")
         if include_empty is None:
-            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+            return _refusal(InvalidParameterError("include_empty must be true or false"))
+        exclude_linked = _boolean_arg(args, "exclude_linked", True)
+        if exclude_linked is None:
+            raise InvalidParameterError("exclude_linked must be true or false")
 
         svc = self.link_svc
         pairs = svc.batch_suggest(
@@ -2146,7 +2185,7 @@ class PyriteMCPServer:
             target_kb=target_kb,
             limit_per_entry=args.get("limit_per_entry", 3),
             mode=args.get("mode", "keyword"),
-            exclude_linked=args.get("exclude_linked", True),
+            exclude_linked=exclude_linked,
             readable_kbs=readable_kbs,
             include_empty=include_empty,
         )
@@ -2169,7 +2208,10 @@ class PyriteMCPServer:
 
         include_empty = _boolean_arg(args, "include_empty")
         if include_empty is None:
-            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+            return _refusal(InvalidParameterError("include_empty must be true or false"))
+        exclude_linked = _boolean_arg(args, "exclude_linked", True)
+        if exclude_linked is None:
+            raise InvalidParameterError("exclude_linked must be true or false")
 
         svc = self.link_svc
         candidates = svc.discover_neighbors(
@@ -2178,7 +2220,7 @@ class PyriteMCPServer:
             target_kb=args.get("target_kb"),
             limit=args.get("limit", 10),
             mode=args.get("mode", "hybrid"),
-            exclude_linked=args.get("exclude_linked", True),
+            exclude_linked=exclude_linked,
             readable_kbs=readable_kbs,
             include_empty=include_empty,
         )
@@ -2260,13 +2302,19 @@ class PyriteMCPServer:
         Operators have an explicit override (`operator_override: true`), which
         the service honours only for the operator.
         A refusal is raised and answered by the dispatcher's error contract."""
+        walk = _boolean_arg(args, "walk")
+        if walk is None:
+            raise InvalidParameterError("walk must be true or false")
+        operator_override = _boolean_arg(args, "operator_override")
+        if operator_override is None:
+            raise InvalidParameterError("operator_override must be true or false")
         result: dict[str, Any] = self.task_svc.finish_task(
             args["task_id"],
             args["kb_name"],
-            walk=bool(args.get("walk", False)),
+            walk=walk,
             reason=args.get("reason") or "",
             by=args.get("by") or acting or "",
-            operator_override=args.get("operator_override") is True,
+            operator_override=operator_override,
         )
         return result
 
@@ -2315,7 +2363,9 @@ class PyriteMCPServer:
         sync added or changed) adds the ``confirm`` block ``index sync
         --confirm`` prints (``services.index_confirm``, #1691)."""
         kb_name = args.get("kb_name")
-        background = args.get("background", False)
+        background = _boolean_arg(args, "background")
+        if background is None:
+            raise InvalidParameterError("background must be true or false")
         confirm = _confirm_names(args.get("confirm"), kb_name=kb_name, background=background)
 
         if background:
@@ -2476,7 +2526,9 @@ class PyriteMCPServer:
         kb_name = args.get("kb")
         message = args.get("message")
         paths = args.get("paths")
-        sign_off = args.get("sign_off", False)
+        sign_off = _boolean_arg(args, "sign_off")
+        if sign_off is None:
+            raise InvalidParameterError("sign_off must be true or false")
 
         if not kb_name or not message:
             return _error("MISSING_PARAMETER", "Both 'kb' and 'message' are required")

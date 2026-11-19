@@ -557,6 +557,29 @@
       "status": 422
     }
   },
+  "InvalidParameterError": {
+    "cli": {
+      "error": "characterization message for InvalidParameterError",
+      "error_code": "INVALID_PARAMETER",
+      "outcome": "error",
+      "retryable": false
+    },
+    "mcp": {
+      "error": "characterization message for InvalidParameterError",
+      "error_code": "INVALID_PARAMETER",
+      "retryable": false
+    },
+    "rest": {
+      "body": {
+        "detail": {
+          "code": "INVALID_PARAMETER",
+          "message": "characterization message for InvalidParameterError",
+          "retryable": false
+        }
+      },
+      "status": 500
+    }
+  },
   "InvalidQATierError": {
     "cli": {
       "error": "characterization message for InvalidQATierError",
