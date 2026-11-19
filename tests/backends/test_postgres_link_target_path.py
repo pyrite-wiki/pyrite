@@ -7,6 +7,9 @@ would get no Markdown link rows for its unchanged files: when the column is
 new, `ensure_schema()` also clears the recorded stat, once, so the next sync
 reads every file (decision D3, as SQLite's migration v30 does). A database
 that already has the column keeps its stat: a restart must not re-read a KB.
+The same release added `link.target_resolved` and the
+`idx_entry_kb_file_path` index on `entry`; the third test drops those two as
+well and pins that `ensure_schema()` puts them back (#1766).
 """
 
 import os
@@ -83,6 +86,38 @@ def test_the_column_is_added_and_the_stat_cleared_once(pre_1723_engine):
         }
     assert "target_path" in columns
     assert _stat(pre_1723_engine) == (None, None)
+
+
+def test_ensure_schema_adds_target_resolved_and_the_file_path_index(pre_1723_engine):
+    """`target_resolved` and `idx_entry_kb_file_path` landed with
+    `target_path` (#1723), so a pre-#1723 index lacks both; the fixture only
+    drops `target_path`, so this test drops the other two first."""
+    with pre_1723_engine.connect() as conn:
+        conn.execute(text("ALTER TABLE link DROP COLUMN IF EXISTS target_resolved"))
+        conn.execute(text("DROP INDEX IF EXISTS idx_entry_kb_file_path"))
+        conn.commit()
+    ensure_schema(pre_1723_engine)  # what the next startup runs
+    with pre_1723_engine.connect() as conn:
+        columns = {
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns"
+                    " WHERE table_schema = current_schema() AND table_name = 'link'"
+                )
+            )
+        }
+        indexes = {
+            r[0]
+            for r in conn.execute(
+                text(
+                    "SELECT indexname FROM pg_indexes"
+                    " WHERE schemaname = current_schema() AND tablename = 'entry'"
+                )
+            )
+        }
+    assert "target_resolved" in columns
+    assert "idx_entry_kb_file_path" in indexes
 
 
 def test_a_database_that_has_the_column_keeps_its_stat(pre_1723_engine):
