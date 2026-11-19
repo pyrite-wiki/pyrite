@@ -2542,6 +2542,9 @@ is the error shape above in one line.
 
 Renaming an entry changes its id while preserving its filename and folder.
 A subsequent update or delete resolves the new id in the existing file.
+A `pyrite rename --dry-run` preview reports the requested `new_id` and the
+retained `file_path` relative to the KB. Its JSON result has `dry_run: true`
+and `renamed: false`, and its rich output shows the retained path.
 Updates preserve deliberate placement, including the KB root; a schema with
 a templated subdirectory may still move the file when its folder fields change.
 

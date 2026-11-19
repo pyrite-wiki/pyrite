@@ -356,6 +356,31 @@ def test_delete_refuses_a_missing_entry_and_kb_as_dev_did(env):
     assert nokb.exit_code == 1 and "ERROR [KB_NOT_FOUND]" in nokb.stdout
 
 
+@pytest.mark.parametrize("output_format", ["json", "rich"])
+def test_rename_dry_run_reports_the_retained_path_without_claiming_a_write(env, output_format):
+    seed(env)
+    (path,) = env["notes"].rglob("hello.md")
+    before = path.read_bytes()
+    relative = str(path.relative_to(env["notes"]))
+
+    result = run(
+        env, "rename", "hello", "new-id", "-k", "notes", "--dry-run", "--format", output_format
+    )
+
+    assert result.exit_code == 0, result.output
+    if output_format == "json":
+        plan = doc(result)
+        assert plan["file_path"] == relative
+        assert plan["new_id"] == "new-id"
+        assert plan["dry_run"] is True
+        assert plan["renamed"] is False
+    else:
+        assert f"File: {relative}" in result.stdout
+        assert "Would rename: hello -> new-id" in result.stdout
+    assert path.read_bytes() == before
+    assert not list(env["notes"].rglob("new-id.md"))
+
+
 def test_rename_dry_run_and_link_report(env):
     seed(env)
     seed(env, "World")
