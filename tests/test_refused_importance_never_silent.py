@@ -57,6 +57,7 @@ def test_qa_reports_refused_importance_as_range_without_rename_advice(make_world
     assert "rename" not in message.lower()
 
 
+@pytest.mark.control(reason="negative control: an accepted spelling was never flagged")
 @pytest.mark.parametrize("value", ACCEPTED)
 def test_qa_accepted_importance_has_no_finding(make_world, value):
     assert _range_findings(make_world(value)) == []
@@ -70,6 +71,7 @@ def test_get_json_warns_on_refused_importance(make_world, value):
     assert any("importance" in w and "1-10" in w for w in body["warnings"]), body
 
 
+@pytest.mark.control(reason="negative control: an accepted spelling was never flagged")
 @pytest.mark.parametrize("value", ACCEPTED)
 def test_get_json_accepted_importance_has_no_warning(make_world, value):
     body = json.loads(make_world(value).cli("get", "n", "-k", "k").stdout)
@@ -85,6 +87,7 @@ def test_search_json_warns_on_that_entry(make_world, value):
     assert any("importance" in w and "1-10" in w for w in rows[0]["warnings"]), rows[0]
 
 
+@pytest.mark.control(reason="negative control: an accepted spelling was never flagged")
 @pytest.mark.parametrize("value", ACCEPTED)
 def test_search_json_accepted_importance_has_no_warning(make_world, value):
     rows = json.loads(make_world(value).cli("search", "zebra", "-k", "k").stdout)["results"]
@@ -100,6 +103,7 @@ def test_csv_writes_a_stderr_note(make_world, value):
         assert "importance" in result.stderr and "1-10" in result.stderr, args
 
 
+@pytest.mark.control(reason="negative control: an accepted spelling was never flagged")
 @pytest.mark.parametrize("value", ACCEPTED)
 def test_csv_accepted_importance_writes_no_note(make_world, value):
     result = make_world(value).cli("get", "n", "-k", "k", "--format", "csv")
