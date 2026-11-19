@@ -17,7 +17,10 @@ longer loads -- is left out with its own reason
 
 Nothing here reads a file or the database. The service supplies whether a
 row's file is still there (``file_present``) and, for a row that passes every
-other check, whether the claim's loader loads it (``file_loads``).
+other check, whether the claim's loader loads it (``file_loads``). That load
+also copies ``parked_awaiting`` from the file onto the row when the file
+parks (#1743). A row the index already calls parked is excluded before the
+load, so this view does not un-park a stale index row.
 """
 
 from __future__ import annotations

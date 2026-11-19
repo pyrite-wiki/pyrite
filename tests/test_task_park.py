@@ -933,3 +933,38 @@ def test_a_done_task_can_still_be_unparked(hworld, surface):
     code, data = _park_on(hworld, surface, "unpark", "done-parked")
     assert code is None, data
     assert "parked_awaiting" not in _front(hworld.kb_path(KB) / "done-parked.md")
+
+
+# -- A park written in the file after the last index (#1743 on dev, with #1688) -------
+
+
+def test_a_file_only_park_is_judged_by_the_park_rule(tmp_path, today):
+    """Indexed with no park, then parked in the file without `index sync`:
+    the listing reads the file's park for a row it would list (#1743), and
+    judges it as it judges an indexed one, at the same today, over the
+    file's three keys together. A person park stays out; an external park
+    whose retest_after has come is due, so listed; one still ahead stays out."""
+    names = ("file-person", "file-due", "file-ahead")
+    w = _build(tmp_path, {tid: _task(tid, minute=i) for i, tid in enumerate(names)})
+    try:
+        root = w.kb_path(KB)
+        parks = {
+            "file-person": "parked_awaiting: payment\npark_kind: person\nretest_after: 2026-12-01\n",
+            "file-due": "parked_awaiting: reply\npark_kind: external\nretest_after: 2026-12-01\n",
+            "file-ahead": "parked_awaiting: reply\npark_kind: external\nretest_after: 2026-12-20\n",
+        }
+        for i, tid in enumerate(names):
+            (root / f"{tid}.md").write_text(
+                _task(tid, minute=i, extra=parks[tid]), encoding="utf-8"
+            )
+        today(ON)
+        for surface, ask in DISPATCH.items():
+            out = ask(w)
+            listed = [t["id"] for t in out["tasks"]]
+            reasons = {e["id"]: e["reason"] for e in out["excluded"]}
+            assert "file-due" in listed, (surface, out)
+            assert reasons.get("file-person") == "parked", (surface, reasons)
+            assert reasons.get("file-ahead") == "parked", (surface, reasons)
+            assert "file-person" not in listed and "file-ahead" not in listed, surface
+    finally:
+        w.close()

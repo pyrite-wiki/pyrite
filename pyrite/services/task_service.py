@@ -27,6 +27,7 @@ from ..models.task_queue import (
     dependency_ids,
     due_rechecks,
     is_parked,
+    park_fields,
     park_reason,
     parked_state,
     retest_date,
@@ -823,6 +824,14 @@ class TaskService:
         completion of a KB a ``kb:id`` dependency names -- only when this
         listing reads that KB, so a dependency on a KB the caller may not
         read stays unresolved (blocked) and reveals nothing.
+
+        That same load is where a park written into the file after the last
+        index is seen (#1743). ``parked_state`` stays the only rule, at the
+        same ``today``, over the file's three park keys taken together (one
+        source, #1688): a file park whose ``retest_after`` has come is due,
+        not parked, as the index's would be. A row the index already calls
+        parked never reaches the load, so a stale parked index row stays
+        ``parked`` until ``index sync``.
         """
         if not tasks:
             return []
@@ -859,10 +868,30 @@ class TaskService:
 
         # The one check that reads a file runs last and only on the rows every
         # other check lists, so its cost is the listed set: does the claim's
-        # own loader load the file? A row it does not is `unreadable`.
+        # own loader load the file? A row it does not is `unreadable`. The
+        # same load applies a park that is in the file but not yet in the
+        # index (#1743); it never clears a park the index already recorded.
         for row, reason in classify_tasks(inputs, derived, today=today):
             if reason is None:
-                row["file_loads"] = self._claim_can_load(row)
+                loaded = self._claim_loaded_entry(row)
+                if loaded is self._UNCONFIGURED_KB:
+                    row["file_loads"] = True
+                elif loaded is None:
+                    row["file_loads"] = False
+                else:
+                    row["file_loads"] = True
+                    # The file's park, all three keys from the file (top
+                    # level, else under `metadata:`), judged as the index's is.
+                    file_park = park_fields(getattr(loaded, "_source_frontmatter", None) or {})
+                    if parked_state(file_park, today) in ("parked", "person"):
+                        row.update(
+                            {
+                                "parked_awaiting": "",
+                                "park_kind": "",
+                                "retest_after": "",
+                                **file_park,
+                            }
+                        )
 
         by_key = {_key(t): t for t in tasks}
         return [
@@ -882,22 +911,29 @@ class TaskService:
         except KBNotFoundError:
             return None
 
-    def _claim_can_load(self, task: dict[str, Any]) -> bool:
-        """Whether ``KBService.claim_entry``'s load of this task succeeds: the
-        same call (``KBRepository(kb).load``), so the list never promises a
-        task the claim then refuses at its load. No entry (the file's YAML
-        broke, or no file holds the id) and a load error (its type refuses
-        it) are both false. A KB no longer configured is not loaded by the
-        claim either, so it is not judged here."""
+    #: Returned by :meth:`_claim_loaded_entry` when the row names a KB that
+    #: is no longer configured. The claim does not load it, and the listing
+    #: does not call it unreadable.
+    _UNCONFIGURED_KB: Any = object()
+
+    def _claim_loaded_entry(self, task: dict[str, Any]) -> Any:
+        """The entry ``KBRepository.load`` returns for this task.
+
+        That is the claim's own load, so the list never promises a task the
+        claim then refuses. ``None`` when no file holds the id, the file's
+        YAML broke, or the type refuses it. :attr:`_UNCONFIGURED_KB` when the
+        row's KB is gone: not loaded, and not judged here. A park on the
+        loaded entry is what ``task list --dispatchable`` trusts when the
+        index row is older than the file (#1743)."""
         from ..storage.repository import KBRepository
 
         kb = self._row_kb(task["kb_name"])
         if kb is None:
-            return True
+            return self._UNCONFIGURED_KB
         try:
-            return KBRepository(kb).load(task["id"]) is not None
+            return KBRepository(kb).load(task["id"])
         except EntryLoadError:  # the claim's load refuses this file's type: leave it out
-            return False
+            return None
 
     def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
         """Whether the task's file is still there, as its KB answers it

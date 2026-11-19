@@ -1273,7 +1273,7 @@ without them the body is unchanged:
   | `orphaned` | its index row's file is gone |
   | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
   | `assigned` | names any assignee |
-  | `parked` | its park state (`parked_state`, #1688) is `parked` or `person`: `parked_awaiting` gives a reason or `retest_after` is set, and the park is not yet due (a `person` park never is). Empty, whitespace, `''` and `null` reasons do not park, and the body is never read |
+  | `parked` | its park state (`parked_state`, #1688) is `parked` or `person`: `parked_awaiting` gives a reason or `retest_after` is set, and the park is not yet due (a `person` park never is). Empty, whitespace, `''` and `null` reasons do not park, and the body is never read. For a row every other check would list, the claim's loader reads the file, so a park written after the last `index sync` still excludes it, judged by the same rule on the file's `parked_awaiting`, `park_kind` and `retest_after` (a file park whose `retest_after` has come is due, not parked). An index row that already says parked stays parked until the next sync, even when the file no longer does |
   | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
   | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
 
