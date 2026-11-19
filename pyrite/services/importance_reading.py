@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from ..exceptions import FrontmatterError
 from ..models.base import DEFAULT_IMPORTANCE
 from ..schema.validators import importance_value
 from ..utils.parse import safe_int
@@ -43,7 +44,7 @@ def file_importance(path: str | Path | None) -> Any:
         from ..utils.frontmatter import load_frontmatter
 
         loaded = load_frontmatter(Path(path).read_text(encoding="utf-8"))
-    except Exception:
+    except (OSError, ValueError, FrontmatterError):
         logger.debug("importance reading: cannot read %s", path, exc_info=True)
         return ABSENT
     if loaded is None:
