@@ -71,3 +71,57 @@ def test_index_embed_format_json_empty_index(tmp_path):
     assert result.exit_code != 0
     data = json.loads(result.stdout)
     assert "error" in data
+
+
+def test_index_embed_format_unknown(tmp_path):
+    _, config = _world(tmp_path)
+    runner = CliRunner()
+    with cli_world(config):
+        result = runner.invoke(app, ["index", "embed", "-k", "kb", "--format", "csv"])
+    assert result.exit_code == 2
+    assert "unknown format 'csv'; choose one of: rich, json, yaml" in result.output
+
+
+def test_index_embed_format_json_success(tmp_path, monkeypatch):
+    import zlib
+    import pyrite.services.embedding_service as es
+
+    class _Vec(list):
+        def tolist(self):
+            return list(self)
+
+    class _StubModel:
+        def encode(self, text, **kwargs):
+            if isinstance(text, list):
+                return [self.encode(t) for t in text]
+            vec = [0.05] * 384
+            vec[zlib.crc32(text.encode()) % 384] += 0.001
+            return _Vec(vec)
+
+    kb_path, config = _world(tmp_path)
+    from pyrite.storage.database import PyriteDB
+
+    db = PyriteDB(config.settings.index_path)
+    if not db.vec_available:
+        db.close()
+        pytest.skip("sqlite-vec not available")
+    db.close()
+
+    runner = CliRunner()
+    with cli_world(config):
+        # Build index first while embedding is not mocked, leaving entries unembedded
+        build_res = runner.invoke(app, ["index", "build", "-k", "kb"])
+        assert build_res.exit_code == 0, build_res.output
+
+    monkeypatch.setattr(es, "is_available", lambda: True)
+    monkeypatch.setattr(es, "_load_model", lambda name: _StubModel())
+    monkeypatch.setattr(es, "_MODEL_CACHE", {})
+
+    with cli_world(config):
+        result = runner.invoke(app, ["index", "embed", "-k", "kb", "--format", "json"])
+    assert result.exit_code == 0, result.output
+    # Must be valid pure JSON with no progress bar text before it
+    data = json.loads(result.stdout)
+    assert data["embedded"] == 1
+    assert data["skipped"] == 0
+    assert data["errors"] == 0

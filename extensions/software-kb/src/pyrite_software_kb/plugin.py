@@ -2906,9 +2906,7 @@ class SoftwareKBPlugin:
                 allowed = get_allowed_transitions(BACKLOG_WORKFLOW, current_status, "write")
                 err_msg = f"Cannot transition from '{current_status}' to '{to_status}'"
                 if current_status == "done" and to_status == "done":
-                    err_msg += (
-                        " (item is already done; 'sw review -o approved' closes items directly)"
-                    )
+                    err_msg += " (item is already done; 'sw review -o approved' (CLI) or 'sw_review' (MCP) closes items directly)"
                 elif current_status == to_status:
                     err_msg += f" (item is already in '{current_status}' status)"
                 return {

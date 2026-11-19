@@ -14,7 +14,13 @@ from typer.core import TyperCommand
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db, require_kb
 from .outcome import Outcome, OutcomeKind
-from .output import OUTPUT_FORMAT_UNASKED, cli_console, path_line, validate_output_format
+from .output import (
+    OUTPUT_FORMAT_UNASKED,
+    cli_console,
+    output_format_choice,
+    path_line,
+    validate_output_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -566,7 +572,7 @@ def index_embed(
     output_format: str = typer.Option(
         "rich",
         "--format",
-        callback=validate_output_format,
+        callback=output_format_choice("rich", "json", "yaml"),
         help="Output format: rich (default), json, yaml",
     ),
 ):
@@ -613,8 +619,6 @@ def index_embed(
             suggestion="run `pyrite index build` first",
         )
 
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-
     # Before embed_all, not after: a queued row marks an entry whose body
     # changed, and only the drain re-embeds it. embed_all(force=False) skips
     # anything that already has a vector, stale or not.
@@ -622,6 +626,12 @@ def index_embed(
 
     queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
     if queue_worker.has_pending() and (model_problem := queue_worker.model_unavailable()):
+        if output_format != "rich":
+            cli_error(
+                model_problem,
+                output_format=output_format,
+                error_code="DEPENDENCY_MISSING",
+            )
         typer.echo(model_problem)
         # Nothing was embedded and the queued entries stay owed: the batch rule
         # (docs/json-contracts.md, "Exit codes (CLI)": offline with nothing
@@ -637,22 +647,30 @@ def index_embed(
     svc = EmbeddingService(db, model_name=config.settings.embedding_model)
 
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("{task.completed}/{task.total}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Embedding entries...", total=None)
+        if output_format == "rich":
+            from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
-            def update_progress(current: int, total: int):
-                progress.update(task, completed=current, total=total)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Embedding entries...", total=None)
 
+                def update_progress(current: int, total: int):
+                    progress.update(task, completed=current, total=total)
+
+                stats = svc.embed_all(
+                    kb_name=kb_name,
+                    force=force,
+                    progress_callback=update_progress,
+                )
+        else:
             stats = svc.embed_all(
                 kb_name=kb_name,
                 force=force,
-                progress_callback=update_progress,
             )
     except EmbeddingModelUnavailableError as e:
         # The finder in `is_available()` saw the package; its first real import
