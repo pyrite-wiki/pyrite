@@ -1205,6 +1205,78 @@ jobs:
           --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
   # ===========================================================================
+  # Postgres backends (#1766): the Postgres backend is an experimental
+  # surface (#657), so the gating `test` matrix deselects its tests
+  # (`-m "not ... experimental"`), and the `experimental` job -- which does
+  # run them against a real Postgres -- tolerates any failure its ratchet
+  # already knows. Nothing in CI therefore goes red when a Postgres schema
+  # or migration change (`ensure_schema`, mark-for-reread) breaks: #1723's
+  # Postgres half was judged by reading only. This job runs `tests/backends/`
+  # -- the Postgres test modules and the backend conformance suite, both
+  # halves -- against a Postgres service container on one interpreter, and
+  # its own red is the verdict. It is deliberately not in `gate`'s needs:
+  # whether it becomes a required check is the maintainer's call, as with
+  # `experimental`.
+  # ===========================================================================
+  postgres:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Same image as the `test` and `experimental` jobs: pgvector/pgvector
+    # ships the server with the pgvector extension pre-installed, which
+    # PostgresBackend.ensure_schema() requires (`CREATE EXTENSION vector`).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pyrite_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+            uv.lock
+
+      # Same install as the `experimental` job: `.[all,postgres]` is the
+      # whole optional surface plus the Postgres driver.
+      - name: Install dependencies
+        run: |
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
+            fi
+          done
+
+      # -n auto like every other pytest gate: the backends conftest gives
+      # each xdist worker its own schema on the one database, and the
+      # Postgres test modules do the same, so the directory is xdist-safe.
+      # HF_HUB_OFFLINE as in the `experimental` job: no test here needs a
+      # model download to prove the backend.
+      - name: Run the backend tests against Postgres
+        env:
+          PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
+          HF_HUB_OFFLINE: "1"
+        run: pytest tests/backends/ -n auto
+
+  # ===========================================================================
   # The one required check. A skipped matrix job reports as `test`, not
   # `test (3.12)`, so requiring the matrix legs by name hangs every docs-only
   # PR (the classifier skipped the matrix, the required context never
