@@ -107,9 +107,10 @@ def test_index_embed_format_json_success(tmp_path, monkeypatch):
         pytest.skip("sqlite-vec not available")
     db.close()
 
+    monkeypatch.setattr(es, "is_available", lambda: False)
     runner = CliRunner()
     with cli_world(config):
-        # Build index first while embedding is not mocked, leaving entries unembedded
+        # Build index with is_available=False, ensuring entries are indexed but not embedded
         build_res = runner.invoke(app, ["index", "build", "-k", "kb"])
         assert build_res.exit_code == 0, build_res.output
 

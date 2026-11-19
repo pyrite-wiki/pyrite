@@ -565,6 +565,20 @@ def index_stats(
         console.print(table)
 
 
+def _refuse_dependency_missing(
+    message: str,
+    output_format: str = "rich",
+    *,
+    suggestion: str | None = None,
+) -> None:
+    cli_error(
+        message,
+        output_format=output_format,
+        error_code="DEPENDENCY_MISSING",
+        suggestion=suggestion,
+    )
+
+
 @index_app.command("embed")
 def index_embed(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to embed (all if omitted)"),
@@ -627,11 +641,7 @@ def index_embed(
     queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
     if queue_worker.has_pending() and (model_problem := queue_worker.model_unavailable()):
         if output_format != "rich":
-            cli_error(
-                model_problem,
-                output_format=output_format,
-                error_code="DEPENDENCY_MISSING",
-            )
+            _refuse_dependency_missing(model_problem, output_format=output_format)
         typer.echo(model_problem)
         # Nothing was embedded and the queued entries stay owed: the batch rule
         # (docs/json-contracts.md, "Exit codes (CLI)": offline with nothing
@@ -677,10 +687,9 @@ def index_embed(
         # failed. That is a missing dependency, not an entry error (#1101).
         from ..utils.install_hints import extra_install_command
 
-        cli_error(
+        _refuse_dependency_missing(
             str(e),
             output_format=output_format,
-            error_code="DEPENDENCY_MISSING",
             suggestion=extra_install_command("semantic"),
         )
 

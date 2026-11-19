@@ -99,7 +99,9 @@ def _sw_limit_callback(
     return value
 
 
-SW_LEGACY_LIMIT_SHORT = typer.Option(None, "-l", hidden=True, callback=_record_sw_short_limit)
+SW_LEGACY_LIMIT_SHORT = typer.Option(
+    None, "-l", min=0, hidden=True, callback=_record_sw_short_limit
+)
 
 
 def _sw_effective_format(fmt: str, legacy_format: Any = None) -> str:
