@@ -64,6 +64,7 @@ def _tree(root: Path) -> dict[str, str]:
     }
 
 
+@pytest.mark.control(reason="records stay entries (option A); this holds before and after the fix")
 def test_assess_writes_records_into_the_kb(world):
     """The records exist as entries (option A keeps them searchable)."""
     _assess(world)
@@ -139,6 +140,7 @@ def test_export_site_has_no_qa_assessment_output(world, tmp_path):
     assert after == _tree(out_before)
 
 
+@pytest.mark.control(reason="existing skip behaviour that the fix must keep")
 def test_assess_still_skips_recently_assessed_entries(world):
     _assess(world)
     result = world.cli("qa", "assess", KB, "--format", "json")
@@ -218,6 +220,9 @@ def _readers():
     return found
 
 
+@pytest.mark.control(
+    reason="checks the classifier finds the readers; true before and after the fix"
+)
 def test_the_classifier_sees_readers():
     names = {f"{f}::{fn}" for f, fn, _ in _readers()}
     assert "qa_service.py::get_status" not in names  # it calls validate_kb
@@ -240,6 +245,7 @@ def test_every_entry_reader_is_guarded_or_classified():
     )
 
 
+@pytest.mark.control(reason="table hygiene, independent of the fix")
 def test_the_not_a_content_reader_table_has_no_stale_rows():
     names = {f"{f}::{fn}" for f, fn, _ in _readers()}
     stale = sorted(set(NOT_A_CONTENT_READER) - names)
