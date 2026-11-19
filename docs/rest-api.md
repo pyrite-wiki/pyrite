@@ -43,14 +43,17 @@ anonymous access and the first admin are in
 
 **A credential that does not verify gets `401`, never anonymous access.**
 Only a request that sends *no* credential is the anonymous visitor. A key
-(`X-API-Key`, `Authorization: Bearer`, `?api_key`) or a `pyrite_session`
-cookie that is wrong, empty, expired or revoked gets `401` even when
-`anonymous_tier` allows reads, on REST, on `/mcp` and on the live-update
-socket. When a request carries more than one, the first in the order
-`Authorization: Bearer`, `X-API-Key`, `?api_key`, cookie decides: a wrong
-key next to a valid cookie is `401`. A `401` caused by the session cookie
-also clears the cookie, so a browser's next request is anonymous. An
-`Authorization` header with another scheme (a proxy's `Basic`) is not read.
+(`X-API-Key`, `Authorization: Bearer`, or `?api_key` where it is read) or a
+`pyrite_session` cookie that is wrong, empty, expired or revoked gets `401`
+even when `anonymous_tier` allows reads, on REST, on `/mcp` and on the
+live-update socket. REST and the socket read `?api_key`; `/mcp` never does,
+so there a `?api_key` is ignored and the request's other credentials (or
+none) decide. When a request carries more than one credential, the first in
+the order `Authorization: Bearer`, `X-API-Key`, `?api_key`, cookie decides: a
+wrong key next to a valid cookie is `401`. A REST `401` caused by the session
+cookie also clears the cookie, so a browser's next request is anonymous;
+`/mcp` and the socket refuse it without clearing it. An `Authorization`
+header with another scheme (a proxy's `Basic`) is not read.
 
 ## Read the API reference
 
