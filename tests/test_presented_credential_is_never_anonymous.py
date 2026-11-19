@@ -302,7 +302,10 @@ def test_a_valid_key_next_to_a_stale_cookie_is_the_key(make_world, tier, state):
 def test_a_stale_cookie_401_clears_the_cookie_and_the_next_request_is_anonymous(make_world, state):
     world = make_world(tier="read")
     client = world.client()
-    r = client.get("/api/kbs", headers={"Cookie": f"{SESSION_COOKIE}={world.token(state)}"})
+    # In the client's cookie jar, where a browser keeps it, for the host the
+    # client talks to (httpx files a dotless host under "<host>.local").
+    client.cookies.set(SESSION_COOKIE, world.token(state), domain="testserver.local", path="/")
+    r = client.get("/api/kbs")
     assert r.status_code == 401, (r.status_code, r.text[:200])
     # A deletion of the cookie at the path it was set on (`/`), as
     # `/auth/logout` sends it.
@@ -310,7 +313,9 @@ def test_a_stale_cookie_401_clears_the_cookie_and_the_next_request_is_anonymous(
     assert set_cookie.startswith(f'{SESSION_COOKIE}=""'), set_cookie
     assert "Max-Age=0" in set_cookie, set_cookie
     assert "Path=/" in set_cookie, set_cookie
-    # A browser drops it; its next request carries no credential.
+    # The jar honours the deletion, as a browser does, so the next request
+    # carries no credential and is the anonymous visitor.
+    assert SESSION_COOKIE not in client.cookies
     assert client.get("/api/kbs").status_code == 200
 
 
