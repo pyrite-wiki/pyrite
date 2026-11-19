@@ -232,6 +232,17 @@ Source of truth: `pyrite/server/mcp_server.py` (`_unknown_arguments`,
 `_declared_arguments`, `_dispatch_tool`); tests in
 `tests/test_mcp_unknown_arguments.py`.
 
+## Boolean MCP arguments
+
+An argument a tool's `inputSchema` declares as `boolean` accepts a JSON
+`true`/`false` or the string `"true"`/`"false"` (a client that serialises
+booleans as strings gets what it asked for). Any other value, such as
+`"yes"` or `1`, answers `INVALID_PARAMETER` naming the argument, before the
+tool runs (#1744). The string `"false"` never reads as true. One helper
+reads every declared-boolean argument:
+`pyrite/server/mcp_server.py` (`_boolean_arg`); tests in
+`tests/test_mcp_boolean_arguments.py`.
+
 ## Server and account codes
 
 These are the central REST mappings (`pyrite/server/errors.py`); an endpoint
