@@ -20,10 +20,19 @@ from pyrite.utils.yaml import load_yaml
 
 def _init_software_kb(world, tmp_path):
     """A KB made by `pyrite init -t software`, in the world's config."""
-    assert world.cli(
-        "init", "--template", "software", "--path", str(tmp_path / "proj"),
-        "--name", "proj", "--no-examples",
-    ).exit_code == 0
+    assert (
+        world.cli(
+        "init",
+            "--template",
+            "software",
+            "--path",
+            str(tmp_path / "proj"),
+            "--name", 
+            "proj", 
+            "--no-examples",
+    ).exit_code
+        == 0
+    )
     return tmp_path / "proj"
 
 
@@ -115,7 +124,13 @@ class TestCreateTemplateWithKb:
             # An in-range importance: the skeleton shows the value the create writes.
             ("software", "note", ["--importance", "7"], ["--title", "x", "--importance", "7"], ()),
             # An out-of-range importance: both refuse, with the same envelope.
-            ("software", "note", ["--importance", "42"], ["--title", "x", "--importance", "42"], ()),
+                (
+                    "software", 
+                    "note", 
+                    ["--importance", "42"], 
+                    ["--title", "x", "--importance", "42"],
+                    ()
+                ),
             # A plugin type mapping: the skeleton stores the mapped type.
             # `date` is caller-supplied, so it differs from the skeleton's
             # empty default the way `title` does.
@@ -218,9 +233,7 @@ class TestCreateTemplateWithKb:
         """A -k that names no KB is refused, as a create is."""
         world = cli_world()
         _init_software_kb(world, tmp_path)
-        result = world.cli(
-            "create", "-k", "nope", "-t", "note", "--template", "--format", "json"
-        )
+        result = world.cli("create", "-k", "nope", "-t", "note", "--template", "--format", "json")
         assert result.exit_code == 1
         assert json.loads(result.output)["error_code"] == "KB_NOT_FOUND"
 
