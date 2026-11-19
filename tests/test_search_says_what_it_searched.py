@@ -233,6 +233,18 @@ class TestSearchedNeverOverstatesAFilter:
         assert fts_columns_read("title: body: hawk") == []
         assert fts_columns_read("nosuchcolumn: hawk") == []
         assert fts_columns_read("title:") == []
+        assert fts_columns_read("title: + hawk OR hawk") == []
+
+    @pytest.mark.parametrize(
+        "joined", ["hawk +falcon", "hawk+ falcon", '"hawk"+falcon', 'hawk+"falcon"']
+    )
+    def test_a_glued_plus_continues_the_filtered_phrase(self, db, svc, joined):
+        # FTS5 reads `a+b` and `a +b` as one phrase, so the filter covers both words
+        add_entry(db, "a", title="hawk falcon", body="x")
+        add_entry(db, "b", title="hawk", body="falcon")
+        resp = svc.search_response(f"title: {joined} OR title: {joined}", mode="keyword")
+        assert ids(resp) == ["a"]
+        assert resp["searched"] == ["title"]
 
 
 class TestALimitOfZeroEmbedsNoBody:

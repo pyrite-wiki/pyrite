@@ -38,7 +38,8 @@ def postgres_fts_vector_expression(row: str = "NEW") -> str:
 
 
 _ALL_COLUMNS = frozenset(FTS_COLUMNS)
-_BAREWORD = re.compile(r"[^\s(){}\",:]+")
+#: ``+`` is its own token: FTS5 reads ``a+b`` and ``a +b`` as one phrase (#1757).
+_BAREWORD = re.compile(r"[^\s(){}\",:+]+")
 _QUOTED = re.compile(r'"(?:[^"]|"")*"')
 
 
@@ -141,6 +142,13 @@ def _columns_read(query: str) -> frozenset[str]:
             i += 1
         elif c == ":":
             raise _NotParsedError
+        elif c == "+":
+            # a phrase join, glued or spaced: the next term continues the last
+            # filtered phrase, so it keeps that phrase's filter
+            if pending is not None:
+                raise _NotParsedError
+            pending = last_applied
+            i += 1
         elif c == "-":
             j = i + 1
             while j < n and query[j].isspace():
@@ -175,9 +183,6 @@ def _columns_read(query: str) -> frozenset[str]:
                 continue
             i = m.end()
             if word in ("AND", "OR", "NOT") or set(word) <= set("^*"):
-                continue
-            if word == "+":
-                pending = last_applied
                 continue
             if word == "NEAR":
                 k = i
