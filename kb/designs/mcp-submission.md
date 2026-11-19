@@ -126,8 +126,6 @@ Extensions register additional MCP tools per tier. Up to 32 plugin tools at admi
 - **Zettelkasten**: `zettel_inbox`, `zettel_graph`
 - **Encyclopedia**: `wiki_stubs`, `wiki_review_queue`, `wiki_quality_stats`, `wiki_assess_quality`, `wiki_submit_review`, `wiki_protect`
 - **Social**: `social_top`, `social_newest`, `social_reputation`, `social_post`, `social_vote`
-- **Cascade Series**: `cascade_timeline`, `cascade_actors`, `cascade_capture_lanes`, `cascade_network`
-- **Solidarity**: `solidarity_timeline`, `solidarity_infrastructure_types`
 
 ### MCP Prompts
 

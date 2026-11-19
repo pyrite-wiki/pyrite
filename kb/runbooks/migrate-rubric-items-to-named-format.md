@@ -58,6 +58,29 @@ For each string item in your `kb.yaml` `evaluation_rubric`:
      covered_by: schema
    ```
 
+## Gradual Adoption: Warn vs Fail in CI
+
+Whole-KB QA and `pyrite ci` enforce named rubric checks. When migrating an existing KB, you can choose whether named rubric checker findings fail `pyrite ci` or are reported as warnings without failing CI:
+
+1. **Per-KB setting** in `kb.yaml`:
+   ```yaml
+   name: my-kb
+   rubric_action: warn  # findings report as warnings and pyrite ci exits 0 (default: fail)
+   ```
+2. **Per-checker setting** in `evaluation_rubric`:
+   ```yaml
+   evaluation_rubric:
+     - checker: has_field
+       params:
+         field: path
+       action: warn   # this check warns without failing ci; others follow the KB default
+       text: "Component specifies its filesystem path"
+   ```
+
+Existing bulk missing-tag and missing-link findings keep failing CI. Invalid
+`rubric_action` or item `action` values fail CI and name the key and allowed
+values (`warn`, `fail`).
+
 ## Verifying Migration
 
 ```bash

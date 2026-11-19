@@ -2,21 +2,31 @@
 
 import logging
 from collections.abc import Callable
+from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from pydantic import ValidationError as PydanticValidationError
 
-from ...exceptions import ConfigError, KBNotFoundError, KBProtectedError
-from ...services.access_policy import ROLES, Action, AnyKB, ReadScope
+from ...config import validate_kb_default_role
+from ...exceptions import (
+    ConfigError,
+    KBNotFoundError,
+    KBProtectedError,
+    ValidationError,
+    public_text,
+)
+from ...services.access_policy import ROLES, AccessPolicy, Action, AnyKB, ReadScope
 from ...services.auth_service import AuthService
 from ...services.embedding_worker import EmbeddingWorker
 from ...services.ephemeral_service import EphemeralKBService, InvalidEphemeralKBNameError
+from ...services.index_health import network_shape
 from ...services.index_worker import IndexWorker
 from ...services.kb_registry_service import KBRegistryService
 from ...services.llm_service import LLMService
 from ...services.llm_usage_service import LLMUsageService
-from ...services.site_cache import SiteCacheService
 from ...storage.index import IndexManager
 from ..api import (
+    get_access_policy,
     get_auth_service,
     get_embedding_worker,
     get_ephemeral_service,
@@ -26,20 +36,33 @@ from ..api import (
     get_kb_registry,
     get_llm_service,
     get_llm_usage_service,
-    get_site_cache_factory,
     limiter,
     requires_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, resolve_named_kb
 from ..schemas import (
     AIStatusResponse,
+    KBMetadataUpdateRequest,
     KBReindexResponse,
-    SiteCacheSyncStatus,
     StatsResponse,
     SyncResponse,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_named_kb(request: Request, policy: AccessPolicy, name: str) -> None:
+    """The KB a route here names, through the one resolver (#952).
+
+    These routes decide access inline (ADR-0037 theme 3c has not moved
+    them), so nothing resolved the path's KB before the handler: the
+    permissions routes answered 200 with no grants for an unknown name, and
+    the admin-only KB routes each spelled their own 404. Resolved for the
+    caller's read scope, an unknown, unreadable or shortname KB is 404
+    ``KB_NOT_FOUND`` before any role is looked at.
+    """
+    resolve_named_kb(request, policy, name)
+
 
 router = APIRouter(tags=["Admin"])
 
@@ -61,6 +84,9 @@ def get_stats(
 def sync_index(
     request: Request,
     wait: bool = False,
+    kb: str | None = None,
+    confirm: list[str] | None = Query(None),
+    policy: AccessPolicy = Depends(get_access_policy),
     worker: IndexWorker = Depends(get_index_worker),
     index_mgr: IndexManager = Depends(get_index_mgr),
 ):
@@ -68,10 +94,30 @@ def sync_index(
 
     By default submits a background job and returns immediately with a job_id.
     Pass ?wait=true to block until completion and return the legacy SyncResponse
-    format with counts.
+    format with counts; ?kb= syncs that KB alone.
+
+    ``confirm`` (repeated: ``?confirm=a&confirm=notes/b.md``; one empty value
+    confirms every entry the sync added or changed) adds the ``confirm`` block
+    ``pyrite index sync --confirm`` prints (``services.index_confirm``,
+    #1691). It needs ``wait=true`` and ``kb``.
     """
+    resolved = None
+    if kb is not None:
+        # Through the one resolver, for the caller: an unknown name is 404
+        # KB_NOT_FOUND, as on the other admin KB routes. The confirm takes
+        # this handle (T3-1, #1530).
+        resolved = resolve_named_kb(request, policy, kb)
+        kb = resolved.name if resolved is not None else None
+    if confirm is not None:
+        if not wait:
+            raise ValidationError(
+                "confirm needs wait=true: a confirm reads the sync, which a background job "
+                "has not done yet"
+            )
+        if not kb:
+            raise ValidationError("confirm needs kb: the KB the entries are in")
     if wait:
-        result = index_mgr.sync_incremental()
+        result = index_mgr.sync_incremental(kb)
 
         # ADR-0035: a write enqueues instead of embedding, and this is one of
         # the two server paths that pay that debt back (the other is the
@@ -89,58 +135,29 @@ def sync_index(
 
         broadcast_event("kb_synced", entry_id="", kb_name="")
 
-        # Re-render the site cache if entries changed, *after* the sync has
-        # already committed and the drain/broadcast above have run. `wait=true`
-        # means the caller is already blocked on this request, so the render
-        # happens synchronously here rather than being handed to the loop
-        # captured at startup (#326's `bind_loop`/`_loop`) -- that hand-off
-        # exists for code with no way to make the caller wait; this code has
-        # exactly that. `index_mgr.config` (not `request.app.state.config`,
-        # which nothing in the server ever sets) is the same config already
-        # used to build `index_mgr` via `get_index_mgr`.
-        #
-        # A render failure does NOT fail the sync (#349 cold-read round): the
-        # sync already committed its counts, drained the embed queue and
-        # broadcast `kb_synced` by this point, and a 500 here would also make
-        # a retry see `added=0` (nothing changed), so the cache would never
-        # get another chance to render. The failure is instead reported on
-        # `site_cache.error` and logged with its traceback -- narrow because
-        # only building the service and `render_all` are wrapped, not the
-        # sync, drain or broadcast above.
-        site_cache_status = None
-        if result.get("added", 0) + result.get("updated", 0) + result.get("removed", 0) > 0:
-            from ...services.site_cache import SiteCacheService
+        if confirm is not None:
+            from ...services.index_confirm import confirm_entries
 
-            try:
-                # Inside the try: the constructor reads branding.yaml, which
-                # an operator may have left half-edited. On this path (#408)
-                # a broken branding file is reported the same generic way as
-                # any other render failure -- the sync already committed, so
-                # there is no "nothing committed yet, fix and retry" framing
-                # to offer; that framing is only true of the explicit
-                # POST /api/site/render call below.
-                stats = SiteCacheService(config=index_mgr.config, db=index_mgr.db).render_all()
-            except Exception:
-                logger.exception("Site cache render failed after sync")
-                site_cache_status = SiteCacheSyncStatus(
-                    rendered=False, error="site cache render failed; see server log"
-                )
-            else:
-                logger.info("Site cache re-rendered after sync")
-                site_cache_status = SiteCacheSyncStatus(
-                    rendered=True, errors=stats.get("errors", 0)
-                )
-
-        return SyncResponse(
+            assert resolved is not None  # confirm without a kb is refused above
+            result["confirm"] = confirm_entries(index_mgr, resolved, confirm, result)
+        # What a network caller gets of the result (#1546, #1552), the confirm
+        # block included: one place decides it.
+        shaped = network_shape(result)
+        response = SyncResponse(
             synced=True,
             added=result.get("added", 0),
             updated=result.get("updated", 0),
             removed=result.get("removed", 0),
             skipped=result.get("skipped", []),
-            site_cache=site_cache_status,
+            unreadable_kbs=result.get("unreadable_kbs", []),
+            # Folders it could not list, rows kept: a count, never a path (#1546).
+            unreadable_folders=shaped["unreadable_folders"],
         )
+        if confirm is None:
+            return response
+        return {**response.model_dump(), "confirm": shaped["confirm"]}
 
-    job_id = worker.submit_sync()
+    job_id = worker.submit_sync(kb)
     return {"job_id": job_id, "status": "submitted"}
 
 
@@ -203,45 +220,6 @@ def get_all_usage(
     return {"users": usage_svc.get_all_usage()}
 
 
-@router.post("/site/render", dependencies=[Depends(requires_tier("admin"))])
-@limiter.limit("10/minute")
-async def render_site_cache(
-    request: Request,
-    build_site_cache: Callable[[], SiteCacheService] = Depends(get_site_cache_factory),
-):
-    """Render all /site pages to the filesystem cache for fast serving.
-
-    ``rendered`` means the same thing here as on the sync path's
-    ``site_cache`` status (#408): the render ran to completion, independent
-    of per-entry page failures, which ``errors`` counts. This is an
-    explicit, nothing-already-committed operator call, so an unreadable
-    ``branding.yaml`` (``SiteCacheService.__init__`` reads it) is reported
-    as a 409 rather than folded into `rendered: false` -- unlike the sync
-    path, there is nothing that already committed, so surfacing the mistake
-    plainly is more useful than a generic 200/500.
-    """
-    import asyncio
-
-    from ...exceptions import BrandingInvalidError, public_text
-
-    try:
-        svc = await asyncio.to_thread(build_site_cache)
-    except BrandingInvalidError as e:
-        # Logged detail names the real path; the response body carries only
-        # the exception's public_message (#377 pattern; #445 cold read --
-        # str(e) here previously leaked the branding.yaml path over HTTP).
-        logger.warning("Site cache render refused: invalid branding.yaml: %s", e)
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "BRANDING_INVALID",
-                "message": public_text(e, already_logged=True, log=logger),
-            },
-        ) from None
-    stats = await asyncio.to_thread(svc.render_all)
-    return {"rendered": True, **stats}
-
-
 @router.get("/index/embed-status")
 @limiter.limit("100/minute")
 def embed_status(request: Request, worker: EmbeddingWorker = Depends(get_embedding_worker)):
@@ -273,15 +251,44 @@ def create_kb(
             kb = eph_svc.create_ephemeral_kb(name, ttl=ttl or 3600, description=description)
         except InvalidEphemeralKBNameError as e:
             raise HTTPException(
-                status_code=400, detail={"code": "INVALID_KB_NAME", "message": str(e)}
+                status_code=400, detail={"code": "INVALID_KB_NAME", "message": public_text(e)}
             ) from None
         return {"created": True, "name": kb.name, "path": str(kb.path), "ephemeral": True}
 
     try:
         result = registry.add_kb(name=name, path=path, kb_type=kb_type, description=description)
     except ConfigError as e:
-        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+        # ConfigError fixes its public_message (its text may name a server
+        # path); a subclass that says what conflicts (KB already exists)
+        # shows its own.
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": public_text(e)})
     return {"created": True, **result}
+
+
+def _parse_kb_metadata_update(body: Any) -> dict[str, Any]:
+    """The fields a ``PUT /kbs/{name}`` body sets (and only those), or a
+    ``VALIDATION_FAILED`` refusal naming what is wrong: an unknown key, a value
+    of the wrong type, or a body that is not an object. Validated here, from
+    the raw body, so the refusal has the documented shape rather than FastAPI's
+    list. The ``kb_type`` null/blank rule is the registry's."""
+    if body is None:
+        return {}
+    try:
+        return KBMetadataUpdateRequest.model_validate(body, strict=True).model_dump(
+            exclude_unset=True
+        )
+    except PydanticValidationError as e:
+        problems = []
+        for err in e.errors():
+            field = ".".join(str(p) for p in err["loc"]) or "body"
+            if err["type"] == "extra_forbidden":
+                problems.append(f"unknown field '{field}'")
+            else:
+                problems.append(f"'{field}': {err['msg']}")
+        raise ValidationError(
+            "Invalid KB update: " + "; ".join(problems) + ". Accepted fields are description "
+            "and kb_type; default_role is set at PUT /api/kbs/{name}/default-role."
+        ) from None
 
 
 @router.put("/kbs/{name}", dependencies=[Depends(requires_tier("admin"))])
@@ -289,13 +296,15 @@ def create_kb(
 def update_kb(
     request: Request,
     name: str,
-    description: str | None = Body(None),
-    kb_type: str | None = Body(None),
+    body: Any = Body(None),
     registry: KBRegistryService = Depends(get_kb_registry),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Update a knowledge base's metadata."""
+    _resolve_named_kb(request, policy, name)
+    updates = _parse_kb_metadata_update(body)
     try:
-        result = registry.update_kb(name, description=description, kb_type=kb_type)
+        result = registry.update_kb(name, **updates)
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
@@ -309,8 +318,10 @@ def delete_kb(
     request: Request,
     name: str,
     registry: KBRegistryService = Depends(get_kb_registry),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Delete a knowledge base from the registry."""
+    _resolve_named_kb(request, policy, name)
     try:
         registry.remove_kb(name)
     except KBNotFoundError:
@@ -318,7 +329,9 @@ def delete_kb(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
         )
     except KBProtectedError as e:
-        raise HTTPException(status_code=403, detail={"code": "PROTECTED", "message": str(e)})
+        raise HTTPException(
+            status_code=403, detail={"code": "PROTECTED", "message": public_text(e)}
+        )
     return {"deleted": True, "name": name}
 
 
@@ -328,15 +341,17 @@ def reindex_kb(
     request: Request,
     name: str,
     registry: KBRegistryService = Depends(get_kb_registry),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Reindex a specific knowledge base."""
+    _resolve_named_kb(request, policy, name)
     try:
         result = registry.reindex_kb(name)
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
         )
-    return KBReindexResponse(name=name, **result)
+    return KBReindexResponse(name=name, **network_shape(result))
 
 
 @router.post("/kbs/gc", dependencies=[Depends(requires_tier("admin"))])
@@ -402,10 +417,10 @@ def create_ephemeral_kb(
         result = auth_service.create_user_ephemeral_kb(auth_user["id"], eph_svc, name=name)
     except InvalidEphemeralKBNameError as e:
         raise HTTPException(
-            status_code=400, detail={"code": "INVALID_KB_NAME", "message": str(e)}
+            status_code=400, detail={"code": "INVALID_KB_NAME", "message": public_text(e)}
         ) from None
     except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=public_text(e))
 
     return {"created": True, **result}
 
@@ -422,8 +437,10 @@ def list_kb_permissions(
     name: str,
     auth_service: AuthService = Depends(get_auth_service),
     resolve_default: Callable[[str], str | None] = Depends(get_kb_default_role_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """List permission grants for a KB. Requires global admin or KB admin."""
+    _resolve_named_kb(request, policy, name)
     auth_user = getattr(request.state, "auth_user", None)
     global_role = getattr(request.state, "api_role", None)
 
@@ -449,8 +466,10 @@ def manage_kb_permission(
     revoke: bool = Body(False),
     auth_service: AuthService = Depends(get_auth_service),
     resolve_default: Callable[[str], str | None] = Depends(get_kb_default_role_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Grant or revoke a per-KB permission. Requires global admin or KB admin."""
+    _resolve_named_kb(request, policy, name)
     auth_user = getattr(request.state, "auth_user", None)
     global_role = getattr(request.state, "api_role", None)
 
@@ -476,7 +495,7 @@ def manage_kb_permission(
     try:
         auth_service.grant_kb_permission(user_id, name, role, granted_by)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=public_text(e))
 
     return {"granted": True, "user_id": user_id, "kb_name": name, "role": role}
 
@@ -488,14 +507,20 @@ def update_kb_default_role(
     name: str,
     role: str | None = Body(..., embed=True),
     registry: KBRegistryService = Depends(get_kb_registry),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Update a KB's default access role. Requires admin."""
-    if role is not None and role not in ("none", "read", "write"):
-        raise HTTPException(status_code=400, detail="role must be 'none', 'read', 'write', or null")
+    _resolve_named_kb(request, policy, name)
+    try:
+        validate_kb_default_role(role, f"KB '{name}'")
+    except ConfigError:
+        raise HTTPException(
+            status_code=400, detail="role must be 'none', 'read', 'write', or null"
+        ) from None
     try:
         registry.update_kb(name, default_role=role)
     except KBNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=public_text(e))
     return {"ok": True, "kb_name": name, "default_role": role}
 
 

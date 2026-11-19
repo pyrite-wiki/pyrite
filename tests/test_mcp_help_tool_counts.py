@@ -5,7 +5,7 @@ plugin tools registered dynamically (`PyriteMCPServer._register_plugin_tools`)
 
 Regression for #229: the help text derived its numbers only from the core
 dicts (29/11/8), while a constructed server exposes far more once plugin
-tools (sw_*, investigation_*, cascade_*, zettel_*, wiki_*, social_*) are
+tools (sw_*, investigation_*, zettel_*, wiki_*, social_*) are
 counted in -- 70 tools at read tier alone.
 """
 

@@ -4,21 +4,32 @@ Database connection setup, extensions, migrations, and plugin tables.
 Mixin class providing __init__, close, transaction, and schema management.
 """
 
+from __future__ import annotations
+
 import copy
 import logging
 import re
 import sqlite3
 import threading
 import warnings
+import weakref
 from contextlib import contextmanager
 from datetime import date, datetime
 from pathlib import Path
+from typing import TypeGuard, cast
 
 from sqlalchemy import create_engine, event, text
+from sqlalchemy.engine import ExceptionContext
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from ..exceptions import IndexSchemaRefusedError, StorageError
+from ..utils.private_files import create_private_file, ensure_private_dir, tighten_file
 from .backends.sqlite_backend import SQLiteBackend
+from .errors import INDEX_ONLY_STATE, storage_error_from
+from .migrations import MigrationError
 from .models import Base
+from .schema_repair import MIGRATION_FAILED_SUGGESTION, repair_schema, schema_lock
 from .virtual_tables import create_fts_tables, create_vec_table
 
 logger = logging.getLogger(__name__)
@@ -61,77 +72,201 @@ sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
 sqlite3.register_adapter(date, lambda d: d.isoformat())
 sqlite3.register_converter("timestamp", lambda b: datetime.fromisoformat(b.decode()))
 
+CORRUPT_INDEX_SUGGESTION = (
+    "Move the unreadable index file aside, and keep it, then run `pyrite index build` "
+    "to rebuild the index from the markdown files. The rebuild does not restore the "
+    f"{INDEX_ONLY_STATE}."
+)
+
+
+def is_index_corruption(exc: BaseException) -> TypeGuard[sqlite3.DatabaseError]:
+    """Distinguish a broken index from query syntax, locks and other SQL errors."""
+    code = getattr(exc, "sqlite_errorcode", 0)
+    return isinstance(exc, sqlite3.DatabaseError) and (code & 0xFF) in (
+        sqlite3.SQLITE_CORRUPT,
+        sqlite3.SQLITE_NOTADB,
+    )
+
+
+def index_file_problem(db_path: Path) -> str | None:
+    """Why the index file at ``db_path`` is unreadable, judged from its header, or None.
+
+    SQLite opens a file cut short without complaint: it trusts the page count in
+    its header, and no read of a table notices the lost tail. So the file is
+    checked against that count here, the one place the rule lives (the opener
+    and ``db backup`` both call it). The count is only believed when it is
+    current and the main file is the whole database:
+
+    * a non-empty ``-wal`` means the main file may lawfully lag the count (a
+      checkpoint in progress, or a crash in the middle of one): the pages are
+      in the WAL;
+    * offset 92 (version-valid-for) must equal offset 24 (change counter), or
+      SQLite itself ignores the count at offset 28 and uses the file size.
+
+    A zero-byte file is an empty database. A directory or a file that is not
+    SQLite is refused whatever the WAL says.
+    """
+    if not db_path.exists():
+        return None
+    size = db_path.stat().st_size
+    if size == 0:
+        return None
+    with db_path.open("rb") as fh:
+        header = fh.read(100)
+    if len(header) < 100 or not header.startswith(b"SQLite format 3\x00"):
+        return "file is not a database"
+    raw_page_size = int.from_bytes(header[16:18], "big")
+    page_size = 65536 if raw_page_size == 1 else raw_page_size
+    if page_size < 512:
+        return "database disk image is malformed"
+    wal = db_path.with_name(db_path.name + "-wal")
+    if wal.exists() and wal.stat().st_size > 0:
+        return None
+    if header[92:96] != header[24:28]:
+        return None
+    in_header_pages = int.from_bytes(header[28:32], "big")
+    if size % page_size != 0 or (in_header_pages > 0 and size < page_size * in_header_pages):
+        return "database disk image is malformed"
+    return None
+
+
+class _FallbackSessionHolder:
+    """Holds a per-thread fallback session and releases its connection on thread exit (#1100)."""
+
+    def __init__(self, session: Session, db: ConnectionMixin) -> None:
+        self.session = session
+        self.db = weakref.ref(db)
+
+    def __del__(self) -> None:
+        try:
+            self.session.close()
+        except Exception:
+            pass
+        db = self.db()
+        if db is not None:
+            try:
+                with db._fallback_lock:
+                    if self.session in db._fallback_sessions:
+                        db._fallback_sessions.remove(self.session)
+            except Exception:
+                pass
+
 
 class ConnectionMixin:
     """Database connection, extensions, migrations, and plugin table creation."""
 
     def _init_connection(self, db_path: Path):
         self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.engine = None
+        self._sa_conn = None
+        try:
+            ensure_private_dir(self.db_path.parent)
+            if self.db_path.is_dir():
+                raise IsADirectoryError(f"Index path is a directory: {self.db_path}")
+            # The index holds password hashes and tokens: it is created 0600
+            # (never at the umask's mode and tightened later), and so are the
+            # -wal/-shm files SQLite makes beside it, which take the mode of
+            # the file they belong to. One that already exists is tightened.
+            create_private_file(self.db_path)
+            for suffix in ("-wal", "-shm"):
+                tighten_file(self.db_path.with_name(self.db_path.name + suffix))
+            problem = index_file_problem(self.db_path)
+            if problem:
+                raise sqlite3.DatabaseError(problem)
 
-        # Create SQLAlchemy engine.
-        #
-        # `check_same_thread: False` stays: the pool hands a connection to
-        # whichever thread checks it out, and with a session per scope no two
-        # threads share one. It is safe here precisely *because* the session
-        # is no longer shared — it was the flag that made the shared-session
-        # bug silent rather than a clean sqlite3 ProgrammingError (#131).
-        self.engine = create_engine(
-            f"sqlite:///{self.db_path}",
-            echo=False,
-            connect_args={"check_same_thread": False},
-            pool_size=_POOL_SIZE,
-            max_overflow=_MAX_OVERFLOW,
-            pool_pre_ping=True,
-        )
+            # Create SQLAlchemy engine.
+            #
+            # `check_same_thread: False` stays: the pool hands a connection to
+            # whichever thread checks it out, and with a session per scope no two
+            # threads share one. It is safe here precisely *because* the session
+            # is no longer shared — it was the flag that made the shared-session
+            # bug silent rather than a clean sqlite3 ProgrammingError (#131).
+            self.engine = create_engine(
+                f"sqlite:///{self.db_path}",
+                echo=False,
+                connect_args={"check_same_thread": False},
+                pool_size=_POOL_SIZE,
+                max_overflow=_MAX_OVERFLOW,
+                pool_pre_ping=True,
+            )
 
-        # Set SQLite pragmas on every connection
-        @event.listens_for(self.engine, "connect")
-        def set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA foreign_keys = ON")
-            cursor.execute("PRAGMA journal_mode = WAL")
-            cursor.execute("PRAGMA synchronous = NORMAL")
-            cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
-            cursor.close()
+            # Set SQLite pragmas on every connection
+            @event.listens_for(self.engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                # busy_timeout first: the journal_mode switch below waits for
+                # another connection's lock under it, not pysqlite's default.
+                cursor.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+                cursor.execute("PRAGMA foreign_keys = ON")
+                cursor.execute("PRAGMA journal_mode = WAL")
+                cursor.execute("PRAGMA synchronous = NORMAL")
+                cursor.close()
 
-        # Create ORM tables
-        Base.metadata.create_all(self.engine)
+            # Translate actual corruption, preserving query and lock errors.
+            # Keep the listener free of an owner reference (engine -> self
+            # would retain every request's database through an event cycle).
+            index_path_for_errors = str(self.db_path)
 
-        # Session factory. There is deliberately no long-lived *shared*
-        # Session: one Session used by concurrent threads corrupts SQLAlchemy's
-        # result state (#131). `self.session` below resolves per thread — the
-        # innermost `session_scope()` on this thread, or a per-thread fallback
-        # for callers that never open a scope.
-        #
-        # `_local` holds both: `.scopes` is the stack of active scopes and
-        # `.fallback` the scope-free session. Single-threaded callers (the CLI,
-        # `pyrite index build`, most tests) see exactly the previous behaviour
-        # — one long-lived Session, so an uncommitted ORM change is still
-        # visible to the next call on that thread. See `session` for why this
-        # is thread-local rather than a ContextVar.
-        self._session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
-        self._local = threading.local()
-        self._fallback_sessions: list[Session] = []
-        self._fallback_lock = threading.Lock()
+            @event.listens_for(self.engine, "handle_error")
+            def handle_db_error(exception_context: ExceptionContext) -> None:
+                orig = exception_context.original_exception
+                if is_index_corruption(orig):
+                    raise storage_error_from(
+                        orig,
+                        f"Database error at {index_path_for_errors}",
+                        suggestion=CORRUPT_INDEX_SUGGESTION,
+                    ) from orig
 
-        # Raw sqlite3 connection for the FTS5 / sqlite-vec virtual tables and
-        # migrations. sqlite3 serialises internally, but see `_raw_cursor()`
-        # below: a shared *cursor* is what is unsafe, so raw reads take their
-        # own cursor under a lock rather than sharing one (#131 criterion 7).
-        self._sa_conn = self.engine.connect()
-        self._raw_conn = self._sa_conn.connection.dbapi_connection
-        self._raw_conn.row_factory = sqlite3.Row
-        self._raw_lock = threading.RLock()
+            # Session factory. There is deliberately no long-lived *shared*
+            # Session: one Session used by concurrent threads corrupts SQLAlchemy's
+            # result state (#131). `self.session` below resolves per thread — the
+            # innermost `session_scope()` on this thread, or a per-thread fallback
+            # for callers that never open a scope.
+            #
+            # `_local` holds both: `.scopes` is the stack of active scopes and
+            # `.fallback` the scope-free session. Single-threaded callers (the CLI,
+            # `pyrite index build`, most tests) see exactly the previous behaviour
+            # — one long-lived Session, so an uncommitted ORM change is still
+            # visible to the next call on that thread. See `session` for why this
+            # is thread-local rather than a ContextVar.
+            self._session_factory = sessionmaker(bind=self.engine, expire_on_commit=False)
+            self._local = threading.local()
+            self._fallback_sessions: list[Session] = []
+            self._fallback_lock = threading.Lock()
 
-        # Load extensions and create virtual tables
-        self._load_extensions()
-        create_fts_tables(self._raw_conn)
-        if self.vec_available:
-            create_vec_table(self._raw_conn)
+            # One process at a time brings the file to this build's schema
+            # (#1302): two that both see it behind would both migrate it. The
+            # lock is taken before the first connection, too: that connection
+            # switches a new file to WAL, and SQLite answers a second process
+            # doing the same at once with "database is locked", busy timeout
+            # or not.
+            with schema_lock(self.db_path):
+                # Raw sqlite3 connection for the FTS5 / sqlite-vec virtual tables and
+                # migrations. sqlite3 serialises internally, but see `_raw_cursor()`
+                # below: a shared *cursor* is what is unsafe, so raw reads take their
+                # own cursor under a lock rather than sharing one (#131 criterion 7).
+                self._sa_conn = self.engine.connect()
+                self._raw_conn = self._sa_conn.connection.dbapi_connection
+                self._raw_conn.row_factory = sqlite3.Row
+                self._raw_lock = threading.RLock()
 
-        self._run_migrations()
-        self._create_plugin_tables()
+                self._load_extensions()
+                self._prepare_schema()
+        except StorageError:
+            # Already the error the user reads (the schema refusal, a busy
+            # schema lock, corruption the handle_error listener translated);
+            # only release the handles.
+            self._dispose_after_failed_open()
+            raise
+        except (OSError, sqlite3.Error, SQLAlchemyError, MigrationError) as exc:
+            self._dispose_after_failed_open()
+            # A disk fault is not fixed by a rebuild; what is left is a file
+            # SQLite cannot read (corruption, not a database, a directory).
+            raise storage_error_from(
+                exc,
+                f"Cannot open index database at {self.db_path}",
+                suggestion=CORRUPT_INDEX_SUGGESTION,
+            ) from exc
 
         # Instantiate the search backend.
         #
@@ -191,15 +326,17 @@ class ConnectionMixin:
         stack = getattr(self._local, "scopes", None)
         if stack:
             return stack[-1]
-        session = getattr(self._local, "fallback", None)
-        if session is None:
+        holder = getattr(self._local, "fallback_holder", None)
+        if holder is None:
             session = self._session_factory()
-            self._local.fallback = session
+            holder = _FallbackSessionHolder(session, self)
+            self._local.fallback_holder = holder
             # Tracked so `close()` can dispose of sessions belonging to threads
-            # that have since exited; `threading.local` alone would leak them.
+            # that have since exited or remain alive; `_FallbackSessionHolder`
+            # disposes of the session if the thread terminates first (#1100).
             with self._fallback_lock:
                 self._fallback_sessions.append(session)
-        return session
+        return holder.session
 
     @contextmanager
     def request_handle(self):
@@ -281,17 +418,29 @@ class ConnectionMixin:
             cursor = (conn if conn is not None else self._raw_conn).cursor()
             try:
                 yield cursor
+            except sqlite3.DatabaseError as exc:
+                if not is_index_corruption(exc):
+                    raise
+                raise storage_error_from(
+                    exc, f"Database error at {self.db_path}", suggestion=CORRUPT_INDEX_SUGGESTION
+                ) from exc
             finally:
                 cursor.close()
 
     def _load_extensions(self):
         """Try to load sqlite-vec extension for vector search."""
+        from ..exceptions import HeldFault, held_fault
+
         self.vec_available = False
-        self.vec_load_error: Exception | None = None
+        # Held, not the exception: the search warning reads it on every call,
+        # REST and MCP included, and its text (an install path, a dlopen
+        # message) is the operator's. A HeldFault shows it to the local
+        # process only, decided when the warning is built (ADR-0052 N3).
+        self.vec_load_error: HeldFault | None = None
         try:
             import sqlite_vec
         except Exception as exc:
-            self.vec_load_error = exc
+            self.vec_load_error = held_fault(exc)
             logger.info(
                 "sqlite-vec extension not available: %s: %s",
                 type(exc).__name__,
@@ -315,7 +464,7 @@ class ConnectionMixin:
                     load_error = exc
 
         if load_error is not None:
-            self.vec_load_error = load_error
+            self.vec_load_error = held_fault(load_error)
             logger.info(
                 "sqlite-vec extension not available: %s: %s",
                 type(load_error).__name__,
@@ -325,17 +474,73 @@ class ConnectionMixin:
 
         self.vec_available = True
 
+    def _dispose_after_failed_open(self) -> None:
+        if self._sa_conn is not None:
+            try:
+                self._sa_conn.close()
+            except Exception:
+                pass
+            self._sa_conn = None
+        if self.engine is not None:
+            try:
+                self.engine.dispose()
+            except Exception:
+                pass
+
+    def _prepare_schema(self) -> None:
+        """Bring the file to this build's schema; runs under ``schema_lock``.
+
+        Four steps, in order, each its own call so the #718 explicit-upgrade
+        mode can refuse before the first one writes: ``create_all`` adds
+        missing tables, then the virtual tables, the numbered migrations, and
+        the repair that adds any model column or index still missing
+        (``schema_repair.py``), and last the plugin tables.
+        """
+        assert self.engine is not None  # set by _init_connection before the lock
+        Base.metadata.create_all(self.engine)
+        create_fts_tables(self._raw_conn)
+        if self.vec_available:
+            create_vec_table(self._raw_conn)
+        self._run_migrations()
+        self._repair_schema()
+        self._create_plugin_tables()
+
     def _run_migrations(self):
-        """Run any pending database migrations using legacy MigrationManager."""
-        from .migrations import MigrationManager
+        """Run any pending database migrations using legacy MigrationManager.
+
+        A migration that fails refuses the open with `IndexSchemaRefusedError`,
+        naming only the versions; the driver's text goes to the log.
+        """
+        from .migrations import CURRENT_VERSION, MigrationManager
 
         mgr = MigrationManager(self._raw_conn)
+        self._version_at_open = mgr.get_current_version()
         pending = mgr.get_pending_migrations()
         if pending:
-            mgr.migrate()
+            from_version = self._version_at_open
+            try:
+                mgr.migrate()
+            except MigrationError as exc:
+                logger.warning("Index migration failed: %s", exc)
+                raise storage_error_from(
+                    exc,
+                    f"Upgrading the index from schema version {from_version} to "
+                    f"{CURRENT_VERSION} stopped at migration v{exc.version}; the steps "
+                    "before it are kept.",
+                    cls=IndexSchemaRefusedError,
+                    with_detail=False,
+                    suggestion=MIGRATION_FAILED_SUGGESTION,
+                ) from exc
         # Create vec_entry table if sqlite-vec is available and table doesn't exist
         if self.vec_available:
             create_vec_table(self._raw_conn)
+
+    def _repair_schema(self) -> list[str]:
+        """Add model columns and indexes the file lacks whatever its recorded version (#1260)."""
+        return repair_schema(
+            cast(sqlite3.Connection, self._raw_conn),
+            version_at_open=getattr(self, "_version_at_open", None),
+        )
 
     def _create_plugin_tables(self):
         """Create custom tables defined by plugins."""
@@ -413,11 +618,11 @@ class ConnectionMixin:
     def conn(self):
         """Backward-compat: returns raw sqlite3 connection.
 
-        Deprecated: Use ``session`` for writes and ``execute_sql()`` for
+        Deprecated; removed in 0.27. Use ``session`` for writes and ``execute_sql()`` for
         read-only raw SQL queries.
         """
         warnings.warn(
-            "db.conn is deprecated. Use db.session for writes and "
+            "db.conn is deprecated and will be removed in 0.27. Use db.session for writes and "
             "db.execute_sql() for read-only queries.",
             DeprecationWarning,
             stacklevel=2,

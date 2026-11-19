@@ -478,6 +478,11 @@ def main(argv: list[str]) -> int:
     env.setdefault("GIT_AUTHOR_EMAIL", "tutorial@example.invalid")
     env.setdefault("GIT_COMMITTER_NAME", "Pyrite Tutorial")
     env.setdefault("GIT_COMMITTER_EMAIL", "tutorial@example.invalid")
+    # pyrite's own git calls (`pyrite kb commit`) drop the GIT_* identity
+    # variables from their environment, so the temp HOME carries one as well.
+    (home / ".gitconfig").write_text(
+        "[user]\n\tname = Pyrite Tutorial\n\temail = tutorial@example.invalid\n"
+    )
 
     print(f"running {doc.relative_to(REPO) if doc.is_relative_to(REPO) else doc}")
     print(f"  HOME={home}")

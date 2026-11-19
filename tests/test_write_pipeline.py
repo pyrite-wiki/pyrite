@@ -281,12 +281,14 @@ def test_kb_update_writes_a_kb_yaml_declared_field_of_a_custom_type(env, mcp):
     assert "severity: high" in path.read_text()
 
 
+@pytest.mark.control(
+    reason="the unwrapped echo already ignored identity fields; the test now asserts the file's bytes, not substrings"
+)
 def test_kb_update_ignores_identity_and_bookkeeping_fields(env, mcp):
     """An agent echoing a read result back cannot rewrite id, path or created_at."""
     eid = _create(mcp, entry_type="person", title="Keep Me", body="b")
-    got = mcp._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": eid})
-    before = _file(env, eid)
-    created_line = [ln for ln in before.read_text().splitlines() if ln.startswith("created_at")]
+    got = mcp._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": eid})["entry"]
+    before = _file(env, eid).read_bytes()
     res = mcp._dispatch_tool(
         "kb_update",
         {
@@ -301,13 +303,10 @@ def test_kb_update_ignores_identity_and_bookkeeping_fields(env, mcp):
         },
     )
     assert res.get("updated"), res
-    after = _file(env, eid)
-    assert after == before, "the entry moved"
-    text = after.read_text()
-    assert "id: keep-me" in text and "hijacked" not in text
-    assert "1999" not in text and "nowhere" not in text
-    assert [ln for ln in text.splitlines() if ln.startswith("created_at")] == created_line
-    assert "edited" in text
+    # Whole file, not substrings (#1024: `1999` was in the keys this test
+    # added, so the old substring check passed while `entry:` was written).
+    assert _file(env, eid).read_bytes() == before.replace(b"\nb\n", b"\nedited\n")
+    assert _file(env, "hijacked") is None
 
 
 def test_kb_update_field_set_names_no_extension_vocabulary(env, mcp):
@@ -425,7 +424,7 @@ def test_cli_import_dry_run_works_on_a_read_only_kb(env):
 
 
 def test_bulk_create_missing_title_is_a_validation_refusal(env, mcp):
-    """#358's per-item title failure now carries the pipeline's code too."""
+    """#358's per-item title failure now carries the pipeline's code and row too."""
     res = mcp._dispatch_tool(
         "kb_bulk_create",
         {"kb_name": KB, "entries": [{"entry_type": "person", "body": "untitled"}]},
@@ -434,6 +433,8 @@ def test_bulk_create_missing_title_is_a_validation_refusal(env, mcp):
         "created": False,
         "error": "title is required",
         "error_code": "VALIDATION_FAILED",
+        # The row the refusal built travels with the record (#1381 review).
+        "errors": [{"field": "title", "rule": "required", "message": "title is required"}],
     }, res
 
 
@@ -549,14 +550,9 @@ def test_rest_create_accepts_the_web_forms_default_payload_in_pyrites_own_kb(sof
     create (web/src/lib/api/client.ts), so the form keeps dev's behaviour in a
     KB that declares types. API callers that do not send it are refused.
 
-    The exact-path assertion below is red without #391's fix for an incidental
-    reason worth naming: this KB's `note` -> most-derived-NoteEntry-subtype
-    resolution silently resolves the entry to an ADREntry (#468, filed,
-    out of scope for #391), so the file only lands under `adrs/` with the
-    `0000-` prefix once the `adr` type's `file_pattern` entry-field
-    placeholder support (this PR) exists at all; on dev, `{adr_number:04d}`
-    is unrecognized and `resolve_filename` falls back to the default
-    `<id>.md`, landing at `adrs/from-the-form.md` instead."""
+    The entry is stored as the `note` the form named (#468): before, the
+    software plugin's most-derived `NoteEntry` subclass won and the note was
+    written as an ADR at `adrs/0000-from-the-form.md`."""
     client, close = _rest_for(software_env)
     try:
         form = {"kb": "sw", "entry_type": "note", "title": "From the form", "body": ""}
@@ -566,17 +562,14 @@ def test_rest_create_accepts_the_web_forms_default_payload_in_pyrites_own_kb(sof
 
         resp = client.post("/api/entries", json={**form, "allow_undeclared": True})
         assert resp.status_code == 200, resp.text
-        # Exact path, not a substring match: #468 (filed, out of scope for
-        # #391) means this KB's `note` -> most-derived-NoteEntry-subtype
-        # resolution silently resolves this to an ADREntry, so the file
-        # lands under adrs/ with the adr type's file_pattern
-        # (adr_number defaults to 0 since this create never sets it).
         assert resp.json()["id"] == "from-the-form"
-        expected = software_env["kb_path"] / "adrs" / "0000-from-the-form.md"
-        assert expected.exists(), (
-            f"expected {expected} (see #468: `note` resolves to ADREntry here); "
-            f"found: {sorted(p.relative_to(software_env['kb_path']) for p in software_env['kb_path'].rglob('*.md'))}"
+        written = sorted(
+            p.relative_to(software_env["kb_path"]).as_posix()
+            for p in software_env["kb_path"].rglob("*.md")
         )
+        assert [p for p in written if "from-the-form" in p] == ["notes/from-the-form.md"], written
+        text = (software_env["kb_path"] / "notes" / "from-the-form.md").read_text()
+        assert "type: note" in text and "adr_number" not in text, text
     finally:
         close()
 
@@ -787,7 +780,14 @@ def test_create_refuses_a_resolved_path_collision_between_different_ids(software
     try:
         svc = KBService(software_env["config"], db)
         first = svc.create_entry(
-            "sw", "adr-a", "Same Title", "adr", "ORIGINAL", adr_number=5, status="proposed"
+            "sw",
+            "adr-a",
+            "Same Title",
+            "adr",
+            "ORIGINAL",
+            owns=frozenset({"adr_number"}),
+            adr_number=5,
+            status="proposed",
         )
         expected_file = software_env["kb_path"] / "adrs" / "0005-same-title.md"
         assert expected_file.exists(), expected_file
@@ -796,7 +796,14 @@ def test_create_refuses_a_resolved_path_collision_between_different_ids(software
 
         with pytest.raises(EntryExistsError):
             svc.create_entry(
-                "sw", "adr-b", "Same Title", "adr", "REPLACED", adr_number=5, status="proposed"
+                "sw",
+                "adr-b",
+                "Same Title",
+                "adr",
+                "REPLACED",
+                owns=frozenset({"adr_number"}),
+                adr_number=5,
+                status="proposed",
             )
 
         assert expected_file.read_bytes() == original, "the first ADR's file must be untouched"
@@ -867,7 +874,15 @@ def test_create_write_is_exclusive_against_a_true_toctou_race(software_env):
     try:
         svc = KBService(software_env["config"], db)
         with pytest.raises(EntryExistsError):
-            svc.create_entry("sw", "adr-loser", "Race", "adr", "LOSER", adr_number=5)
+            svc.create_entry(
+                "sw",
+                "adr-loser",
+                "Race",
+                "adr",
+                "LOSER",
+                owns=frozenset({"adr_number"}),
+                adr_number=5,
+            )
 
         assert winner_file.exists()
         assert "WINNER" in winner_file.read_text(), (
@@ -892,7 +907,14 @@ def test_update_keeps_the_existing_filename_for_a_file_pattern_type(software_env
     try:
         svc = KBService(software_env["config"], db)
         svc.create_entry(
-            "sw", "adr-x", "Original Title", "adr", "body", adr_number=9, status="proposed"
+            "sw",
+            "adr-x",
+            "Original Title",
+            "adr",
+            "body",
+            owns=frozenset({"adr_number"}),
+            adr_number=9,
+            status="proposed",
         )
         original_file = software_env["kb_path"] / "adrs" / "0009-original-title.md"
         assert original_file.exists(), original_file
@@ -931,7 +953,16 @@ def test_rename_an_adr_keeps_its_file_and_survives_index_verification(software_e
     db = PyriteDB(software_env["db_path"])
     try:
         svc = KBService(software_env["config"], db)
-        svc.create_entry("sw", "adr-x", "Keep Me", "adr", "body", adr_number=9, status="proposed")
+        svc.create_entry(
+            "sw",
+            "adr-x",
+            "Keep Me",
+            "adr",
+            "body",
+            owns=frozenset({"adr_number"}),
+            adr_number=9,
+            status="proposed",
+        )
         original_file = software_env["kb_path"] / "adrs" / "0009-keep-me.md"
         assert original_file.exists(), original_file
 
@@ -1095,12 +1126,14 @@ def test_plugin_validator_receives_documented_context_for_create_and_update(env,
         assert existing.role == "author"
 
 
-def test_update_validators_see_the_existing_entry_on_both_passes(env, mcp, monkeypatch):
-    """#601: the validation after before_save hooks is still an update.
+def test_update_validators_see_the_existing_entry_once(env, mcp, monkeypatch):
+    """#601: an update's validation sees the stored entry.
 
-    Validators run twice per write. The second pass once dropped
-    `existing_entry`, so a validator that compared against the stored entry
-    saw an update as a create on that pass.
+    Validators run once per update, on the entry parsed from the result
+    (ADR-0042 decision 2, #955; before that they ran before and after the
+    before_save hooks). The pass once dropped `existing_entry`, so a
+    validator that compared against the stored entry saw an update as a
+    create.
     """
     from pyrite.plugins import get_registry
     from pyrite.plugins.capabilities import Capability
@@ -1146,7 +1179,7 @@ def test_update_validators_see_the_existing_entry_on_both_passes(env, mcp, monke
     assert updated.get("updated"), updated
 
     update_calls = [existing for role, existing in calls if role == "editor"]
-    assert len(update_calls) == 2, "validators run before and after before_save hooks"
+    assert len(update_calls) == 1, "validators run once, on the result"
     assert all(existing is not None for existing in update_calls)
 
 
@@ -1187,8 +1220,11 @@ def test_before_save_hook_output_is_validated_on_create(env):
         db.close()
 
 
-def test_before_save_hook_output_is_validated_on_update_and_preserves_file(env):
-    from pyrite.exceptions import SchemaViolationError
+def test_a_before_save_hooks_change_never_reaches_the_file_on_update(env):
+    """ADR-0042 decision 4 (#955): a before_save hook may refuse an update
+    (raise); what it returns or sets on the entry changes no byte. The
+    hook here sets an off-list `role`; the update lands with only the body
+    changed, and `role` in the file is still `author`."""
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
 
@@ -1200,12 +1236,15 @@ def test_before_save_hook_output_is_validated_on_update_and_preserves_file(env):
         svc.create_entry(KB, "hook-update", "Hook Update", "person", "before", role="author")
         target = _file(env, "hook-update")
         assert target is not None
-        original = target.read_bytes()
+        original = target.read_text(encoding="utf-8")
 
         registry = _register_invalid_person_role_hook(plugin_name)
-        with pytest.raises(SchemaViolationError, match="reviewer"):
-            svc.update_entry("hook-update", KB, body="after")
-        assert target.read_bytes() == original
+        written = svc.update_entry("hook-update", KB, body="after")
+        assert written is not None
+        after = target.read_text(encoding="utf-8")
+        assert "role: author" in after and "reviewer" not in after
+        assert after.split("---", 2)[1] == original.split("---", 2)[1], "the frontmatter changed"
+        assert after.endswith("\nafter\n")
     finally:
         if registry is not None:
             del registry._plugins[plugin_name]
@@ -1256,3 +1295,103 @@ def test_update_rejects_malformed_source_and_link_items_by_field(env, field, val
         assert target.read_bytes() == before
     finally:
         db.close()
+
+
+# ---------------------------------------------------------------------------
+# #1024: an echoed kb_get envelope is refused, and the file is untouched
+# ---------------------------------------------------------------------------
+
+
+def _echo_setup(env, mcp):
+    eid = _create(mcp, entry_type="person", title="Keep Me", body="b")
+    got = mcp._dispatch_tool("kb_get", {"kb_name": KB, "entry_id": eid})
+    return eid, got
+
+
+def test_kb_update_refuses_an_echoed_kb_get_envelope_and_leaves_the_file_alone(env, mcp):
+    """`kb_get` answers `{"entry": {...}}`; sending that back whole writes
+    nothing: it is refused with the hint, and the file is byte-identical."""
+    eid, got = _echo_setup(env, mcp)
+    assert set(got) == {"entry"}, got  # the shape the issue is about
+    before = _file(env, eid).read_bytes()
+    res = mcp._dispatch_tool("kb_update", {**got, "kb_name": KB, "entry_id": eid, "body": "edited"})
+    assert not res.get("updated"), res
+    assert "kb_get" in json.dumps(res) and "entry" in json.dumps(res), res
+    assert _file(env, eid).read_bytes() == before
+
+
+@pytest.mark.control(
+    reason="the unwrapped echo already wrote only the body; the envelope is what was broken"
+)
+def test_kb_update_of_the_unwrapped_entry_writes_only_the_body(env, mcp):
+    eid, got = _echo_setup(env, mcp)
+    before = _file(env, eid).read_text()
+    res = mcp._dispatch_tool(
+        "kb_update", {**got["entry"], "kb_name": KB, "entry_id": eid, "body": "edited"}
+    )
+    assert res.get("updated"), res
+    assert _file(env, eid).read_text() == before.replace("\nb\n", "\nedited\n")
+
+
+def test_rest_put_never_writes_the_envelope(env, rest):
+    """REST's body model has no `entry` key (a top-level one is not read), so the
+    envelope can only arrive as `metadata.entry`; both leave the file untouched."""
+    assert (
+        rest.post(
+            "/api/entries",
+            json={"kb": KB, "entry_type": "person", "title": "Keep Me", "body": "b"},
+        ).status_code
+        == 200
+    )
+    got = rest.get("/api/entries/keep-me", params={"kb": KB}).json()
+    before = _file(env, "keep-me").read_bytes()
+    top = rest.put("/api/entries/keep-me", json={"kb": KB, "entry": {"entry": got}})
+    assert _file(env, "keep-me").read_bytes() == before, top.text
+    nested = rest.put("/api/entries/keep-me", json={"kb": KB, "metadata": {"entry": got}})
+    assert nested.status_code >= 400, nested.text
+    assert _file(env, "keep-me").read_bytes() == before
+
+
+@pytest.mark.control(reason="a declared field named entry was written before and must stay written")
+def test_a_declared_field_named_entry_is_still_written(env, mcp):
+    """Only an `entry` mapping that carries read-result keys is an envelope."""
+    (env["kb_path"] / "kb.yaml").write_text(
+        KB_YAML.replace("      mood:\n", "      entry:\n        type: text\n      mood:\n", 1)
+    )
+    env["config"].get_kb(KB).invalidate_schema_cache()
+    eid = _create(mcp, entry_type="note", title="Has Entry", body="b")
+    res = mcp._dispatch_tool(
+        "kb_update", {"kb_name": KB, "entry_id": eid, "entry": {"label": "mine"}}
+    )
+    assert res.get("updated"), res
+    assert "label: mine" in _file(env, eid).read_text()
+    # The boundary: a value that has an `id` is still the field's value; only
+    # a key a read alone carries (entry_type, file_path, an index column) makes it
+    # an envelope.
+    res = mcp._dispatch_tool(
+        "kb_update", {"kb_name": KB, "entry_id": eid, "entry": {"id": "ref-7", "label": "b"}}
+    )
+    assert res.get("updated"), res
+    assert "ref-7" in _file(env, eid).read_text()
+    before = _file(env, eid).read_bytes()
+    res = mcp._dispatch_tool(
+        "kb_update",
+        {"kb_name": KB, "entry_id": eid, "entry": {"id": eid, "entry_type": "note", "label": "c"}},
+    )
+    assert not res.get("updated"), res
+    assert _file(env, eid).read_bytes() == before
+
+
+@pytest.mark.control(
+    reason="documents the exception: add FILE adopted these values before and still does"
+)
+def test_add_file_adopts_a_hand_written_files_managed_values(env):
+    """The documented exception: `pyrite add FILE` takes a file's own values
+    (here a provenance block); it is not a request that sets them."""
+    src = env["tmp_path"] / "mine.md"
+    src.write_text(
+        "---\nid: mine\ntitle: Mine\ntype: person\nprovenance:\n  source: hand\n---\n\nb\n"
+    )
+    result = _cli(env, ["add", str(src), "-k", KB, "--allow-undeclared"])
+    assert result.exit_code == 0, result.output
+    assert "provenance" in _file(env, "mine").read_text()

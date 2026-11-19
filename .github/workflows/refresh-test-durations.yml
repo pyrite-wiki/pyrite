@@ -1,0 +1,83 @@
+name: Refresh test duration estimates
+on:
+  schedule:
+    - cron: '20 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: refresh-test-durations
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.prepare.outputs.changed }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+          fetch-depth: 0
+      - name: Find the latest successful dev merge-group run
+        id: latest
+        run: python3 scripts/refresh_test_durations.py --latest >> "$GITHUB_OUTPUT"
+      - name: Download its timing and junit evidence
+        if: steps.latest.outputs.run_id != ''
+        env:
+          SOURCE_RUN: ${{ steps.latest.outputs.run_id }}
+        run: |
+          gh run download "$SOURCE_RUN" --name test-durations --dir "$RUNNER_TEMP/fresh-timings"
+          gh run download "$SOURCE_RUN" --pattern 'junit-test-*' --dir "$RUNNER_TEMP/shard-reports"
+      - name: Prepare a refresh only above the observed spread threshold
+        if: steps.latest.outputs.run_id != ''
+        id: prepare
+        env:
+          SOURCE_RUN: ${{ steps.latest.outputs.run_id }}
+        run: |
+          python3 scripts/refresh_test_durations.py --root . \
+            --fresh "$RUNNER_TEMP/fresh-timings/test_durations.gz" \
+            --reports "$RUNNER_TEMP/shard-reports" --body "$RUNNER_TEMP/duration-refresh.md" \
+            --run-url "https://github.com/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" >> "$GITHUB_OUTPUT"
+      - name: Publish the proposed timings and evidence
+        if: steps.prepare.outputs.changed == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: proposed-test-durations
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            .test_durations.gz
+            ${{ runner.temp }}/duration-refresh.md
+  notify:
+    needs: refresh
+    if: needs.refresh.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: proposed-test-durations
+          path: proposal
+      - name: Open or update one timing refresh issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          title='ci: Test duration refresh evidence'
+          body=$(find proposal -name duration-refresh.md -print -quit)
+          test -n "$body"
+          printf '\nProposed baseline artifact: https://github.com/%s/actions/runs/%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> "$body"
+          number=$(gh issue list --state open --search 'in:title "Test duration refresh evidence"' --json number,title --jq 'map(select(.title == "ci: Test duration refresh evidence")) | first | .number // empty')
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --body-file "$body"
+          else
+            gh issue create --title "$title" --body-file "$body"
+          fi

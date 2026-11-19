@@ -18,10 +18,13 @@ FastAPI HTTP + WebSocket server structured as a factory (`create_app()`) with fu
 - Auth endpoints mounted outside `/api` for OAuth login/logout/callback
 - Rate limiting via `slowapi` with SHA-256-anonymized client IPs
 - WebSocket at `/ws` for real-time index progress and multi-tab updates
+- One body limit for the whole app: `body_limit.RequestBodyLimitMiddleware` counts every HTTP request body (REST, `/auth`, the `/mcp` mount, plugin routers) against `settings.max_request_body_bytes` and answers `413 PAYLOAD_TOO_LARGE` once it passes, replacing whatever the app answers after the overflow (FastAPI would otherwise turn the read error into a `400`). A route needs no limit of its own; `tests/test_request_body_limit.py` walks every OpenAPI route to keep it so
 
 ## Key Modules
 
 - `api.py` — app factory, DI providers, auth middleware, CORS, rate limiter
+- `body_limit.py` — the request-body size limit (above)
+- `request_guard.py` — Host allow-list and cross-origin write refusal
 - `endpoints/` — 17 domain routers (entries, search, kbs, collections, graph, timeline, AI, etc.)
 - `auth_endpoints.py` — OAuth routes outside /api prefix
 - `schemas.py` — Pydantic request/response models

@@ -97,8 +97,42 @@ class JournalismInvestigationPlugin:
         return None
 
     def _resolve_kb(self, args: dict[str, Any]) -> str:
-        """Resolve kb_name from args, default investigation KB, or 'investigation'."""
+        """Resolve kb_name from args, default investigation KB, or 'investigation'.
+
+        A write tool's handler never falls back here: its tool declares
+        ``default_kb`` (``_default_write_kb``), and the MCP dispatcher sets
+        ``kb_name`` from it before its checks, so ``args["kb_name"]`` is always
+        the KB those checks ran on. The read tools still fall
+        back, through ``_readable_kb``.
+        """
         return args.get("kb_name") or self._default_investigation_kb() or "investigation"
+
+    def _default_write_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str | None:
+        """The KB a write tool works in when the call names none: the first
+        investigation KB the caller may read, else a KB named ``investigation``.
+
+        Asked by the MCP dispatcher before its read, write and landing checks
+        (the ``default_kb`` declaration), so the KB it names is
+        checked like a named one. Only KBs the caller may read are offered: a
+        default the caller cannot read would be refused by its name, which
+        would tell the caller that KB exists.
+        """
+        config = getattr(self.ctx, "config", None) if self.ctx is not None else None
+        if not config:
+            return None
+        for kb in config.knowledge_bases:
+            if getattr(kb, "kb_type", None) == "journalism-investigation" and (
+                readable_kbs is None or kb.name in readable_kbs
+            ):
+                return kb.name
+        # A KB named "investigation" of another type, if there is one. Never a
+        # name that matches no KB: the call is then refused for naming none,
+        # not answered "not found" for a name the caller never sent.
+        if config.get_kb("investigation") is not None and (
+            readable_kbs is None or "investigation" in readable_kbs
+        ):
+            return "investigation"
+        return None
 
     def _readable_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str:
         """The KB this call reads, or a name that matches nothing (#223).
@@ -152,6 +186,11 @@ class JournalismInvestigationPlugin:
             "funding": FundingEntry,
         }
 
+    def get_type_mappings(self) -> dict[str, str]:
+        """A core ``event`` or ``document`` in an investigation KB is stored as
+        this plugin's type (#468: declared, never inferred from subclassing)."""
+        return {"event": "investigation_event", "document": "document_source"}
+
     def get_type_metadata(self) -> dict[str, dict]:
         """Aliases for keys older files spell another way (ADR-0045 decision 8)."""
         return {
@@ -174,10 +213,27 @@ class JournalismInvestigationPlugin:
         }
 
     def get_relationship_types(self) -> dict[str, dict]:
-        # Note: member_of/has_member, funded_by/funds, investigated/investigated_by
-        # are already registered by the cascade plugin. We only register types
-        # that are new to journalism-investigation.
+        # member_of/has_member and funded_by/funds are the relations
+        # `enrich_connection_links` writes for `membership` and `funding`;
+        # declared here so `kb schema show` lists them and their inverse is
+        # known (they came from the cascade extension until #953 deleted it).
         return {
+            "member_of": {
+                "inverse": "has_member",
+                "description": "Person is a member of an organization",
+            },
+            "has_member": {
+                "inverse": "member_of",
+                "description": "Organization has a member",
+            },
+            "funded_by": {
+                "inverse": "funds",
+                "description": "Entity is funded by another entity",
+            },
+            "funds": {
+                "inverse": "funded_by",
+                "description": "Entity funds another entity",
+            },
             "owns": {
                 "inverse": "owned_by",
                 "description": "Entity owns an asset or organization",
@@ -337,6 +393,7 @@ class JournalismInvestigationPlugin:
                     },
                     "required": ["entry_id"],
                 },
+                "locates_entry": {"id_args": ["entry_id"]},
                 "handler": self._mcp_network,
             }
             tools["investigation_sources"] = {
@@ -404,6 +461,7 @@ class JournalismInvestigationPlugin:
                     },
                     "required": ["claim_id"],
                 },
+                "locates_entry": {"id_args": ["claim_id"], "entry_type": "claim"},
                 "handler": self._mcp_evidence_chain,
             }
             tools["investigation_money_flow"] = {
@@ -438,6 +496,7 @@ class JournalismInvestigationPlugin:
                     },
                     "required": ["entry_id"],
                 },
+                "locates_entry": {"id_args": ["entry_id"]},
                 "handler": self._mcp_money_flow,
             }
             tools["investigation_qa_report"] = {
@@ -504,6 +563,7 @@ class JournalismInvestigationPlugin:
                     },
                     "required": ["entry_id"],
                 },
+                "locates_entry": {"id_args": ["entry_id"]},
                 "handler": self._mcp_ownership_chain,
             }
             tools["investigation_find_duplicates"] = {
@@ -624,6 +684,7 @@ class JournalismInvestigationPlugin:
                     "required": ["entity_type", "title"],
                 },
                 "handler": self._mcp_create_entity,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_create_event"] = {
                 "description": "Record a new event or incident in your investigation timeline. Specify a type, title, and date",
@@ -658,6 +719,7 @@ class JournalismInvestigationPlugin:
                     "required": ["event_type", "title", "date"],
                 },
                 "handler": self._mcp_create_event,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_create_claim"] = {
                 "description": "Document a claim or allegation that needs verification. Provide the assertion text and optionally link evidence",
@@ -692,6 +754,7 @@ class JournalismInvestigationPlugin:
                     "required": ["title", "assertion"],
                 },
                 "handler": self._mcp_create_claim,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_start"] = {
                 "description": "Start a new investigation — create the investigation entry with scope, key questions, and initial entities to research",
@@ -730,6 +793,7 @@ class JournalismInvestigationPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_investigation_start,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_promote_claim"] = {
                 "description": "Promote a corroborated or partially-verified claim to a structured edge-entity (ownership, membership, funding) in the investigation graph",
@@ -777,6 +841,11 @@ class JournalismInvestigationPlugin:
                     },
                     "required": ["claim_id", "edge_type"],
                 },
+                # Only claim_id is located. The ids nested in endpoint_fields
+                # (owner, asset, ...) are not: they are written as fields of
+                # the new edge entry, in the claim's KB -- the one the
+                # dispatcher's checks ran on -- and never looked up (#1310).
+                "locates_entry": {"id_args": ["claim_id"], "entry_type": "claim"},
                 "handler": self._mcp_promote_claim,
             }
             tools["investigation_log_source"] = {
@@ -816,6 +885,7 @@ class JournalismInvestigationPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_log_source,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_bulk_edges"] = {
                 "description": "Create multiple connection entries (ownership, membership, funding) at once. Validates all edges before creating, skips duplicates, and auto-generates titles/IDs",
@@ -856,6 +926,7 @@ class JournalismInvestigationPlugin:
                     "required": ["edges"],
                 },
                 "handler": self._mcp_bulk_edges,
+                "default_kb": self._default_write_kb,
             }
             tools["investigation_ftm_import"] = {
                 "description": "Import FollowTheMoney (FtM) entities into the investigation KB for Aleph interop",
@@ -879,6 +950,7 @@ class JournalismInvestigationPlugin:
                     "required": ["entities"],
                 },
                 "handler": self._mcp_ftm_import,
+                "default_kb": self._default_write_kb,
             }
         for tool in tools.values():
             tool["description"] = f"{_EXPERIMENTAL_NOTICE} {tool['description']}"
@@ -892,11 +964,18 @@ class JournalismInvestigationPlugin:
         """Get DB from injected context, falling back to self-bootstrap."""
         if self.ctx is not None:
             return self.ctx.db, False
-        from pyrite.config import load_config
         from pyrite.storage.database import PyriteDB
 
-        config = load_config()
-        return PyriteDB(config.settings.index_path), True
+        return PyriteDB(self._get_config().settings.index_path), True
+
+    def _get_config(self):
+        """The server's config from the injected context; the process's own
+        only when there is no context (the CLI). See the software-kb plugin."""
+        if self.ctx is not None:
+            return self.ctx.config
+        from pyrite.config import load_config
+
+        return load_config()
 
     # =========================================================================
     # Read-tier MCP tool handlers — delegate to pure query functions
@@ -1108,6 +1187,18 @@ class JournalismInvestigationPlugin:
             return self.ctx.kb_service
         return None
 
+    def _writing_kb_service(self, db):
+        """A KBService for the batch tools, which create every entry through
+        the pipeline: the context's when it carries one (it
+        honours a change-set landing, ADR-0044), else one over this plugin's
+        config (`_get_config`) and ``db``."""
+        kb_service = self._get_kb_service()
+        if kb_service is not None:
+            return kb_service
+        from pyrite.services.kb_service import KBService
+
+        return KBService(self._get_config(), db)
+
     def _mcp_create_entity(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create an entity entry."""
         from pyrite.schema import generate_entry_id
@@ -1300,13 +1391,31 @@ class JournalismInvestigationPlugin:
 
     def _mcp_investigation_start(self, args: dict[str, Any]) -> dict[str, Any]:
         """Create a new investigation."""
+        from pyrite.exceptions import KBNotFoundError, KBReadOnlyError, PyriteError, public_text
+
         from .investigation_setup import create_investigation
 
         db, should_close = self._get_db()
         try:
+            kb_name = self._resolve_kb(args)
+            # The KB through the server's config (#952). `create_investigation`
+            # writes through KBService and raises on a read-only KB; the
+            # refusal is answered here first, in this tool's own shape.
+            # A KB that does not exist is left to `create_investigation`'s
+            # own answer: the chokepoint has already refused a *named* one,
+            # so this is the plugin's default KB, and its hint says so.
+            try:
+                kb = self._get_config().require_kb(kb_name, db=db)
+            except KBNotFoundError:
+                kb = None
+            except PyriteError as e:
+                return {"error": public_text(e), "error_code": e.error_code}
+            if kb is not None and kb.read_only:
+                e = KBReadOnlyError(f"KB is read-only: {kb_name}")
+                return {"error": public_text(e), "error_code": e.error_code}
             return create_investigation(
-                db=db,
-                kb_name=self._resolve_kb(args),
+                self._writing_kb_service(db),
+                kb_name=kb_name,
                 title=args.get("title", ""),
                 scope=args.get("scope", ""),
                 key_questions=args.get("key_questions"),
@@ -1337,7 +1446,7 @@ class JournalismInvestigationPlugin:
         kb_name = self._resolve_kb(args)
         try:
             return create_edge_batch(
-                db=db,
+                self._writing_kb_service(db),
                 kb_name=kb_name,
                 edges=args.get("edges", []),
                 dry_run=args.get("dry_run", False),
@@ -1398,10 +1507,11 @@ class JournalismInvestigationPlugin:
         from .ftm import import_ftm
 
         db, should_close = self._get_db()
+        kb_name = self._resolve_kb(args)
         try:
             return import_ftm(
-                db,
-                self._resolve_kb(args),
+                self._writing_kb_service(db),
+                kb_name,
                 args.get("entities", []),
                 dry_run=args.get("dry_run", False),
             )

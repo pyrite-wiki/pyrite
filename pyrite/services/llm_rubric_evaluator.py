@@ -17,7 +17,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from ..exceptions import EvaluationFailedError
+from ..exceptions import EvaluationFailedError, outside_text
 from ..utils.metadata import parse_metadata
 
 if TYPE_CHECKING:
@@ -67,7 +67,9 @@ class LLMRubricEvaluator:
         except Exception as exc:
             logger.warning("LLM rubric evaluation failed", exc_info=True)
             raise EvaluationFailedError(
-                entry_id, f"the model call failed: {type(exc).__name__}: {exc}"
+                entry_id,
+                f"the model call failed: {type(exc).__name__}: "
+                f"{outside_text(exc, already_logged=True)}",
             ) from exc
 
         return self._parse_response(response, entry, rubric_items)
@@ -193,10 +195,18 @@ class LLMRubricEvaluator:
                 or passed is not False
             ):
                 continue
-            if isinstance(confidence, bool) or not isinstance(confidence, int | float):
+            # NaN compares false with everything, so the range check refuses
+            # NaN and infinity too (#1055). math.isfinite() is not used: it
+            # raises OverflowError on a JSON integer too big for a float.
+            if (
+                isinstance(confidence, bool)
+                or not isinstance(confidence, int | float)
+                or not 0 <= confidence <= 1
+            ):
                 raise EvaluationFailedError(
                     entry_id,
-                    f"the model's confidence for '{item_text}' is not a number: {confidence!r}",
+                    f"the model's confidence for '{item_text}' is not a number "
+                    f"between 0 and 1: {confidence!r}",
                 )
 
             issues.append(

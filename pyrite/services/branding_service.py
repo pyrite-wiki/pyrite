@@ -18,6 +18,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from ..exceptions import BrandingInvalidError
 from ..utils.yaml import load_yaml_file
@@ -30,11 +31,10 @@ DEFAULT_FOOTER_CREDIT_URL = "https://pyrite.wiki"
 
 # Module-level, keyed on the resolved branding.yaml path, each holding at
 # most one ((mtime_ns, size), message) pair (#445 delta cold read): every
-# request to an anonymous route (/sitemap.xml, /robots.txt,
-# /config/branding) that hits a broken branding.yaml builds its own
-# BrandingService (seo_endpoints.py has no per-request caching the way
-# branding_endpoints.py's _service_cache does), so without this, a stuck
-# operator typo logs a full traceback on every single page load. Keyed on
+# request to an anonymous route (/config/branding, and the MCP prompt and
+# README footer that read the brand) that hits a broken branding.yaml
+# builds its own BrandingService, so without this, a stuck operator typo
+# logs a full traceback on every single page load. Keyed on
 # (mtime, size), not just the path, so a fixed file is re-read and
 # re-logged on its next real failure instead of staying silent forever --
 # and keyed per-path (not a single shared slot) so two different branding
@@ -48,6 +48,18 @@ DEFAULT_FOOTER_CREDIT_URL = "https://pyrite.wiki"
 # grows without bound. A cache hit constructs a fresh BrandingInvalidError
 # from the stored message instead.
 _failure_cache: dict[str, tuple[tuple[int, int], str]] = {}
+
+
+def _is_web_url(value: str | None, *, allow_mailto: bool = False) -> bool:
+    """Only http and https URLs are kept (and, for a contact, ``mailto:``);
+    an empty value is kept as empty. ``value`` must already be stripped, so
+    what is checked is what is stored."""
+    if not value:
+        return True
+    parsed = urlsplit(value)
+    if parsed.scheme in ("http", "https"):
+        return bool(parsed.netloc)
+    return allow_mailto and parsed.scheme == "mailto" and bool(parsed.path)
 
 
 @dataclass
@@ -239,11 +251,11 @@ class BrandingService:
 
         # Every scalar field BrandingConfig exposes must be a string (or
         # absent) -- a list or number reads fine as far as .get() is
-        # concerned, but silently breaks the field's contract: site_url: [x]
-        # reaches SitemapService as a list where f-string interpolation
-        # expects str, and name: [x] serializes through to_public_dict() as
-        # a JSON array where every consumer (the web branding store, the
-        # <title> tag, the MCP prompt) expects text (#445 delta cold read).
+        # concerned, but silently breaks the field's contract: name: [x]
+        # serializes through to_public_dict() as a JSON array where every
+        # consumer (the web branding store, the <title> tag, the MCP prompt)
+        # expects text, and site_url: [x] reaches the web app's canonical
+        # URL the same way (#445 delta cold read).
         string_fields = {
             "name": data.get("name"),
             "tagline": data.get("tagline"),
@@ -269,6 +281,21 @@ class BrandingService:
                     f"{yaml_path}: '{field_name}' must be a string, got {type(value).__name__}"
                 )
 
+        urls: dict[str, str | None] = {}
+        for field_name, allow_mailto in (
+            ("site_url", False),
+            ("support_url", True),
+            ("footer_credit_url", False),
+        ):
+            raw = data.get(field_name)
+            urls[field_name] = raw.strip() if isinstance(raw, str) else raw
+            if not _is_web_url(urls[field_name], allow_mailto=allow_mailto):
+                raise BrandingInvalidError(
+                    f"{yaml_path}: '{field_name}' must be an http(s) URL"
+                    + (" or mailto: address" if allow_mailto else "")
+                    + " or empty"
+                )
+
         name = data.get("name", DEFAULT_BRAND_NAME)
         mcp_brand = mcp.get("agent_prompt_brand") or name
 
@@ -276,9 +303,13 @@ class BrandingService:
             name=name,
             tagline=data.get("tagline", ""),
             primary_color=data.get("primary_color", DEFAULT_PRIMARY_COLOR),
-            site_url=data.get("site_url", ""),
-            support_url=data.get("support_url", ""),
-            footer_credit_url=data.get("footer_credit_url", DEFAULT_FOOTER_CREDIT_URL),
+            site_url="" if urls["site_url"] is None else urls["site_url"],
+            support_url="" if urls["support_url"] is None else urls["support_url"],
+            footer_credit_url=(
+                DEFAULT_FOOTER_CREDIT_URL
+                if urls["footer_credit_url"] is None
+                else urls["footer_credit_url"]
+            ),
             logo=data.get("logo"),
             wordmark=data.get("wordmark"),
             favicon=data.get("favicon"),

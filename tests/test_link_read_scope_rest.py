@@ -1,7 +1,7 @@
 """REST reads learn nothing about a KB the caller cannot read (P-R4, P-R5).
 
-Private #55 (entry without a KB), #56 (entry links), #57 (graph), #58 (QA
-broken links), plus the paths the same grep found: the JSON export, the
+An entry without a KB, entry links, the graph, QA
+broken links, plus the paths the same grep found: the JSON export, the
 daily note, QA orphans and status, and the entry read through a user's
 worktree overlay. #518 (graph edges dropped for a scoped caller) is fixed
 by the same change. Surface: `TestClient` against the real app.
@@ -72,7 +72,6 @@ def w(tmp_path_factory):
 
 def _get(w, principal, url, **params):
     p = w.principals[principal]
-    w.release_idle_connections()
     return w.client.get(url, params=params, headers=p.rest_headers, cookies=p.rest_cookies)
 
 
@@ -213,7 +212,6 @@ def test_created_daily_note_carries_no_private_backlinks(w):
         row["id"], READABLE, "write", granted_by=row["id"]
     )
     cookie = {SESSION_COOKIE: sign_in(w.app, "link-scope-writer")}
-    w.release_idle_connections()
     r = w.client.post(f"/api/daily/{WANTED_DAILY_DATE}", params={"kb": READABLE}, cookies=cookie)
     assert r.status_code == 200, r.text
     assert "private-diary-watcher" not in r.text
@@ -263,12 +261,13 @@ def test_n7_graph_keeps_readable_edges_for_scoped_caller(w):
     assert any(e["source_id"] == "readable-a" for e in r.json()["edges"])
 
 
-@pytest.mark.control(reason="unscoped graph unchanged: private nodes, counts and a missing KB")
-def test_graph_unscoped_unchanged(w):
+def test_graph_unscoped_sees_private_nodes_and_a_missing_kb_is_refused(w):
     r = _admin(w, "/api/graph", center=READABLE_ENTRY, center_kb=READABLE)
     assert PRIVATE_SPY in {n["id"] for n in r.json()["nodes"]}
+    # An unknown KB is refused for the unscoped caller too (#952); it used
+    # to answer an empty graph.
     r2 = _admin(w, "/api/graph", center=PRIVATE_SPY, center_kb=MISSING)
-    assert r2.status_code == 200 and r2.json() == {"nodes": [], "edges": []}
+    assert r2.status_code == 404 and r2.json()["detail"]["code"] == "KB_NOT_FOUND"
 
 
 # -- QA (#58, orphans, status) -----------------------------------------------

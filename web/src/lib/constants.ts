@@ -22,7 +22,6 @@ export const typeColors: Record<string, string> = {
 	meeting: '#3b82f6',
 	article: '#6b7280',
 	actor: '#6b7280',
-	cascade_org: '#f59e0b',
 };
 
 /** Default color for unknown entry types. */
@@ -58,7 +57,6 @@ export const typeBgColors: Record<string, string> = {
 	meeting: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
 	article: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300',
 	actor: 'bg-zinc-100 text-zinc-800 dark:bg-zinc-800 dark:text-zinc-300',
-	cascade_org: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
 	concept: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
 	project: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
 };

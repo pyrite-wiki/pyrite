@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pyrite.services.git_service import GitService
+from tests._git_plans import allowed_remote_plan, plan_for
 
 
 class TestParseGithubUrl:
@@ -37,21 +38,38 @@ class TestParseGithubUrl:
         assert result is None
 
 
-class TestTokenInjection:
-    """Tests for _inject_token (no mocks needed)."""
+class TestCredentialsAreOfferedOnlyToGitHub:
+    """`_network_plan` hands git a caller's token only for https GitHub URLs."""
 
-    def test_inject_https(self):
-        url = GitService._inject_token("https://github.com/org/repo.git", "mytoken")
-        assert url == "https://oauth2:mytoken@github.com/org/repo.git"
+    def test_https_github_gets_a_scoped_helper(self):
+        plan = plan_for("mytoken", ["https://github.com/org/repo.git"])
+        assert plan.env["PYRITE_GIT_TOKEN"] == "mytoken"
+        config = dict(plan.config)
+        assert config["credential.helper"] == ""  # configured helpers reset
+        assert "credential.https://github.com.helper" in config
+        assert "mytoken" not in str(plan.config)
 
-    def test_inject_ssh_converted(self):
-        url = GitService._inject_token("git@github.com:org/repo.git", "mytoken")
-        assert "oauth2:mytoken" in url
-        assert "github.com" in url
+    def test_a_non_https_url_gets_nothing(self):
+        """An ssh remote with no operator ssh key is refused outright."""
+        assert plan_for("mytoken", ["git@github.com:org/repo.git"]) is None
 
-    def test_no_token(self):
-        url = GitService._inject_token("https://github.com/org/repo.git", None)
-        assert url == "https://github.com/org/repo.git"
+    @pytest.mark.control(
+        reason="already held; round 2 pins the network plan's exact config instead of a looser check"
+    )
+    def test_no_token_gets_nothing(self):
+        from pyrite.services.acting import local_process
+
+        with local_process(False):
+            plan = plan_for(None, ["https://github.com/org/repo.git"])
+        assert "PYRITE_GIT_TOKEN" not in plan.env
+        # A network caller's plan with no credential holds exactly one setting:
+        # http.proxy reset to none (no git_proxy).
+        assert plan.config == (("http.proxy", ""),)
+        assert plan.credential == "none"
+
+    def test_one_foreign_url_among_several_withholds_it(self):
+        urls = ["https://github.com/o/r", "https://evil.example/o/r"]
+        assert "PYRITE_GIT_TOKEN" not in plan_for("mytoken", urls).env
 
 
 class TestSanitizeOutput:
@@ -69,6 +87,14 @@ class TestSanitizeOutput:
 
 class TestClone:
     """Tests for clone() with subprocess mocked."""
+
+    @pytest.fixture(autouse=True)
+    def _urls_already_checked(self, monkeypatch):
+        """These tests are about the git command; the host rule's own calls to
+        git are tested in tests/test_git_destinations_are_allowed.py."""
+        monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
+        monkeypatch.setattr(GitService, "_remote_plan", staticmethod(allowed_remote_plan))
+        monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
     @patch("pyrite.services.git_service.subprocess.run")
     def test_clone_success(self, mock_run):
@@ -110,6 +136,14 @@ class TestClone:
 
 class TestPull:
     """Tests for pull() with subprocess mocked."""
+
+    @pytest.fixture(autouse=True)
+    def _urls_already_checked(self, monkeypatch):
+        """These tests are about the git command; the host rule's own calls to
+        git are tested in tests/test_git_destinations_are_allowed.py."""
+        monkeypatch.setattr(GitService, "_effective_url", staticmethod(lambda url, cwd=None: url))
+        monkeypatch.setattr(GitService, "_remote_plan", staticmethod(allowed_remote_plan))
+        monkeypatch.setattr(GitService, "_pull_remote", staticmethod(lambda path: "origin"))
 
     @patch("pyrite.services.git_service.subprocess.run")
     def test_pull_success(self, mock_run):
@@ -416,15 +450,16 @@ class TestGitHubHostMatching:
     ]
 
     @pytest.mark.parametrize("url", HOSTILE)
-    def test_token_never_injected_for_non_github_host(self, url):
-        assert "SECRET" not in GitService._inject_token(url, "SECRET")
+    def test_token_never_offered_for_non_github_host(self, url):
+        plan = plan_for("SECRET", [url])
+        assert plan is None or "PYRITE_GIT_TOKEN" not in plan.env
 
     @pytest.mark.parametrize("url", HOSTILE)
     def test_non_github_host_does_not_parse(self, url):
         assert GitService.parse_github_url(url) is None
 
     def test_http_scheme_never_gets_token(self):
-        assert "SECRET" not in GitService._inject_token("http://github.com/org/repo", "SECRET")
+        assert plan_for("SECRET", ["http://github.com/org/repo"]) is None
 
     def test_www_and_case_variants_still_work(self):
         assert GitService.parse_github_url("https://GitHub.com/org/repo") == ("org", "repo")
@@ -478,3 +513,37 @@ class TestGitArgumentInjection:
             GitService.commit(tmp_path, "msg", paths=["--force"])
         add_cmd = next(c[0][0] for c in run.call_args_list if c[0][0][:2] == ["git", "add"])
         assert add_cmd == ["git", "add", "--", "--force"]
+
+
+class TestShow:
+    """#1049: a path at a revision is read in GitService, not by its callers."""
+
+    def test_show_returns_the_committed_text_and_none_for_an_uncommitted_path(self, tmp_path):
+        from tests.test_worktree_service import _clean_git_env, _init_git_repo
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_git_repo(repo)
+        env = _clean_git_env()
+        (repo / "note.md").write_text("first\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "note.md"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "add the note"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env=env,
+            timeout=30,
+        )
+        (repo / "note.md").write_text("second\n", encoding="utf-8")
+        (repo / "untracked.md").write_text("never committed\n", encoding="utf-8")
+
+        assert GitService.show(repo, "note.md") == "first\n"
+        assert GitService.show(repo, "untracked.md") is None

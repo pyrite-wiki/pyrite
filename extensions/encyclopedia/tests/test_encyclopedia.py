@@ -23,6 +23,7 @@ from pyrite_encyclopedia.workflows import (
 )
 
 from pyrite.plugins.registry import PluginRegistry
+from pyrite.storage.repository import new_entry_text
 
 # =========================================================================
 # Plugin registration
@@ -183,6 +184,9 @@ class TestArticleEntry:
         assert entry.protection_level == "none"
         assert entry.categories == []
 
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_roundtrip_markdown(self):
         entry = ArticleEntry(
             id="test",
@@ -191,7 +195,7 @@ class TestArticleEntry:
             quality="GA",
             categories=["test"],
         )
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "quality: GA" in md
         assert "Article body" in md
 

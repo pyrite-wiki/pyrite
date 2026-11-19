@@ -167,7 +167,6 @@
 					.filter(Boolean);
 			if (date) req.date = date;
 			if (importance !== 5) req.importance = importance;
-			if (status.trim()) req.status = status.trim();
 			// Only the explicit "use a type this KB does not declare" choice
 			// (TypeChoice's own toggle) sends this; the client itself never
 			// opts in on the caller's behalf, and a template naming an
@@ -176,6 +175,10 @@
 
 			// Merge non-empty custom fields into metadata, coerced by schema type.
 			const meta = buildMetadata(customFields, selectedTypeSchema?.fields);
+			// The create body has no top-level `status` (#1090: POST /api/entries
+			// refuses a key its model does not declare), so the Status input
+			// travels in `metadata`, the one place the model takes it.
+			if (status.trim()) meta.status = status.trim();
 			if (Object.keys(meta).length > 0) req.metadata = meta;
 
 			const res = await api.createEntry(req as any);

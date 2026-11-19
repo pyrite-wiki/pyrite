@@ -9,17 +9,17 @@ below do this transparently: callers still pass one `name` and get one
 merged `dict` back). `rest`/`mcp` shard by principal (one of `world.py`'s
 seven principal names is always the middle segment of every key here, so
 this needs no new grouping logic); `error_bodies` (12KB) never shards.
-Regeneration (`PYRITE_CHARACTERIZATION_REGENERATE=1 pytest
-tests/characterization/ -n4`, documented in each test module's docstring)
-writes these files; every other run only reads and compares. **Never gated
+Regeneration (`PYRITE_CHARACTERIZATION_REGENERATE=1 pytest tests/characterization`,
+serial -- refusing a parallel run; see `refuse_ambiguous_regenerate`) writes these
+files; every other run only reads and compares. **Never gated
 to run in CI** -- the regenerate path is opt-in per the environment
 variable, off by default, and nothing in `scripts/test-affected`, the
 pre-push hook or CI sets it.
 
 **`save` replaces the file's keys in its scope, under a lock.**
 `test_rest_matrix.py` and `test_mcp_matrix.py` parametrize one test per
-principal, and `-n4` (the regenerate command every module's docstring
-documents) runs those in separate worker processes -- each with its own
+principal, and `-n4` (a command the earlier regenerate docstrings
+suggested) would run those in separate worker processes -- each with its own
 in-memory `golden` dict from its own `load()` call at the start of ITS test.
 A blind merge-only overwrite is a lost-update race across workers (worker
 B's save must not erase worker A's already-written keys for A's own
@@ -36,7 +36,6 @@ platforms), so two workers' read-merge-write cannot interleave.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -54,6 +53,24 @@ _SHARDED_SURFACES = {"rest", "mcp"}
 
 def regenerating() -> bool:
     return os.environ.get(REGENERATE_ENV) == "1"
+
+
+def refuse_ambiguous_regenerate() -> None:
+    """A regenerate run that cannot rewrite every golden it owns raises here (#712).
+
+    Each xdist worker records only the routes/tools its own tests observed, so
+    under `pytest -n 4` a regenerate left the other workers' principals stale
+    while the run looked green. If any xdist worker env is present during a
+    regenerate run, refuse before any golden write and say how to run it for
+    real.
+    """
+    if os.environ.get("PYTEST_XDIST_WORKER") or os.environ.get("PYTEST_XDIST_WORKER_COUNT"):
+        raise RuntimeError(
+            "PYRITE_CHARACTERIZATION_REGENERATE=1 with pytest-xdist active writes only "
+            "the goldens this worker's tests own, leaving the others stale (#712). "
+            "Run the characterization suite serially (without `-n`), review the diff, "
+            "and commit it as a separate change."
+        )
 
 
 def _shard_key(key: str) -> str:
@@ -102,6 +119,8 @@ def save(name: str, data: dict[str, Any], *, principal_scope: str | None = None)
     one pass with every key in scope), every on-disk key is eligible.
     """
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
+    if regenerating():
+        refuse_ambiguous_regenerate()
     if name in _SHARDED_SURFACES:
         by_shard: dict[str, dict[str, Any]] = {}
         for key, value in data.items():
@@ -122,6 +141,8 @@ def _in_scope(key: str, scope_key: str | None) -> bool:
 
 
 def _save_one(path: Path, data: dict[str, Any], *, scope_key: str | None) -> None:
+    import fcntl  # POSIX-only, kept local so a refusal test can run elsewhere (#712)
+
     lock_path = path.with_suffix(path.suffix + ".lock")
     with open(lock_path, "w") as lock_file:
         fcntl.flock(lock_file, fcntl.LOCK_EX)

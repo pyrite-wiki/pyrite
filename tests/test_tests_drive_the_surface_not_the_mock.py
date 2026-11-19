@@ -48,19 +48,26 @@ become `pyrite.services.git_service.GitService.fork_repo`). The rules:
      The ceiling and the ALLOWLIST below are separate rules and stay as they are.
 
 Scanned: every `.py` under `tests/` and `extensions/*/tests`, so `conftest.py` and the seed
-helpers are covered too (a patch hidden in a shared helper counts when the file drives).
+helpers are covered too (a patch hidden in a shared helper counts when the file drives). A
+helper's patches also count against every file that imports it from the test tree and drives
+an entry point: the patches of each function it imports (and of the helper's functions those
+call), plus the helper's module-level ones, reported at the import line.
 
-Known limits: the allowlist is per file, not per site (a listed file can add another service
-patch), and the ceiling below lives in this file, which a PR can edit; review is the check on
-both.
+Known limit: the allowlist and its pinned size live in this file, which a PR can edit; review
+is the check on both. Each listed file carries its patch count, so a new patch in a listed file
+fails too (#1075).
 
 The failure message names the fix:
 `file:line: <target> is the service behind <entry point>; seed the world instead`.
 
-`ALLOWLIST` names every file that violates today with one line of why. It can
-only shrink: a file not on it that violates fails, a file on it that no longer
-violates fails (remove the line), and `ALLOWLIST_SIZE_AT_LANDING` is a ceiling a
-pull request may lower and never raise.
+`ALLOWLIST` names every file that violates today, with its patch count and one line of why.
+It can only shrink, and every number is pinned with `==` (as in tests/test_layer_boundaries.py):
+a file not on it that violates fails, a file on it that no longer violates fails (remove the
+line), a file whose count differs fails (lower it; raising it is the fix this rule refuses), and
+`ALLOWLIST_SIZE` must equal the number of files.
+
+
+Rule and contributor guidance: ../CONTRIBUTING.md#writing-tests
 """
 
 from __future__ import annotations
@@ -106,12 +113,12 @@ EDGES: dict[str, str] = {
     "pyrite.services.git_service.GitService.fork_repo": (
         "one GitHub API request (a fork); needs the network and a real token"
     ),
+    "pyrite.services.git_service.GitService._effective_url": (
+        "one `git ls-remote --get-url` subprocess (the account's insteadOf rewrite); a test "
+        "that clones a local bare repo in place of an https host answers it with the URL"
+    ),
     "pyrite.services.url_checker.URLChecker._urlopen": (
         "one HEAD request via urlopen; needs the network, status mapping stays in check_url"
-    ),
-    "pyrite.services.id_pin_service._rename": (
-        "one os.rename (fault injection: a real disk cannot be made to fail, or a link "
-        "swapped in right before the rename, on cue)"
     ),
 }
 EDGE_ATTR_PREFIXES = ("_import_",)  # llm_service._import_anthropic / _import_openai
@@ -129,63 +136,202 @@ MOCK_CALLS = {
 }
 
 #: Files that violate on dev. The migration debt; it can only shrink.
-#: path (relative to the repo root) -> why it is listed.
-ALLOWLIST: dict[str, str] = {
-    "extensions/social/tests/test_social.py": "1 patch(es) behind PluginContext: kb_service.KBService.create_entry",
-    "extensions/software-kb/tests/test_software_kb.py": "11 patch(es) behind CliRunner, PluginContext: kb_service.KBService, kb_service.KBService.create_entry",
-    "extensions/zettelkasten/tests/test_zettelkasten.py": "1 patch(es) behind CliRunner: kb_service.KBService.create_entry",
-    "tests/test_admin_cli.py": "1 patch(es) behind CliRunner: storage.repository.KBRepository._get_file_path",
-    "tests/test_anonymous_and_missing_kb_writes.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_auth_bootstrap.py": "3 patch(es) behind CliRunner, TestClient: auth_service.AuthService._verify_password, auth_service.AuthService.login",
-    "tests/test_auth_endpoints.py": "1 patch(es) behind TestClient: auth_service.AuthService.login",
-    "tests/test_auth_user_management.py": "1 patch(es) behind TestClient: auth_service.AuthService.set_role",
-    "tests/test_authz_authorize.py": "1 patch(es) behind TestClient: access_policy.AccessPolicy.read_scope",
-    "tests/test_cli_finds_db_registered_kbs.py": "3 patch(es) behind CliRunner: storage.database.PyriteDB.close, storage.index.IndexManager.check_health",
-    "tests/test_cli_json_output.py": "5 patch(es) behind CliRunner: search_service.SearchService.search, storage.database.PyriteDB.close ...",
-    "tests/test_cli_outcome_write_path.py": "2 patch(es) behind CliRunner: kb_service.KBService.add_link",
-    "tests/test_default_output_is_the_result.py": "9 patch(es) behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: embedding_service.EmbeddingService._get_model, embedding_service.EmbeddingService.embed_all ...",
-    "tests/test_default_role_change_takes_effect.py": "1 patch(es) behind TestClient: site_cache.SiteCacheService._render_landing",
-    "tests/test_embed_queue_debt_is_honest.py": "5 patch(es) behind TestClient: embedding_worker.EmbeddingWorker, embedding_worker.EmbeddingWorker._get_embedding_svc",
-    "tests/test_fields_single_entry.py": "2 patch(es) behind CliRunner: kb_service.KBService.get_entry",
-    "tests/test_ids_commands.py": "12 patch(es) behind CliRunner: id_pin_service._rename, id_pin_service._write_pin ...",
-    "tests/test_json_stdout.py": "2 patch(es) behind CliRunner: url_checker.URLChecker.check_url, url_checker.URLChecker.collect_urls",
-    "tests/test_kb_bulk_create_description.py": "1 patch(es) behind PyriteMCPServer, _dispatch_tool: kb_service.build_entry",
-    "tests/test_kb_export_read_scoping.py": "1 patch(es) behind TestClient: export_service.ExportService.export_kb_to_repo",
-    "tests/test_kb_policy_availability.py": "5 patch(es) behind TestClient: ephemeral_service.save_config, repo_service.save_config ...",
-    "tests/test_kb_scoped_writes.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_mcp_server.py": "1 patch(es) behind PyriteMCPServer, _dispatch_tool: <unresolved>:_run_hooks",
-    "tests/test_one_reconcile.py": "2 patch(es) behind CliRunner: storage.index._hash_file, storage.repository.KBRepository.load_entry_from_file",
-    "tests/test_private_kb_read_scoping.py": "1 patch(es) behind TestClient: search_service.SearchService.search",
-    "tests/test_qa_assessment.py": "6 patch(es) behind CliRunner, PyriteMCPServer: pyrite.cli.context.PyriteDB, qa_service.QAService._maybe_create_task ...",
-    "tests/test_qa_commands_run.py": "1 patch(es) behind CliRunner: url_checker.URLChecker.check_url",
-    "tests/test_repo_subscribe_never_adopts_existing_kb.py": "2 patch(es) behind TestClient: git_service.GitService.clone_with_code, git_service.GitService.fork_repo",
-    "tests/test_requested_effect_exit_code.py": "6 patch(es) behind CliRunner: kb_service.KBService.add_link, kb_service.KBService.reconcile_templated_subdirectories ...",
-    "tests/test_save_config_never_drops_unnamed_kbs.py": "2 patch(es) behind CliRunner, TestClient: repo_service.GitService.clone_with_code, repo_service.GitService.fork_repo",
-    "tests/test_search_contract.py": "13 patch(es) behind CliRunner, PyriteMCPServer, _dispatch_tool: embedding_service.EmbeddingService.has_embeddings, embedding_service.EmbeddingService.search_similar ...",
-    "tests/test_server_write_embedding_debt.py": "2 patch(es) behind TestClient: embedding_worker.EmbeddingWorker._get_embedding_svc",
-    "tests/test_site_cache.py": "1 patch(es) behind TestClient: site_cache.SiteCacheService._render_entry",
-    "tests/test_site_cache_follows_deletes.py": "1 patch(es) behind TestClient: site_cache.SiteCacheService._render_kb_index",
-    "tests/test_sync_wait_rerenders_site_cache.py": "3 patch(es) behind TestClient: site_cache.SiteCacheService._render_entry, site_cache.SiteCacheService.render_all",
-    "tests/test_untrusted_local_config.py": "1 patch(es) behind CliRunner, TestClient: embedding_service.EmbeddingService.__init__",
-    "tests/test_websocket_credential_lifetime.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_websocket_kb_policy_lifetime.py": "1 patch(es) behind TestClient: repo_service.save_config",
-    "tests/test_websocket_scoping.py": "1 patch(es) behind TestClient: clipper.ClipperService.clip_url",
-    "tests/test_write_pipeline.py": "2 patch(es) behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: clipper.ClipperService.clip_url, kb_service.KBService._prepare_and_save",
-    "tests/conftest.py": "the console_width fixture sets Rich's terminal width on the CLI consoles (a terminal edge, unresolved by the walk)",
-    "tests/test_cli_surfaces_through_services.py": "patch target held in a variable; unresolved",
-    "tests/test_doc_write_as_patch.py": "patches a class held in a variable (cls.emit); unresolved",
-    "tests/test_embedding_prewarm.py": "patches _get_model on a local service instance behind the REST client; unresolved",
-    "tests/test_ephemeral_kb_name_is_not_a_path.py": "patches execute_sql on a local service db; unresolved",
-    "tests/test_get_reads_the_file.py": "spies on os/glob/Path directory-walk functions to count walks (a filesystem process edge; the owners come from a loop, unresolved)",
-    "tests/test_index_worker.py": "patches IndexManager behind the REST client",
-    "tests/test_link_asymmetric.py": "patches close on a fixture-held db; unresolved",
-    "tests/test_mcp_finders.py": "patches a method named by a variable; unresolved",
-    "tests/test_mcp_setup_reads_back.py": "21 patches of names held in variables; unresolved",
-    "tests/test_plugin_integration.py": "patches get_hooks_for_kb on a local registry; unresolved",
-    "tests/test_repo_error_disclosure.py": "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate",
-    "tests/test_shipped_schemas_accept_workflows.py": "patch target built with an f-string; unresolved",
+#: path (relative to the repo root) -> (patches in it today, why it is listed). Both are
+#: pinned with `==`: a new patch in a listed file, or one removed, fails until the count is edited.
+ALLOWLIST: dict[str, tuple[int, str]] = {
+    "extensions/social/tests/test_social.py": (
+        1,
+        "behind PluginContext: kb_service.KBService.create_entry",
+    ),
+    "extensions/software-kb/tests/test_software_kb.py": (
+        11,
+        "behind CliRunner, PluginContext: kb_service.KBService, kb_service.KBService.create_entry",
+    ),
+    "extensions/zettelkasten/tests/test_zettelkasten.py": (
+        1,
+        "behind CliRunner: kb_service.KBService.create_entry",
+    ),
+    "tests/test_admin_cli.py": (
+        2,
+        "behind CliRunner: storage.repository.KBRepository._get_file_path",
+    ),
+    "tests/test_anonymous_and_missing_kb_writes.py": (
+        1,
+        "behind TestClient: clipper.ClipperService.clip_url",
+    ),
+    "tests/test_auth_bootstrap.py": (
+        3,
+        "behind CliRunner, TestClient: auth_service.AuthService._verify_password, auth_service.AuthService.login",
+    ),
+    "tests/test_auth_endpoints.py": (1, "behind TestClient: auth_service.AuthService.login"),
+    "tests/test_auth_user_management.py": (
+        1,
+        "behind TestClient: auth_service.AuthService.set_role",
+    ),
+    "tests/test_authz_authorize.py": (
+        1,
+        "behind TestClient: access_policy.AccessPolicy.read_scope",
+    ),
+    "tests/test_cli_finds_db_registered_kbs.py": (
+        3,
+        "behind CliRunner: storage.database.PyriteDB.close, storage.index.IndexManager.check_health",
+    ),
+    "tests/test_cli_json_output.py": (
+        6,
+        "behind CliRunner: search_service.SearchService.search, storage.database.PyriteDB.close ...",
+    ),
+    "tests/test_cli_outcome_write_path.py": (2, "behind CliRunner: kb_service.KBService.add_link"),
+    "tests/test_default_output_is_the_result.py": (
+        13,
+        "behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: embedding_service.EmbeddingService._get_model, embedding_service.EmbeddingService.embed_all ...",
+    ),
+    "tests/test_embed_queue_debt_is_honest.py": (
+        5,
+        "behind TestClient: embedding_worker.EmbeddingWorker, embedding_worker.EmbeddingWorker._get_embedding_svc",
+    ),
+    "tests/test_fields_single_entry.py": (2, "behind CliRunner: kb_service.KBService.get_entry"),
+    "tests/test_ids_commands.py": (
+        12,
+        "behind CliRunner: id_pin_service._rename, id_pin_service._write_pin ...",
+    ),
+    "tests/test_json_stdout.py": (
+        2,
+        "behind CliRunner: url_checker.URLChecker.check_url, url_checker.URLChecker.collect_urls",
+    ),
+    "tests/test_kb_bulk_create_description.py": (
+        1,
+        "behind PyriteMCPServer, _dispatch_tool: kb_service.build_entry",
+    ),
+    "tests/test_kb_export_read_scoping.py": (
+        3,
+        "behind TestClient: export_service.ExportService.export_kb_to_repo; and, through "
+        "tests/_git_plans.py::allow_local_destinations, GitService._endpoint/"
+        "check_remote_allowed, so a local bare repo stands in for an allowed https host",
+    ),
+    "tests/test_kb_policy_availability.py": (
+        1,
+        "behind TestClient: ephemeral_service.save_config, repo_service.save_config ...",
+    ),
+    "tests/test_kb_scoped_writes.py": (1, "behind TestClient: clipper.ClipperService.clip_url"),
+    "tests/test_mcp_server.py": (
+        1,
+        "behind PyriteMCPServer: build_sdk_server",
+    ),
+    "tests/test_one_reconcile.py": (
+        3,
+        "behind CliRunner: storage.index._hash_file, storage.repository.KBRepository.load_entry_from_file",
+    ),
+    "tests/test_private_kb_read_scoping.py": (
+        1,
+        "behind TestClient: search_service.SearchService.search",
+    ),
+    "tests/test_qa_assessment.py": (
+        8,
+        "behind CliRunner, PyriteMCPServer: pyrite.cli.context.PyriteDB, qa_service.QAService._maybe_create_task ...",
+    ),
+    "tests/test_qa_commands_run.py": (1, "behind CliRunner: url_checker.URLChecker.check_url"),
+    "tests/test_repo_subscribe_never_adopts_existing_kb.py": (
+        1,
+        "behind TestClient: git_service.GitService.clone_with_code, git_service.GitService.fork_repo",
+    ),
+    "tests/test_requested_effect_exit_code.py": (
+        7,
+        "behind CliRunner: kb_service.KBService.add_link, kb_service.KBService.reconcile_templated_subdirectories ...",
+    ),
+    "tests/test_save_config_never_drops_unnamed_kbs.py": (
+        2,
+        "behind CliRunner, TestClient: repo_service.GitService.clone_with_code, repo_service.GitService.fork_repo",
+    ),
+    "tests/test_search_contract.py": (
+        21,
+        "behind CliRunner, PyriteMCPServer, _dispatch_tool: embedding_service.EmbeddingService.has_embeddings, embedding_service.EmbeddingService.search_similar ...",
+    ),
+    "tests/test_server_write_embedding_debt.py": (
+        2,
+        "behind TestClient: embedding_worker.EmbeddingWorker._get_embedding_svc",
+    ),
+    "tests/test_untrusted_local_config.py": (
+        3,
+        "behind CliRunner, TestClient: embedding_service.EmbeddingService.__init__",
+    ),
+    "tests/test_websocket_credential_lifetime.py": (
+        1,
+        "behind TestClient: clipper.ClipperService.clip_url",
+    ),
+    "tests/test_websocket_kb_policy_lifetime.py": (
+        1,
+        "behind TestClient: repo_service.save_config",
+    ),
+    "tests/test_websocket_scoping.py": (1, "behind TestClient: clipper.ClipperService.clip_url"),
+    "tests/test_write_pipeline.py": (
+        9,
+        "behind CliRunner, PyriteMCPServer, TestClient, _dispatch_tool: clipper.ClipperService.clip_url, kb_service.KBService._prepare_and_save",
+    ),
+    "tests/conftest.py": (
+        2,
+        "the console_width fixture sets Rich's terminal width on the CLI consoles (a terminal edge, unresolved by the walk)",
+    ),
+    "tests/test_cli_surfaces_through_services.py": (
+        1,
+        "patch target held in a variable; unresolved",
+    ),
+    "tests/test_doc_write_as_patch.py": (
+        3,
+        "patches a class held in a variable (cls.emit); unresolved",
+    ),
+    "tests/test_create_writes_through_apply.py": (
+        2,
+        "through tests/test_doc_write_as_patch.py::_watch_emitter: the yaml library's emitter "
+        "classes it watches are held in loop variables (cls.emit, dumper.__init__), so "
+        "unresolved; library classes, not services. Measured once helpers were counted",
+    ),
+    "tests/test_embedding_prewarm.py": (
+        2,
+        "patches _get_model on a local service instance behind the REST client; unresolved",
+    ),
+    "tests/test_ephemeral_kb_name_is_not_a_path.py": (
+        2,
+        "patches execute_sql on a local service db; unresolved",
+    ),
+    "tests/test_get_reads_the_file.py": (
+        1,
+        "spies on os/glob/Path directory-walk functions to count walks (a filesystem process edge; the owners come from a loop, unresolved)",
+    ),
+    "tests/test_index_worker.py": (1, "patches IndexManager behind the REST client"),
+    "tests/test_link_asymmetric.py": (1, "patches close on a fixture-held db; unresolved"),
+    "tests/test_mcp_finders.py": (1, "patches a method named by a variable; unresolved"),
+    "tests/test_mcp_setup_reads_back.py": (21, "21 patches of names held in variables; unresolved"),
+    "tests/test_plugin_integration.py": (
+        2,
+        "patches get_hooks_for_kb on a local registry; unresolved",
+    ),
+    "tests/test_repo_error_disclosure.py": (
+        14,
+        "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate. "
+        "2 answer the host rule's own git lookups (_remote_plan, _pull_remote; _effective_url is an EDGE) so the stubbed failure is the clone's",
+    ),
+    "tests/test_shipped_schemas_accept_workflows.py": (
+        1,
+        "patch target built with an f-string; unresolved",
+    ),
+    "tests/test_rest_bodies_carry_no_fault_text.py": (
+        4,
+        "fault injection (ADR-0052 N3): an OS or storage fault whose text must not reach "
+        "a body cannot be seeded into a world; 1 patches every public KBService method by "
+        "name in a loop (unresolved), to call every route and tool with the fault",
+    ),
+    "tests/test_update_walks_every_surface.py": (
+        1,
+        "fault injection: a StorageError from the writer, for kb_update's legacy code; "
+        "no world state makes the writer refuse",
+    ),
 }
-ALLOWLIST_SIZE_AT_LANDING = 53
+# 52, not 51: tests/test_create_writes_through_apply.py was already in
+# violation at its import of tests/test_doc_write_as_patch.py::_watch_emitter
+# (unresolved yaml emitter patches) and became visible when patches made
+# through a test-tree helper began to count (T1a). It is debt that existed,
+# not a new patch; it comes off with that helper's migration.
+ALLOWLIST_SIZE = 52  # lower it with every file removed; never raise it
 
 
 def _is_service_path(dotted: str) -> bool:
@@ -355,9 +501,15 @@ def violations(source: str) -> list[tuple[int, str]]:
     tree = ast.parse(source)
     if not entry_points(tree):
         return []
-    imports = _file_imports(tree)
+    return _service_patches(tree, _file_imports(tree), tree)
+
+
+def _service_patches(
+    tree: ast.AST, imports: dict[str, str], root: ast.AST
+) -> list[tuple[int, str]]:
+    """``[(line, target)]`` for each service patch under `root` (part of `tree`)."""
     out = []
-    for call, kind in _patch_calls(tree, imports):
+    for call, kind in _patch_calls(root, imports):
         args = call.args
         if not args:
             continue
@@ -391,15 +543,139 @@ def _test_files() -> list[Path]:
     return sorted({*ROOT.glob("tests/**/*.py"), *ROOT.glob("extensions/*/tests/**/*.py")})
 
 
+def _helper_path(node: ast.ImportFrom, importer: Path) -> Path | None:
+    """The test-tree module an import names (``from tests._git_plans import x``,
+    ``from extensions.e.tests.seed import y``, or a relative import), or None."""
+    if node.level:
+        base = importer.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        parts = (node.module or "").split(".") if node.module else []
+    elif node.module and node.module.split(".")[0] in ("tests", "extensions"):
+        base, parts = ROOT, node.module.split(".")
+    else:
+        return None
+    path = base.joinpath(*parts).with_suffix(".py") if parts else None
+    if path is None or not path.is_file() or "tests" not in path.relative_to(ROOT).parts:
+        return None
+    return path
+
+
+@lru_cache(maxsize=None)  # noqa: UP033
+def _helper_patches(path: Path) -> tuple[dict[str, list[tuple[int, str]]], frozenset, dict]:
+    """A helper module's service patches: (function name -> its own patches,
+    names of its module-level patches' lines, function name -> the module's
+    functions it calls). Counted whether or not the helper drives anything."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imports = _file_imports(tree)
+    funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    own = {name: _service_patches(tree, imports, f) for name, f in funcs.items()}
+    calls = {
+        name: {
+            c.func.id
+            for c in ast.walk(f)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in funcs
+        }
+        for name, f in funcs.items()
+    }
+    in_funcs = {line for hits in own.values() for line, _ in hits}
+    module_level = frozenset(
+        hit for hit in _service_patches(tree, imports, tree) if hit[0] not in in_funcs
+    )
+    return own, module_level, calls
+
+
+def _module_file(base: Path, parts: list[str]) -> Path | None:
+    path = base.joinpath(*parts).with_suffix(".py") if parts else None
+    if path is None or not path.is_file() or "tests" not in path.relative_to(ROOT).parts:
+        return None
+    return path
+
+
+def _helper_uses(tree: ast.AST, importer: Path) -> list[tuple[int, Path, set[str]]]:
+    """(import line, helper module, names used from it) for every test-tree
+    helper the file imports: ``from tests.h import f`` (f), ``from tests import h``
+    and ``import tests.h as h`` (every ``h.<name>`` the file reads)."""
+
+    def attributes_of(alias: str) -> set[str]:
+        return {
+            n.attr
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == alias
+        }
+
+    uses = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            helper = _helper_path(node, importer)
+            if helper is not None:
+                uses.append((node.lineno, helper, {a.name for a in node.names}))
+                continue
+            # ``from tests import h``: each name may itself be a helper module.
+            if node.level:
+                base = importer.parent
+                for _ in range(node.level - 1):
+                    base = base.parent
+                prefix = (node.module or "").split(".") if node.module else []
+            elif node.module and node.module.split(".")[0] in ("tests", "extensions"):
+                base, prefix = ROOT, node.module.split(".")
+            else:
+                continue
+            for a in node.names:
+                module = _module_file(base, [*prefix, a.name])
+                if module is not None:
+                    uses.append((node.lineno, module, attributes_of(a.asname or a.name)))
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                parts = a.name.split(".")
+                if parts[0] not in ("tests", "extensions") or not a.asname:
+                    continue
+                module = _module_file(ROOT, parts)
+                if module is not None:
+                    uses.append((node.lineno, module, attributes_of(a.asname)))
+    return uses
+
+
+def helper_violations(source: str, importer: Path) -> list[tuple[int, str]]:
+    """Service patches a file that drives an entry point makes through a helper
+    it imports from the test tree: the patches of each function it uses from
+    it (and the helper's functions those call), plus the helper's module-level
+    ones, each reported at the import line (``<target> via <helper>:<line>``)."""
+    tree = ast.parse(source)
+    if not entry_points(tree):
+        return []
+    out = []
+    for lineno, helper, wanted in _helper_uses(tree, importer):
+        if helper == importer:
+            continue
+        own, module_level, calls = _helper_patches(helper)
+        if "*" in wanted:
+            wanted = set(own)
+        seen: set[str] = set()
+        todo = [n for n in wanted if n in own]
+        while todo:
+            name = todo.pop()
+            if name not in seen:
+                seen.add(name)
+                todo += calls[name]
+        hits = sorted({*module_level, *(h for n in seen for h in own[n])})
+        rel = helper.relative_to(ROOT)
+        out += [(lineno, f"{target} via {rel}:{line}") for line, target in hits]
+    return sorted(out)
+
+
 @lru_cache(maxsize=1)
 def _scan() -> dict[str, list[tuple[int, str, str]]]:
-    """relative path -> [(line, target, entry points)] for every offending file."""
+    """relative path -> [(line, target, entry points)] for every offending file:
+    its own patches and those it makes through a helper it imports."""
     found = {}
     for path in _test_files():
         if path.name == Path(__file__).name:
             continue
         source = path.read_text(encoding="utf-8")
-        hits = violations(source)
+        hits = violations(source) + helper_violations(source, path)
         if hits:
             eps = ", ".join(entry_points(ast.parse(source)))
             found[str(path.relative_to(ROOT))] = [(line, tgt, eps) for line, tgt in hits]
@@ -543,7 +819,6 @@ GIT = "from typer.testing import CliRunner\nfrom unittest.mock import patch\n"
         # string target, canonical module
         GIT + "patch('pyrite.services.git_service.GitService.fork_repo')\n",
         GIT + "patch('pyrite.services.git_service.GitService.add_remote')\n",
-        GIT + "patch('pyrite.services.id_pin_service._rename')\n",
         GIT + "patch('pyrite.services.embedding_service._load_model')\n",
         # a name one module imported from another resolves to where it is defined
         GIT + "patch('pyrite.services.repo_service.GitService.fork_repo')\n",
@@ -552,7 +827,6 @@ GIT = "from typer.testing import CliRunner\nfrom unittest.mock import patch\n"
         "patch.object(GitService, 'fork_repo')\n",
         GIT + "from pyrite.services.repo_service import GitService\n"
         "patch.object(GitService, 'add_remote')\n",
-        GIT + "import pyrite.services.id_pin_service as pin\npatch.object(pin, '_rename')\n",
         "from typer.testing import CliRunner\n"
         "from pyrite.services import git_service\n"
         "def t(monkeypatch):\n"
@@ -623,6 +897,76 @@ def test_a_neighbour_of_an_edge_is_still_flagged(source, target):
     assert [t for _, t in violations(source)] == [target]
 
 
+# --------------------------------------------------------------- the ratchet
+
+
+def ratchet_problems(
+    found: dict[str, list], allowlist: dict[str, tuple[int, str]], size: int
+) -> list[str]:
+    """Everything wrong with the allowlist against what the scan found; [] when exact."""
+    problems = []
+    if len(allowlist) != size:
+        problems.append(
+            f"ALLOWLIST lists {len(allowlist)} files but the pinned size {size}. Removing a "
+            "file: lower ALLOWLIST_SIZE to match. Adding one is not the fix; seed the world "
+            "in the new test instead of listing it"
+        )
+    for path, (count, why) in sorted(allowlist.items()):
+        if path not in found:
+            problems.append(f"{path} no longer violates; remove it from ALLOWLIST")
+        elif len(found[path]) > count:
+            problems.append(
+                f"{path} has {len(found[path])} service patches, ALLOWLIST says {count}; "
+                "seed the world instead of adding one"
+            )
+        elif len(found[path]) < count:
+            problems.append(
+                f"{path} has {len(found[path])} service patches, ALLOWLIST says {count}; "
+                "lower the count"
+            )
+        if not why.strip():
+            problems.append(f"{path} says why it is listed: give a reason")
+    return problems
+
+
+def _hits(n: int) -> list[tuple[int, str, str]]:
+    return [(i + 1, "pyrite.services.x.X", "TestClient") for i in range(n)]
+
+
+@pytest.mark.control(reason="Pins the ratchet on planted data, independent of the tree")
+class TestTheRatchetHasNoSlack:
+    LISTED = {"tests/test_a.py": (2, "why a"), "tests/test_b.py": (1, "why b")}
+
+    def test_a_tree_that_matches_passes(self):
+        found = {"tests/test_a.py": _hits(2), "tests/test_b.py": _hits(1)}
+        assert ratchet_problems(found, self.LISTED, size=2) == []
+
+    def test_listing_one_more_file_fails(self):
+        listed = {**self.LISTED, "tests/test_c.py": (1, "why c")}
+        found = {p: _hits(n) for p, (n, _) in listed.items()}
+        problems = ratchet_problems(found, listed, size=2)
+        assert any("3 files" in p and "pinned size 2" in p for p in problems)
+
+    def test_one_more_patch_in_a_listed_file_fails(self):
+        found = {"tests/test_a.py": _hits(3), "tests/test_b.py": _hits(1)}
+        problems = ratchet_problems(found, self.LISTED, size=2)
+        assert any("tests/test_a.py" in p and "3" in p and "2" in p for p in problems)
+
+    def test_one_fewer_patch_asks_for_the_count_to_be_lowered(self):
+        found = {"tests/test_a.py": _hits(1), "tests/test_b.py": _hits(1)}
+        problems = ratchet_problems(found, self.LISTED, size=2)
+        assert any("tests/test_a.py" in p and "lower" in p for p in problems)
+
+    def test_a_file_that_no_longer_violates_must_be_removed(self):
+        problems = ratchet_problems({"tests/test_a.py": _hits(2)}, self.LISTED, size=2)
+        assert any("tests/test_b.py" in p and "remove" in p for p in problems)
+
+    def test_every_entry_says_why(self):
+        listed = {"tests/test_a.py": (1, "")}
+        problems = ratchet_problems({"tests/test_a.py": _hits(1)}, listed, size=1)
+        assert any("why" in p for p in problems)
+
+
 # ------------------------------------------------------------------- the tree
 
 
@@ -638,6 +982,7 @@ def _message(path: str, line: int, target: str, eps: str) -> str:
     )
 
 
+@pytest.mark.guard
 def test_no_test_mocks_the_service_behind_the_entry_point_it_drives():
     found = _scan()
     new = [
@@ -649,13 +994,50 @@ def test_no_test_mocks_the_service_behind_the_entry_point_it_drives():
     assert not new, "\n" + "\n".join(new)
 
 
-def test_the_allowlist_can_only_shrink():
-    found = _scan()
-    stale = sorted(set(ALLOWLIST) - set(found))
-    assert not stale, f"no longer violate; remove them from ALLOWLIST: {stale}"
-    assert len(ALLOWLIST) <= ALLOWLIST_SIZE_AT_LANDING, (
-        f"ALLOWLIST grew to {len(ALLOWLIST)} (ceiling {ALLOWLIST_SIZE_AT_LANDING}): "
-        "seed the world in the new test instead of listing it"
-    )
-    assert all(ALLOWLIST.values()), "every entry says why"
+@pytest.mark.guard
+def test_the_allowlist_matches_the_tree_exactly():
+    assert ratchet_problems(_scan(), ALLOWLIST, ALLOWLIST_SIZE) == []
     assert all((ROOT / p).exists() for p in ALLOWLIST)
+
+
+# ------------------------------------------------------------------ helpers count
+
+
+_DRIVES = "from typer.testing import CliRunner\n"
+
+
+@pytest.mark.control(reason="Pins the helper count on the tree's own helper module")
+def test_a_helpers_patches_count_against_a_file_that_imports_and_drives():
+    source = _DRIVES + "from tests._git_plans import allow_local_destinations\n"
+    hits = helper_violations(source, ROOT / "tests" / "test_planted.py")
+    assert [t.split(" via ")[0] for _, t in hits] == [
+        "pyrite.services.git_service.GitService._endpoint",
+        "pyrite.services.git_service.GitService.check_remote_allowed",
+    ]
+
+
+@pytest.mark.control(reason="Pins the helper count on the tree's own helper module")
+@pytest.mark.parametrize(
+    "source",
+    [
+        _DRIVES + "from tests._git_plans import plan_for\n",  # a function with no patch
+        "from tests._git_plans import allow_local_destinations\n",  # drives nothing
+    ],
+)
+def test_a_helper_counts_only_for_patching_functions_in_a_driving_file(source):
+    assert helper_violations(source, ROOT / "tests" / "test_planted.py") == []
+
+
+@pytest.mark.control(reason="Pins the helper count for a helper imported as a module")
+@pytest.mark.parametrize(
+    "source",
+    [
+        _DRIVES + "from tests import _git_plans as gp\ndef t(monkeypatch):\n"
+        "    gp.allow_local_destinations(monkeypatch)\n",
+        _DRIVES + "import tests._git_plans as gp\ndef t(monkeypatch):\n"
+        "    gp.allow_local_destinations(monkeypatch)\n",
+    ],
+)
+def test_a_helper_imported_as_a_module_counts_too(source):
+    hits = helper_violations(source, ROOT / "tests" / "test_planted.py")
+    assert len(hits) == 2, hits

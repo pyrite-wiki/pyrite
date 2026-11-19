@@ -31,7 +31,7 @@ class TestPlugin:
     def test_get_relationship_types(self):
         plugin = JournalismInvestigationPlugin()
         rels = plugin.get_relationship_types()
-        # Check bidirectional pairs (only JI-specific, not cascade-shared)
+        # Check bidirectional pairs
         assert rels["owns"]["inverse"] == "owned_by"
         assert rels["owned_by"]["inverse"] == "owns"
         assert rels["sourced_from"]["inverse"] == "source_for"
@@ -40,10 +40,14 @@ class TestPlugin:
         assert rels["party_to"]["inverse"] == "has_party"
         assert rels["supports"]["inverse"] == "supported_by"
         assert rels["supported_by"]["inverse"] == "supports"
-        # These are registered by cascade, not here
-        assert "member_of" not in rels
-        assert "funded_by" not in rels
+        # The relations the connection hook writes (moved here from cascade, #953)
+        assert rels["member_of"]["inverse"] == "has_member"
+        assert rels["has_member"]["inverse"] == "member_of"
+        assert rels["funded_by"]["inverse"] == "funds"
+        assert rels["funds"]["inverse"] == "funded_by"
+        # cascade-only relations went with the cascade extension
         assert "investigated" not in rels
+        assert "capture_mechanism" not in rels
 
     def test_get_validators(self):
         plugin = JournalismInvestigationPlugin()

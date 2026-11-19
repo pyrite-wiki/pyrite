@@ -14,9 +14,9 @@ file in the KB changed. A planted hook that writes a parent proves the check
 catches what it is for; without it, an empty hook list would pass against
 nothing.
 
-Limit: the KB is `generic` and the saved entries are a task, a note and a
-cascade actor. A plugin hook that writes only for its own KB type or its own
-entry types (say, a cascade-only writer that checks `kb_type == "cascade"`,
+Limit: the KB is `generic` and the saved entries are a task, a note and an
+actor. A plugin hook that writes only for its own KB type or its own
+entry types (say, a writer that checks `kb_type == "journalism-investigation"`,
 or a social hook acting on a post) returns early here and would go unnoticed.
 Each hook is called directly, so the KB-type filter of `get_hooks_for_kb` is
 not what hides it; the hook's own guard is.
@@ -139,13 +139,12 @@ _NON_TASK = pytest.mark.control(
     "saved_id", ["c2", pytest.param("n1", marks=_NON_TASK), pytest.param("a1", marks=_NON_TASK)]
 )
 def test_every_installed_after_save_hook_leaves_other_entries_alone(env, saved_id):
-    # The extensions that register after_save hooks today; CI installs them.
-    pytest.importorskip("pyrite_cascade")
+    # The extension that registers an after_save hook today; CI installs it.
     pytest.importorskip("pyrite_social")
     hooks = _installed_after_save_hooks(env)
     names = {getattr(h, "__name__", "") for h in hooks}
     assert hooks, "no after_save hooks found: the check would pass against nothing"
-    assert {"_on_actor_saved", "after_save_update_counts"} <= names, names
+    assert "after_save_update_counts" in names, names
 
     assert _writers(env, hooks, saved_id) == []
 

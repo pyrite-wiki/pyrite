@@ -24,6 +24,16 @@ def csv_serialize(data: Any, **kwargs) -> str:
             for row in rows:
                 writer.writerow({key: cell_text(row.get(key)) for key in columns})
             return output.getvalue()
+        if kwargs.get("single_entry", False):
+            # A single entry is not an envelope: render its own keys as one
+            # header row plus exactly one data row, whatever keys it has.
+            # (Without this, an entry's `tags` list matched the tag-count
+            # table and the entry itself never printed.)
+            output = io.StringIO()
+            basic = csv.writer(output)
+            basic.writerow(list(data.keys()))
+            basic.writerow([cell_text(data.get(key)) for key in data])
+            return output.getvalue()
         if "results" in data:
             return _results_to_csv(data["results"])
         if "entries" in data:
@@ -38,9 +48,9 @@ def csv_serialize(data: Any, **kwargs) -> str:
     # Fallback: single row of key-value pairs
     if isinstance(data, dict):
         output = io.StringIO()
-        writer = csv.writer(output)
-        writer.writerow(data.keys())
-        writer.writerow(data.values())
+        basic = csv.writer(output)
+        basic.writerow(list(data.keys()))
+        basic.writerow(list(data.values()))
         return output.getvalue()
 
     return str(data)

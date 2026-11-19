@@ -1,8 +1,8 @@
 """
 QA Fix Service — auto-fix for safe structural issues in knowledge bases.
 
-Extracted from QAService. Handles date normalisation, missing field defaults,
-broken wikilink fixes by edit distance, and tag normalisation.
+Extracted from QAService. Handles date normalisation, broken wikilink fixes by
+edit distance, and tag normalisation.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from ..config import PyriteConfig
+from ..exceptions import EntryLoadError, outside_text
 from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
@@ -25,7 +26,6 @@ class QAFixService:
     FIXABLE_RULES = frozenset(
         {
             "invalid_date",
-            "schema_violation",  # only missing-field sub-cases
             "broken_link",
         }
     )
@@ -34,7 +34,7 @@ class QAFixService:
     #: `tag_case`, which comes from the tag index rather than an issue. A test
     #: runs each through a write that lands, raises, and finds no file
     #: (tests/test_qa_records_only_what_ran.py); add a kind here and there.
-    FIX_KINDS = ("invalid_date", "schema_violation", "broken_link", "tag_case")
+    FIX_KINDS = ("invalid_date", "broken_link", "tag_case")
 
     def __init__(self, config: PyriteConfig, db: PyriteDB, kb_svc=None):
         self.config = config
@@ -96,7 +96,10 @@ class QAFixService:
                 not_applied = write()
             except Exception as e:
                 logger.warning("Failed to apply a fix to %s: %s", fixes[0]["entry_id"], e)
-                not_applied = f"update_failed: {type(e).__name__}: {e}"
+                # Logged above; the fault's text is the operator's (ADR-0052 N3).
+                not_applied = (
+                    f"update_failed: {type(e).__name__}: {outside_text(e, already_logged=True)}"
+                )
             if not_applied:
                 failed.extend({**fix, "reason": not_applied} for fix in fixes)
             else:
@@ -139,20 +142,22 @@ class QAFixService:
                     else:
                         manual.append({**issue, "reason": "cannot_normalise_date"})
 
-                elif rule == "schema_violation" and "missing" in issue.get("message", "").lower():
-                    # Only reached by an issue whose message says "missing":
-                    # the KB schema's required-field errors say "required",
-                    # so no validator yields one today (#795 Learned).
-                    fix = self._fix_missing_field(issue)
-                    if fix:
-                        # _fix_missing_field's only default is `importance`,
-                        # a top-level field. A metadata default would have to
-                        # send only its own key (update_entry merges metadata
-                        # into the file's), never a dict read from the index.
-                        updates[fix["field"]] = fix["new_value"]
-                        field_fixes.append(fix)
+                elif rule == "field_spelled_twice":
+                    # Andon #994 / #1001 decision 2: an *equal* pair merges
+                    # into the field's own top-level spelling, losing
+                    # nothing; a pair that disagrees stays a hand fix.
+                    merge = self._fix_double_spelling(issue, kb_name)
+                    if isinstance(merge, str):
+                        manual.append({**issue, "reason": merge})
+                    elif merge is None:
+                        manual.append({**issue, "reason": "spellings_disagree"})
                     else:
-                        manual.append({**issue, "reason": "no_safe_default"})
+                        attempt(
+                            [merge],
+                            lambda f=merge, eid=entry_id: self._apply_double_spelling_merge(
+                                eid, kb_name, f, kb_svc
+                            ),
+                        )
 
                 elif rule == "broken_link":
                     fix = self._fix_broken_link(issue, all_entry_ids)
@@ -169,6 +174,8 @@ class QAFixService:
                         )
                     else:
                         manual.append({**issue, "reason": "no_close_match"})
+                elif rule == "schema_violation" and issue.get("schema_rule") == "required":
+                    manual.append({**issue, "reason": "no_safe_default"})
                 else:
                     manual.append({**issue, "reason": "not_auto_fixable"})
 
@@ -301,34 +308,6 @@ class QAFixService:
         }
 
     @staticmethod
-    def _fix_missing_field(issue: dict[str, Any]) -> dict[str, Any] | None:
-        """Provide a type-appropriate default for a missing required field.
-
-        Only handles fields where a safe default exists.
-        Returns fix dict or None.
-        """
-        field = issue.get("field", "")
-
-        # Map of field names to safe defaults
-        safe_defaults: dict[str, Any] = {
-            "importance": 5,
-        }
-
-        default_val = safe_defaults.get(field)
-        if default_val is None:
-            return None
-
-        return {
-            "entry_id": issue["entry_id"],
-            "kb_name": issue["kb_name"],
-            "rule": "schema_violation",
-            "field": field,
-            "old_value": None,
-            "new_value": default_val,
-            "message": f"Added default {field}={default_val}",
-        }
-
-    @staticmethod
     def _edit_distance(a: str, b: str) -> int:
         """Compute Levenshtein edit distance between two strings."""
         if len(a) < len(b):
@@ -411,24 +390,138 @@ class QAFixService:
         written: the entry's file is gone, or the target is not in its
         ``links`` (a ``[[wikilink]]`` in the body is not rewritten).
         """
-        entry = self._load(entry_id, kb_name)
-        if not entry:
+        found = self._file_value(entry_id, kb_name, "links")
+        if found is None:
             return "entry_not_found: the entry's file is gone"
+        _present, links = found
+        items = list(links) if isinstance(links, list) else []
 
-        # Update the link target in the entry's links list
-        changed = False
-        for link in entry.links:
-            if link.target == old_target:
-                link.target = new_target
-                changed = True
+        # One operation per broken item, on the key the item itself uses
+        # (`target:` or the legacy `to:`), so the other items and the rest of
+        # the item keep their bytes (ADR-0042 decisions 1 and 3; #955 P3b). A
+        # bare string item (`links: [foo]`, a link to `foo` by the model's
+        # rule) is set as the string it is (#973 fix round 1).
+        from ..storage.file_operations import Set
 
-        if not changed:
+        ops = []
+        for i, item in enumerate(items):
+            if isinstance(item, dict):
+                key = "to" if "to" in item and "target" not in item else "target"
+                if item.get(key) == old_target:
+                    ops.append(Set(("links", i, key), new_target))
+            elif item == old_target:
+                ops.append(Set(("links", i), new_target))
+        if not ops:
             return (
                 f"link_not_rewritten: '{old_target}' is not in the entry's links "
                 "(a link in the body is not rewritten)"
             )
-        kb_svc.update_entry(entry_id, kb_name, links=entry.links)
+        kb_svc.apply_operations(entry_id, kb_name, ops)
         return None
+
+    def _fix_double_spelling(
+        self, issue: dict[str, Any], kb_name: str
+    ) -> dict[str, Any] | str | None:
+        """The merge of a field one file spells twice: when every spelling
+        holds the same YAML value, type included (``values_identical``:
+        `true` is not `1`, `1` is not `1.0`), the spellings other than the
+        field's own name are removed (``Unset``), so the file loses nothing.
+        A string is the reason the pair is a hand fix instead (the spellings
+        disagree; `type`, which no write may touch); None when the file
+        cannot be read."""
+        from ..schema.field_aliases import spellings_of, values_identical
+        from ..storage.repository import KBRepository
+
+        entry_id = issue.get("entry_id", "")
+        field_name = issue.get("field", "")
+        kb_config = self.config.get_kb(kb_name)
+        if not kb_config or not entry_id or not field_name:
+            return None
+        if field_name in ("type", "entry_type"):
+            return "field_fixed_once_created"
+        try:
+            entry = KBRepository(kb_config).load(entry_id)
+        except EntryLoadError as e:
+            # Called outside `attempt()`, so a raise would end the whole run:
+            # the file its type cannot load is a hand fix, named, and the run
+            # goes on (ADR-0042 8a: no write lands on it).
+            return f"{e.error_code}: {e}"
+        source = getattr(entry, "_source_frontmatter", None)
+        if entry is None or not isinstance(source, dict):
+            return None
+        nested = source.get("metadata")
+        nested = nested if isinstance(nested, dict) else {}
+        present: list[tuple[str, ...]] = []
+        values: list[Any] = []
+        for path in spellings_of(type(entry), entry.entry_type, field_name):
+            holder = nested if path[0] == "metadata" else source
+            if path[-1] in holder:
+                present.append(path)
+                values.append(holder[path[-1]])
+        if len(present) < 2:
+            return None
+        if any(not values_identical(v, values[0]) for v in values):
+            return "spellings_disagree"
+        removed = present[1:]
+        # The block the merge empties goes whole: no `metadata: {}` the
+        # author never wrote is left behind (round 4, item 4). Decided here
+        # on this field alone; the resolver re-checks the whole block.
+        nested_removed = {p[-1] for p in removed if p[0] == "metadata"}
+        if nested and nested_removed and set(nested) == nested_removed:
+            removed = [p for p in removed if p[0] != "metadata"] + [("metadata",)]
+        return {
+            "entry_id": entry_id,
+            "kb_name": kb_name,
+            "rule": "field_spelled_twice",
+            "field": field_name,
+            "kept": ".".join(present[0]),
+            "removed": [".".join(p) for p in present[1:]],
+            "paths": removed,
+        }
+
+    @staticmethod
+    def _apply_double_spelling_merge(
+        entry_id: str, kb_name: str, fix: dict[str, Any], kb_svc
+    ) -> str | None:
+        """Remove the extra spellings of an equal pair; the resolver lets an
+        ``Unset`` of a non-canonical spelling through for this call alone
+        (``merge_spellings``), when every spelling holds one value
+        (``KBService._resolve_operation``)."""
+        from ..storage.file_operations import Unset
+
+        kb_svc.apply_operations(
+            entry_id, kb_name, [Unset(tuple(p)) for p in fix["paths"]], merge_spellings=True
+        )
+        return None
+
+    def _file_value(self, entry_id: str, kb_name: str, key: str) -> tuple[bool, Any] | None:
+        """``key``'s value as the entry's file holds it -- ``(present, value)``
+        -- or None when there is no file to read. A fix edits the file's own
+        shape (a list item by position, a scalar as a scalar), so it reads
+        the file, not the model's reading of it."""
+        from ..storage.repository import KBRepository
+        from ..utils.frontmatter import load_frontmatter
+        from ..utils.kb_files import KBFileOutsideRootError
+
+        kb_config = self.config.get_kb(kb_name)
+        if not kb_config:
+            return None
+        try:
+            # Read only inside the KB, one name: a link out or a hard link is
+            # no file this fix may read (and its write would be refused).
+            found = KBRepository(kb_config).read_for_write(entry_id)
+        except (OSError, KBFileOutsideRootError):
+            return None
+        if found is None:
+            return None
+        _path, raw = found
+        try:
+            parsed = load_frontmatter(raw.decode("utf-8"))
+        except Exception:
+            return None
+        if parsed is None:
+            return None
+        return key in parsed[0], parsed[0].get(key)
 
     def _find_tag_normalisation_fixes(self, kb_name: str) -> list[dict[str, Any]]:
         """Find tags with mixed case that should be lowercased.
@@ -471,10 +564,22 @@ class QAFixService:
 
         Returns ``None`` once the write returned, else why nothing was written.
         """
-        entry = self._load(entry_id, kb_name)
-        if not entry:
+        found = self._file_value(entry_id, kb_name, "tags")
+        if found is None:
             return "entry_not_found: the entry's file is gone"
+        _present, tags = found
 
-        new_tags = [new_tag if t == old_tag else t for t in entry.tags]
-        kb_svc.update_entry(entry_id, kb_name, tags=new_tags)
+        # One operation per tag, by its position in the file's list: the
+        # other tags, and the line's comment, keep their bytes (#955 P3b). A
+        # scalar `tags: Foo` is one tag (#561) and stays a scalar: it is set
+        # to its lowercase as it is (#973 fix round 1).
+        from ..storage.file_operations import Set
+
+        if isinstance(tags, list):
+            ops = [Set(("tags", i), new_tag) for i, t in enumerate(tags) if t == old_tag]
+        else:
+            ops = [Set("tags", new_tag)] if tags == old_tag else []
+        if not ops:
+            return f"tag_not_in_file: '{old_tag}' is not in the entry's tags as the file holds them"
+        kb_svc.apply_operations(entry_id, kb_name, ops)
         return None

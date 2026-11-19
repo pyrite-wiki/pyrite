@@ -18,7 +18,9 @@ from pathlib import Path
 import pytest
 from pyrite_software_kb.plugin import SoftwareKBPlugin
 
+from pyrite.config import KBConfig
 from pyrite.storage.database import PyriteDB
+from tests._world import build_world
 
 PUBLIC, PRIVATE = "public-kb", "private-kb"
 
@@ -117,3 +119,130 @@ def test_no_read_surface_serves_an_unreadable_kb(tmp_path, handler, entry_type):
     empty = _call(tmp_path, handler, entry_type, readable_kbs=set())
     assert f"{PUBLIC}-{entry_type}" not in empty
     assert f"{PRIVATE}-{entry_type}" not in empty
+
+
+@pytest.mark.parametrize(
+    "readable_kbs,expected_counts",
+    [
+        ({PUBLIC}, {"adr_count": 1, "component_count": 1, "validation_count": 0}),
+        ({PUBLIC, PRIVATE}, {"adr_count": 2, "component_count": 2, "validation_count": 0}),
+    ],
+    ids=["public-only", "both-kbs"],
+)
+def test_pull_next_context_preview_preserves_readable_link_scope(
+    tmp_path, readable_kbs, expected_counts
+):
+    world = build_world(
+        tmp_path,
+        kbs=[KBConfig(name=kb, path=tmp_path / kb, kb_type="software") for kb in (PUBLIC, PRIVATE)],
+        rest=False,
+    )
+    try:
+        world.add_entry(
+            PUBLIC,
+            f"""---
+id: next-item
+title: Next item
+type: backlog_item
+kind: feature
+status: accepted
+priority: high
+links:
+  - target: public-adr
+    relation: related_to
+  - target: private-adr
+    kb: {PRIVATE}
+    relation: related_to
+---
+Implement this item.
+""",
+        )
+        for kb, visibility in ((PUBLIC, "public"), (PRIVATE, "private")):
+            world.add_entry(
+                kb,
+                f"""---
+id: {visibility}-adr
+title: {visibility} decision
+type: adr
+adr_number: 1
+status: accepted
+date: 2026-10-23
+---
+Decision details.
+""",
+            )
+            world.add_entry(
+                kb,
+                f"""---
+id: {visibility}-component
+title: {visibility} component
+type: component
+kind: module
+path: {visibility}/module.py
+owner: core
+links:
+  - target: next-item
+    kb: {PUBLIC}
+    relation: related_to
+---
+Component details.
+""",
+            )
+
+        files_before = {
+            path: path.read_bytes()
+            for kb in (PUBLIC, PRIVATE)
+            for path in world.kb_path(kb).rglob("*.md")
+        }
+        server = world.mcp("read")
+        oriented = server._dispatch_tool(
+            "kb_orient", {"kb_name": PUBLIC}, readable_kbs=readable_kbs
+        )
+        assert "error" not in oriented
+        context = server._dispatch_tool(
+            "sw_context_for_item",
+            {"item_id": "next-item", "kb_name": PUBLIC},
+            readable_kbs=readable_kbs,
+        )
+        pulled = server._dispatch_tool(
+            "sw_pull_next", {"kb_name": PUBLIC}, readable_kbs=readable_kbs
+        )
+
+        assert context["item"]["id"] == pulled["recommendation"]["id"] == "next-item"
+        if PRIVATE in readable_kbs:
+            assert {entry["id"] for entry in context["adrs"]} == {"public-adr", "private-adr"}
+            assert {entry["id"] for entry in context["components"]} == {
+                "public-component",
+                "private-component",
+            }
+            assert context["related"] == []
+        else:
+            assert [entry["id"] for entry in context["adrs"]] == ["public-adr"]
+            assert [entry["id"] for entry in context["components"]] == ["public-component"]
+            # The readable source names this target, but its metadata stays hidden.
+            assert context["related"] == [
+                {
+                    "id": "private-adr",
+                    "title": None,
+                    "entry_type": None,
+                    "relation": "related_to",
+                    "body_preview": "",
+                }
+            ]
+            # An unreadable source contributes no backlink, even as a placeholder.
+            assert "private-component" not in json.dumps(context)
+            assert "private decision" not in json.dumps(context)
+
+        assert {
+            path: path.read_bytes()
+            for kb in (PUBLIC, PRIVATE)
+            for path in world.kb_path(kb).rglob("*.md")
+        } == files_before
+        assert pulled["context_preview"] == expected_counts
+        assert pulled["context_preview"] == {
+            "adr_count": len(context["adrs"]),
+            "component_count": len(context["components"]),
+            "validation_count": len(context["validations"]),
+        }
+    finally:
+        world.close()

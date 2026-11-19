@@ -1,4 +1,7 @@
-"""Run a newly added raw CLI assertion under an inherited forced-colour setting."""
+"""Run a newly added raw CLI assertion under an inherited forced-colour setting.
+
+Rule and contributor guidance: ../CONTRIBUTING.md#writing-tests
+"""
 
 import os
 import subprocess

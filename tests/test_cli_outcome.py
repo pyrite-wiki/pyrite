@@ -580,6 +580,68 @@ def _run(root, path, body, fmt, args=None):
         return runner.invoke(app, [*path, *args, "--format", fmt])
 
 
+class OddError(Exception):
+    code = "4xp6"
+
+
+class NonExitError(Exception):
+    exit_code = "not a process exit"
+
+
+class UnreadableExit(SystemExit):
+    @property
+    def code(self):
+        raise RuntimeError("cannot read the exit code")
+
+
+@pytest.mark.parametrize(
+    ("exc", "description"),
+    [
+        (OddError(), "OddError"),
+        (NonExitError(), "NonExitError"),
+        pytest.param(
+            SystemExit(5),
+            "SystemExit (exit code 5)",
+            marks=pytest.mark.control(reason="real process exits keep their exit code"),
+        ),
+        pytest.param(
+            SystemExit(None),
+            "SystemExit",
+            marks=pytest.mark.control(reason="an absent exit code stays absent"),
+        ),
+        pytest.param(
+            SystemExit("stop"),
+            "SystemExit (exit code 'stop')",
+            marks=pytest.mark.control(reason="a SystemExit message is still an exit request"),
+        ),
+        pytest.param(
+            typer.Exit(7),
+            "Exit (exit code 7)",
+            marks=pytest.mark.control(reason="Click exits retain their exit_code"),
+        ),
+        pytest.param(
+            UnreadableExit(),
+            "UnreadableExit",
+            marks=pytest.mark.control(
+                reason="unreadable exception attributes must not break the answer"
+            ),
+        ),
+    ],
+)
+def test_no_outcome_names_exit_codes_only_for_process_exits(exc, description):
+    def body():
+        raise exc
+
+    out = _run("pyrite", ("task", "claim"), body, "json")
+    assert out.exit_code == 1, out.output
+    doc = json.loads(out.stdout)
+    assert doc["error_code"] == "NO_OUTCOME"
+    assert doc["error"] == (
+        f"internal error: the command raised {description}, "
+        "so what the command did is unknown; please report it"
+    )
+
+
 def test_the_walk_is_not_empty_and_is_the_registry_s_own_list():
     """An empty parametrisation is silently green. `task` is on the contract,
     so the walk has commands; and it finds them the way the root does."""

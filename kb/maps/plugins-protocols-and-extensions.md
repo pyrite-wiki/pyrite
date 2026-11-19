@@ -87,7 +87,7 @@ only: [[adr-0022]] (a type pattern a plugin first needed).
 
 Components [[plugin-system]], [[pyrite-plugin-protocol]], [[protocols-module]],
 [[software-kb-extension]], [[zettelkasten-extension]], [[social-extension]],
-[[encyclopedia-extension]], [[cascade-extension]]. Paths:
+[[encyclopedia-extension]]. Paths:
 `pyrite/plugins/protocol.py`, `pyrite/plugins/registry.py`,
 `pyrite/plugins/capabilities.py`, `pyrite/models/protocols.py`,
 `extensions/`. Standard `extension-development` and `plugin-developer-guide`.
@@ -102,10 +102,10 @@ Components [[plugin-system]], [[pyrite-plugin-protocol]], [[protocols-module]],
 ## Known gaps
 
 - No `pyrite.plugin_api` façade, `PLUGIN_API_VERSION` or `plugins:` allowlist
-  exists; `extensions/cascade/` is still in tree ([[adr-audit-2026-10]]).
+  exists. `extensions/cascade/` was deleted by #953 (2026-10).
 - [[adr-0040]]'s inventory counts internal-use sites per extension:
-  journalism-investigation 36, social 31, encyclopedia 19, cascade 17,
-  zettelkasten 13 (software-kb, which stays, 84).
+  journalism-investigation 36, social 31, encyclopedia 19, cascade 17
+  (deleted, #953), zettelkasten 13 (software-kb, which stays, 84).
 - [[adr-0014]] phases 1 and 2 (protocol entries, `requires_protocols`,
   `pyrite protocol show`) do not exist; the audit marks the ADR current and
   ADR-0045 disagrees on that point.

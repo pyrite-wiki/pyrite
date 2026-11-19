@@ -69,7 +69,7 @@ def test_sse_exposes_every_declared_read_tool(reachable_session):
     """The advertised tool list must contain everything tool_schemas declares.
 
     Superset, not equality: installed extensions contribute their own
-    read-tier tools (sw_*, cascade_*, investigation_* ...) through the plugin
+    read-tier tools (sw_*, investigation_* ...) through the plugin
     registry, so equality would fail on any install that has them -- which
     CI's does. What must hold is that nothing declared goes missing. The
     stdio module asserts the stronger property: the two transports advertise

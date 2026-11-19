@@ -9,110 +9,78 @@ Tests of experimental surfaces carry the `experimental` marker, applied from
 `tests/experimental_surface.py`; they run in their own non-blocking job and
 locally with `--experimental` (same section).
 
-## 8-Section Extension Test Structure
+## Writing a medium test
 
-Every extension test file follows this structure. Not every section is required — only include sections for capabilities your extension implements.
+A medium test drives one real surface (REST, MCP or the CLI) against a real
+world, in-process. Build the world with `tests/_world.py`, or with one of the
+fixtures over it, and the test runs the production wiring:
+
+- the config is `config.yaml` in a real config dir, written by `save_config`
+  and read back by `load_config`. A setting or KB field (`types`,
+  `policies`) that file cannot express is refused when the world is built,
+  so it never silently falls back to its default;
+- a KB is a directory of files, and `world.add_entry(kb, text)` writes one
+  file and indexes it through the indexer;
+- REST is `create_app(config)` with no `dependency_overrides`. `get_db` is the
+  app's own per-request session (#131), and the `TestClient` is entered, so
+  the lifespan runs;
+- the world closes everything it opened, including `app.state.pyrite_db`.
 
 ```python
-"""Tests for the my_extension extension."""
+def test_one_note_on_every_surface(tmp_path):
+    from pyrite.config import KBConfig
+    from tests._world import build_world
 
-from pyrite_my_extension.entry_types import MyEntry
-from pyrite_my_extension.plugin import MyExtensionPlugin
-from pyrite_my_extension.preset import MY_PRESET
-from pyrite_my_extension.validators import validate_my_type
-
-from pyrite.plugins.registry import PluginRegistry
-
-# =========================================================================
-# 1. Plugin registration
-# =========================================================================
-
-class TestPluginRegistration:
-    def test_plugin_has_name(self):
-        plugin = MyExtensionPlugin()
-        assert plugin.name == "my_extension"
-
-    def test_register_with_registry(self):
-        registry = PluginRegistry()
-        registry.register(MyExtensionPlugin())
-        assert "my_extension" in registry.list_plugins()
-
-    def test_entry_types_registered(self):
-        registry = PluginRegistry()
-        registry.register(MyExtensionPlugin())
-        types = registry.get_all_entry_types()
-        assert "my_type" in types  # Use `in`, not len()
-
-    # ... validators, commands, presets, kb_types, mcp_tools
-
-# =========================================================================
-# 2. Entry types
-# =========================================================================
-
-class TestMyEntry:
-    def test_default_values(self): ...
-    def test_entry_type_property(self): ...
-    def test_to_frontmatter(self): ...
-    def test_to_frontmatter_omits_defaults(self): ...
-    def test_from_frontmatter(self): ...
-    def test_from_frontmatter_generates_id(self): ...
-    def test_roundtrip_markdown(self): ...
-
-# =========================================================================
-# 3. Validators
-# =========================================================================
-
-class TestValidators:
-    def test_valid_data_passes(self): ...
-    def test_required_field_missing(self): ...
-    def test_invalid_enum_value(self): ...
-    def test_ignores_unrelated_types(self): ...  # CRITICAL: always include
-
-# =========================================================================
-# 4. Hooks (if applicable)
-# =========================================================================
-
-class TestHooks:
-    def test_before_save_modifies_entry(self): ...
-    def test_before_save_raises_on_violation(self): ...
-    def test_after_save_side_effect(self): ...
-    def test_hooks_ignore_unrelated_types(self): ...
-
-# =========================================================================
-# 5. Workflows (if applicable)
-# =========================================================================
-
-class TestWorkflows:
-    def test_valid_transitions(self): ...
-    def test_invalid_transition_rejected(self): ...
-    def test_initial_state(self): ...
-
-# =========================================================================
-# 6. DB Tables (if applicable)
-# =========================================================================
-
-class TestDBTables:
-    def test_table_definitions_valid(self): ...
-    def test_table_names_prefixed(self): ...
-
-# =========================================================================
-# 7. Preset
-# =========================================================================
-
-class TestPreset:
-    def test_preset_structure(self): ...
-    def test_preset_contains_expected_types(self): ...
-    def test_preset_directories(self): ...
-
-# =========================================================================
-# 8. Core integration
-# =========================================================================
-
-class TestCoreIntegration:
-    def test_entry_class_resolution(self): ...
-    def test_entry_from_frontmatter_resolution(self): ...
-    def test_relationship_types_merged(self): ...
+    world = build_world(tmp_path, kbs=[KBConfig(name="notes", path=tmp_path / "notes")])
+    try:
+        world.add_entry("notes", "---\nid: hello\ntype: note\ntitle: Hello\n---\n\nHi\n")
+        assert world.client.get("/api/entries/hello?kb=notes").json()["title"] == "Hello"
+        assert world.cli("get", "hello", "-k", "notes", "--format", "json").exit_code == 0
+        assert world.mcp("read")._dispatch_tool("kb_get", {"entry_id": "hello"})["entry"]
+    finally:
+        world.close()
 ```
+
+The rules:
+
+1. **Seed files, not rows.** Do not seed with `db.upsert_entry` or a raw
+   `INSERT` under a surface test. A row with no file behind it cannot show
+   file/index divergence, and a `get` that should read the file passes on the
+   row alone.
+2. **Do not override `get_db` and do not patch `load_config`.** The world
+   gives you both for real. `tests/test_production_wiring_guard.py` counts
+   the sites still left (`tests/production_wiring_baseline.txt`). The count
+   only shrinks: a new site fails, and so does a file that dropped below its
+   line until you lower that line.
+3. **Stub only the process edge.** An LLM provider, a git remote or an HTTP
+   call is an edge. Override that one dependency (`make_client(...,
+   dependency_overrides={get_repo_service: ...})`); never the database or the
+   config. The edges allowed by name are listed in
+   `tests/test_tests_drive_the_surface_not_the_mock.py`.
+4. **Point the CLI, don't patch it.** `cli_world()` points this process's
+   config location at the world for the rest of the test. Setting
+   `PYRITE_CONFIG_DIR` alone with `monkeypatch.setenv` does not do that:
+   `pyrite.config` reads the variable once, at import, and the repo-wide
+   `_isolate_global_config` fixture pins `CONFIG_DIR` for every test.
+5. **One world per write.** A test that writes gets its own world (a
+   function-scoped fixture). A session- or module-scoped world is read-only
+   by convention (`tests/characterization/conftest.py`).
+
+### Which fixture?
+
+| You are testing | Use | You get |
+|---|---|---|
+| a REST route, with your own KB/auth/API keys | `make_client(kb_name=, api_key=, api_keys=, auth=, register_user=)` | `(client, config, db)`; call it again for a second app |
+| a REST route over the standard events + research sample data | `rest_api_env` (with `sample_events` for their ids) | `{"client", "config", "db", "events_kb", "research_kb"}` |
+| an MCP tool | `mcp_server(kb_defs, tier=, extra_setup=)` from `tests/_world.py` (`_make_mcp_server` in `tests/test_mcp_server.py`; seed: `tests/mcp_seed.py`) | `{"server", "config", <kb name>: KBConfig}` |
+| a CLI command | `cli_world(kbs=, settings=)` | a world: `.cli(*args)`, `.add_entry`, `.config_dir` |
+| one property across REST, MCP and the CLI | `build_world(tmp_path, kbs=, settings=)` from `tests/_world.py` | `.client`, `.mcp(tier)`, `.cli(...)`; call `.close()` |
+| the access matrix (principals x KB states) | `world` / `write_world` (`tests/characterization/conftest.py`) | principals, the ADR-0037 KB axis, goldens |
+| a service or storage function, no surface | `kb_service`, `pyrite_db`, `indexed_test_env` | the objects, no app |
+
+## Extension Tests
+
+See [extensions.md](extensions.md#8-section-extension-test-structure) for the 8-section extension test template.
 
 ## Important Test Patterns
 
@@ -255,7 +223,12 @@ and says who holds the lock. Local workers: `PW_WORKERS=N`, else Playwright's
 default (half the cores). It is not bounded lower yet: `e2e/seed.spec.ts`
 times out at 1-2 workers (#906); bound it once that is fixed.
 
-**Playwright config** starts both FastAPI (:8088) and Vite (:5173) dev servers. Uses `reuseExistingServer` in dev so you can keep servers running.
+**Playwright config** starts four servers: FastAPI and Vite, and a second pair
+with auth enabled. Their ports are derived per worktree (`web/e2e/ports.ts`),
+so two worktrees can run Playwright at once; `cat .pyrite/e2e-ports` shows
+this worktree's. `PLAYWRIGHT_E2E_PORT` and `PLAYWRIGHT_E2E_VITE_PORT` override
+the first pair. Every server has `reuseExistingServer: false`: Playwright
+never reuses a server already running, and a port in use fails the run.
 
 ## Pre-Commit Hooks
 

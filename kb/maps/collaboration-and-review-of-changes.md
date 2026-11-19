@@ -77,16 +77,24 @@ section 6, [[adr-0032]] for the model it copies. History only: [[adr-0018]].
 ## Where the code starts
 
 Components [[collaboration-services]], [[git-service]], [[repo-service]].
-Paths: `pyrite/services/worktree_service.py`, `pyrite/server/worktree_resolver.py`
-(called by `pyrite/server/endpoints/entries.py`),
+Where a write lands: `AccessPolicy.lands_in` (`pyrite/services/access_policy.py`),
+the per-KB `landing` field (`pyrite/config.py`), and the one write factory
+`pyrite/services/write_target.py`, which REST asks in `requires_kb_tier("write")`
+(`pyrite/server/api.py`) and MCP in `_dispatch_tool` (`pyrite/server/mcp_server.py`,
+bound per call for the plugins' `PluginContext` too).
+Paths: `pyrite/services/worktree_service.py` (the working copy behind a change
+set, for now), `pyrite/server/worktree_resolver.py` (reads through the overlay),
 `pyrite/server/endpoints/worktree.py`,
 `pyrite/storage/backends/overlay_backend.py`.
 
 ## Tests that pin it
 
-`tests/test_overlay_backend.py`. The ADRs name no test for the merge queue.
-ADR-0044 proposes `tests/test_doc_internal_pull_requests.py` and a git-driven
-invariant set (L, W, P, R, M); none exists.
+`tests/test_overlay_backend.py`. L1 to L3 for every registered REST write route
+and MCP write tool, in a `landing: canonical` world and a `landing: review`
+world: `tests/test_writes_land_in_the_users_worktree.py`; the rule's table:
+`tests/test_landing_rule.py`. The ADRs name no test for the merge queue.
+ADR-0044 proposes `tests/test_doc_internal_pull_requests.py` and the rest of a
+git-driven invariant set (W, P, R, M); none exists.
 
 ## Known gaps
 

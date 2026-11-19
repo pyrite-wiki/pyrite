@@ -7,11 +7,14 @@ no service-layer duplication.
 """
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 
+from ...exceptions import ValidationError
 from ...services.access_policy import KB, Action, ReadScope
-from ...services.link_discovery_service import LinkDiscoveryService
+from ...services.link_discovery_service import LinkDiscoveryService, _validate_mode
 from ..api import get_link_discovery_service, limiter
 from ..authz import authorize
+from ..errors import error_response
 
 router = APIRouter(tags=["Links"])
 
@@ -46,6 +49,16 @@ def discover_neighbors(
     is what stops a readable KB's entry being matched against a private
     KB's entry and handed back as a suggestion (#186).
     """
+    # An unknown mode answers 400, not the central handler's 422 for
+    # ValidationError (maintainer decision 2026-10-17): REST validation
+    # errors answer 400 per docs/json-contracts.md. error_response builds
+    # the canonical VALIDATION_FAILED body; only the status is overridden.
+    try:
+        _validate_mode(mode)
+    except ValidationError as exc:
+        _, content = error_response(exc)
+        return JSONResponse(status_code=400, content=content)
+
     candidates = svc.discover_neighbors(
         entry_id=entry_id,
         kb_name=kb,
@@ -85,6 +98,16 @@ def batch_suggest(
 
     Targets with no body and no summary are left out unless `include_empty`.
     """
+    # An unknown mode answers 400, not the central handler's 422 for
+    # ValidationError (maintainer decision 2026-10-17): REST validation
+    # errors answer 400 per docs/json-contracts.md. error_response builds
+    # the canonical VALIDATION_FAILED body; only the status is overridden.
+    try:
+        _validate_mode(mode)
+    except ValidationError as exc:
+        _, content = error_response(exc)
+        return JSONResponse(status_code=400, content=content)
+
     pairs = svc.batch_suggest(
         source_kb=source_kb,
         target_kb=target_kb,

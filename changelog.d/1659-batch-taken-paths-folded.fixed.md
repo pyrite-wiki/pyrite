@@ -1,0 +1,1 @@
+- Batch taken paths are compared ignoring letter case and Unicode normalisation on every disk (#1623), so two items whose paths differ only in case step the second to `-2` or refuse a colliding `file_pattern` (#1659).

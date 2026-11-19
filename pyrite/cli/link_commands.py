@@ -20,18 +20,18 @@ from rich.table import Table
 
 from ..exceptions import EntryNotFoundError, KBNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
-from .context import cli_context, get_config_and_db, read_input_file
+from .context import cli_context, get_config_and_db, read_input_file, require_kb
 from .outcome import Outcome
-from .output import OUTPUT_FORMAT
+from .output import OUTPUT_FORMAT, cli_console
 
 links_app = typer.Typer(help="Link validation and inspection")
-console = Console()
+console = cli_console()
 
 
 @links_app.command("check")
 def links_check(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to check links from"),
-    limit: int = typer.Option(500, "--limit", help="Max missing targets to show"),
+    limit: int = typer.Option(500, "--limit", min=1, help="Max missing targets to show"),
     detail: bool = typer.Option(False, "--detail", help="Show per-link breakdown"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
@@ -46,6 +46,7 @@ def links_check(
     from ..services.wikilink_service import WikilinkService
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
     try:
         targets = WikilinkService(config, db).check_links(kb_name=kb_name, limit=limit)
     finally:
@@ -107,9 +108,9 @@ def links_check(
 
 def _parse_link_specs(raw: str) -> list[dict]:
     """Parse YAML link specifications from a string."""
-    import yaml
+    from ..utils.yaml import safe_load_bounded
 
-    data = yaml.safe_load(raw)
+    data = safe_load_bounded(raw)
     if not isinstance(data, list):
         raise ValidationError("YAML input must be a list of link specs")
     return data
@@ -164,7 +165,7 @@ def links_bulk_create(
     # Each spec is checked by the service (KBService.add_links), the one place
     # a link spec is judged (#846): a malformed one fails alone, before its
     # source is touched, and the others go on.
-    with cli_context() as (_config, _db, svc):
+    with cli_context(kbs=(kb_name,)) as (_config, _db, svc):
         # KBService.add_links saves each source once, in place, through the
         # same path `pyrite link` uses. This command used to `repo.save` the
         # source, which re-derived its path from the type and wrote a second
@@ -198,6 +199,10 @@ def links_bulk_create(
             item["error"] = r.get("error", "failed")
             if r.get("error_code"):
                 item["error_code"] = r["error_code"]
+            if r.get("errors"):
+                # The rows the service answered, on the item they belong to
+                # (#1381 review): a bulk caller fixes fields, not prose.
+                item["errors"] = r["errors"]
         items.append(item)
 
     def rich(console: Console, data: dict) -> None:
@@ -270,7 +275,7 @@ def links_suggest(
     target_kb: str | None = typer.Option(
         None, "--target-kb", help="KB to search for candidates (default: same as --kb)"
     ),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max number of suggestions"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Max number of suggestions"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Suggest related entries that could be linked.
@@ -290,6 +295,8 @@ def links_suggest(
     candidates = _suggest_links(entry_id, kb_name, target_kb, limit)
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
+    require_kb(config, target_kb, db=db)
     try:
         svc = KBService(config, db)
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
@@ -384,7 +391,7 @@ def links_discover(
     target_kb: str | None = typer.Option(
         None, "--target-kb", help="KB to search (default: all KBs, including the source KB)"
     ),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Max results"),
     mode: str = typer.Option(
         "hybrid", "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
     ),
@@ -427,6 +434,8 @@ def links_discover(
     )
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db)
+    require_kb(config, target_kb, db=db)
     try:
         svc = KBService(config, db)
         entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
@@ -640,7 +649,7 @@ def _find_orphans(
 def links_orphans(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to check for orphans"),
     min_importance: int = typer.Option(5, "--min-importance", help="Minimum importance threshold"),
-    limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="Max results"),
     output_format: str = OUTPUT_FORMAT,
 ) -> Outcome:
     """Find high-importance entries that lack cross-KB connections.

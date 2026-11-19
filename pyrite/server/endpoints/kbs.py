@@ -1,18 +1,18 @@
 """KB listing, schema, health, reindex, and export endpoints."""
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from ...config import PyriteConfig
-from ...exceptions import InvalidGitRefError, KBNotFoundError
+from ...exceptions import InvalidGitRefError, KBNotFoundError, public_text
 from ...services.access_policy import KB, Action, AnyKB, ReadScope
 from ...services.auth_service import AuthService
 from ...services.export_service import ExportService
-from ...services.kb_registry_service import KBRegistryService
+from ...services.kb_registry_service import HEALTH_CACHE_SECONDS, KBRegistryService
 from ...services.kb_service import KBService
 from ..api import (
     get_auth_service,
-    get_config,
     get_export_service,
     get_kb_registry,
     get_kb_service,
@@ -22,6 +22,8 @@ from ..api import (
 )
 from ..authz import authorize
 from ..schemas import KBHealthResponse, KBInfo, KBListResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Knowledge Bases"])
 
@@ -102,7 +104,7 @@ def kb_health(
 ):
     """Check KB health: path, file count vs index count."""
     try:
-        result = registry.health_kb(kb_name)
+        result = registry.health_kb(kb_name, max_age=HEALTH_CACHE_SECONDS)
     except KBNotFoundError:
         raise HTTPException(
             status_code=404,
@@ -116,17 +118,16 @@ def kb_health(
 def get_kb_schema(
     kb_name: str,
     request: Request,
-    config: PyriteConfig = Depends(get_config),
+    svc: KBService = Depends(get_kb_service),
 ):
     """Get the schema for a knowledge base including type metadata."""
-    kb_config = config.get_kb(kb_name)
-    if not kb_config:
-        raise HTTPException(
-            status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
-        )
+    # Through the service, so a KB `pyrite kb add` registered after the
+    # config was loaded -- which `authorize` above accepted -- is found
+    # here too, not 404 from a second, narrower lookup (#952).
+    kb_config = svc.require_kb(kb_name)
 
     schema = kb_config.kb_schema
-    return schema.to_agent_schema()
+    return schema.to_agent_schema(kb_type=kb_config.kb_type)
 
 
 @router.get("/kbs/{kb_name}/orient", dependencies=[Depends(authorize(Action.KB_READ, KB))])
@@ -201,7 +202,8 @@ def export_kb_to_repo(
     except InvalidGitRefError as e:
         raise HTTPException(status_code=400, detail={"code": "INVALID_REF", "message": str(e)})
     except Exception as e:
+        logger.error("Export of KB %r failed", kb_name, exc_info=e)
         raise HTTPException(
             status_code=500,
-            detail={"code": "EXPORT_FAILED", "message": str(e)},
-        )
+            detail={"code": "EXPORT_FAILED", "message": public_text(e, already_logged=True)},
+        ) from None

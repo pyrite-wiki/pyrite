@@ -21,10 +21,10 @@ export const E2E_KB = 'e2e';
  *
  *   - `/login` and `/register` are not the app's operating mode; auth specs
  *     must either skip or run under their own auth-enabled project (package C);
- *   - every request has write tier, so `GET /daily/{date}` DOES create a note
- *     for a date that has none. The seed therefore pre-creates every date the
- *     specs navigate to (see `SEEDED_DAILY_DATES`), which makes those GETs
- *     reads and leaves the world unchanged by a read-only run.
+ *   - every request has write tier. `GET /daily/{date}` creates nothing for
+ *     any caller (it answers 404 for a date with no note; the page offers
+ *     "Start today's note", a POST), so the seed pre-creates every date the
+ *     specs navigate to (see `SEEDED_DAILY_DATES`) for them to find a note.
  */
 export const AUTH_ENABLED = false;
 
@@ -93,8 +93,8 @@ export function dateOffsetFromToday(offset: number): string {
 
 /**
  * Every date the daily specs can land on: today, and the days reachable by the
- * prev/next buttons they click. Seeding all of them keeps `GET /daily/{date}`
- * a read for the whole suite.
+ * prev/next buttons they click. Each has a note, so every daily page the
+ * suite opens shows one.
  */
 export const DAILY_OFFSETS_SEEDED = [-3, -2, -1, 0, 1, 2] as const;
 
@@ -103,6 +103,34 @@ export const SEEDED_DAILY_DATES: string[] = [
 	SEEDED_FIXED_DAILY_DATE,
 	...DAILY_OFFSETS_SEEDED.map(dateOffsetFromToday)
 ];
+
+/**
+ * Links seeded into the world (#162) — the FULL link set for the e2e world.
+ * The seed creates each link's target before its source (`global-setup.ts`),
+ * because a link to an entry that does not exist yet is a partial create
+ * (exit 3) whose link is dropped. When adding or removing a link here, update
+ * the graph and QA expectations together: `graph.spec.ts` asserts
+ * `edgeKeys.size === SEEDED_LINKS.length`, and `qa.spec.ts` treats exactly the
+ * ids in `SEEDED_LINKED_ENTRY_IDS` as non-orphans.
+ */
+export interface SeededLink {
+	/** Entry id of the link source — created after the target. */
+	source: string;
+	/** Entry id of the link target. */
+	target: string;
+	relation: string;
+}
+
+export const SEEDED_LINKS: SeededLink[] = [
+	{ source: 'e2e-event-first-light', target: 'e2e-person-ada-lovelace', relation: 'related_to' },
+	{ source: 'e2e-event-second-signal', target: 'e2e-person-grace-hopper', relation: 'related_to' },
+	{ source: 'e2e-note-alpha', target: 'e2e-event-first-light', relation: 'related_to' }
+];
+
+/** Entry ids that take part in at least one seeded link (either direction). */
+export const SEEDED_LINKED_ENTRY_IDS: Set<string> = new Set(
+	SEEDED_LINKS.flatMap((l) => [l.source, l.target])
+);
 
 /** Every non-daily entry the seed creates. */
 export const SEEDED_ENTRIES: SeededEntry[] = [

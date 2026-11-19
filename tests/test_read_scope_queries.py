@@ -108,14 +108,12 @@ def _local(w):
 
 
 def _get(w, url, *, scoped=True, **kw):
-    w.release_idle_connections()
     if scoped:
         return w.client.get(url, cookies=_local(w), **kw)
     return w.client.get(url, headers=ADMIN, **kw)
 
 
 def _post(w, url, *, scoped=True, **kw):
-    w.release_idle_connections()
     if scoped:
         return w.client.post(url, cookies=_local(w), **kw)
     return w.client.post(url, headers=ADMIN, **kw)
@@ -376,9 +374,7 @@ def private_repo(w):
 @pytest.mark.parametrize("who", ["writer", "admin_key"])
 def test_repo_sync_empty_name_never_syncs_all(w, private_repo, who):
     kw = {"cookies": private_repo} if who == "writer" else {"headers": ADMIN}
-    w.release_idle_connections()
     r = w.client.post("/api/repos//sync", **kw)
-    w.release_idle_connections()
     unknown = w.client.post("/api/repos/no-such-repo/sync", **kw)
     assert "private-repo" not in r.text
     assert (r.status_code, r.json()) == (unknown.status_code, unknown.json())

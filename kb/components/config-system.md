@@ -30,10 +30,10 @@ A repo-local `.pyrite/config.yaml` found by searching up from the cwd (the ADR-0
 Dataclass for a single knowledge base. Fields include `name`, `path`, `kb_type` (free-form string, default `"generic"`), `description`, `read_only`, `remote`, `shortname` (alias for cross-KB links), `ephemeral`, `ttl`, `created_at_ts`, and `default_role`. The `default_role` field controls per-KB access: `None` = use global role, `"read"` = public, `"none"` = private. Provides `load_kb_yaml()` to pull in per-KB schema/types/policies and `validate()` for path checking. Properties expose `kb_yaml_path` and `local_db_path` (the per-KB SQLite index under `<kb>/.pyrite/index.db`).
 
 ### `PyriteConfig`
-Root configuration aggregating `knowledge_bases`, `repositories`, `subscriptions`, `github_auth`, and `settings`. Maintains internal `_kb_by_name` and `_repo_by_name` lookup dicts rebuilt on init. Methods: `get_kb()`, `get_kb_by_shortname()`, `list_kbs()`, `add_kb()`, `remove_kb()`, `get_repo()`, `add_repo()`, `remove_repo()`, `get_kbs_in_repo()`, `validate()`, `to_dict()`, `from_dict()`.
+Root configuration aggregating `knowledge_bases`, `repositories`, `subscriptions`, `github_auth`, and `settings`. Maintains internal `_kb_by_name` and `_repo_by_name` lookup dicts rebuilt on init. Methods: `get_kb()`, `list_kbs()`, `add_kb()`, `remove_kb()`, `get_repo()`, `add_repo()`, `remove_repo()`, `get_kbs_in_repo()`, `validate()`, `to_dict()`, `from_dict()`.
 
 ### `Settings`
-Global application settings: `default_editor`, `ai_provider`/`ai_model`/`ai_api_key`, `summary_length`, `enable_mcp`, `index_path`, `host`/`port`, `cors_origins`, `api_key`, rate limits, `embedding_model`/`embedding_dimensions`, `search_mode`, and `workspace_path`. Environment variables (`EDITOR`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_BASE`) serve as fallbacks.
+Global application settings: `default_editor`, `ai_provider`/`ai_model`/`ai_api_key`, `summary_length`, `enable_mcp`, `index_path`, `host`/`port`, `cors_origins`, `api_key`, rate limits, `max_request_body_bytes` (default 32 MiB, positive integer, refused at load otherwise), `embedding_model`/`embedding_dimensions`, `search_mode`, and `workspace_path`. Environment variables (`EDITOR`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_BASE`) serve as fallbacks.
 
 ### `Repository`
 Configuration for a git repository that may contain one or more KBs. Supports local and remote repos with authentication methods (`none`, `ssh`, `github_oauth`, `token`).
@@ -46,7 +46,8 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 
 ## Module-Level Functions
 
-- **`load_config()`** -- Reads `CONFIG_FILE`, deserializes via `PyriteConfig.from_dict()`, and loads `kb.yaml` for each KB. Creates a default `PyriteConfig` if the file does not exist.
+- **`load_config()`** -- Reads `CONFIG_FILE`, deserializes via `PyriteConfig.from_dict()`, and loads `kb.yaml` for each KB. Creates a default `PyriteConfig` if the file does not exist. One KB whose files cannot be read (`KB_UNREADABLE`, #1542) or whose `kb.yaml` does not load as a mapping (`KB_CONFIG_INVALID`, #1547) never stops the load: `KBConfig.load_kb_yaml` marks it `unreadable` and goes on.
+- **`read_kb_yaml(kb_root)`** (`pyrite/utils/yaml.py`) -- The one function that turns a `kb.yaml` into a mapping (#1547): `{}` without one, `KBConfigInvalidError` for bytes that are not UTF-8, a YAML error, a document over the YAML limits, or a top level that is not a mapping. `KBConfig.kb_schema`, `check_readable` (the reconcile's gate, so a KB in this state keeps its index rows), `load_kb_yaml`, `SchemaService` and KB discovery all go through it; `tests/test_a_kb_yaml_that_does_not_load.py` fails on a new `load_yaml_file(kb_root=...)` elsewhere.
 - **`save_config(config)`** -- Serializes `PyriteConfig.to_dict()` to `CONFIG_FILE` using `dump_yaml_file`.
 - **`auto_discover_kbs(search_paths)`** -- Recursively finds `kb.yaml` files under the given paths and returns a list of `KBConfig` objects.
 - **`ensure_config_dir()`** -- Creates `CONFIG_DIR` if missing.
@@ -62,7 +63,7 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 - YAML serialization uses `pyrite.utils.yaml` wrappers around `ruamel.yaml`, not the stdlib `yaml` module.
 - `KBConfig.kb_type` is a free-form string for extensibility; the `KBType` enum exists only for legacy compatibility.
 - Ephemeral KBs are tracked via `ephemeral`, `ttl`, and `created_at_ts` fields and garbage-collected by `KBService.gc_ephemeral_kbs()`.
-- The `shortname` field on `KBConfig` enables concise cross-KB wikilink syntax (`shortname:entry-id`).
+- The `shortname` field on `KBConfig` enables concise cross-KB wikilink syntax (`[[shortname:entry-id]]`) and nothing else (#952, ADR-0049 Q3): the link prefix is looked up among the caller's readable KBs only, by `readable_kb_named(name, readable_kbs=...)` (full name, then shortname; `readable_kb_with_shortname` is its second step) -- scoped methods, `readable_kbs` a required keyword, the implementation `services/kb_resolver` delegates to and the index uses to store the KB a link names (ADR-0049 Q3); the unscoped `kb_name_for`/`get_kb_by_shortname` are gone; every `kb` parameter, `-k` and `kb_name` takes the full name, and a shortname there is refused by the one resolver, `services/kb_resolver.py`, with the full name suggested. `require_kb(name, db=None)` is that resolver for a caller with no scope: a blank name is `ValidationError`, an unknown one `KBNotFoundError` with `did_you_mean`, and with `db` a KB registered after the config was loaded is found (#925).
 
 ## Consumers
 

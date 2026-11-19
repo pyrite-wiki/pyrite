@@ -291,20 +291,40 @@ def test_hand_written_shapes_read_as_written(env, svc, shape):
 @contextmanager
 def _files_opened():
     """Every file opened, as a Path: ``Path.read_bytes``/``read_text``/``open``
-    go through ``io.open``, a bare ``open()`` through ``builtins.open``; each
-    open is recorded once."""
+    go through ``io.open``, a bare ``open()`` through ``builtins.open``, and
+    the contained read (``KBFiles.read_bytes``) through ``os.open`` beneath a
+    folder's descriptor, recorded as that folder's path joined with the name;
+    each open is recorded once."""
     import builtins
     import io
+    import sys
 
     opened: list[Path] = []
     real = io.open
+    real_os_open = os.open
+
+    def fd_path(fd: int) -> Path:
+        if sys.platform == "darwin":
+            import fcntl
+
+            return Path(fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024).rstrip(b"\0").decode())
+        return Path(os.readlink(f"/proc/self/fd/{fd}"))
 
     def spy(file, *a, **k):
         if isinstance(file, (str, os.PathLike)):
             opened.append(Path(file))
         return real(file, *a, **k)
 
-    with patch.object(io, "open", spy), patch.object(builtins, "open", spy):
+    def os_spy(path, flags, mode=0o777, *, dir_fd=None):
+        if isinstance(path, (str, os.PathLike)):
+            opened.append(Path(path) if dir_fd is None else fd_path(dir_fd) / path)
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+    with (
+        patch.object(io, "open", spy),
+        patch.object(builtins, "open", spy),
+        patch.object(os, "open", os_spy),
+    ):
         yield opened
 
 
@@ -397,17 +417,18 @@ def test_no_row_but_a_file_is_found(env, svc):
     assert got["indexed_at"] is None and got["links"] == []
 
 
-@pytest.mark.control(reason="dev never reads a file on a miss; guards the no-scan rule")
-def test_no_row_and_no_file_named_like_the_id_is_a_miss_without_a_scan(env, svc):
-    """A miss reads no file: an id with no row is looked for under its own name
-    only (a scan of every file costs seconds on a large KB). A file whose id is
-    not its filename is found once the index has it."""
+def test_no_row_and_no_file_named_like_the_id_is_found_by_the_scan(env, svc):
+    """An id with no row and no file named like it is found by the scan
+    ``find_file`` uses, so ``get`` and ``create`` agree (maintainer,
+    2026-10-15, #135). #857 left the scan out of the read because it cost
+    seconds on a large KB; the raw-text prefilter makes it a read of each
+    file with no parse (``test_find_file_prefilter.py`` counts the parses)."""
     (env["kb_path"] / "notes" / "other-name.md").write_text(
         "---\nid: renamed-id\ntitle: R\ntype: note\n---\n\nx\n"
     )
-    with _files_opened() as opened:
-        assert svc.get_entry("renamed-id", KB, readable_kbs=None) is None
-    assert opened == []
+    got = svc.get_entry("renamed-id", KB, readable_kbs=None)
+    assert got is not None and got["title"] == "R"
+    assert svc.get_entry("no-file-holds-this", KB, readable_kbs=None) is None
 
 
 def test_a_row_but_no_file_is_not_found(env, svc):
@@ -472,17 +493,20 @@ def test_two_files_hold_the_id_the_index_winner_is_read(env, svc):
     assert got["body"].endswith("hand text")
 
 
-def test_a_symlinked_entry_reads_its_target_now(env, svc, tmp_path):
+def test_a_link_out_of_the_kb_is_never_read(env, svc, tmp_path):
+    """A read by id hands the file's bytes to the caller, so it reads only
+    inside the KB (`KBFiles.read_bytes`): an entry file that is a link out of
+    the KB is neither indexed nor read, now or after the target changes.
+    (It used to be read through; tests/test_indexed_bytes_stay_inside_the_kb.py
+    holds the property for every surface.)"""
     outside = tmp_path / "outside.md"
-    outside.write_text(ORIGINAL)
+    outside.write_text(ORIGINAL.replace("id: multi", "id: linked"))
     link = env["kb_path"] / "notes" / "linked.md"
     os.symlink(outside, link)
-    outside.write_text(ORIGINAL.replace("id: multi", "id: linked"))
     _index(env["config"])
     outside.write_text(HAND_EDITED.replace("id: multi", "id: linked"))
     got = svc.get_entry("linked", KB, readable_kbs=None)
-    assert "### Added by hand" in got["body"]
-    assert got["content_hash"] == hashlib.sha256(outside.read_bytes()).hexdigest()
+    assert got is None or "### Added by hand" not in (got.get("body") or ""), got
 
 
 @pytest.mark.control(
@@ -631,6 +655,11 @@ PIN_FILES = {
 }
 
 
+@pytest.mark.control(
+    reason="the pin held on dev, where the two projections were equal key for key; it is "
+    "loosened on the one key they now differ on by decision (#1025, option B), so it "
+    "passes without the fix and pins that nothing else drifts"
+)
 def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
     """``IndexManager.read_fields`` mirrors the backend's row shape; this is
     the test that fails when one changes without the other (a finding for
@@ -659,8 +688,25 @@ def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
             )
             got = {k: v for k, v in read.items() if k not in ("outlinks", "backlinks")}
             got.pop("content_hash")
+            # A refused importance is flagged by the read alone (#1761): the
+            # row, the index's own shape, carries no entry_warnings. By hand:
+            # `unquoted` (7.9) and `scalars` (true) hold a refused importance;
+            # no other file here does, a missing key included.
+            flagged = got.pop("entry_warnings", None)
+            assert bool(flagged) == (entry_id in ("unquoted", "scalars")), (entry_id, flagged)
             assert list(got) == list(row), entry_id
-            assert got == row, entry_id
+            # The one key the two projections differ on, by decision (#1025,
+            # option B): the read's `metadata` holds the row's bag less every
+            # key the read spells at its own name with the same value (a
+            # declared field); the row, the storage dict, keeps the whole bag.
+            read_bag, row_bag = got.pop("metadata"), dict(row["metadata"])
+            assert got == {k: v for k, v in row.items() if k != "metadata"}, entry_id
+            for key, value in row_bag.items():
+                if key in read_bag:
+                    assert read_bag[key] == value, (entry_id, key)
+                else:
+                    assert key in got and got[key] == value, (entry_id, key, "lost from the read")
+            assert set(read_bag) <= set(row_bag), entry_id
     finally:
         db.close()
 
@@ -677,6 +723,7 @@ def test_the_overlay_reads_the_users_own_file_never_mains_in_its_place(tmp_path)
     import subprocess
 
     from pyrite.server.worktree_resolver import WorktreeResolver
+    from pyrite.services.write_target import change_set_target
     from tests.test_worktree_service import _clean_git_env, _init_git_repo
 
     repo = tmp_path / "repo"
@@ -697,7 +744,9 @@ def test_the_overlay_reads_the_users_own_file_never_mains_in_its_place(tmp_path)
     ann, bob = {"id": 7, "username": "ann"}, {"id": 8, "username": "bob"}
     try:
         resolver = WorktreeResolver(config, db, cache)
-        resolver.get_write_service(KB, ann).update(ENTRY, KB, {"body": "Ann's pending body."})
+        KBService(*change_set_target(config, db, 7, KB, diff_cache=cache, username="ann")).update(
+            ENTRY, KB, {"body": "Ann's pending body."}
+        )
         main_file.write_text(HAND_EDITED)  # main moves on by hand
 
         def read(user):

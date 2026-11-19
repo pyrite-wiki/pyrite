@@ -71,7 +71,7 @@ Schemas evolve via version tracking and on-load migration. Three version markers
 ### CLI Commands
 
 - `pyrite schema diff --kb <name>` — shows types with version annotations and `since_version` highlights
-- `pyrite schema migrate --kb <name> [--dry-run]` — forces load+save of all entries, applying migrations
+- `pyrite schema migrate --kb <name> [--dry-run]` — writes each behind entry's migration difference onto its own bytes (`SchemaService.migrate_entries`, #955 B6 P4); `--dry-run` counts and writes nothing
 
 ## Plugin Validator Registration
 

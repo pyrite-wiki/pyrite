@@ -12,6 +12,7 @@ from ..config import PyriteConfig
 from ..exceptions import AmbiguousEntryError
 from ..storage.database import PyriteDB
 from .access_policy import named_kb
+from .kb_resolver import readable_kb_named
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,13 @@ class WikilinkService:
         readable_kbs: set[str] | None,
     ) -> list[dict[str, Any]]:
         """Lightweight listing of entry IDs and titles for wikilink autocomplete."""
-        sql = "SELECT id, kb_name, entry_type, title, json_extract(metadata, '$.aliases') as aliases FROM entry WHERE 1=1"
+        # `aliases` is the row's own column (#1001, decision 5); a file that
+        # spells it under `metadata:` is still read there.
+        sql = (
+            "SELECT id, kb_name, entry_type, title, "
+            "COALESCE(aliases, json_extract(metadata, '$.aliases')) as aliases "
+            "FROM entry WHERE 1=1"
+        )
         params: dict[str, Any] = {}
 
         if kb_name:
@@ -68,7 +75,10 @@ class WikilinkService:
         sql += scope_sql
         params.update(scope_params)
         if query:
-            sql += " AND (title LIKE :q1 OR json_extract(metadata, '$.aliases') LIKE :q2)"
+            sql += (
+                " AND (title LIKE :q1 OR aliases LIKE :q2"
+                " OR json_extract(metadata, '$.aliases') LIKE :q2)"
+            )
             params["q1"] = f"%{query}%"
             params["q2"] = f"%{query}%"
 
@@ -78,15 +88,19 @@ class WikilinkService:
         return self.db.execute_sql(sql, params)
 
     def _prefixed_kb(self, prefix: str, readable_kbs: set[str] | None) -> str | None:
-        """The KB a ``prefix:`` names -- a shortname or a KB name -- if the
+        """The KB a ``prefix:`` names -- a KB name or a shortname -- if the
         caller may read it. An unreadable KB is answered as an unknown
-        prefix, which is what a KB that does not exist gets."""
-        name = self.config.kb_name_for(prefix)
-        if not self.config.get_kb(name):
-            name = None
-        if name is None or (readable_kbs is not None and name not in readable_kbs):
-            return None
-        return name
+        prefix, which is what a KB that does not exist gets.
+
+        The lookup is among the caller's readable KBs only, by full name and
+        then by shortname (`kb_resolver.readable_kb_named`): a readable full
+        name wins over another KB's shortname; a shortname is the readable
+        KB that has it. A KB the caller cannot read is never consulted, so
+        it never changes the answer -- neither one sharing the shortname nor
+        one whose full name is the readable KB's shortname (#952, #965
+        rounds 2 and 3)."""
+        kb = readable_kb_named(self.config, prefix, readable_kbs)
+        return kb.name if kb is not None else None
 
     def _one_or_ambiguous(self, rows: list[dict[str, Any]], target: str) -> dict[str, Any] | None:
         """The one row a pass found, or None; rows from more than one KB are
@@ -109,8 +123,9 @@ class WikilinkService:
     ) -> dict[str, Any] | None:
         """Resolve a wikilink target to an entry. Supports kb:id format for cross-KB links.
 
-        ``kb_name`` may be a shortname. An id, title or alias held by more
-        than one readable KB (with none named) is refused, in every pass."""
+        ``kb_name`` is a full name (a shortname is link syntax, the
+        ``prefix:`` form). An id, title or alias held by more than one
+        readable KB (with none named) is refused, in every pass."""
         # Parse cross-KB format
         actual_target = target
         actual_kb = kb_name
@@ -121,8 +136,6 @@ class WikilinkService:
                 actual_target = rest
                 actual_kb = prefixed
         actual_kb = named_kb(actual_kb)  # a blank names no KB
-        if actual_kb:
-            actual_kb = self.config.kb_name_for(actual_kb)  # a shortname names its KB
         scope_sql, scope_params = _scope_clause("kb_name", readable_kbs)
 
         # First pass: exact ID match. Without a KB, an id held by more than
@@ -142,8 +155,11 @@ class WikilinkService:
             return picked
 
         # Second pass: title match
-        sql = "SELECT id, kb_name, entry_type, title FROM entry WHERE title LIKE :target"
-        params = {"target": actual_target, **scope_params}
+        sql = (
+            "SELECT id, kb_name, entry_type, title FROM entry WHERE title LIKE :target ESCAPE '\\'"
+        )
+        literal_title = actual_target.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params = {"target": literal_title, **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
@@ -154,12 +170,28 @@ class WikilinkService:
         if picked:
             return picked
 
-        # Third pass: search aliases
+        # Third pass: exact alias elements -- the row's own `aliases` column (a
+        # file's top-level `aliases:`, #1001 decision 5) or, for a file that
+        # spells it under `metadata:`, the bag.
         sql = """
             SELECT id, kb_name, entry_type, title FROM entry
-            WHERE json_extract(metadata, '$.aliases') LIKE :alias_pattern
+            WHERE (
+                EXISTS (
+                    SELECT 1 FROM json_each(
+                        CASE WHEN json_valid(aliases) THEN aliases ELSE '[]' END
+                    ) AS alias
+                    WHERE alias.type = 'text' AND alias.value = :alias_target COLLATE NOCASE
+                )
+                OR EXISTS (
+                    SELECT 1 FROM json_each(
+                        CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, '$.aliases'
+                    ) AS legacy_alias
+                    WHERE legacy_alias.type = 'text'
+                        AND legacy_alias.value = :alias_target COLLATE NOCASE
+                )
+            )
         """
-        params = {"alias_pattern": f"%{actual_target}%", **scope_params}
+        params = {"alias_target": actual_target, **scope_params}
         if actual_kb:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = actual_kb
@@ -230,7 +262,8 @@ class WikilinkService:
             SELECT l.target_id, l.target_kb, COUNT(*) as ref_count,
                    GROUP_CONCAT(DISTINCT l.source_id) as referenced_by
             FROM link l
-            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name{target_scope}
+            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1{target_scope}
             WHERE e.id IS NULL{source_scope}
         """
         params: dict[str, Any] = {**source_params, **target_params}
@@ -267,6 +300,7 @@ class WikilinkService:
             SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE e.id IS NULL
         """
         params: dict[str, Any] = {}

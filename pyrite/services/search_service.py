@@ -5,15 +5,30 @@ Unified search operations with FTS5 query sanitization and hybrid search.
 Used by API, CLI, and UI layers.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import sqlite3
 import time
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..exceptions import QuerySyntaxError, QueryTooLongError, StorageBusyError, StorageError
-from ..storage.database import PyriteDB
+from ..exceptions import (
+    QuerySyntaxError,
+    QueryTooLongError,
+    RefusedValueError,
+    ValidationError,
+    caller_owned,
+    outside_text,
+)
+from ..storage.errors import storage_error_from
+from ..storage.virtual_tables import EMBEDDED_PARTS, KEYWORD_SEARCHED_PARTS
+from .importance_reading import row_importance_warning
+from .read_shaping import ENTRY_WARNINGS_KEY
+
+if TYPE_CHECKING:
+    from ..storage.database import PyriteDB
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +47,35 @@ _QUERY_SYNTAX_ERROR_MARKERS = (
     "unknown special query",
     "expected integer",  # NEAR(a b, <not an int>)
 )
+
+
+#: The FTS5 parser's messages, as SQLite writes them; ``q`` is the part it
+#: quotes from the MATCH query. A message is the caller's to see only when it
+#: is one of these whole and ``q`` is a substring of the caller's own query
+#: (``_quotes_only_the_callers_query``): an expanded query carries provider
+#: terms, and any other text is the driver's.
+_FTS_PARSE_TEMPLATES = tuple(
+    re.compile(pattern)
+    for pattern in (
+        r'fts5: syntax error near "(?P<q>.*)"',
+        r"unterminated string",
+        r"unknown special query: (?P<q>.*)",
+        r'expected integer, got "(?P<q>.*)"',
+        r"no such column: (?P<q>.*)",
+    )
+)
+
+
+def _quotes_only_the_callers_query(message: str, caller_query: str | None) -> bool:
+    """Whether ``message`` is one of the parser's templates whose quoted part
+    is a substring of ``caller_query`` (None: no caller query known, so no)."""
+    if caller_query is None:
+        return False
+    for template in _FTS_PARSE_TEMPLATES:
+        match = template.fullmatch(message)
+        if match is not None:
+            return (match.groupdict().get("q") or "") in caller_query
+    return False
 
 
 def _looks_like_query_syntax_error(message: str, query: str) -> bool:
@@ -59,41 +103,6 @@ def _looks_like_query_syntax_error(message: str, query: str) -> bool:
         pattern = r"(?<![\w.])" + re.escape(name) + r"(?![\w.])"
         return re.search(pattern, query.lower()) is not None
     return any(marker in lowered for marker in _QUERY_SYNTAX_ERROR_MARKERS)
-
-
-#: SQLite's primary result codes for a transient lock: another connection
-#: holds the database (SQLITE_BUSY) or a table (SQLITE_LOCKED).
-_TRANSIENT_SQLITE_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
-
-#: The same faults by message, for an error that lost ``sqlite_errorcode``
-#: (constructed by a wrapper rather than raised by SQLite).
-_TRANSIENT_SQLITE_MARKERS = (
-    "database is locked",
-    "database table is locked",
-    "database schema is locked",
-    "database is busy",
-)
-
-
-def _is_transient(error: sqlite3.Error) -> bool:
-    """Could the same call succeed if made again? Only for a lock (#431)."""
-    code = getattr(error, "sqlite_errorcode", None)
-    if code is not None:
-        # Extended codes (SQLITE_BUSY_SNAPSHOT, ...) carry the primary code in
-        # the low byte.
-        return (code & 0xFF) in _TRANSIENT_SQLITE_CODES
-    lowered = str(error).lower()
-    return any(marker in lowered for marker in _TRANSIENT_SQLITE_MARKERS)
-
-
-def storage_error_from(error: sqlite3.Error, what: str = "Search failed") -> StorageError:
-    """The ``StorageError`` for a sqlite failure that is not the caller's query.
-
-    A lock becomes ``StorageBusyError`` (retryable); schema drift, a missing
-    table and corruption stay a plain ``StorageError`` (not retryable).
-    """
-    cls = StorageBusyError if _is_transient(error) else StorageError
-    return cls(f"{what}: {error}")
 
 
 def check_query_length(query: str) -> None:
@@ -203,6 +212,19 @@ class SearchMode(StrEnum):
     KEYWORD = "keyword"
     SEMANTIC = "semantic"
     HYBRID = "hybrid"
+
+
+#: The valid search modes. An unknown mode is refused with a
+#: ``ValidationError`` naming these, never silently answered as keyword
+#: (#917).
+VALID_SEARCH_MODES = ("keyword", "semantic", "hybrid")
+
+
+def _validate_search_mode(mode: str | SearchMode) -> None:
+    if mode not in VALID_SEARCH_MODES:
+        raise ValidationError(
+            f"Unknown search mode: {mode!r}. Valid modes: {', '.join(VALID_SEARCH_MODES)}."
+        )
 
 
 #: How an agent reads the verdict. The sentence in ``SearchService.search``'s
@@ -483,8 +505,13 @@ class SearchService:
         allowed = set(kb_names)
         return [r for r in results if r.get("kb_name") in allowed][:limit]
 
-    def _db_search(self, **kwargs: Any) -> list[dict[str, Any]]:
+    def _db_search(self, *, caller_query: str | None = None, **kwargs: Any) -> list[dict[str, Any]]:
         """Call ``self.db.search`` and classify any sqlite failure.
+
+        ``caller_query`` is the query as the caller wrote it, before any
+        expansion; ``kwargs["query"]`` is what reaches MATCH and may carry the
+        expansion provider's terms. Only text the caller wrote is named back
+        to them: a token, or a parser message that quotes only their query.
 
         ``sanitize_fts_query`` skips quoting when the query already contains
         an FTS5 operator (uppercase AND/OR/NOT) or a quote — it assumes the
@@ -512,7 +539,9 @@ class SearchService:
             query = str(kwargs.get("query") or "")
             if not _looks_like_query_syntax_error(str(e), query):
                 raise storage_error_from(e) from e
-            token = self._offending_token(query, e)
+            # Named only from the caller's own query: a token of an expanded
+            # query may be the provider's.
+            token = self._offending_token(caller_query, e) if caller_query else None
             if token:
                 raise QuerySyntaxError(
                     f"Query could not be parsed: the token '{token}' was read as a "
@@ -520,8 +549,13 @@ class SearchService:
                     "only between plain words (sanitization is skipped once you "
                     "use operators or quotes)."
                 ) from e
+            # The parser's message is the caller's to see only when it is one
+            # of its templates quoting nothing but the caller's own query; any
+            # other text (an expanded term, the driver's) is withheld.
+            cause = caller_owned(e) if _quotes_only_the_callers_query(str(e), caller_query) else e
             raise QuerySyntaxError(
-                f"Query could not be parsed: {e}. If your query uses AND/OR/NOT "
+                f"Query could not be parsed: {outside_text(cause)}. If your query "
+                "uses AND/OR/NOT "
                 "or phrase quotes, quote any tokens containing - : . yourself "
                 "(sanitization is skipped once you use operators or quotes)."
             ) from e
@@ -599,6 +633,8 @@ class SearchService:
         query: str,
         kb_name: str | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -616,6 +652,7 @@ class SearchService:
         warnings: list[str] | None = None,
         semantic_query: str | None = None,
         non_empty: bool = False,
+        caller_wrote_query: bool = False,
     ) -> list[dict[str, Any]]:
         """
         Search across entries.
@@ -624,6 +661,12 @@ class SearchService:
             query: Search query
             kb_name: Filter to specific KB (None for all)
             entry_type: Filter by type (event, actor, etc.)
+            entry_types: Filter by several types at once (an OR over the names).
+                The CLI's repeated `--type` arrives as this list; REST and MCP
+                still take the single `entry_type`. A supplied `entry_type` and
+                this list are combined into one filter set.
+            exclude_types: Remove these entry types from the results, whatever
+                the include side says (`--exclude-type`, repeatable).
             tags: Filter by tags (AND logic)
             date_from: Filter from date (YYYY-MM-DD)
             date_to: Filter to date (YYYY-MM-DD)
@@ -656,12 +699,20 @@ class SearchService:
                 ``"a" OR "b"`` (#431). ``None`` (the default): both legs use
                 ``query``. Refused over ``MAX_SEARCH_QUERY_LENGTH`` like
                 ``query``; ignored in keyword mode.
+            caller_wrote_query: ``query`` is the words the caller wrote, as
+                they wrote them (REST ``/api/search``, MCP ``kb_search``, the
+                CLI's ``search``). Only then may the FTS parser's message about
+                it be shown to a network caller (``_db_search``'s
+                ``caller_query``). False, the default, for a query Pyrite
+                builds: from an entry's title and tags (suggest-links), from a
+                chat message's words, or a plugin's.
 
         **What a search response owes its caller** (#56) — the one statement
         of the convention; the REST schema, the REST route and the ``kb_search``
         tool description point here rather than restating it:
 
-        1. Every filter — ``entry_type``, ``tags``, ``date_from``/``date_to``,
+        1. Every filter - ``entry_types``, ``exclude_types``, ``tags``,
+           ``date_from``/``date_to``,
            ``fips``, ``state``, ``status``, ``include_archived`` — is applied on
            **every** leg of every mode. Before #56 the vector leg ran unfiltered
            and the fused result silently contained entries the filter excluded.
@@ -710,18 +761,37 @@ class SearchService:
            cut short makes the verdict ``weak`` at worst, and ``match_basis``
            says which. What ``none`` does not account for: entries still
            waiting in the embed queue are not seen by the vector leg.
+        11. ``searched`` (#1757) lists the entry parts the legs that ran read, so
+           a miss on something not listed is not an absence. It names only what
+           a leg read: ``[]`` when no leg ran (``legs_run`` is ``[]``). A keyword
+           leg ran: the parts the backend's keyword index reads
+           (``keyword_searched_parts``: on SQLite every ``entry_fts`` column,
+           ``id``, ``kb_name``, ``entry_type``, ``title``, ``body``,
+           ``summary``, ``location``, narrowed to the columns an FTS5 column
+           filter leaves (``title:hawk``, ``"title":``, ``{a b}:``, ``- title:``;
+           a filter binds to the next phrase or group, filters nest by
+           intersection, and the list is the union over terms; a query not
+           understood lists none); on
+           Postgres ``title``, ``summary``, ``body``), the whole body included.
+           Only the vector leg ran (``semantic`` mode): ``title``, ``summary``
+           and ``body_prefix``, with ``body_prefix_chars`` giving the length the
+           body is cut to before it is embedded (a character count: the model's
+           token window may cut sooner), so a word past that point is not
+           searched. Declared field values and tags are in no leg's index,
+           so they are never listed: a keyword search does not find a word that
+           appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
            similarity, 3 places, the same number on every backend. A hybrid
            row carries ``legs``, the legs that returned it. ``distance`` (the
            backend's own measure), ``rank`` (raw BM25) and ``rrf_score`` (rank
            arithmetic) order results and are not scores; ``distance`` leaves
-           the response after one release.
+           the response in 0.27; use ``similarity`` instead.
         8. The thresholds behind ``match`` belong to an embedding model. With a
            model that has no row in ``_MODEL_MATCH_THRESHOLDS`` the vector leg
            is not judged: ``match_basis`` says ``uncalibrated model <name>``,
            and ``match`` is ``strong`` only from the keyword leg.
 
-        Items 4 to 10 are attached by ``search_response``, which the CLI, MCP
+        Items 4 to 11 are attached by ``search_response``, which the CLI, MCP
         and REST all return; this method returns the rows alone, for callers
         that gather context and show no page.
 
@@ -747,6 +817,12 @@ class SearchService:
             check_query_length(semantic_query)
         semantic_text = query if semantic_query is None else semantic_query
 
+        # Validate `mode` up front: an unknown mode is a caller mistake and
+        # must be refused, not silently answered as keyword (#917). The
+        # caller's actual input reaches this function on every surface (CLI,
+        # REST, MCP), so one check here covers all of them.
+        _validate_search_mode(mode)
+
         # Validate `limit` once, here, rather than letting whatever arithmetic
         # reaches it first decide the error. `limit=None` used to surface as a
         # bare TypeError from `limit * 3` deep inside the hybrid leg -- and,
@@ -756,18 +832,23 @@ class SearchService:
         # 400 SEARCH_FAILED. Both are the caller's mistake; say so, and name
         # the value (#56).
         if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
-            raise ValueError(f"limit must be a positive integer, got {limit!r}")
+            raise RefusedValueError(f"limit must be a positive integer, got {limit!r}")
 
-        # Normalize mode
+        # Normalize mode (already validated above, so SearchMode(...) cannot fail)
         if isinstance(mode, str):
-            try:
-                mode = SearchMode(mode)
-            except ValueError:
-                mode = SearchMode.KEYWORD
+            mode = SearchMode(mode)
 
         # Normalize "All KBs" to None
         if kb_name == "All KBs":
             kb_name = None
+
+        # One include-set from both spellings (#627): a single `entry_type`
+        # and a repeatable `entry_types` list are one filter, applied on
+        # every leg. An empty list is no filter, like None.
+        types = [t for t in (entry_types or []) if t]
+        if entry_type and entry_type not in types:
+            types.append(entry_type)
+        excluded = [t for t in (exclude_types or []) if t]
 
         signal["mode"] = mode.value
         tr["requested_mode"] = mode.value
@@ -794,7 +875,8 @@ class SearchService:
                     kb_names=kb_names,
                     signal=signal,
                     filters=self._leg_filters(
-                        entry_type=entry_type,
+                        entry_types=types,
+                        exclude_types=excluded,
                         tags=tags,
                         date_from=date_from,
                         date_to=date_to,
@@ -818,7 +900,8 @@ class SearchService:
                 results = self._hybrid_search(
                     query,
                     kb_name,
-                    entry_type,
+                    types,
+                    excluded,
                     tags,
                     date_from,
                     date_to,
@@ -836,6 +919,7 @@ class SearchService:
                     kb_names=kb_names,
                     signal=signal,
                     non_empty=non_empty,
+                    caller_query=query if caller_wrote_query else None,
                 )
                 results = self._restrict(results, kb_names, limit)
             else:
@@ -846,10 +930,12 @@ class SearchService:
 
                 def _run(q: str, page: tuple[int, int] = (limit, offset)) -> list[dict[str, Any]]:
                     return self._db_search(
+                        caller_query=query if caller_wrote_query else None,
                         query=q,
                         kb_name=kb_name,
                         kb_names=kb_names,
-                        entry_type=entry_type,
+                        entry_types=types or None,
+                        exclude_types=excluded or None,
                         tags=tags,
                         date_from=date_from,
                         date_to=date_to,
@@ -941,7 +1027,7 @@ class SearchService:
 
         Takes what ``search`` takes. Returns a mapping with ``results`` (the
         rows ``search`` returns), ``match`` and ``match_basis``, ``legs_run`` (the
-        legs that ran), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
+        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
         are any (absent otherwise; see ``search``'s docstring, which states
         what each key means).
 
@@ -981,6 +1067,16 @@ class SearchService:
             )
             if ran
         ]
+        # A refused importance keeps its legacy reading in the row; say so (#1761).
+        kb_roots: dict[str, Any] = {}
+        for row in results:
+            if not isinstance(row, dict) or not row.get("id") or not row.get("kb_name"):
+                continue
+            path = row.get("file_path") or (self.db.get_entry(row["id"], row["kb_name"]) or {}).get(
+                "file_path"
+            )
+            if said := row_importance_warning(self.db, row["kb_name"], path, kb_roots):
+                row[ENTRY_WARNINGS_KEY] = [said]
         response: dict[str, Any] = {
             "results": results,
             "match": match,
@@ -988,11 +1084,44 @@ class SearchService:
             # Not `legs`: that is the per-row key (which legs returned the row).
             "legs_run": legs_run,
         }
+        searched, body_chars = self._searched(query, kwargs, legs_run, signal)
+        response["searched"] = searched
+        if body_chars is not None:
+            response["body_prefix_chars"] = body_chars
         if "keyword_match" in signal:
             response["keyword_match"] = signal["keyword_match"]
         if warnings:
             response["warnings"] = warnings
         return response
+
+    def _searched(
+        self, query: str, kwargs: dict[str, Any], legs_run: list[str], signal: dict[str, Any]
+    ) -> tuple[list[str], int | None]:
+        """``(searched, body_prefix_chars)`` for a response whose legs were ``legs_run``.
+
+        Names an entry part only if a leg that ran read it, in full unless the
+        name says otherwise (#1757). No leg ran: nothing was searched. A
+        keyword leg ran: what the backend's keyword index reads for this query
+        (`keyword_searched_parts`), the whole body included. Only the vector
+        leg ran: the text it was built from, `title`, `summary` and a
+        ``body_prefix``, whose length is the second value (``None`` when the
+        limit is 0, and then no body is named).
+        """
+        if "keyword" in legs_run:
+            query_as_matched = query
+            if kwargs.get("sanitize", True):
+                query_as_matched = self.sanitize_fts_query(query)
+            reader = getattr(self.db.backend, "keyword_searched_parts", None)
+            parts = reader(query_as_matched) if reader else list(KEYWORD_SEARCHED_PARTS)
+            return list(parts), None
+        if "semantic" in legs_run:
+            # What `_entry_text` embeds: title, summary and `body[:chars]`. A limit
+            # of 0 (or none recorded) embeds no body, so none is claimed.
+            chars = signal.get("body_chars")
+            if chars:
+                return list(EMBEDDED_PARTS), chars
+            return [p for p in EMBEDDED_PARTS if p != "body_prefix"], None
+        return [], None
 
     @staticmethod
     def _skip_reason(mode: str, code: str | None) -> str:
@@ -1087,6 +1216,9 @@ class SearchService:
         svc = self._embedder()
         if signal is not None:
             signal["model"] = svc.model_name
+            # How many characters of a body the vectors were built from (0: none of it,
+            # as `_entry_text` takes `body[:0]`).
+            signal["body_chars"] = svc.max_body_chars
         # Asked of the KBs this search covers, not of the index (#668): whether
         # some other KB has vectors must not change what a scoped caller is
         # told, and a KB with none has not been searched by this leg even when
@@ -1177,7 +1309,8 @@ class SearchService:
     @staticmethod
     def _leg_filters(
         *,
-        entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -1195,7 +1328,8 @@ class SearchService:
         to search means adding it here, and both legs get it.
         """
         return {
-            "entry_type": entry_type,
+            "entry_types": entry_types or None,
+            "exclude_types": exclude_types or None,
             "tags": tags,
             "date_from": date_from,
             "date_to": date_to,
@@ -1245,7 +1379,8 @@ class SearchService:
         self,
         query: str,
         kb_name: str | None = None,
-        entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -1263,6 +1398,7 @@ class SearchService:
         kb_names: set[str] | list[str] | None = None,
         signal: dict[str, Any] | None = None,
         non_empty: bool = False,
+        caller_query: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Hybrid search using Reciprocal Rank Fusion (RRF).
@@ -1284,10 +1420,12 @@ class SearchService:
             # (#668): filtering the fused list afterwards let nearer rows the
             # caller cannot read use up the fetch.
             return self._db_search(
+                caller_query=caller_query,
                 query=q,
                 kb_name=kb_name,
                 kb_names=kb_names,
-                entry_type=entry_type,
+                entry_types=entry_types or None,
+                exclude_types=exclude_types or None,
                 tags=tags,
                 date_from=date_from,
                 date_to=date_to,
@@ -1318,7 +1456,8 @@ class SearchService:
             kb_name,
             limit=fetch_size,
             filters=self._leg_filters(
-                entry_type=entry_type,
+                entry_types=entry_types,
+                exclude_types=exclude_types,
                 tags=tags,
                 date_from=date_from,
                 date_to=date_to,

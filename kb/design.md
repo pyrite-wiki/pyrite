@@ -57,7 +57,10 @@ contracts are alpha.
    and keys are the operator's, kept in a documented config file the operator
    edits. Whoever holds the files is the operator. The database holds the
    derived index and machinery, never the only copy of content or
-   configuration.
+   configuration. A network call reaches entries by grant and nothing else
+   the server account holds: no file outside a KB, no credential, no text
+   Pyrite did not write for a caller, and no answer that depends on any of
+   them. The local process is the operator and keeps the operator's reach.
 8. **Each rule lives in one place.** A property is enforced at the single
    point everything passes through, with a test that fails when new code goes
    around it. A rule enforced call site by call site is not yet a rule.
@@ -81,7 +84,7 @@ contracts are alpha.
 ## What Pyrite is not
 
 - Not a site generator. Publishing is an export. The built-in `/site`
-  ([[adr-0023]]) is experimental.
+  ([[adr-0023]]) was removed in #953.
 - Not a formatter. It does not normalise or repair files unless asked to.
 - Not a database with instant indexes. Search, lists and links come from the
   index, which catches up with the files after a write or a hand edit; a
@@ -99,9 +102,11 @@ contracts are alpha.
 |---|---|
 | Files, index, what is derived | [[adr-0001]], [[adr-0029]] |
 | The principle | ADR-0041 (accepted) |
-| Writes, reads, identity, hooks | ADR-0042 (accepted), [[adr-0038]] (accepted) |
+| Writes, reads, identity, hooks | ADR-0042 (accepted), ADR-0051 (accepted), [[adr-0038]] (accepted) |
+| KB names, scope, links | ADR-0049 (accepted) |
 | Registry, config, state | ADR-0039 (accepted), [[adr-0029]] |
 | Who may do what | [[adr-0037]], ADR-0043 (accepted) |
+| CLI outcomes and exit codes | ADR-0046 (accepted) |
 | Types, protocols, plugins | [[adr-0014]], [[adr-0017]], [[adr-0040]], ADR-0045 (accepted) |
 | Review of changes | ADR-0044 (proposed) |
 | What the alpha supports | `alpha-supported-surface` (approved 2026-10-02) |
@@ -139,19 +144,31 @@ Working in a guest file: [[pyrite-is-a-guest-in-state-it-does-not-own]].
 The design above is ahead of the code in these places. Do not assume the
 code follows it; check, and treat a mismatch as the work to do.
 
-- An update re-serialises the whole file from the model (principle 3).
+- An update is operations on the file's own bytes since #955 (B6 P3a), the
+  surfaces take `append`, `remove` and `unset` (P3b), and a create writes its
+  values onto a skeleton the same way (C2), and every other writer sends
+  operations through the same write (P4: `add_link`/`add_links`, rename,
+  `schema migrate`, software-kb's `migrate-standards`; `ids pin` keeps its
+  own no-follow write under the momentary lock). The model has no `save`
+  and no emitter.
   [How Pyrite edits your files](../docs/how-pyrite-edits-your-files.md) holds
-  the examples a fix must pass; `tests/test_doc_write_as_patch.py` runs them
-  and lists each one the code fails today, and how.
-- Save hooks write links and parent status into files (principle 4).
-- An entry with no `id:` takes its identity from its title, and no command
-  lists or pins the files missing one (principle 5).
+  the examples; `tests/test_doc_write_as_patch.py` runs them and lists each
+  one the code still fails, and how.
+- Save hooks no longer change an update (principle 4), but what a hook sets
+  in place still reaches that write's index row until the index derives it
+  (P6); a create still takes a hook's changes.
+- An entry with no `id:` still takes its identity from its title;
+  `pyrite ids missing` lists such files and `pyrite ids pin` pins them before
+  the switch to path ids (principle 5).
 - A single-entry read returns the type's defaults and normalised values
   among the file's own fields, so a client that sends a read back writes them
   into the file (principles 3 and 4).
 - Entry classes and protocol mixins serialise themselves (principle 6).
 - KBs can exist only as database rows; grants and secrets are not in a
   reviewable config file (principle 7).
+- Network reach is enforced per call site for reads and response text
+  until N1 and N3's next step land (ADR-0052); git's environment is decided
+  from the reach at one point (N2).
 - Several rules are enforced per call site (principle 8).
 - The supported-surface list is approved but not yet reflected in the
   README, `--help` and tool descriptions, and experimental tests are not yet

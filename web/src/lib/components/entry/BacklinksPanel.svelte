@@ -1,6 +1,10 @@
 <!--
   BacklinksPanel: Shows entries that link to the current entry.
   Displayed in the split pane side panel on the entry detail page.
+
+  The API returns one row per link the source writes (#1009): a frontmatter
+  `links:` item and a body `[[x]]` are two rows from one source. The panel
+  lists each source once, with each of its links' relation and note.
 -->
 <script lang="ts">
 	interface Backlink {
@@ -10,7 +14,14 @@
 		entry_type: string;
 		snippet?: string;
 		note?: string;
+		forward_relation?: string;
 		[key: string]: unknown;
+	}
+
+	interface SourceGroup {
+		key: string;
+		source: Backlink;
+		links: { relation: string; note: string }[];
 	}
 
 	interface Props {
@@ -20,7 +31,20 @@
 
 	let { backlinks, loading = false }: Props = $props();
 
-	const items = $derived(backlinks as unknown as Backlink[]);
+	// One group per source entry (id and KB), in the order the rows came.
+	const items = $derived.by(() => {
+		const groups = new Map<string, SourceGroup>();
+		for (const row of backlinks as unknown as Backlink[]) {
+			const key = row.kb_name + '\u0000' + row.id;
+			let group = groups.get(key);
+			if (!group) {
+				group = { key, source: row, links: [] };
+				groups.set(key, group);
+			}
+			group.links.push({ relation: row.forward_relation ?? '', note: row.note ?? '' });
+		}
+		return [...groups.values()];
+	});
 </script>
 
 <div class="flex h-full flex-col overflow-hidden">
@@ -43,7 +67,8 @@
 			</div>
 		{:else}
 			<ul class="divide-y divide-zinc-100 dark:divide-zinc-800/50">
-				{#each items as link (link.id + ':' + link.kb_name)}
+				{#each items as group (group.key)}
+					{@const link = group.source}
 					<li>
 						<a
 							href="/entries/{link.id}?kb={link.kb_name}"
@@ -59,19 +84,30 @@
 											{link.snippet}
 										</p>
 									{/if}
+									<div class="mt-1 flex flex-wrap gap-1">
+										{#each group.links as written, i (i)}
+											{#if written.relation}
+												<span
+													class="inline-flex items-center rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400"
+												>
+													{written.relation}
+												</span>
+											{/if}
+											{#if written.note}
+												<span
+													class="inline-flex items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-900 dark:text-blue-400"
+												>
+													{written.note}
+												</span>
+											{/if}
+										{/each}
+									</div>
 								</div>
 								<span
 									class="inline-flex shrink-0 items-center rounded-full bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400"
 								>
 									{link.entry_type}
 								</span>
-								{#if link.note}
-									<span
-										class="inline-flex shrink-0 items-center rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:bg-blue-900 dark:text-blue-400"
-									>
-										{link.note}
-									</span>
-								{/if}
 							</div>
 						</a>
 					</li>

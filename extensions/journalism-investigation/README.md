@@ -13,9 +13,9 @@ protocol at full width, and exposed the type-scoping gaps now
 tracked in `kb/backlog/plugin-type-resolution-scoping.md`. Findings
 and disposition: `kb/notes/ji-spike-findings.md`.
 
-**What's load-bearing:** `InvestigationEventEntry` (base class of
-the cascade extension's `timeline_event` — thousands of production
-entries), `query_network`, the edge-type declarations.
+**What's load-bearing:** `InvestigationEventEntry` (the type the
+former cascade extension's `timeline_event` derived from — thousands
+of production entries), `query_network`, the edge-type declarations.
 
 **What's exploratory:** the claims/evidence chain, financial layer,
 money-flow/ownership analytics, source-reliability system, FtM

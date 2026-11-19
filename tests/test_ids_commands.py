@@ -591,16 +591,23 @@ def test_a_file_changed_at_the_last_moment_is_not_overwritten(kb, monkeypatch):
     assert _json(result)["skipped"][0]["path"] == "a.md"
 
 
+@pytest.mark.control(
+    reason="the pin never emitted a model; the patched emit moved from the deleted to_markdown to new_entry_text, which the base has (#955 P4)"
+)
 def test_pin_never_goes_through_update_or_to_frontmatter(kb, monkeypatch):
+    """A pin is a textual insertion: never an update, never the model's
+    frontmatter, never the create's whole-file text (`new_entry_text`, the
+    one emit of a model left after #955 B6 P4)."""
     from pyrite.models.base import Entry
     from pyrite.services.kb_service import KBService
+    from pyrite.storage import repository
 
     def boom(*a, **k):
         raise AssertionError("pin must be a textual insertion")
 
     monkeypatch.setattr(KBService, "update", boom)
     monkeypatch.setattr(KBService, "update_entry", boom)
-    monkeypatch.setattr(Entry, "to_markdown", boom)
+    monkeypatch.setattr(repository, "new_entry_text", boom)
     monkeypatch.setattr(Entry, "to_frontmatter", boom)
     root, config = kb
     _write(root, {"a.md": "---\ntitle: A\n---\n"})
@@ -682,7 +689,9 @@ def test_a_symlink_to_a_file_outside_the_kb_is_reported_and_never_written(kb):
     assert [r["path"] for r in before["missing"]] == ["a.md"]
     [link] = before["skipped"]
     assert link["path"] == "link.md" and "symbolic link" in link["reason"]
-    assert "outside-thing" in link["reason"]  # the id it has today, for a hand edit
+    # Not the KB's file: nothing it holds (not even the id it derives) is read
+    # or reported.
+    assert "outside-thing" not in link["reason"]
 
     result = _run(config, "ids", "pin", "-k", "notes")
     assert result.exit_code == OUTSIDE_CONTRACT, result.output
@@ -1036,20 +1045,20 @@ def test_a_dry_run_reports_a_file_swapped_for_a_link_after_the_scan(kb, monkeypa
 def test_a_link_swapped_in_at_the_rename_is_replaced_and_its_target_untouched(kb, monkeypatch):
     """The exact moment: after every check, right before the rename. The
     rename replaces the link itself; the file it pointed to keeps its bytes."""
-    from pyrite.services import id_pin_service
-
     root, config = kb
     _write(root, {"d.md": "---\ntitle: Delta\n---\nd\n"})
     outside = root.parent / "outside.md"
     outside.write_text("---\ntitle: Out\n---\nx\n")
-    real = id_pin_service._rename
+    from pyrite.utils import kb_files
 
-    def swap_then_rename(dir_fd, tmp, name):
+    real = kb_files.Folder.rename
+
+    def swap_then_rename(folder, tmp, name):
         (root / "d.md").unlink()
         os.symlink(outside, root / "d.md")
-        return real(dir_fd, tmp, name)
+        return real(folder, tmp, name)
 
-    monkeypatch.setattr(id_pin_service, "_rename", swap_then_rename)
+    monkeypatch.setattr(kb_files.Folder, "rename", swap_then_rename)
     result = _run(config, "ids", "pin", "-k", "notes")
     assert result.exit_code == 0, result.output
     assert outside.read_text() == "---\ntitle: Out\n---\nx\n"

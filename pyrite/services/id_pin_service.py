@@ -25,7 +25,6 @@ import hashlib
 import logging
 import os
 import re
-import secrets
 import sqlite3
 import stat
 from collections import defaultdict
@@ -35,10 +34,13 @@ from typing import Any
 
 from .. import config as pyrite_config
 from ..config import KBConfig, PyriteConfig
-from ..exceptions import ValidationError
+from ..exceptions import PyriteError, ValidationError, os_reason, outside_text
 from ..models.core_types import explicit_entry_id, id_text, read_entry_id
 from ..storage.repository import KBRepository
+from ..utils.atomic_write import FileChanged, HardLinked
+from ..utils.file_lock import LockDirError
 from ..utils.frontmatter import Frontmatter, describe, load_frontmatter, split_frontmatter
+from ..utils.kb_files import KBFileOutsideRootError, KBFiles, KBFolderChanged, OwnerNotKeptError
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +50,13 @@ _PLAIN_ID = re.compile(r"[A-Za-z][A-Za-z0-9._-]*")
 _YAML11_WORDS = {"y", "n", "yes", "no", "on", "off", "true", "false", "null"}
 
 
-class PinRefusedError(Exception):
-    """One file cannot take the pin as a single added line; the reason."""
+class PinRefusedError(PyriteError):
+    """One file cannot take the pin as a single added line; the reason, in
+    Pyrite's words (a ``PyriteError``, so ``outside_text`` passes it on)."""
+
+
+class PinMetadataRefusedError(PinRefusedError):
+    """Pin cannot preserve the original file's owner or group."""
 
 
 @dataclass
@@ -66,6 +73,8 @@ class IdScan:
     # sha256 of each id-less file's bytes as scanned: a pin is written only
     # to a file that still holds exactly these bytes (so still this id)
     digests: dict[str, str] = field(default_factory=dict)
+    # the KB's config, so `apply` asks it whether the KB takes writes
+    kb_config: KBConfig | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -170,7 +179,7 @@ def write_refusal(root: Path, path: Path) -> str | None:
                 where = current.relative_to(root).as_posix()
                 return f"inside a symlinked directory ({where}); pin does not write through links"
     except OSError as e:
-        return f"cannot be inspected: {e.strerror or e}"
+        return f"cannot be inspected: {os_reason(e)}"
     if st is None or not stat.S_ISREG(st.st_mode):
         return "not a regular file"
     if st.st_nlink > 1:
@@ -187,113 +196,75 @@ def _digest(data: bytes) -> str:
 def _write_pin(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
     """Write ``new_text`` over ``path`` without ever following a link.
 
-    Checked again at the last moment: the path is still a regular file
-    inside the KB, and its bytes are still the ones the pin was computed
-    from (an edit made in between wins: Pyrite is a guest). Then every
-    operation goes through a descriptor of the checked directory, never a
-    path that is resolved again:
+    Checked again at the last moment (``write_refusal``): the path is still a
+    regular file inside the KB, reached without a link, with one name. The
+    write is then ``KBFiles.write_bytes``, the one KB writer every entry write
+    uses: the folder is opened beneath the KB root ``O_NOFOLLOW`` at each step
+    (a folder swapped for a link after the check is refused, not written
+    into), the file is re-read ``O_NOFOLLOW`` through it and must still hold
+    the bytes the pin was computed from (an edit made in between wins: Pyrite
+    is a guest), and ``rename`` puts the temp file at the name, replacing a
+    link swapped in after the re-read rather than following it. The compare
+    and the rename run under the entry's momentary lock (ADR-0042 decision
+    10; #955, B6 P4) in a git work tree, without one outside it (D1 (b)).
 
-    - the directory is opened ``O_NOFOLLOW`` and must be the inode
-      ``write_refusal`` checked (``st_dev``/``st_ino``), so a parent swapped
-      for a link after the check is refused, not written into;
-    - the file is re-read ``O_NOFOLLOW`` through that directory (a link
-      swapped in fails with ``ELOOP``) and must still be a regular file with
-      one link and the planned bytes;
-    - the new text goes to a temp file created ``O_CREAT|O_EXCL|O_NOFOLLOW``
-      beside it, written and fsynced through its descriptor;
-    - ``rename`` puts it at the name: rename never follows its target, so a
-      link swapped in after the re-read is itself replaced, and the file it
-      pointed to is untouched.
-
-    Not ``atomic_write_text``: it resolves the path with ``realpath`` and
-    writes a multiply-linked file in place, both of which follow a link.
-
-    Known limit, no lock removes it: an edit that lands between the byte
-    re-read and the rename is overwritten by the pinned text.
+    Known limits, no lock removes them: an edit by a writer that takes no
+    lock, landing between the byte re-read and the rename, is overwritten by
+    the pinned text. A hard link added in that window keeps the old inode and
+    bytes (an existing one is refused before writing). The file keeps its
+    mode, owner and group, or the pin is refused naming the group
+    (``PinMetadataRefusedError``, #831): it is never written in place.
+    Replacing the inode does not carry extended attributes or ACLs; add the
+    id by hand to retain them.
     """
     if not (os.rename in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW")):
         raise PinRefusedError("this platform cannot write without following links")
     # The folder as it is when checked: taken before write_refusal, so a
-    # folder swapped after the check is a different inode (or a link).
+    # folder replaced after the check is another inode (or a link).
     try:
-        expected_dir = os.lstat(path.parent)
+        checked = os.lstat(path.parent)
     except OSError as e:
-        raise PinRefusedError(f"its folder cannot be inspected: {e.strerror or e}") from e
+        raise PinRefusedError(f"its folder cannot be inspected: {os_reason(e)}") from e
     refusal = write_refusal(root, path)
     if refusal:
         raise PinRefusedError(refusal)
     try:
-        dir_fd = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    except OSError as e:
-        raise PinRefusedError(f"cannot open its folder without following a link: {e}") from e
-    try:
-        here = os.fstat(dir_fd)
-        if (here.st_dev, here.st_ino) != (expected_dir.st_dev, expected_dir.st_ino):
-            raise PinRefusedError("its folder changed after it was checked; run the command again")
-        _check_unchanged(dir_fd, path.name, planned_original)
-        _replace_through(dir_fd, path.name, new_text.encode("utf-8"))
-        try:
-            os.fsync(dir_fd)
-        except OSError:  # a filesystem that refuses a directory fsync
-            pass
-    finally:
-        os.close(dir_fd)
-
-
-def _check_unchanged(dir_fd: int, name: str, planned_original: bytes) -> None:
-    try:
-        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
-    except OSError as e:
-        raise PinRefusedError(
-            f"cannot be read without following a link ({e.strerror or e}); run the command again"
+        KBFiles(root).write_bytes(
+            path,
+            new_text.encode("utf-8"),
+            expect=planned_original,
+            expect_folder=(checked.st_dev, checked.st_ino),
+            in_place=False,
+        )
+    except OwnerNotKeptError as e:
+        raise PinMetadataRefusedError(
+            f"cannot preserve owner {e.uid} and group {e.gid}; "
+            "ask the owner to pin it, or add the id by hand"
         ) from e
-    try:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-            raise PinRefusedError(
-                "is no longer a regular file with one name; run the command again"
-            )
-        chunks = []
-        while chunk := os.read(fd, 1 << 16):
-            chunks.append(chunk)
-    finally:
-        os.close(fd)
-    if b"".join(chunks) != planned_original:
-        raise PinRefusedError("the file changed after it was read; run the command again")
-
-
-def _replace_through(dir_fd: int, name: str, data: bytes) -> None:
-    """Create a temp file beside ``name`` and rename it over ``name``, both
-    through ``dir_fd``; the rename replaces whatever entry ``name`` is."""
-    st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-    tmp = f".{name}.{secrets.token_hex(8)}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=dir_fd)
-    try:
-        try:
-            os.fchmod(fd, stat.S_IMODE(st.st_mode))
-            if (st.st_uid, st.st_gid) != (os.getuid(), os.getgid()):
-                os.fchown(fd, st.st_uid, st.st_gid)
-            view = memoryview(data)
-            while view:
-                view = view[os.write(fd, view) :]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-        _rename(dir_fd, tmp, name)
-    except BaseException as e:
-        try:
-            os.unlink(tmp, dir_fd=dir_fd)
-        except OSError:
-            pass
-        if isinstance(e, OSError):
-            raise PinRefusedError(f"could not be written: {e.strerror or e}") from e
+    except KBFolderChanged as e:
+        raise PinRefusedError(
+            "its folder changed after it was checked; run the command again"
+        ) from e
+    except FileChanged as e:
+        raise PinRefusedError("the file changed after it was read; run the command again") from e
+    except KBFileOutsideRootError as e:
+        raise PinRefusedError(
+            "a link appeared on its path after it was checked, and pin writes without "
+            "following a link; run the command again"
+        ) from e
+    except HardLinked as e:
+        raise PinRefusedError(
+            f"has {e.links} hard links; pinning one name would split it from the others"
+        ) from e
+    except LockDirError:
         raise
+    except OSError as e:
+        raise PinRefusedError(f"could not be written: {os_reason(e)}") from e
 
 
-def _rename(dir_fd: int, tmp: str, name: str) -> None:
-    """The one step that puts the pinned text at ``name`` (a seam: a test
-    swaps ``name`` for a link right before it)."""
-    os.rename(tmp, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+def _write_pin_locked(root: Path, path: Path, planned_original: bytes, new_text: str) -> None:
+    """``_write_pin``; the momentary lock is the writer's own (``KBFiles``)."""
+    _write_pin(root, path, planned_original, new_text)
 
 
 # --- scan ------------------------------------------------------------------
@@ -309,7 +280,7 @@ def scan(kb_config: KBConfig) -> IdScan:
     files that could not be read."""
     repo = KBRepository(kb_config)
     root = repo.path
-    result = IdScan(kb=kb_config.name, root=root)
+    result = IdScan(kb=kb_config.name, root=root, kb_config=kb_config)
     holders: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
     for path in sorted(repo.list_files()):
@@ -317,33 +288,42 @@ def scan(kb_config: KBConfig) -> IdScan:
         refusal = write_refusal(root, path)
         if refusal:
             # Not a file pin may write. Never read before this check: a FIFO
-            # named `x.md` would block the read. Its id (read through the
-            # link, as the index reads it) still counts as taken, but it is
-            # no claimant: a link to a file in the KB would otherwise collide
-            # with its own target.
+            # named `x.md` would block the read. A link that stays inside the
+            # KB is read through, as the index reads it: its id still counts
+            # as taken, but it is no claimant (it would otherwise collide
+            # with its own target). A link out of the KB, or a hard link, is
+            # not the KB's: nothing it holds is read or reported.
             if ("symbolic link" in refusal or "hard links" in refusal) and path.is_file():
-                current = repo.id_of_file(path)
+                text = repo._inside_text(path)
+                current = repo.read_id(path, text)[0] if text is not None else None
                 if current:
                     result.taken.add(current)
-                    try:
-                        has_id = explicit_entry_id(path.read_text(encoding="utf-8"))
-                    except (OSError, UnicodeDecodeError):
-                        has_id = None
-                    if has_id:
+                    if explicit_entry_id(text):
                         continue
                     refusal += f"; its id today is {current!r}: add the line by hand"
             result.skipped.append({"path": rel, "reason": refusal})
             continue
         try:
-            raw = path.read_bytes()
+            # Inside the KB and one name, decided on the descriptor that
+            # reads it: `write_refusal` above is a check, this is the read.
+            raw = KBFiles(root).read_bytes(path)
+            if raw is None:
+                raise FileNotFoundError(rel)
             text = raw.decode("utf-8")
+        except KBFileOutsideRootError as e:
+            result.skipped.append({"path": rel, "reason": str(e)})
+            continue
         except (OSError, UnicodeDecodeError) as e:
-            result.skipped.append({"path": rel, "reason": f"not readable as UTF-8: {e}"})
+            result.skipped.append(
+                {"path": rel, "reason": f"not readable as UTF-8: {outside_text(e)}"}
+            )
             continue
         try:
             parsed = load_frontmatter(text)
         except Exception as e:  # what the loader would raise: report, never repair
-            result.skipped.append({"path": rel, "reason": f"invalid frontmatter: {e}"})
+            result.skipped.append(
+                {"path": rel, "reason": f"invalid frontmatter: {outside_text(e)}"}
+            )
             continue
         if parsed is None:
             result.skipped.append({"path": rel, "reason": "no YAML frontmatter"})
@@ -363,9 +343,9 @@ def scan(kb_config: KBConfig) -> IdScan:
         holders[current].append({"path": rel, "explicit": explicit})
 
     # __collection.yaml files hold ids too (``collection-<folder>``)
-    for path in sorted(repo.path.rglob("__collection.yaml")):
+    for path in sorted(repo.list_collection_files()):
         current = repo.id_of_file(path)
-        if current and not any(part.startswith(".") for part in path.parts):
+        if current:
             holders[current].append({"path": _rel(root, path), "explicit": True})
 
     result.taken |= set(holders)
@@ -476,8 +456,11 @@ def _prepared(found: IdScan, item: dict[str, str]) -> tuple[Path, bytes, str]:
     refusal = write_refusal(found.root, path)
     if refusal:
         raise PinRefusedError(refusal)
-    original = path.read_bytes()
-    if _digest(original) != found.digests.get(item["path"]):
+    try:
+        original = KBFiles(found.root).read_bytes(path)
+    except KBFileOutsideRootError as e:
+        raise PinRefusedError(str(e)) from e
+    if original is None or _digest(original) != found.digests.get(item["path"]):
         raise PinRefusedError("the file changed after it was scanned; run the command again")
     return path, original, insert_id_line(original.decode("utf-8"), item["id"])
 
@@ -485,13 +468,18 @@ def _prepared(found: IdScan, item: dict[str, str]) -> tuple[Path, bytes, str]:
 def apply(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
     """Write each planned pin. A file that cannot take it moves from
     ``pinned`` to ``skipped`` with the reason; nothing else is written."""
+    if found.kb_config is not None:
+        found.kb_config.refuse_writes()  # a read-only KB takes no pin
     done: list[dict[str, str]] = []
     for item in the_plan["pinned"]:
         try:
             path, original, new_text = _prepared(found, item)
-            _write_pin(found.root, path, original, new_text)
+            _write_pin_locked(found.root, path, original, new_text)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
-            the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
+            if isinstance(e, PinMetadataRefusedError):
+                the_plan["refused"].append({**item, "reason": outside_text(e)})
+            else:
+                the_plan["skipped"].append({"path": item["path"], "reason": outside_text(e)})
             continue
         done.append(item)
     the_plan["pinned"] = done
@@ -506,7 +494,7 @@ def check(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
         try:
             _prepared(found, item)
         except (PinRefusedError, OSError, UnicodeDecodeError) as e:
-            the_plan["skipped"].append({"path": item["path"], "reason": str(e)})
+            the_plan["skipped"].append({"path": item["path"], "reason": outside_text(e)})
             continue
         ok.append(item)
     the_plan["pinned"] = ok
@@ -519,7 +507,8 @@ def check(found: IdScan, the_plan: dict[str, Any]) -> dict[str, Any]:
 def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     """The KB named ``kb_name``, found the way every command finds it
     (config.yaml, then the KBs ``pyrite kb add`` registered in the index),
-    without creating or changing a file.
+    without creating or changing a file; ``KBNotFoundError`` from the one
+    resolver when it is not a KB (an unknown name, a shortname).
 
     ``cli_context`` cannot be used for this: it creates the config directory,
     opens the index (creating ``index.db`` and its ``-wal``/``-shm`` files,
@@ -537,9 +526,15 @@ def find_kb_without_writes(kb_name: str) -> KBConfig | None:
     """
     config = pyrite_config.load_config(create_dir=False)
     kb = config.get_kb(kb_name)
+    if kb is None:
+        kb = _registered_kb(config, kb_name)
     if kb is not None:
         return kb
-    return _registered_kb(config, kb_name)
+    # Not a KB: the one refusal (#952), with the shortname rule and the hint.
+    from .access_policy import UNSCOPED
+    from .kb_resolver import resolve_kb
+
+    return resolve_kb(config, kb_name, readable_kbs=UNSCOPED)
 
 
 def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
@@ -552,7 +547,9 @@ def _registered_kb(config: PyriteConfig, kb_name: str) -> KBConfig | None:
         try:
             rows = conn.execute(
                 "SELECT name, path, kb_type, description, default_role "
-                "FROM kb WHERE source = 'user' AND name = ?",
+                # A row with no source is a user row, as the registry, the
+                # resolver and merge_registered_kbs read it.
+                "FROM kb WHERE (source = 'user' OR source IS NULL) AND name = ?",
                 (kb_name,),
             ).fetchall()
         finally:

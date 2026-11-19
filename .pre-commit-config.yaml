@@ -21,7 +21,7 @@
 #
 # The commit stage must stay fast because pre-commit stashes EVERY unstaged edit
 # in the working tree while commit hooks run. Several sessions share this tree
-# (see CLAUDE.md, "Multi-Session Git Hazard"); a multi-minute commit hook makes
+# (see CONTRIBUTING.md, "Branches, hooks and pull requests"); a multi-minute commit hook makes
 # other sessions' edits disappear for minutes, and one session's untracked RED
 # test blocks everyone's commits. tests/test_dev_process_config.py pins this
 # layout -- change both together.
@@ -32,7 +32,7 @@ default_stages: [pre-commit]
 repos:
   # Ruff - fast Python linter and formatter
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.4
+    rev: a27a2e47c7751b639d2b5badf0ef6ff11fee893f  # v0.15.4
     hooks:
       # Linter
       - id: ruff
@@ -44,7 +44,7 @@ repos:
 
   # Basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: cef0300fd0fc4d2a87a85fa2093c6b283ea36f4b  # v5.0.0
     hooks:
       # `stages` is pinned on every hook: default_stages does not apply to hooks
       # whose upstream manifest declares its own stages, and these fixers list
@@ -59,6 +59,8 @@ repos:
         stages: [pre-commit]
       - id: check-added-large-files
         args: ['--maxkb=500']
+        # A lockfile cannot be split or compressed (#1357).
+        exclude: '^uv\.lock$'
         stages: [pre-commit]
       - id: check-merge-conflict
         stages: [pre-commit]
@@ -73,14 +75,19 @@ repos:
   #     - id: mypy
   #       additional_dependencies: [types-PyYAML]
 
-  # Local hooks. They prefer the repo's .venv but fall back to whatever
-  # `python` / `pyrite` is on PATH, so they work from a non-activated shell
-  # (agents), a differently named venv, or Windows Git Bash.
+  # Standard-library hooks prefer this checkout's venv, then python3 or
+  # python on PATH. Tests below require this checkout's own environment.
   - repo: local
     hooks:
       - id: import-cycle-check
         name: Check for circular imports
-        entry: bash -c 'PY=.venv/bin/python; [ -x "$PY" ] || PY=python; exec "$PY" scripts/check_import_cycles.py'
+        entry: >-
+          bash -c 'PY=.venv/bin/python; if [ ! -x "$PY" ] || [ ! -f "$PY" ]; then
+          PY=$(command -v python3 || command -v python || true); fi;
+          if [ -z "$PY" ] || [ ! -f "$PY" ] || [ ! -x "$PY" ]; then
+          echo "import-cycle-check: no Python interpreter found in .venv or on PATH.
+          Run scripts/setup-checkout.sh or create a worktree with scripts/new-worktree.sh."
+          >&2; exit 1; fi; exec "$PY" scripts/check_import_cycles.py'
         language: system
         pass_filenames: false
         files: '\.py$'
@@ -165,6 +172,12 @@ repos:
         stages: [pre-push]
       - id: fix-commit-has-tests
         name: "fix: commits must touch tests/"
-        entry: bash -c 'PY=.venv/bin/python; [ -x "$PY" ] || PY=python; exec "$PY" scripts/check_fix_commit_has_tests.py "$1"' --
+        entry: >-
+          bash -c 'PY=.venv/bin/python; if [ ! -x "$PY" ] || [ ! -f "$PY" ]; then
+          PY=$(command -v python3 || command -v python || true); fi;
+          if [ -z "$PY" ] || [ ! -f "$PY" ] || [ ! -x "$PY" ]; then
+          echo "fix-commit-has-tests: no Python interpreter found in .venv or on PATH.
+          Run scripts/setup-checkout.sh or create a worktree with scripts/new-worktree.sh."
+          >&2; exit 1; fi; exec "$PY" scripts/check_fix_commit_has_tests.py "$1"' --
         language: system
         stages: [commit-msg]

@@ -38,6 +38,7 @@ from pyrite.exceptions import UndeclaredTypeError, ValidationError
 from pyrite.schema.core_types import CORE_TYPES
 from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.services.access_policy import AccessPolicy, Principal
+from pyrite.services.kb_resolver import HOW_TO_LIST_KBS
 from pyrite.services.auth_service import AuthService
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
@@ -45,9 +46,10 @@ from tests.auth_seed import seed_user
 
 WRITE_SIDE_KEYS = ("ai_instructions", "evaluation_rubric", "guidelines", "goals")
 ABSENT = "no-such-kb-at-all"
-#: What the dispatcher's refusal says to do next: one string, for an absent and
-#: an unreadable name alike, and no KB name in it (round 1, item 4).
-SCOPED_REFUSAL_HINT = "Call kb_orient with no kb_name to list the KBs you can read."
+#: What the refusal says to do next when nothing is near: one string, for an
+#: absent and an unreadable name alike, and no KB name in it (round 1, item 4;
+#: the one resolver's wording for every surface, #952).
+SCOPED_REFUSAL_HINT = HOW_TO_LIST_KBS
 
 
 def _presets() -> dict[str, dict]:
@@ -304,8 +306,8 @@ class TestABadNameIsKBNotFound:
         out = one_kb.mcp("kb_orient", {"kb_name": "nope"})
         assert out["error_code"] == "KB_NOT_FOUND", out
         assert out["retryable"] is False
-        assert out["legacy_error_code"] == "OPERATION_FAILED", (
-            "the code orient reported before this release, kept one release (ADR-0037)"
+        assert out["legacy_error_code"] == "NOT_FOUND", (
+            "one refusal for every caller: the dispatcher's, not orient's own (#952)"
         )
 
     def test_mcp_scoped_caller_over_the_http_wiring(self, scoped):
@@ -355,11 +357,19 @@ class TestUnreadableAndAbsentAreOneAnswer:
         diverged = []
         for tool in sorted(server.tools):
             for key in ("kb_name", "kb"):
+                # One rate-limit bucket per probe pair. Under the default
+                # client the loop's several hundred read-tier calls spend
+                # the 100/minute budget partway through, and every pair
+                # after that compared two RATE_LIMITED answers instead of
+                # the refusals -- equal only while both rounded to the same
+                # retry-after tenth, which a slow run (CI's coverage job)
+                # broke on `sw_epics`.
+                caller = {"client_kind": "user", "client_id": f"probe-{tool}-{key}"}
                 a = server._dispatch_tool(
-                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set()
+                    tool, {key: PRIVATE}, readable_kbs=scoped.peer, writable_kbs=set(), **caller
                 )
                 b = server._dispatch_tool(
-                    tool, {key: ABSENT}, readable_kbs=scoped.peer, writable_kbs=set()
+                    tool, {key: ABSENT}, readable_kbs=scoped.peer, writable_kbs=set(), **caller
                 )
                 if not self._same(a, b, PRIVATE, ABSENT):
                     diverged.append((tool, key, a, b))
@@ -372,6 +382,7 @@ class TestUnreadableAndAbsentAreOneAnswer:
             "error_code": "KB_NOT_FOUND",
             "retryable": False,
             "suggestion": SCOPED_REFUSAL_HINT,
+            "did_you_mean": [],
             "legacy_error_code": "NOT_FOUND",
         }
 
@@ -460,6 +471,25 @@ class TestOrientWithNoNameIsTheFirstCall:
         result = one_kb.cli(monkeypatch, "orient")
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == one_kb.mcp("kb_orient")
+
+    @pytest.mark.parametrize("bad_limit", ["0", "-1", "101"])
+    def test_cli_limit_outside_1_to_100_is_a_usage_error(self, one_kb, monkeypatch, bad_limit):
+        """The help text promises a maximum of 100; the CLI refuses before the service."""
+        result = one_kb.cli(monkeypatch, "orient", "--limit", bad_limit)
+        assert result.exit_code == 2, result.output
+        assert "Invalid value for '--limit'" in result.output
+        assert "USAGE_ERROR" in result.output
+        assert "VALIDATION_FAILED" not in result.output
+
+    @pytest.mark.parametrize("good_limit", ["1", "100"])
+    def test_cli_limit_at_the_bounds_is_accepted(self, one_kb, monkeypatch, good_limit):
+        result = one_kb.cli(monkeypatch, "orient", "--limit", good_limit)
+        assert result.exit_code == 0, result.output
+        assert "knowledge_bases" in json.loads(result.output)
+
+    def test_cli_valid_limit_with_a_named_kb_still_works(self, one_kb, monkeypatch):
+        result = one_kb.cli(monkeypatch, "orient", "--kb", "notes", "--limit", "50")
+        assert result.exit_code == 0, result.output
 
     def test_detail_with_no_name_is_accepted_and_changes_nothing(self, one_kb):
         brief = one_kb.mcp("kb_orient", {"detail": "brief"})
@@ -719,7 +749,7 @@ class TestAKbNameThatIsNotAStringIsRefused:
         assert out.get("error_code") == "VALIDATION_FAILED", out
         assert "knowledge_bases" not in out
 
-    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb, private #74)")
+    @pytest.mark.control(reason="a blank string is already 'no name' (named_kb)")
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_a_blank_string_is_still_no_name(self, sw, blank):
         assert "knowledge_bases" in sw.dispatch("kb_orient", {"kb_name": blank})
@@ -764,7 +794,8 @@ class TestTheScopedRefusalSaysWhatToDoNext:
         absent = scoped.mcp("kb_orient", {"kb_name": ABSENT}, readable=scoped.peer)
         assert refused["suggestion"] == absent["suggestion"] == SCOPED_REFUSAL_HINT
         assert PRIVATE not in json.dumps(refused).replace(f"KB '{PRIVATE}' not found", "")
-        assert "did_you_mean" not in refused and "did_you_mean" not in absent
+        # Near matches come only from the readable set; here there are none.
+        assert refused["did_you_mean"] == absent["did_you_mean"] == []
 
     def test_every_tool_refuses_with_the_hint(self, scoped):
         server = scoped.server("admin")

@@ -1,1 +1,0 @@
-- **Markdown import detects .md files automatically, and stream mode only splits when the next entry key is on the immediately following line (#756).** Edits that refuse malformed or unterminated YAML frontmatter now say why.

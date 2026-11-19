@@ -22,7 +22,8 @@ const mockKBStore = vi.hoisted(() => ({
 	loading: false,
 	initialized: true,
 	error: null as string | null,
-	load: vi.fn()
+	load: vi.fn(),
+	resolveName: (name: string | undefined) => name
 }));
 
 vi.mock('$lib/stores/entries.svelte', () => ({

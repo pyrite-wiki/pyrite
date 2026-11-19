@@ -47,7 +47,11 @@ import release  # noqa: E402
 
 VERSION = "0.1.0"
 GITHUB_URL = "git@github.com:acme/widget.git"
-TODAY = date.today().isoformat()
+#: The day this rehearsal runs on, read once at import (#1128). `_one_clock`
+#: freezes the script under test on the same day, so a run that crosses
+#: midnight compares one day and not two.
+TODAY_DATE = date.today()
+TODAY = TODAY_DATE.isoformat()
 
 # What pre-commit's pre-push shim does, for one pushed ref: hand the hook the
 # range and the remote, and run it. For a ref the remote has every commit of
@@ -81,6 +85,13 @@ def _write(root: Path, rel: str, text: str) -> None:
 
 def changelog(day: str = TODAY) -> str:
     return f"# Changelog\n\n## [{VERSION}] - {day}\n\n- The first release.\n"
+
+
+@pytest.fixture(autouse=True)
+def _one_clock(monkeypatch):
+    """The script under test reads the day this module dated its changelogs
+    with (#1128): one clock for the test and the run, even across midnight."""
+    monkeypatch.setattr(release, "current_day", lambda: TODAY_DATE)
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +175,8 @@ def checkout(tmp_path: Path) -> Path:
         shutil.copy(REPO / "scripts" / name, root / "scripts" / name)
     _git(root, "init", "-q", "-b", "dev")
     _git(root, "remote", "add", "origin", str(origin))
+    # The private fixes repository, its dev here equal to dev: nothing stranded.
+    _git(root, "remote", "add", "security", str(origin))
     _git(root, "add", ".")
     _git(root, "commit", "-qm", "the last release")
     (root / "pyrite" / "b.py").write_text("def func():\n    return 2\n")
@@ -225,7 +238,7 @@ def make_untracked(checkout: Path) -> None:
 def make_stale_date(checkout: Path) -> str:
     """The section dated the day the release was PREPARED, committed and
     pushed, with `gate` green on it: everything else is in order."""
-    prepared = (date.today() - timedelta(days=1)).isoformat()
+    prepared = (TODAY_DATE - timedelta(days=1)).isoformat()
     (checkout / "CHANGELOG.md").write_text(changelog(prepared))
     _git(checkout, "commit", "-qam", "release: dated yesterday")
     _git(checkout, "push", "-q", "origin", "dev:refs/heads/dev")
@@ -454,7 +467,7 @@ class TestEveryOneIsNamedInOneRun:
 
     def test_each_is_flagged_where_it_is_found_too(self, checkout, capsys):
         make_untracked(checkout)
-        make_stale = (date.today() - timedelta(days=3)).isoformat()
+        make_stale = (TODAY_DATE - timedelta(days=3)).isoformat()
         (checkout / "CHANGELOG.md").write_text(changelog(make_stale))
         rehearse(checkout)
         out = capsys.readouterr().out
@@ -478,6 +491,57 @@ class TestEveryOneIsNamedInOneRun:
         err = capsys.readouterr().err
         assert code == 1 and planned == []
         assert err.count("FAIL at preconditions") == 1
+
+
+class TestEachFailureIsNamedOnce:
+    def test_the_missing_section_is_named_once_not_twice(self, checkout, capsys):
+        """The version mismatch and the missing section are two problems.
+
+        The missing section used to be found by two checks -- the changelog
+        check and the release notes, which are read out of that section -- so
+        one problem was named twice and counted as three (#889). The notes
+        check cannot run without the section, so it says nothing.
+        """
+        _write(checkout, "pyproject.toml", '[project]\nname = "widget"\nversion = "0.0.9"\n')
+        (checkout / "CHANGELOG.md").write_text("# Changelog\n")
+        _git(checkout, "commit", "-qam", "prepare: an older version and no section")
+        _git(checkout, "push", "-q", "origin", "dev:refs/heads/dev")
+        gh_answers(green(head(checkout)))
+
+        code, planned = rehearse(checkout)
+        captured = capsys.readouterr()
+        assert code == 1 and planned == []
+        assert captured.err.count("FAIL at ") == 2, captured.err
+        assert "pyproject.toml says version = '0.0.9'" in captured.err
+        assert captured.err.count("has no `## [0.1.0]` section") == 1, captured.err
+        assert "stop at the first of the 2 check(s)" in captured.err, captured.err
+        # Flagged where found, too -- and the second finding is not flagged twice.
+        assert captured.out.count("!! WOULD STOP --execute:") == 2, captured.out
+        assert "release notes for v0.1.0" not in captured.out
+
+    def test_a_section_dated_tomorrow_still_prints_the_notes(self, checkout, capsys):
+        """Only a missing section leaves the notes with nothing to read.
+
+        Gating the notes on the whole changelog check silenced them whenever
+        the section existed but was undated or dated for another day, and that
+        is the dry run made the day before the cut. The notes are the thing the
+        rehearsal exists to have read, so they still print here -- and the wrong
+        date is still named once, by the changelog check.
+        """
+        tomorrow = (TODAY_DATE + timedelta(days=1)).isoformat()
+        (checkout / "CHANGELOG.md").write_text(changelog(tomorrow))
+        _git(checkout, "commit", "-qam", f"release: {VERSION}")
+        _git(checkout, "push", "-q", "origin", "dev:refs/heads/dev")
+        gh_answers(green(_git(checkout, "rev-parse", "HEAD").strip()))
+
+        code, planned = rehearse(checkout)
+        captured = capsys.readouterr()
+        assert code == 1 and planned == []
+        assert f"is dated {tomorrow}, today is {TODAY}" in captured.err
+        assert captured.err.count("FAIL at ") == 1, captured.err
+        assert captured.out.count("!! WOULD STOP --execute:") == 1, captured.out
+        assert "release notes for v0.1.0" in captured.out
+        assert "- The first release." in captured.out
 
 
 class TestExecute:

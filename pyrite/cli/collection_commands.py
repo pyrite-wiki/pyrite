@@ -1,15 +1,14 @@
 """CLI commands for collections — list and query."""
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..services.access_policy import UNSCOPED
 from .context import cli_context
-from .output import validate_output_format
+from .output import cli_console, validate_output_format
 
 collections_app = typer.Typer(help="Collection management")
-console = Console()
+console = cli_console()
 
 
 @collections_app.command("list")
@@ -25,7 +24,7 @@ def list_collections(
     """List all collections with entry counts."""
     import json as json_mod
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb,), output_format=output_format) as (config, db, svc):
         results = svc.list_collections(kb_name=kb)
 
         if not results:
@@ -71,7 +70,7 @@ def query_entries(
         ..., help="Query string, e.g. 'type:backlog_item status:proposed'"
     ),
     kb: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB name"),
-    limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=1000, help="Max results"),
     output_format: str = typer.Option(
         "json",
         "--format",
@@ -86,7 +85,7 @@ def query_entries(
         validate_query,
     )
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb,), output_format=output_format) as (config, db, svc):
         query = parse_query(query_str)
 
         # Override kb and limit from CLI flags

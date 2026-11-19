@@ -51,6 +51,8 @@ above rather than trusting a number written here. If it errors instead of
 reporting a collected count, step 2 or 3 above did not take.
 
 ## Troubleshooting
-- If pre-commit pytest fails: ensure extensions are installed in `.venv/` not just system Python
+- If the pre-push pytest run fails: ensure extensions are installed in `.venv/` not just system Python
+- `KB_NOT_FOUND` from `pyrite sw backlog -k pyrite`: the checkout's `kb/` is not registered. Run `scripts/setup-checkout.sh`, then check with `pyrite kb list`.
+- "no .venv" when you push: this worktree has no venv. Run `scripts/setup-checkout.sh` in it.
 - If ruff-format modifies files: re-stage and commit again (hooks run twice on failure)
 - If `generate_entry_id()` errors: it takes only 1 arg (title), not 3

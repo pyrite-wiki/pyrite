@@ -3,10 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
+from ...exceptions import ValidationError, public_text
 from ...services.access_policy import KB, Action, ReadScope
 from ...services.kb_service import KBService
 from ...services.read_shaping import parse_fields_param, project_fields
-from ...services.search_service import SearchService
+from ...services.search_service import SearchService, _validate_search_mode
 from ..api import (
     get_kb_service,
     get_search_service,
@@ -14,6 +15,7 @@ from ..api import (
     negotiate_response,
 )
 from ..authz import authorize
+from ..errors import error_response
 from ..schemas import SearchResponse, SearchResult
 
 router = APIRouter(tags=["Search"])
@@ -61,6 +63,16 @@ def search(
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Full-text search across the knowledge bases the caller may read."""
+    # An unknown mode answers 400, not the central handler's 422 for
+    # ValidationError (maintainer decision 2026-10-17): REST validation
+    # errors answer 400 per docs/json-contracts.md. error_response builds
+    # the canonical VALIDATION_FAILED body; only the status is overridden.
+    try:
+        _validate_search_mode(mode)
+    except ValidationError as exc:
+        _, content = error_response(exc)
+        return JSONResponse(status_code=400, content=content)
+
     if svc.count_entries() == 0:
         raise HTTPException(
             status_code=503,
@@ -87,6 +99,7 @@ def search(
         response = search_svc.search_response(
             kb_names=None if kb else scope.as_set(),
             query=q,
+            caller_wrote_query=True,  # the caller's own words, as written
             kb_name=kb,
             entry_type=type,
             tags=tag_list,
@@ -161,4 +174,8 @@ def search(
         # StorageError (mapped to a logged 500). Catching the raw
         # OperationalError here too would undo that distinction the moment
         # it (incorrectly) reached this far (#414 round 2).
-        raise HTTPException(status_code=400, detail={"code": "SEARCH_FAILED", "message": str(e)})
+        # The service's own refusals are RefusedValueError (shown); any other
+        # ValueError's text is withheld and logged (ADR-0052 N3).
+        raise HTTPException(
+            status_code=400, detail={"code": "SEARCH_FAILED", "message": public_text(e)}
+        )

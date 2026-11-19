@@ -3,9 +3,9 @@
 axis (ADR-0037 theme 0).
 
 Regenerate: ``PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest
-tests/characterization/test_rest_matrix.py -n4``, then review the diff to
-``tests/characterization/goldens/rest.*.json`` and commit it as its own
-reviewed change. Never set in CI or the pre-push hook.
+tests/characterization/test_rest_matrix.py (serial, no `-n`)``, then review
+the diff to ``tests/characterization/goldens/rest.*.json`` and commit it as its
+own reviewed change. Never set in CI or the pre-push hook.
 
 **What "every operation" means here.** `surfaces.kb_bearing_rest_operations`
 narrows `tests/_surface_inventory.py`'s 144 REST operations to the 74 that a
@@ -41,7 +41,7 @@ golden recorded" (`assert_matches`, unchanged). A route in `golden` but not
 `live` is the dangerous case: it dropped out of the scoping the ADR-0037
 guard is meant to enforce, and `test_no_golden_key_is_orphaned` fails loudly
 naming it, rather than the matrix quietly running one route fewer. The
-overall counts (74 REST operations, 106 MCP tools) are pinned in
+overall counts (75 REST operations, 108 MCP tools) are pinned in
 `test_surface_counts_are_pinned` below, in this file for REST.
 """
 
@@ -63,7 +63,7 @@ from tests.characterization.world import MISSING, NO_DEFAULT_ROLE, PRIVATE, READ
 
 GOLDEN_NAME = "rest"
 KB_STATES = (READABLE, PRIVATE, MISSING, NO_DEFAULT_ROLE)
-PINNED_REST_OPERATION_COUNT = 74
+PINNED_REST_OPERATION_COUNT = 75  # 74 until #1685 added POST /api/tasks/{task_id}/start
 
 
 def _golden_routes_for(principal_name: str, golden: dict) -> set[tuple[str, str]]:
@@ -82,12 +82,12 @@ def _golden_routes_for(principal_name: str, golden: dict) -> set[tuple[str, str]
 
 _WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-# A GET route whose handler mutates as a side effect of reading -- HTTP
+# A GET route whose handler mutated as a side effect of reading -- HTTP
 # method is otherwise a reliable enough proxy for "runs against `world`
-# unmutated" (#476 round-2 blocker 1's fix), but this one is a documented
-# exception: `GET /api/daily/{date_str}` auto-creates the day's note if it
-# doesn't exist yet (`get_or_create_daily_note`, see rest_calls.py's own
-# comment on `_unique_date`). Routed to `write_world` like any write method,
+# unmutated" (#476 round-2 blocker 1's fix). `GET /api/daily/{date_str}`
+# auto-created the day's note until 0.26.1 (it now creates nothing, and
+# `test_no_get_route_writes` holds every GET to that); it stays routed to
+# `write_world`, where its goldens were recorded. Routed there like any write method,
 # so its creation can never permanently add a `daily-<date>` entry to the
 # read-only world's listings -- which is exactly what happened before this
 # override existed: the golden recorded during a serial regenerate carried
@@ -165,17 +165,6 @@ class TestRestPrincipalMatrix:
         skipped = []
         for method, path in sorted(all_routes):
             for kb_state in KB_STATES:
-                # Releases this world's DB's per-thread fallback SQLAlchemy
-                # sessions before every call (see
-                # `World.release_idle_connections`'s docstring) -- without
-                # it, this many `TestClient` requests against the shared
-                # `get_db` override exhausts the connection pool partway
-                # through one principal's route sweep, and the request that
-                # finds it empty hangs forever rather than erroring
-                # (confirmed with faulthandler while building this harness;
-                # a sparser interval was not reliably enough headroom for a
-                # write-tier principal's heavier per-request session use).
-                world.release_idle_connections()
                 key = f"{method} {path} | {principal_name} | {kb_state}"
                 try:
                     kwargs = build_call(

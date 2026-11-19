@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from ...config import PyriteConfig
-from ...exceptions import QuerySyntaxError
+from ...exceptions import QuerySyntaxError, public_text
 from ...services.access_policy import KB, Action, ReadScope
 from ...services.auth_service import AuthService
 from ...services.kb_service import KBService
@@ -19,9 +19,9 @@ from ...services.search_service import SearchService, build_or_query, clip_seman
 from ..api import (
     get_auth_service,
     get_config,
-    get_kb_service,
     get_llm_service,
     get_llm_usage_service,
+    get_read_kb_service,
     get_search_service,
     get_user_llm_context,
     limiter,
@@ -88,7 +88,7 @@ def _get_entry(
 ) -> dict:
     """Fetch an entry or raise 404.
 
-    Within the caller's scope: a blank ``kb_name`` names no KB (private #74),
+    Within the caller's scope: a blank ``kb_name`` names no KB,
     and the lookup then walks only the KBs the caller can read, so a private
     entry answers exactly as a missing one.
     """
@@ -137,7 +137,7 @@ async def ai_summarize(
     request: Request,
     req: AIEntryRequest,
     llm: LLMService = Depends(get_llm_service),
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     user_ctx: dict | None = Depends(get_user_llm_context),
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
@@ -163,7 +163,10 @@ async def ai_summarize(
         return AISummarizeResponse(summary=summary.strip())
     except Exception as e:
         logger.exception("AI summarize failed")
-        raise HTTPException(status_code=500, detail={"code": "AI_ERROR", "message": str(e)})
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "AI_ERROR", "message": public_text(e, already_logged=True)},
+        )
 
 
 @router.post("/auto-tag", response_model=AIAutoTagResponse)
@@ -172,7 +175,7 @@ async def ai_auto_tag(
     request: Request,
     req: AIEntryRequest,
     llm: LLMService = Depends(get_llm_service),
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     user_ctx: dict | None = Depends(get_user_llm_context),
     config: PyriteConfig = Depends(get_config),
     auth_service: AuthService = Depends(get_auth_service),
@@ -191,7 +194,7 @@ async def ai_auto_tag(
 
     # Get the tag vocabulary
     # The vocabulary goes to the LLM provider: only the caller's readable KBs'
-    # tags, and a blank kb_name is no KB (private #74).
+    # tags, and a blank kb_name is no KB.
     all_tags_raw = svc.get_tags(
         kb_name=req.kb_name or None, kb_names=None if req.kb_name else scope.as_set()
     )
@@ -227,7 +230,10 @@ Tag vocabulary: {json.dumps(tag_vocab[:100])}"""
         return AIAutoTagResponse(suggested_tags=[])
     except Exception as e:
         logger.exception("AI auto-tag failed")
-        raise HTTPException(status_code=500, detail={"code": "AI_ERROR", "message": str(e)})
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "AI_ERROR", "message": public_text(e, already_logged=True)},
+        )
 
 
 @router.post("/suggest-links", response_model=AILinkSuggestResponse)
@@ -236,7 +242,7 @@ async def ai_suggest_links(
     request: Request,
     req: AIEntryRequest,
     llm: LLMService = Depends(get_llm_service),
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     search_svc: SearchService = Depends(get_search_service),
     user_ctx: dict | None = Depends(get_user_llm_context),
     config: PyriteConfig = Depends(get_config),
@@ -347,7 +353,10 @@ Candidate entries to link:
         return AILinkSuggestResponse(suggestions=[])
     except Exception as e:
         logger.exception("AI suggest-links failed")
-        raise HTTPException(status_code=500, detail={"code": "AI_ERROR", "message": str(e)})
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "AI_ERROR", "message": public_text(e, already_logged=True)},
+        )
 
 
 @router.post("/chat")
@@ -356,7 +365,7 @@ async def ai_chat(
     request: Request,
     req: AIChatRequest,
     llm: LLMService = Depends(get_llm_service),
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     search_svc: SearchService = Depends(get_search_service),
     user_ctx: dict | None = Depends(get_user_llm_context),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
@@ -477,7 +486,7 @@ KB Context:
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
         except Exception as e:
             logger.exception("AI chat stream error")
-            data = json.dumps({"type": "error", "message": str(e)})
+            data = json.dumps({"type": "error", "message": public_text(e, already_logged=True)})
             yield f"data: {data}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

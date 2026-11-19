@@ -7,6 +7,7 @@ semantic similarity search across knowledge base entries.
 Requires the optional semantic extra; remedies use the current source install.
 """
 
+import importlib.util
 import json
 import logging
 import os
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..exceptions import HeldFault
 from ..storage.backends.protocol import DEFAULT_MIN_SIMILARITY
 from ..storage.database import PyriteDB
 from ..utils.install_hints import extra_install_command
@@ -24,12 +26,18 @@ logger = logging.getLogger(__name__)
 
 
 def is_available() -> bool:
-    """Check if sentence-transformers is installed."""
-    try:
-        import sentence_transformers  # noqa: F401
+    """Is sentence-transformers installed? Answered by the import system's
+    finder, not by importing the package.
 
-        return True
-    except ImportError:
+    Importing it pulls in torch -- about 300 MB of work per process, once per
+    test worker and in every CLI or server path that asks (#1101). A package
+    the finder can see but whose import fails is reported when the model first
+    loads (:func:`_load_model`), where the remedy can name the extra.
+    """
+    try:
+        return importlib.util.find_spec("sentence_transformers") is not None
+    except (ImportError, ValueError):
+        # A broken parent package, or None in sys.modules: not usable here.
         return False
 
 
@@ -67,7 +75,7 @@ def _extension_loading_refused(error: Exception) -> bool:
 
 
 def semantic_unavailable(
-    vec_available: bool, vec_load_error: Exception | None = None
+    vec_available: bool, vec_load_error: HeldFault | None = None
 ) -> tuple[str, str, str] | None:
     """Why semantic search cannot run here, or None when it can.
 
@@ -75,8 +83,10 @@ def semantic_unavailable(
     puts it in a warning and in the trace's ``reason``, `index embed` in its
     error, so the three never disagree. The install line only fits a missing
     package, not an extension that is installed but would not load. When the
-    SQLite connection supplies the loader exception, use it instead of guessing
-    at a local SQLite build limitation.
+    SQLite connection supplies the loader's fault, use it instead of guessing
+    at a local SQLite build limitation. The fault is held
+    (``exceptions.HeldFault``): its class name is shown to every caller, its
+    text only to the local process (ADR-0052 N3).
     """
     import importlib.util
 
@@ -97,9 +107,9 @@ def semantic_unavailable(
     if vec_load_error is not None:
         cause = (
             "the sqlite-vec extension failed to load "
-            f"({type(vec_load_error).__name__}: {vec_load_error})"
+            f"({vec_load_error.type_name}: {vec_load_error})"
         )
-        if _extension_loading_refused(vec_load_error):
+        if vec_load_error.matches(_extension_loading_refused):
             # The one load failure a different interpreter fixes (#606): say
             # so, beside the exception, instead of "resolve the error".
             return (
@@ -320,6 +330,13 @@ class EmbeddingModelRefusedError(RuntimeError):
     that Pyrite does not trust."""
 
 
+class EmbeddingModelUnavailableError(RuntimeError):
+    """sentence-transformers is installed but cannot be imported.
+
+    The finder in :func:`is_available` sees a broken install; the first real
+    load is where the failure can be named (#1101)."""
+
+
 def _check_model_source(name: str) -> None:
     """Refuse a model that could run code shipped beside it.
 
@@ -348,7 +365,9 @@ def _check_model_source(name: str) -> None:
     try:
         modules = json.loads(modules_file.read_text())
     except (OSError, ValueError) as e:
-        raise EmbeddingModelRefusedError(f"Cannot read {modules_file}: {e}") from e
+        from ..exceptions import outside_text
+
+        raise EmbeddingModelRefusedError(f"Cannot read {modules_file}: {outside_text(e)}") from e
     for module in modules if isinstance(modules, list) else []:
         ref = module.get("type", "") if isinstance(module, dict) else ""
         if not str(ref).startswith("sentence_transformers."):
@@ -369,11 +388,22 @@ def _load_model(name: str) -> Any:
 
     _check_model_source(name)
 
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as e:
+        from ..exceptions import outside_text
+
+        # is_available() only sees the package through the finder, so a broken
+        # install reaches its first load here: name it and the remedy (#1101).
+        raise EmbeddingModelUnavailableError(
+            "sentence-transformers is installed but cannot be imported: "
+            f"{outside_text(e)}. Reinstall it with `{extra_install_command('semantic')}`."
+        ) from e
+
     # Suppress noisy output during model loading:
     # - transformers.disable_progress_bar() silences weight-loading tqdm bars
     # - Log levels silence the HF load report and auth warnings
     import transformers.utils.logging as tf_logging
-    from sentence_transformers import SentenceTransformer
 
     tf_logging.disable_progress_bar()
     loggers = ["transformers", "huggingface_hub"]
@@ -408,8 +438,8 @@ class EmbeddingService:
         self._model = None
         # If the caller didn't pin a limit, derive one from the model so a
         # model swap doesn't silently leave bodies clipped at the old
-        # limit (Tier A r2100). max_body_chars=0 is treated as "no
-        # limit" — useful for tests.
+        # limit (Tier A r2100). max_body_chars=0 embeds no body
+        # (`_entry_text` takes `body[:0]`) — useful for tests.
         if max_body_chars is None:
             max_body_chars = max_body_chars_for_model(model_name)
         self.max_body_chars = max_body_chars
@@ -453,7 +483,7 @@ class EmbeddingService:
             self._model = model
             return model
 
-    def prewarm(self) -> bool:
+    def prewarm(self, *, log_failure: bool = True) -> bool:
         """Pre-load the embedding model to avoid cold-start latency.
 
         Returns True if model was loaded successfully, False if dependencies
@@ -466,7 +496,13 @@ class EmbeddingService:
             logger.info("Embedding model '%s' pre-warmed", self.model_name)
             return True
         except Exception:
-            logger.warning("Failed to pre-warm embedding model", exc_info=True)
+            if log_failure:
+                logger.warning(
+                    "Failed to pre-warm embedding model %r. Check that the model is cached "
+                    "locally or that Hugging Face is reachable.",
+                    self.model_name,
+                    exc_info=True,
+                )
             return False
 
     @property
@@ -570,6 +606,11 @@ class EmbeddingService:
                 embedding = self.embed_text(text)
                 backend.upsert_embedding(row["id"], row["kb_name"], embedding)
                 stats["embedded"] += 1
+            except EmbeddingModelUnavailableError:
+                # Not this entry's fault: the extra is installed but broken, and
+                # every entry would fail the same way. Let the caller report the
+                # dependency once (the CLI answers DEPENDENCY_MISSING, #1101).
+                raise
             except Exception as e:
                 logger.warning("Failed to embed entry %s: %s", row.get("id"), e)
                 stats["errors"] += 1
@@ -586,6 +627,8 @@ class EmbeddingService:
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -610,16 +653,19 @@ class EmbeddingService:
             entry_type, tags, date_from, date_to, fips, state, status,
             include_archived: the same filter set the keyword leg takes.
                 Applied by the backend inside the KNN query rather than after
-                it (#56) — a filter honoured on only one leg makes a fused
+                it (#56) - a filter honoured on only one leg makes a fused
                 hybrid result violate it. ``include_archived`` is the default
                 exclusion rather than a value filter, and holds on both legs
-                for the same reason.
+                for the same reason. ``entry_types`` (the #627 include-set,
+                which absorbs a single ``entry_type``) and ``exclude_types``
+                are part of that set too, so a repeated `--type` and an
+                `--exclude-type` reach the vector leg like every other filter.
             non_empty: leave out entries whose body and summary are both blank
                 (#200); applied inside the KNN like the others.
 
         Returns list of entry dicts with ``similarity`` (cosine, 3 places, the
         same on every backend), ``snippet``, and ``distance`` (backend-specific:
-        sqlite-vec's L2, pgvector's cosine distance; kept for one release).
+        sqlite-vec's L2, pgvector's cosine distance; kept until 0.27; use ``similarity``).
         """
         backend = self.db.backend
         if not backend.vec_available:
@@ -633,6 +679,8 @@ class EmbeddingService:
             min_similarity=min_similarity,
             kb_names=kb_names,
             entry_type=entry_type,
+            entry_types=entry_types or None,
+            exclude_types=exclude_types or None,
             tags=tags,
             date_from=date_from,
             date_to=date_to,

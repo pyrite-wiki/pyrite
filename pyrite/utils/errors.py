@@ -27,7 +27,7 @@ import sys
 import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import typer
 from typer.core import TyperGroup
@@ -102,10 +102,11 @@ def cli_error(
 
 def _print_error_line(payload: dict[str, Any]) -> None:
     """The rich form of the error shape, on stdout."""
-    from rich.console import Console
     from rich.text import Text
 
-    console = Console()
+    from pyrite.cli.output import cli_console
+
+    console = cli_console()
     # The styled labels are ours and stay markup; the message and the
     # suggestion are data -- an extra like `pyrite[semantic]`, a JSON
     # example, an entry id -- and Rich would parse their brackets as style
@@ -219,7 +220,7 @@ def _default_format() -> str:
     return asked if asked in SHARED_FORMATS else "json"
 
 
-def _format_in(argv: Sequence[str]) -> str:
+def _format_in(argv: Sequence[str], ctx: Any = None) -> str:
     """The format a usage error is printed in: the ``--format`` (or the
     deprecated ``-f``) the caller typed, if it is a format the root prints (the
     parse that failed may be what never got to read it), else the default.
@@ -228,11 +229,30 @@ def _format_in(argv: Sequence[str]) -> str:
     document is in ``PYRITE_FORMAT``, else JSON."""
     from ..cli.output import SHARED_FORMATS
 
+    short_is_format = ctx is None
+    if ctx is not None:
+        from ..cli.output import _record_short_format, requested_format
+
+        if value := requested_format(ctx):
+            if isinstance(value, str) and value in SHARED_FORMATS:
+                return value
+        for parameter in ctx.command.params:
+            options = (*getattr(parameter, "opts", ()), *getattr(parameter, "secondary_opts", ()))
+            callback = getattr(parameter, "callback", None)
+            original = getattr(callback, "__wrapped__", callback)
+            if "--format" in options:
+                value = ctx.params.get(parameter.name)
+                if isinstance(value, str) and value in SHARED_FORMATS:
+                    return value
+            if "-f" in options and ("--format" in options or original is _record_short_format):
+                short_is_format = True
     if next((w for w in argv if not w.startswith("-")), None) == "export":
         return _default_format()
     for index, word in enumerate(argv):
         if word == "--":
             break
+        if word == "-f" and not short_is_format:
+            continue
         if word in ("--format", "-f") and index + 1 < len(argv):
             value = argv[index + 1]
         elif word.startswith("--format="):
@@ -260,13 +280,15 @@ class _CountingStdout:
     cannot see (descriptor 1 directly, a stream a module took at import) are a
     stated limit: see ``_answered``."""
 
-    def __init__(self, inner: Any) -> None:
+    def __init__(self, inner: Any, owner: Any = None) -> None:
         self._inner = inner
+        self._owner = owner if owner is not None else self
+        self._buffer: _CountingStdout | None = None
         self.written = False
 
     def write(self, text: Any) -> Any:
         if text:
-            self.written = True
+            self._owner.written = True
         return self._inner.write(text)
 
     def writelines(self, lines: Any) -> None:
@@ -274,7 +296,12 @@ class _CountingStdout:
             self.write(line)
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._inner, name)
+        value = getattr(self._inner, name)
+        if name == "buffer":
+            if self._buffer is None:
+                self._buffer = _CountingStdout(value, owner=self._owner)
+            return self._buffer
+        return value
 
 
 def _is_a(error: BaseException, name: str) -> bool:
@@ -338,8 +365,8 @@ def _answered(*, watch_stdout: bool):
         if counting is not None and counting.written:
             _tell_a_person(error)
         else:
-            _print_click_error(error, _format_in(_ARGV.get()))
-        raise typer.Exit(error.exit_code) from error
+            _print_click_error(error, _format_in(_ARGV.get(), getattr(error, "ctx", None)))
+        raise typer.Exit(cast(Any, error).exit_code) from error
     except EOFError as error:
         sys.stderr.write("\nAborted!\n")
         raise typer.Exit(1) from error
@@ -376,6 +403,21 @@ def _print_click_error(error: Any, fmt: str) -> None:
     message = error.format_message()
     ctx = getattr(error, "ctx", None)
     suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
+    # Typer 0.29 flattens click's NoSuchCommand into a plain UsageError, so
+    # recognise it by its message rather than by the exception class.
+    if is_usage and ctx is not None and message.startswith("No such command "):
+        # A missing subcommand on a group: name the commands that do exist, so
+        # the refusal points at something runnable instead of only --help.
+        names = [
+            name
+            for name in ctx.command.list_commands(ctx)
+            if not getattr(ctx.command.get_command(ctx, name), "hidden", False)
+        ]
+        if names:
+            suggestion = (
+                f"{ctx.command_path} has: {', '.join(names)}. "
+                f"Try '{ctx.command_path} --help' for help."
+            )
     payload = {
         "outcome": REFUSED,
         **build_error(message, "USAGE_ERROR" if is_usage else "ERROR", suggestion=suggestion),
@@ -498,11 +540,15 @@ class _BodyGuard:
         #: The format asked for, read when the body starts: the body cannot
         #: change the format its answer is printed in.
         self.format: str | None = None
+        #: The command declared ``OUTPUT_FORMAT_UNASKED`` and no format was
+        #: asked for: its outcome is printed as text, a refusal in the
+        #: default format (#1691).
+        self.unasked = False
         self._watch: _StdoutWatch | None = None
 
     def watch_body_of(self, ctx: Any) -> None:
         """Called by the shared option's callback, while click is parsing."""
-        from ..cli.output import declares_shared_format, requested_format
+        from ..cli.output import UNASKED_META_KEY, declares_shared_format, requested_format
 
         command = ctx.command
         body = getattr(command.callback, _BODY, command.callback)
@@ -513,6 +559,7 @@ class _BodyGuard:
         def entered(*args: Any, **kwargs: Any) -> Any:
             if not self.entered:
                 self.format = requested_format(ctx)
+                self.unasked = self.format is None and bool(ctx.meta.get(UNASKED_META_KEY))
             self._enter()
             self.returned = _NOT_RETURNED
             self.returned = body(*args, **kwargs)
@@ -563,9 +610,9 @@ def _outcome_answer(outcome: Any, fmt: str) -> _Answer:
         return _Answer(code, text=document(outcome, fmt))
 
     def show() -> None:
-        from rich.console import Console
+        from pyrite.cli.output import cli_console
 
-        (outcome.rich or print_fields)(Console(), outcome.data)
+        (outcome.rich or print_fields)(cli_console(), outcome.data)
 
     return _Answer(code, show=show)
 
@@ -574,7 +621,12 @@ def _named(exc: BaseException) -> str:
     """An exception's class, and the exit code it asked for if it had one.
     Never raises: it runs where the root is already answering NO_OUTCOME."""
     try:
-        code = getattr(exc, "exit_code", getattr(exc, "code", None))
+        if isinstance(exc, SystemExit):
+            code = exc.code
+        elif isinstance(exc, typer.Exit):
+            code = getattr(exc, "exit_code", None)
+        else:
+            code = None
         return type(exc).__name__ + (f" (exit code {code!r})" if code is not None else "")
     except BaseException:
         return type(exc).__name__
@@ -644,6 +696,8 @@ class PyriteCLIGroup(TyperGroup):
     - **A rich renderer chooses its words.** The kind, the exit code and every
       machine format are still decided here. Text a renderer printed before it
       raised stays above the ``NO_OUTCOME`` line.
+    - **Root-context close callbacks**: drained inside this method's guard,
+      before the answer is published; their prints or exits are NO_OUTCOME.
     - **After this method returns**: ``os._exit`` (exit 0, empty stdout, which
       no outcome ever is), an ``atexit`` handler, a thread that outlives the
       command, a buffer of the command's own over descriptor 1 that is
@@ -663,6 +717,16 @@ class PyriteCLIGroup(TyperGroup):
     back, and its exceptions pass through, except a refused config save
     (#377), which is one error line and exit 1. If it returns an ``Outcome``
     (a plugin, decision 5), that is rendered here in the default format.
+    Its own private ``--format`` parameter is not the shared contract and
+    does not choose that rendering. An unsupported ``PYRITE_FORMAT`` is a
+    usage error for the shared option, but falls back to JSON for a legacy
+    Outcome. These two legacy behaviours are outside the shared-option
+    guarantee (#838). A standalone sub-app needs this root to join it.
+
+    Root-context close callbacks run here, before the guard ends and before
+    the answer is emitted. A cleanup print or exit cannot append a second
+    document or replace the decided exit code. A printed body followed by a
+    refusal is NO_OUTCOME; the original refusal reason is retained on stderr.
     """
 
     def main(
@@ -706,7 +770,7 @@ class PyriteCLIGroup(TyperGroup):
     def _invoke(self, ctx):
         from ..cli.outcome import Outcome
         from ..cli.output import BODY_GUARD_META_KEY
-        from ..exceptions import ConfigSaveRefusedError
+        from ..exceptions import ConfigSaveRefusedError, StorageError
 
         if BODY_GUARD_META_KEY in ctx.meta:
             # A PyriteCLIGroup mounted under another: the outer one decides.
@@ -721,6 +785,8 @@ class PyriteCLIGroup(TyperGroup):
             if not guard.entered:
                 if isinstance(exc, ConfigSaveRefusedError):
                     cli_error(str(exc), error_code="CONFIG_SAVE_REFUSED")
+                if isinstance(exc, StorageError):
+                    cli_error_from(exc, _format_in(_ARGV.get()))
                 raise
             raised = exc
 
@@ -730,10 +796,26 @@ class PyriteCLIGroup(TyperGroup):
             return result
 
         fmt = guard.format or _default_format()
+        # Click normally closes the root after invoke returns. Drain its
+        # ExitStack while stdout is still held; the later close is idempotent.
+        try:
+            ctx.close()
+        except KeyboardInterrupt:
+            raise
+        except BaseException as exc:
+            if not isinstance(raised, KeyboardInterrupt):
+                raised = exc
         try:
             # Still watched: serialising a payload can print or raise too.
             try:
-                answer = self._decide(guard, fmt, result, raised)
+                answer = self._decide(
+                    guard,
+                    fmt,
+                    result,
+                    raised,
+                    self._outcome_format(guard, fmt),
+                    self._refusal_format(guard, fmt, raised),
+                )
             except KeyboardInterrupt:
                 raise
             except BaseException as exc:
@@ -750,6 +832,8 @@ class PyriteCLIGroup(TyperGroup):
                 except Exception:  # no stderr to move it to; the answer still stands
                     pass
         if held:
+            if isinstance(raised, PyriteError | ValueError):
+                typer.echo(public_text(raised, log=logger, local=True), err=True)
             answer = _error_answer(
                 _no_outcome_payload(
                     f"the command wrote {len(held)} bytes to stdout itself (moved to stderr)"
@@ -760,17 +844,49 @@ class PyriteCLIGroup(TyperGroup):
         return result
 
     @staticmethod
-    def _decide(guard: _BodyGuard, fmt: str, result: Any, raised: BaseException | None) -> _Answer:
+    def _outcome_format(guard: _BodyGuard, fmt: str) -> str:
+        """The format a returned outcome is printed in: ``fmt``, unless the
+        command declared ``OUTPUT_FORMAT_UNASKED`` and no format was asked for,
+        when it is text for a person (a refusal stays in ``fmt``, #1691)."""
+        from ..cli.output import UNASKED_OUTCOME_FORMAT
+
+        return UNASKED_OUTCOME_FORMAT if guard.unasked else fmt
+
+    @staticmethod
+    def _refusal_format(guard: _BodyGuard, fmt: str, raised: BaseException | None) -> str:
+        """The format a refusal is printed in: ``fmt``, unless the command
+        declared ``OUTPUT_FORMAT_UNASKED`` and no format was asked for. Then it
+        is the shape the command printed before it joined the contract: its own
+        refusals as one ``ERROR [CODE]`` line, and a storage fault, which only
+        this root printed, in ``fmt`` (the JSON error shape) (#1691)."""
+        from ..cli.output import UNASKED_REFUSAL_FORMAT
+        from ..exceptions import StorageError
+
+        if guard.unasked and not isinstance(raised, StorageError):
+            return UNASKED_REFUSAL_FORMAT
+        return fmt
+
+    @staticmethod
+    def _decide(
+        guard: _BodyGuard,
+        fmt: str,
+        result: Any,
+        raised: BaseException | None,
+        outcome_fmt: str | None = None,
+        refusal_fmt: str | None = None,
+    ) -> _Answer:
         """The allow-list. Each branch names something accepted; the last
-        lines are everything else."""
+        lines are everything else. A refusal is printed in ``refusal_fmt``,
+        a returned outcome in ``outcome_fmt``, each ``fmt`` unless given;
+        anything else (``NO_OUTCOME``) in ``fmt``."""
         from ..cli.outcome import Outcome
 
         if isinstance(raised, KeyboardInterrupt):
             raise raised
         if isinstance(raised, PyriteError | ValueError):
-            return _error_answer(_refusal_payload(raised), fmt)
+            return _error_answer(_refusal_payload(raised), refusal_fmt or fmt)
         if raised is None and type(result) is Outcome and result is guard.returned:
-            return _outcome_answer(result, fmt)
+            return _outcome_answer(result, outcome_fmt or fmt)
 
         if raised is not None:
             logger.debug("CLI command raised %s", type(raised).__name__, exc_info=raised)

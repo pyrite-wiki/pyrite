@@ -9,6 +9,7 @@ import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry, NoteEntry, PersonEntry
+from pyrite.models.task import TaskEntry
 from pyrite.services.qa_service import QAService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
@@ -409,3 +410,171 @@ class TestStatus:
         status = qa_setup["qa"].get_status("empty-kb", readable_kbs=UNSCOPED)
         assert status["total_entries"] == 0
         assert status["total_issues"] == 0
+
+
+def _save_task(
+    repo,
+    task_id: str,
+    *,
+    status: str = "open",
+    dependencies: list[str] | None = None,
+    produces: list[str] | None = None,
+    deliverable: list[str] | None = None,
+) -> None:
+    """Save a task whose free deliverable fields ride in ``metadata`` (#935)."""
+    metadata = {}
+    if produces is not None:
+        metadata["produces"] = produces
+    if deliverable is not None:
+        metadata["deliverable"] = deliverable
+    repo.save(
+        TaskEntry(
+            id=task_id,
+            title=task_id.replace("-", " ").title(),
+            body="Task body.",
+            status=status,
+            dependencies=list(dependencies or []),
+            metadata=metadata,
+        )
+    )
+
+
+def _task_reference_issues(qa_setup, readable_kbs=UNSCOPED):
+    result = qa_setup["qa"].validate_kb("test-research", readable_kbs=readable_kbs)
+    return [issue for issue in result["issues"] if issue["rule"] == "task_references"]
+
+
+class TestTaskReferences:
+    """`qa validate` checks a task's dependencies and deliverable (#935)."""
+
+    def test_missing_dependency_is_an_error(self, qa_setup):
+        _save_task(qa_setup["research_repo"], "task-a", dependencies=["no-such-entry"])
+        qa_setup["index_mgr"].index_all()
+
+        issues = _task_reference_issues(qa_setup)
+
+        assert [(issue["severity"], issue["field"]) for issue in issues] == [
+            ("error", "dependencies")
+        ]
+        assert "no-such-entry" in issues[0]["message"]
+
+    def test_missing_deliverable_is_an_error(self, qa_setup):
+        _save_task(qa_setup["research_repo"], "task-a", produces=["no-such-entry"])
+        qa_setup["index_mgr"].index_all()
+
+        issues = _task_reference_issues(qa_setup)
+
+        assert [(issue["severity"], issue["field"]) for issue in issues] == [("error", "produces")]
+
+    def test_a_deliverable_held_in_the_deliverable_field_is_checked_too(self, qa_setup):
+        _save_task(qa_setup["research_repo"], "task-a", deliverable=["no-such-entry"])
+        qa_setup["index_mgr"].index_all()
+
+        issues = _task_reference_issues(qa_setup)
+
+        assert [(issue["severity"], issue["field"]) for issue in issues] == [
+            ("error", "deliverable")
+        ]
+
+    def test_existing_dependency_is_clean(self, qa_setup):
+        person_id = qa_setup["db"].execute_sql(
+            "SELECT id FROM entry WHERE kb_name = 'test-research'"
+        )[0]["id"]
+        _save_task(qa_setup["research_repo"], "task-a", dependencies=[person_id])
+        qa_setup["index_mgr"].index_all()
+
+        assert _task_reference_issues(qa_setup) == []
+
+    def test_open_task_whose_deliverable_exists_is_a_warning(self, qa_setup):
+        qa_setup["research_repo"].save(
+            NoteEntry(id="delivered-report", title="Delivered Report", body="Done.")
+        )
+        _save_task(qa_setup["research_repo"], "task-a", produces=["delivered-report"])
+        qa_setup["index_mgr"].index_all()
+
+        issues = _task_reference_issues(qa_setup)
+
+        assert [(issue["severity"], issue["field"]) for issue in issues] == [
+            ("warning", "produces")
+        ]
+        assert "may be done" in issues[0]["message"]
+
+    def test_a_deliverable_that_is_itself_a_task_is_not_a_warning(self, qa_setup):
+        _save_task(qa_setup["research_repo"], "other-task")
+        _save_task(qa_setup["research_repo"], "task-a", produces=["other-task"])
+        qa_setup["index_mgr"].index_all()
+
+        assert _task_reference_issues(qa_setup) == []
+
+    def test_a_task_naming_itself_as_deliverable_is_ignored(self, qa_setup):
+        _save_task(qa_setup["research_repo"], "task-a", produces=["task-a"])
+        qa_setup["index_mgr"].index_all()
+
+        assert _task_reference_issues(qa_setup) == []
+
+    def test_a_closed_task_is_not_checked(self, qa_setup):
+        _save_task(
+            qa_setup["research_repo"],
+            "task-a",
+            status="done",
+            dependencies=["no-such-entry"],
+        )
+        qa_setup["index_mgr"].index_all()
+
+        assert _task_reference_issues(qa_setup) == []
+
+    def test_cross_kb_deliverable_resolves(self, qa_setup):
+        event_id = qa_setup["db"].execute_sql("SELECT id FROM entry WHERE kb_name = 'test-events'")[
+            0
+        ]["id"]
+        _save_task(
+            qa_setup["research_repo"],
+            "task-a",
+            produces=[f"test-events:{event_id}"],
+        )
+        qa_setup["index_mgr"].index_all()
+
+        issues = _task_reference_issues(qa_setup)
+
+        assert [(issue["severity"], issue["field"]) for issue in issues] == [
+            ("warning", "produces")
+        ]
+
+    def test_a_target_the_caller_cannot_read_is_missing(self, qa_setup):
+        event_id = qa_setup["db"].execute_sql("SELECT id FROM entry WHERE kb_name = 'test-events'")[
+            0
+        ]["id"]
+        _save_task(
+            qa_setup["research_repo"],
+            "task-a",
+            dependencies=[f"test-events:{event_id}"],
+        )
+        qa_setup["index_mgr"].index_all()
+
+        issues = _task_reference_issues(qa_setup, readable_kbs={"test-research"})
+
+        assert [(issue["severity"], issue["field"]) for issue in issues] == [
+            ("error", "dependencies")
+        ]
+
+    def test_qa_validate_exits_1_on_a_missing_task_reference(self, cli_world):
+        world = cli_world()
+        folder = world.kb_path("test-kb")
+        (folder / "task-a.md").write_text(
+            "---\n"
+            "id: task-a\n"
+            "type: task\n"
+            "title: Task A\n"
+            "status: open\n"
+            "dependencies:\n"
+            "  - no-such-entry\n"
+            "---\n"
+            "Task body.\n",
+            encoding="utf-8",
+        )
+        world.index()
+
+        result = world.cli("qa", "validate", "test-kb", "--format", "json")
+
+        assert result.exit_code == 1, result.output
+        assert "task_references" in result.output

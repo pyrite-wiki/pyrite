@@ -2661,6 +2661,7 @@ class Case:
     was_true: bool = False
     calls: list | None = None  # the `claude mcp` verbs the run may make
     more: str = ""  # members seeded beside the entry
+    suggestion: str = ""  # the cause named when no restore command can be printed
 
 
 #: `pyrite` entries that are not objects, as whole files.
@@ -2684,6 +2685,60 @@ CLAUDE_CODE_CASES = {
     # unknown keys | a third entry in place; the read-back unreadable;
     # --force; `claude` that cannot be run, times out, exits 0 without writing.
     "equal": Case("_record #1", "unchanged", "new", seed=HERE, was_true=True),
+    "restore-reason-nul-command": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        seed=('"command": "/old/\\u0000bin/pyrite"', args_text("mcp", "--tier", "admin")),
+        stub={"FAKE_CLAUDE_FAIL": "add"},
+        calls=["remove", "add"],
+        suggestion="a NUL no command line can carry",
+    ),
+    "restore-reason-string": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        seed=NOT_AN_OBJECT["a string"],
+        args=FORCE,
+        stub={"FAKE_CLAUDE_FAIL": "add"},
+        calls=["remove", "add"],
+        suggestion="the previous entry was not an object",
+    ),
+    "restore-reason-null": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        seed=NOT_AN_OBJECT["null"],
+        args=FORCE,
+        stub={"FAKE_CLAUDE_FAIL": "add"},
+        calls=["remove", "add"],
+        suggestion="the previous entry was not an object",
+    ),
+    "restore-reason-env-and-nul": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        seed=(
+            '"command": "/old/\\u0000bin/pyrite"',
+            args_text("mcp", "--tier", "admin") + ', "env": {"TOKEN": "' + SECRET + '"}',
+        ),
+        args=FORCE,
+        stub={"FAKE_CLAUDE_FAIL": "add"},
+        calls=["remove", "add"],
+        suggestion="`claude mcp add` cannot write env without its values, or other keys",
+        was_true=True,
+    ),
+    "restore-reason-unknown-key": Case(
+        F_ABSENT,
+        "failed",
+        ABSENT,
+        seed=(cmd_text(OLD), args_text("mcp", "--tier", "admin") + ', "custom": true'),
+        args=FORCE,
+        stub={"FAKE_CLAUDE_FAIL": "add"},
+        calls=["remove", "add"],
+        suggestion="`claude mcp add` cannot write env without its values, or other keys",
+        was_true=True,
+    ),
     "env-and-the-path-must-change": Case(HAND_EDIT, "stopped", "old", seed=WITH_ENV, by_hand=2),
     "env-args-and-unknown-keys": Case(HAND_EDIT, "stopped", "old", seed=CARRIES_EXTRA, by_hand=2),
     "an-argument-no-command-line-can-carry": Case(
@@ -3062,6 +3117,9 @@ def test_the_report_is_true_of_the_file_and_every_printed_command_works(
 
     suggestion = item.get("suggestion", "")
     by_hand = item.get("by_hand", [])
+    if name.startswith("restore-reason-"):
+        # The public cause (#841): the report names the real obstacle.
+        assert case.suggestion in suggestion, suggestion
     if now is UNREADABLE:
         # Claude Code replaces a file it cannot read: no command that runs it.
         said = [suggestion, *by_hand, *item["notes"]]
@@ -3449,7 +3507,7 @@ def _calls_after_the_clients_are_chosen() -> dict[str, str | None]:
                 called.append(node.func.id)
     # The report itself: a raise here is the printing failing, with nothing
     # left to print with. Its inputs are the strings and numbers built above.
-    printing = {"format_output", "Console", "_print_report"}
+    printing = {"format_output", "cli_console", "_print_report"}
     found: dict[str, str | None] = {}
     for name in dict.fromkeys(called):
         if name in printing:

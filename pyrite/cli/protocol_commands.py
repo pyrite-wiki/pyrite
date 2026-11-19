@@ -4,11 +4,12 @@ import dataclasses
 import logging
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.output import cli_console
+
 logger = logging.getLogger(__name__)
-console = Console()
+console = cli_console()
 
 protocol_app = typer.Typer(help="Protocol inspection and satisfaction checking")
 
@@ -56,7 +57,7 @@ def protocol_check(
     if kb_name:
         from .context import cli_context
 
-        with cli_context() as (config, db, svc):
+        with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
             kb_config = config.get_kb(kb_name)
             if not kb_config:
                 from ..utils.errors import cli_error

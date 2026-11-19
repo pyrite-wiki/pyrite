@@ -2,17 +2,24 @@
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from ...exceptions import InvalidGitRefError, KBNotFoundError, PyriteError
-from ...services.access_policy import KB, Action
+from ...exceptions import (
+    InvalidGitRefError,
+    KBNotFoundError,
+    KBReadOnlyError,
+    PyriteError,
+    public_text,
+)
+from ...services.access_policy import KB, AccessPolicy, Action
 from ...services.export_service import ExportService
 from ...services.kb_service import KBService
 from ..api import (
+    get_access_policy,
     get_export_service,
     get_kb_service,
     limiter,
     requires_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, resolve_named_kb
 
 router = APIRouter(tags=["Git Operations"])
 
@@ -46,8 +53,10 @@ def publish_changes(
     kb_name: str,
     summary: str | None = Body(None, embed=True),
     svc: KBService = Depends(get_kb_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Commit and push all pending changes in a KB."""
+    resolve_named_kb(request, policy, kb_name)  # the one resolver first (#952)
     try:
         return svc.publish_changes(kb_name, summary=summary)
     except KBNotFoundError:
@@ -55,7 +64,9 @@ def publish_changes(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
         )
     except PyriteError as e:
-        raise HTTPException(status_code=400, detail={"code": "PUBLISH_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "PUBLISH_FAILED", "message": public_text(e)}
+        )
 
 
 @router.post("/kbs/{kb_name}/commit", dependencies=[Depends(requires_tier("admin"))])
@@ -67,17 +78,23 @@ def commit_kb(
     paths: list[str] | None = Body(None, embed=True),
     sign_off: bool = Body(False, embed=True),
     export_svc: ExportService = Depends(get_export_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Commit changes in a KB's git repository."""
+    resolve_named_kb(request, policy, kb_name)
     try:
         result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
         return result
+    except KBReadOnlyError as e:
+        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
         )
     except PyriteError as e:
-        raise HTTPException(status_code=400, detail={"code": "COMMIT_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "COMMIT_FAILED", "message": public_text(e)}
+        )
 
 
 @router.post("/kbs/{kb_name}/push", dependencies=[Depends(requires_tier("admin"))])
@@ -88,11 +105,15 @@ def push_kb(
     remote: str = Body("origin", embed=True),
     branch: str | None = Body(None, embed=True),
     export_svc: ExportService = Depends(get_export_service),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Push KB commits to a remote repository."""
+    resolve_named_kb(request, policy, kb_name)
     try:
         result = export_svc.push_kb(kb_name, remote=remote, branch=branch)
         return result
+    except KBReadOnlyError as e:
+        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
@@ -100,4 +121,6 @@ def push_kb(
     except InvalidGitRefError as e:
         raise HTTPException(status_code=400, detail={"code": "INVALID_REF", "message": str(e)})
     except PyriteError as e:
-        raise HTTPException(status_code=400, detail={"code": "PUSH_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "PUSH_FAILED", "message": public_text(e)}
+        )

@@ -8,6 +8,19 @@ from .core_types import get_entry_class
 from .generic import GenericEntry
 
 
+def _restore_lifecycle(entry: Entry, fm: dict) -> Entry:
+    """Give ``entry`` the ``lifecycle`` its frontmatter names.
+
+    ``lifecycle`` is a base field outside every subclass constructor, so a
+    subclass's ``from_frontmatter`` leaves it at "active"; only the loader
+    (``entry_from_frontmatter``) restored it from the file. A created or
+    imported entry is built here instead, and used to lose the key without a
+    word (#1097). One restore for both branches keeps the rule in one place.
+    """
+    entry.lifecycle = fm.get("lifecycle", "active")
+    return entry
+
+
 def build_entry(
     entry_type: str,
     *,
@@ -83,7 +96,7 @@ def build_entry(
             if k in _reserved or k == "metadata":
                 continue
             fm[k] = v
-        return GenericEntry.from_frontmatter(fm, body)
+        return _restore_lifecycle(GenericEntry.from_frontmatter(fm, body), fm)
 
     # Build frontmatter dict for from_frontmatter().
     # Known dataclass fields go as top-level keys; unknown kwargs are
@@ -130,12 +143,18 @@ def build_entry(
             _extra_meta[k] = v
 
     # The REST body and the web form send every non-standard field inside
-    # `metadata`. Lift the alias keys out of it so they land top-level too. An
-    # explicit top-level argument wins, unless it is an empty default (REST
-    # sends `participants: []` when the client gave none).
+    # `metadata`. `metadata.k` is a second spelling of field `k` (Andon #994,
+    # decision A), so a declared field or an alias sent there lands at its
+    # own top-level key, where the class reads it; nesting it left the field's
+    # default at the top level and the caller's value under `metadata:`, a
+    # file spelling the field twice (a stored-query collection read as a
+    # folder once the row stopped letting the bag override the model). An
+    # undeclared key keeps its nested placement (#178, #447). An explicit
+    # top-level argument wins, unless it is an empty default (REST sends
+    # `participants: []` when the client gave none).
     if isinstance(fm.get("metadata"), dict):
         bag = fm["metadata"]
-        lifted = {mk: mv for mk, mv in bag.items() if mk in _alias_keys}
+        lifted = {mk: mv for mk, mv in bag.items() if mk in _fm_keys}
         for mk, mv in lifted.items():
             if not fm.get(mk):
                 fm[mk] = mv
@@ -146,4 +165,4 @@ def build_entry(
         existing = fm.get("metadata") or {}
         fm["metadata"] = {**existing, **_extra_meta}
 
-    return resolved_cls.from_frontmatter(fm, body)
+    return _restore_lifecycle(resolved_cls.from_frontmatter(fm, body), fm)

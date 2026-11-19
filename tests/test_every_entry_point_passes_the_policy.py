@@ -26,7 +26,7 @@ exists, fails `test_the_lists_hold_only_what_is_still_owed`, so the room it
 leaves cannot be reused. Adding an entry is not the fix for a new route:
 declare `authorize(...)` on it. `PUBLIC_ENTRY_POINTS` is the other list:
 routes that answer before anyone is authenticated (login, the OAuth dance,
-SEO, branding, health, the static site and viewer), each with a reason; it
+branding, health), each with a reason; it
 is pinned too, and no `/api` operation may be on it unless it is also on
 `PUBLIC_API_OPERATIONS` (empty) with a reason.
 
@@ -85,20 +85,10 @@ PUBLIC_ENTRY_POINTS: dict[str, str] = {
     "GET /auth/github": "starts the OAuth dance, before there is a principal",
     "GET /auth/github/callback": "the OAuth dance's return leg, before there is a principal",
     "GET /health": "infrastructure probe; no KB content",
-    "GET /robots.txt": "public SEO route (seo_endpoints.py)",
-    "GET /sitemap.xml": "public SEO route (seo_endpoints.py)",
     "GET /branding/{filename}": "the login page fetches branding before signing in",
     "GET /config/branding": "the login page fetches branding before signing in",
-    "GET /site": "the static site: a pre-rendered public cache",
-    "GET /site/{path:path}": "the static site: a pre-rendered public cache",
-    "GET /site/search": "the static site: a pre-rendered public cache",
-    "GET /site/sitemap.xml": "the static site: a pre-rendered public cache",
-    "GET /site/robots.txt": "the static site: a pre-rendered public cache",
-    "GET /site/_static/{name}": "the static site's assets",
-    "GET /viewer": "the SPA's static files; the API calls it makes are guarded",
-    "GET /viewer/{path:path}": "the SPA's static files; the API calls it makes are guarded",
 }
-PUBLIC_ENTRY_POINTS_SIZE = 18  # lower it with every entry removed; never raise it
+PUBLIC_ENTRY_POINTS_SIZE = 8  # lower it with every entry removed; never raise it
 
 #: The `/api` operations allowed in `PUBLIC_ENTRY_POINTS`, each with its reason.
 #: None today: everything under `/api` sits behind `verify_api_key`, so a public
@@ -119,6 +109,7 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "POST /api/reviews": "3b: requires_kb_tier('write'), a per-KB write",
     "DELETE /api/reviews/{review_id}": "3b: requires_kb_tier('write', resolve_kb=...), a row's KB",
     "POST /api/tasks/{task_id}/claim": "3b: requires_kb_tier('write'), a per-KB write",
+    "POST /api/tasks/{task_id}/start": "3b: requires_kb_tier('write'), a per-KB write",
     "GET /api/admin/merge-queue": "3c: requires_tier('admin'), instance administration",
     "GET /api/admin/merge-queue/{username}/diff": (
         "3c: requires_tier('admin'), instance administration"
@@ -163,7 +154,6 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "DELETE /api/settings/{key}": "3c: requires_tier('write') and settings_ep.py's inline check",
     "GET /api/settings/{key}": "3c: settings_ep.py, the inline secret-key role check",
     "PUT /api/settings/{key}": "3c: requires_tier('write') and settings_ep.py's inline check",
-    "POST /api/site/render": "3c: requires_tier('admin'), instance administration",
     "PUT /api/starred/reorder": "3c: requires_tier('write'), Action.SELF (the caller's stars)",
     "GET /api/usage/me": "3c: Action.SELF, the caller's own usage",
     "GET /api/worktree/changes": "3c: requires_tier('read'), worktree.py",
@@ -185,6 +175,8 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "GET /auth/users/{user_id}/permissions": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
     "PUT /auth/users/{user_id}/role": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
 }
+# 67 -> 68, maintainer 2026-11-18 (#1685, PR #1708): POST /api/tasks/{task_id}/start,
+# guarded as /claim; it migrates with claim (ADR-0037 §5, recorded changes).
 REST_NOT_YET_MIGRATED_SIZE = 68  # lower it with every entry removed; never raise it
 
 #: Non-GET operations that pass the policy only with a *read* declaration while
@@ -227,10 +219,6 @@ REST_READS_OVER_POST_SIZE = 4  # a new entry is a reviewed diff to this constant
 #: MCP tools that do not resolve an `Action` yet: all of them until theme 4.
 MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
     {
-        "cascade_actors",
-        "cascade_capture_lanes",
-        "cascade_network",
-        "cascade_timeline",
         "investigation_bulk_edges",
         "investigation_claims",
         "investigation_create_claim",
@@ -295,8 +283,6 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "social_reputation",
         "social_top",
         "social_vote",
-        "solidarity_infrastructure_types",
-        "solidarity_timeline",
         "sw_adrs",
         "sw_backlog",
         "sw_board",
@@ -327,7 +313,9 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "task_create",
         "task_critical_path",
         "task_decompose",
+        "task_finish",
         "task_list",
+        "task_start",
         "task_status",
         "task_subtree",
         "task_update",
@@ -341,12 +329,17 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "zettel_inbox",
     }
 )
-MCP_NOT_YET_MIGRATED_SIZE = 112  # lower it with every entry removed; never raise it
+# 106 -> 108, maintainer 2026-11-18 (#1685, PR #1708): task_start and task_finish,
+# guarded as task_claim; they migrate with it (ADR-0037 §5, recorded changes).
+MCP_NOT_YET_MIGRATED_SIZE = 108  # lower it with every entry removed; never raise it
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {
-    ("pyrite/server/mcp_server.py", "PyriteMCPServer._dispatch_tool"): "the chokepoint: calls it",
-    ("pyrite/server/mcp_server.py", "PyriteMCPServer._handler_takes_readable_kbs"): (
+    ("pyrite/server/mcp_server.py", "PyriteMCPServer._dispatch_tool_checked"): (
+        "the chokepoint's checks, reached only through _dispatch_tool, which holds "
+        "its one error contract: calls it"
+    ),
+    ("pyrite/server/mcp_server.py", "PyriteMCPServer._handler_takes"): (
         "inspect.signature only; calls nothing"
     ),
 }

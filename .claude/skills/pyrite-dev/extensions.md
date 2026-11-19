@@ -50,7 +50,9 @@ Implement the `PyritePlugin` Protocol. All methods are optional — implement on
 """My Extension plugin."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
+
+from pyrite.plugins.capabilities import Capability
 
 from .entry_types import MyEntry
 from .preset import MY_PRESET
@@ -59,6 +61,15 @@ from .validators import validate_my_type
 
 class MyExtensionPlugin:
     name = "my_extension"
+    # Declare a capability for every method group you implement; the registry
+    # skips methods whose capability is missing (map: _METHOD_CAPABILITIES in
+    # pyrite/plugins/registry.py).
+    capabilities: ClassVar[set[Capability]] = {
+        Capability.SCHEMA,    # get_entry_types
+        Capability.STORAGE,   # get_validators, get_hooks
+        Capability.SURFACE,   # get_kb_presets, get_cli_commands, get_mcp_tools, get_kb_types
+        Capability.DOMAIN,    # get_relationship_types, get_workflows
+    }
 
     def get_entry_types(self) -> dict[str, type]:
         return {"my_type": MyEntry}
@@ -88,7 +99,28 @@ class MyExtensionPlugin:
                 },
                 "handler": self._mcp_handler,
             }
+            # A tool that takes an entry id and an optional kb_name:
+            tools["my_item_tool"] = {
+                "description": "Act on one item",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "kb_name": {"type": "string", "description": "KB name"},
+                        "item_id": {"type": "string", "description": "Item entry ID"},
+                    },
+                    "required": ["item_id"],
+                },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "my_type"},
+                "handler": self._mcp_item_handler,  # args["kb_name"] is set
+            }
+        # Names are `<prefix>_*`: a core tool's name, or one another plugin
+        # registered first, is refused at registration.
         return tools
+
+    # A tool that records a person (who voted, reviewed, claimed) declares the
+    # argument in its tool dict: `PERSON_ARGUMENTS: {"who": CALLER}` from
+    # `pyrite.plugins.identity` (alpha). The dispatcher sets it from the
+    # session before the handler runs; the handler just reads `args["who"]`.
 
     def get_relationship_types(self) -> dict[str, dict]:
         return {
@@ -144,6 +176,52 @@ class MyExtensionPlugin:
         """Receive PluginContext with DB, config, services."""
         self._ctx = ctx
 ```
+
+### MCP write tools work in `kb_name`: `default_kb`
+
+A plugin tool registered above the read tier reads its KB from
+`args["kb_name"]` and nowhere else; the dispatcher sets it to a KB its read,
+write, read-only and landing checks ran on, or refuses the call.
+A tool whose KB may be omitted declares `"default_kb": self._default_kb` beside
+its `handler`: `(args, readable_kbs) -> str | None`, asked **before** the
+checks, answering only with a KB in `readable_kbs` (None means unscoped). No
+answer, and a call with no `kb_name` is refused. Never fall back to a default
+inside the handler. `tests/test_plugin_write_tools_work_in_the_checked_kb.py`
+drives every registered plugin write tool under every KB argument name.
+
+### MCP tools that take an entry id: `locates_entry`
+
+A tool whose arguments carry entry ids declares `locates_entry` beside its
+`handler` (#1310): `id_args`, every argument that names an entry (a string or
+a list of strings; anchors such as `after`/`before` count), and `entry_type`,
+the one type the tool acts on (leave it out for a tool that takes any type).
+The MCP dispatcher then finds the ids with `KBService.locate`, the rule
+`kb_get` and the CLI's `require_entry_kb` use: with `kb_name` blank or
+absent, the one readable KB holding them, `AMBIGUOUS` with `candidate_kbs` when
+several do, `ENTRY_NOT_FOUND` when none does; every id must be in that one KB.
+It sets `args["kb_name"]` to the KB it found **before** the read, write and
+landing checks, so the handler always works in a checked KB.
+
+- The handler reads `args["kb_name"]` and never resolves an id itself, never
+  falls back to a default KB, and never works in `kb_name or ""`.
+- `kb_name` is the handler's KB. Another KB argument (`kb`, `target_kb`, ...)
+  is checked but does not choose where the id is found.
+- A call whose id arguments are all blank (missing, empty, whitespace) is
+  refused `VALIDATION_FAILED` before any check: the handler never sees a call
+  without a located id, so it needs no fallback for one.
+- `kb_name` is registered as optional even if your schema lists it in
+  `required`: the MCP SDK validates arguments against the schema before the
+  dispatcher, and a required `kb_name` would refuse the call the lookup is for.
+  Leave it out of `required` anyway.
+- With no `kb_name`, the lookup reads the canonical index, so an id that
+  exists only in the caller's pending change set is found only when the call
+  names its KB.
+- Only the top-level `id_args` are located. An id nested in an object
+  argument (`investigation_promote_claim`'s `endpoint_fields`) is not; write it
+  only in the located KB, never use it to choose one.
+- `tests/test_plugin_mcp_tools_locate_ids.py` walks the registry and fails for
+  a tool with an id argument (by name, or by a description such as "Item entry
+  ID") and no `locates_entry`. Add a `Case` for your tool there.
 
 ## Entry Type Contract
 
@@ -315,22 +393,20 @@ MY_TABLES = [
 
 ## Hooks Pattern
 
+Hooks may refuse a write, not set fields; follow [the protocol contract](../../../pyrite/plugins/protocol.py).
+
 ```python
 from pyrite.models.base import Entry
 from typing import Any
 
 def before_save_check(entry: Entry, context: dict[str, Any]) -> Entry:
-    """before_save hooks receive (entry, context) and must return the entry."""
+    """Refuse invalid state without changing the entry."""
     if entry.entry_type != "my_type":
         return entry  # Don't interfere with other types
 
     # context keys: kb_name, user, kb_schema, operation ("create"|"update"|"delete")
-    # Can modify entry or raise to abort
-    if context.get("operation") == "create":
-        # Set defaults, validate state, etc.
-        pass
-
-    return entry  # MUST return entry
+    # Check state here and raise ValidationError to refuse if necessary.
+    return entry
 
 def after_save_update(entry: Entry, context: dict[str, Any]) -> None:
     """after_save hooks receive (entry, context) and return nothing."""
@@ -347,6 +423,7 @@ def after_save_update(entry: Entry, context: dict[str, Any]) -> None:
 ```python
 class MyExtensionPlugin:
     name = "my_extension"
+    capabilities = {Capability.STORAGE, Capability.CONTEXT}  # get_hooks, set_context
 
     def set_context(self, ctx):
         """Receive DI context — store for use in hooks and MCP handlers."""
@@ -380,16 +457,118 @@ MY_WORKFLOW = {
 }
 ```
 
+## 8-Section Extension Test Structure
+
+Every extension test file follows this structure. Not every section is required — only include sections for capabilities your extension implements.
+
+```python
+"""Tests for the my_extension extension."""
+
+from pyrite_my_extension.entry_types import MyEntry
+from pyrite_my_extension.plugin import MyExtensionPlugin
+from pyrite_my_extension.preset import MY_PRESET
+from pyrite_my_extension.validators import validate_my_type
+
+from pyrite.plugins.registry import PluginRegistry
+
+# =========================================================================
+# 1. Plugin registration
+# =========================================================================
+
+class TestPluginRegistration:
+    def test_plugin_has_name(self):
+        plugin = MyExtensionPlugin()
+        assert plugin.name == "my_extension"
+
+    def test_register_with_registry(self):
+        registry = PluginRegistry()
+        registry.register(MyExtensionPlugin())
+        assert "my_extension" in registry.list_plugins()
+
+    def test_entry_types_registered(self):
+        registry = PluginRegistry()
+        registry.register(MyExtensionPlugin())
+        types = registry.get_all_entry_types()
+        assert "my_type" in types  # Use `in`, not len()
+
+    # ... validators, commands, presets, kb_types, mcp_tools
+
+# =========================================================================
+# 2. Entry types
+# =========================================================================
+
+class TestMyEntry:
+    def test_default_values(self): ...
+    def test_entry_type_property(self): ...
+    def test_to_frontmatter(self): ...
+    def test_to_frontmatter_omits_defaults(self): ...
+    def test_from_frontmatter(self): ...
+    def test_from_frontmatter_generates_id(self): ...
+    def test_roundtrip_markdown(self): ...
+
+# =========================================================================
+# 3. Validators
+# =========================================================================
+
+class TestValidators:
+    def test_valid_data_passes(self): ...
+    def test_required_field_missing(self): ...
+    def test_invalid_enum_value(self): ...
+    def test_ignores_unrelated_types(self): ...  # CRITICAL: always include
+
+# =========================================================================
+# 4. Hooks (if applicable)
+# =========================================================================
+
+class TestHooks:
+    def test_before_save_modifies_entry(self): ...
+    def test_before_save_raises_on_violation(self): ...
+    def test_after_save_side_effect(self): ...
+    def test_hooks_ignore_unrelated_types(self): ...
+
+# =========================================================================
+# 5. Workflows (if applicable)
+# =========================================================================
+
+class TestWorkflows:
+    def test_valid_transitions(self): ...
+    def test_invalid_transition_rejected(self): ...
+    def test_initial_state(self): ...
+
+# =========================================================================
+# 6. DB Tables (if applicable)
+# =========================================================================
+
+class TestDBTables:
+    def test_table_definitions_valid(self): ...
+    def test_table_names_prefixed(self): ...
+
+# =========================================================================
+# 7. Preset
+# =========================================================================
+
+class TestPreset:
+    def test_preset_structure(self): ...
+    def test_preset_contains_expected_types(self): ...
+    def test_preset_directories(self): ...
+
+# =========================================================================
+# 8. Core integration
+# =========================================================================
+
+class TestCoreIntegration:
+    def test_entry_class_resolution(self): ...
+    def test_entry_from_frontmatter_resolution(self): ...
+    def test_relationship_types_merged(self): ...
+```
+
 ## Installation and Development
 
 ```bash
-# Install in development mode (required for plugin discovery)
-cd extensions/my-extension
-pip install -e . --target ../../.venv/lib/python3.*/site-packages/
-
-# Or simpler:
+# Install in development mode (required for plugin discovery).
+# Worktree venvs have no pip, so use uv (or re-run scripts/setup-checkout.sh):
 cd /path/to/repo
-.venv/bin/pip install -e extensions/my-extension
+uv pip install --python .venv/bin/python -e extensions/my-extension
 
 # Verify plugin loads
 .venv/bin/python -c "from pyrite.plugins.registry import get_registry; print(get_registry().list_plugins())"

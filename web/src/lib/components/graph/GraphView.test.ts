@@ -19,6 +19,7 @@ vi.mock('cytoscape', async () => {
 });
 import GraphView from './GraphView.svelte';
 import { goto } from '$app/navigation';
+import { uiStore } from '$lib/stores/ui.svelte';
 
 const nodes: GraphNode[] = [
 	{ id: 'hub', kb_name: 'test', title: 'Alpha Hub', entry_type: 'note', link_count: 1, centrality: 0.5 },
@@ -31,7 +32,7 @@ async function initialized() {
 	await waitFor(() => expect(graph.instances.length).toBeGreaterThan(0));
 	return graph.instances.at(-1)!;
 }
-afterEach(() => { cleanup(); graph.instances = []; });
+afterEach(() => { cleanup(); graph.instances = []; uiStore.theme = 'dark'; localStorage.removeItem('pyrite-theme'); });
 
 it('opens a tapped node in its own KB and omits missing KB names', async () => {
 	render(GraphView, { nodes, edges, layoutName: 'grid' });
@@ -121,3 +122,52 @@ describe('GraphView search reactivity', () => {
 
 
 
+
+describe('GraphView theme reactivity', () => {
+	it('uses light labels on an initially populated light graph', async () => {
+		uiStore.theme = 'light';
+		render(GraphView, { nodes, edges, layoutName: 'grid' });
+		const cy = await initialized();
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(113,113,122)'));
+	});
+
+	it('changes labels and canvas theme without replacing the graph instance', async () => {
+		const view = render(GraphView, { nodes, edges, layoutName: 'grid' });
+		const cy = await initialized();
+		const canvas = view.container.querySelector('.graph-container')!;
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(161,161,170)'));
+		uiStore.toggleTheme();
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(113,113,122)'));
+		expect(canvas.getAttribute('data-theme')).toBe('light');
+		uiStore.toggleTheme();
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(161,161,170)'));
+		expect(canvas.getAttribute('data-theme')).toBe('dark');
+		expect(graph.instances).toEqual([cy]);
+		expect(cy.destroyed()).toBe(false);
+	});
+
+	it('uses the current theme when an empty graph later receives nodes', async () => {
+		uiStore.theme = 'light';
+		const view = render(GraphView, { nodes: [], edges: [], layoutName: 'grid' });
+		expect(graph.instances).toHaveLength(0);
+		expect(view.container.querySelector('.graph-container')?.getAttribute('data-theme')).toBe('light');
+		uiStore.toggleTheme();
+		await view.rerender({ nodes, edges });
+		const cy = await initialized();
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(161,161,170)'));
+		uiStore.toggleTheme();
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(113,113,122)'));
+	});
+
+	it('keeps themed labels for replacement nodes and after clearing search', async () => {
+		const view = render(GraphView, { nodes, edges, layoutName: 'grid', searchQuery: 'alpha' });
+		const cy = await initialized();
+		uiStore.toggleTheme();
+		await waitFor(() => expect(cy.nodes().style('color')).toBe('rgb(113,113,122)'));
+		await view.rerender({ nodes: [...nodes, { ...nodes[1], id: 'new' }], searchQuery: '' });
+		await waitFor(() => expect(cy.nodes()).toHaveLength(3));
+		expect(cy.getElementById('test/new').style('color')).toBe('rgb(113,113,122)');
+		expect(cy.getElementById('test/hub').style('color')).toBe('rgb(113,113,122)');
+		expect(graph.instances).toHaveLength(1);
+	});
+});

@@ -11,16 +11,15 @@ import sys
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..utils.errors import PARTIAL_EXIT, cli_error
-from .output import validate_output_format
+from .output import cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
 
 extension_app = typer.Typer(help="Extension management")
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str) -> str | None:
@@ -294,11 +293,11 @@ class Test{pascal}Plugin:
     else:
         console.print(f"[green]Created extension:[/green] {name}")
         console.print(f"  Package: {pkg}")
-        console.print(f"  Path: {out_path}")
+        console.print(path_line("  Path: ", out_path))
         console.print(f"  Files: {len(generated_files)}")
         if type_names:
             console.print(f"  Types: {', '.join(type_names)}")
-        console.print(f"\n  Install with: pyrite extension install {out_path}")
+        console.print(path_line("\n  Install with: pyrite extension install ", out_path))
 
 
 # Runs in a fresh interpreter. Loads only the named distribution's own
@@ -307,11 +306,12 @@ class Test{pascal}Plugin:
 _VERIFY_SCRIPT = """
 import json, sys
 from importlib.metadata import distribution
+from pyrite.plugins.registry import load_plugin_entry_point
 eps = [e for e in distribution(sys.argv[1]).entry_points if e.group == "pyrite.plugins"]
 errors = []
 for ep in eps:
     try:
-        ep.load()()
+        load_plugin_entry_point(ep)
     except BaseException as exc:
         errors.append(f"entry point {ep.name!r} ({ep.value}): {type(exc).__name__}: {exc}")
 print(json.dumps({"found": len(eps), "errors": errors}))
@@ -348,7 +348,11 @@ def _verify_distribution(dist_name: str) -> list[str]:
 @extension_app.command("install")
 def extension_install(
     path: Path = typer.Argument(..., help="Path to extension directory"),
-    verify: bool = typer.Option(False, "--verify", help="Verify plugin loads after install"),
+    verify: bool = typer.Option(
+        False,
+        "--verify",
+        help="Verify plugin loads after install; exit 3 if verification fails or no pyrite.plugins entry points are declared",
+    ),
     output_format: str = typer.Option(
         "json",
         "--format",
@@ -402,7 +406,7 @@ def extension_install(
         verify_errors = _verify_distribution(plugin_name)
         verified = not verify_errors
         for err in verify_errors:
-            console.print(f"[yellow]Warning:[/yellow] Plugin verification failed: {err}")
+            typer.echo(f"Warning: Plugin verification failed: {err}", err=True)
 
     output = {
         "status": "installed",
@@ -418,7 +422,7 @@ def extension_install(
         typer.echo(formatted)
     else:
         console.print(f"[green]Installed:[/green] {plugin_name}")
-        console.print(f"  Path: {path}")
+        console.print(path_line("  Path: ", path))
         if verify:
             if verified:
                 console.print("  [green]Verified: plugin loaded successfully[/green]")

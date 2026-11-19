@@ -599,11 +599,16 @@ class TestTheTraceAndTheWarningAgree:
 
     @staticmethod
     def _trace(db, mode):
+        """The search as the CLI runs it: the local process, which is shown a
+        loader fault's text (a network caller is shown its class only:
+        tests/test_caller_owned_text.py)."""
+        from pyrite.services.acting import local_process
         from pyrite.services.search_service import SearchService
 
         trace: dict = {}
         warnings: list[str] = []
-        SearchService(db).search("falcon", mode=mode, warnings=warnings, trace=trace)
+        with local_process(True):
+            SearchService(db).search("falcon", mode=mode, warnings=warnings, trace=trace)
         return trace, warnings
 
     def test_semantic_without_the_extra(self, indexed, no_extra):
@@ -631,7 +636,9 @@ class TestTheTraceAndTheWarningAgree:
             "importlib.util.find_spec",
             lambda name, *args: object() if name == "sqlite_vec" else real_find_spec(name, *args),
         )
-        monkeypatch.setattr(db, "vec_load_error", load_error, raising=False)
+        from pyrite.exceptions import held_fault
+
+        monkeypatch.setattr(db, "vec_load_error", held_fault(load_error), raising=False)
         trace, warnings = self._trace(db, "semantic")
         assert trace["reason"] == "semantic_sqlite_vec_not_loaded", trace
         assert "RuntimeError: simulated sqlite-vec loader failure" in warnings[0]
@@ -702,7 +709,7 @@ class TestTheTraceAndTheWarningAgree:
         self._installed_sqlite_vec(monkeypatch, lambda conn: conn.load_extension("vec0"))
         db = PyriteDB(tmp_path / "second.db")
         try:
-            assert isinstance(db.vec_load_error, AttributeError), db.vec_load_error
+            assert db.vec_load_error.type_name == "AttributeError", db.vec_load_error
             trace, warnings = self._trace(db, "semantic")
         finally:
             db.close()
@@ -730,10 +737,13 @@ class TestTheTraceAndTheWarningAgree:
     def test_only_a_refused_extension_load_names_the_python(
         self, monkeypatch, error, names_the_python
     ):
+        from pyrite.exceptions import held_fault
+        from pyrite.services.acting import local_process
         from pyrite.services.embedding_service import semantic_unavailable
 
         self._installed_sqlite_vec(monkeypatch, lambda conn: None)
-        code, cause, remedy = semantic_unavailable(False, error)
+        with local_process(True):
+            code, cause, remedy = semantic_unavailable(False, held_fault(error))
         assert code == "sqlite_vec_not_loaded"
         assert f"{type(error).__name__}: {error}" in cause
         assert ("use a Python whose sqlite3 allows extensions" in remedy) is names_the_python
@@ -821,11 +831,13 @@ class TestIndexEmbedAccounting:
 
         from pyrite.cli import app, index_commands
 
+        from pyrite.exceptions import held_fault
+
         load_error = OSError("simulated loadable-extension failure")
         db = type(
             "UnavailableDB",
             (),
-            {"vec_available": False, "vec_load_error": load_error},
+            {"vec_available": False, "vec_load_error": held_fault(load_error)},
         )()
         real_find_spec = importlib.util.find_spec
         monkeypatch.setattr(
@@ -856,3 +868,54 @@ def test_hybrid_and_semantic_keep_their_published_no_embeddings_reasons(indexed)
         TestTheTraceAndTheWarningAgree._trace(db, "semantic")[0]["reason"]
         == "semantic_empty_no_embeddings"
     )
+
+
+class TestIndexEmbedUnavailableModel:
+    def test_model_load_failure_preserves_queue_and_reports_one_actionable_message(
+        self, tmp_path, monkeypatch
+    ):
+        from typer.testing import CliRunner
+
+        from pyrite.cli import app
+
+        kb_path = tmp_path / "kb"
+        kb_path.mkdir()
+        config = PyriteConfig(
+            knowledge_bases=[KBConfig(name="t", path=kb_path, kb_type=KBType.GENERIC)],
+            settings=Settings(
+                index_path=tmp_path / "i.db",
+                auto_embed=True,
+                embedding_model="configured-offline-model",
+            ),
+        )
+        db = PyriteDB(config.settings.index_path)
+        db.vec_available = True
+        db.backend.vec_available = True
+        kb_service = KBService(config, db)
+        kb_service.create_entry("t", "e1", "First", "note", "body one")
+        kb_service.create_entry("t", "e2", "Second", "note", "body two")
+
+        monkeypatch.setattr("pyrite.services.embedding_service.is_available", lambda: True)
+        load_model = MagicMock(side_effect=OSError("model unavailable offline"))
+        monkeypatch.setattr("pyrite.services.embedding_service._load_model", load_model)
+        monkeypatch.setattr("pyrite.cli.index_commands.get_config_and_db", lambda: (config, db))
+
+        try:
+            result = CliRunner().invoke(app, ["index", "embed"])
+
+            assert result.exit_code == 1, result.output  # nothing embedded: never 0
+            assert result.output.count("Could not load the embedding model") == 1
+            assert "'configured-offline-model'" in result.output
+            assert "cache" in result.output.lower()
+            assert "pending" in result.output.lower()
+            assert load_model.call_count == 1
+            assert _vector_count(db) == 0
+            rows = db._raw_conn.execute(
+                "SELECT entry_id, attempts, status FROM embed_queue ORDER BY entry_id"
+            ).fetchall()
+            assert [tuple(row) for row in rows] == [
+                ("e1", 0, "pending"),
+                ("e2", 0, "pending"),
+            ]
+        finally:
+            db.close()

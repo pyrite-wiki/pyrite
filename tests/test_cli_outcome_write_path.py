@@ -147,16 +147,16 @@ def doc(result):
 REFUSALS = [
     # (id, argv, code, hint): `hint` is a substring of the suggestion dev gave for the
     # same input, or None when it gave none.
-    ("create-kb", ["create", "-k", "nokb", "-t", "note", "--title", "x"], "KB_NOT_FOUND", None),
-    ("update-kb", ["update", "hello", "-k", "nokb", "--title", "x"], "KB_NOT_FOUND", None),
-    ("link-kb", ["link", "hello", "hello", "-k", "nokb"], "KB_NOT_FOUND", None),
-    ("rename-kb", ["rename", "hello", "other", "-k", "nokb"], "KB_NOT_FOUND", None),
-    ("add-kb", ["add", "{f_ok}", "-k", "nokb"], "KB_NOT_FOUND", None),
+    ("create-kb", ["create", "-k", "nokb", "-t", "note", "--title", "x"], "KB_NOT_FOUND", "orient"),
+    ("update-kb", ["update", "hello", "-k", "nokb", "--title", "x"], "KB_NOT_FOUND", "orient"),
+    ("link-kb", ["link", "hello", "hello", "-k", "nokb"], "KB_NOT_FOUND", "orient"),
+    ("rename-kb", ["rename", "hello", "other", "-k", "nokb"], "KB_NOT_FOUND", "orient"),
+    ("add-kb", ["add", "{f_ok}", "-k", "nokb"], "KB_NOT_FOUND", "orient"),
     (
         "bulk-kb",
         ["links", "bulk-create", "{links}", "-k", "nokb"],
         "KB_NOT_FOUND",
-        "pyrite kb list",
+        "orient",  # the one resolver's hint: the CLI resolves -k before the body (#924)
     ),
     ("create-ro", ["create", "-k", "ro", "-t", "note", "--title", "x"], "KB_READ_ONLY", None),
     ("update-ro", ["update", "hello", "-k", "ro", "--title", "x"], "KB_READ_ONLY", None),
@@ -331,10 +331,12 @@ def test_create_update_get_round_trip_in_json_and_rich(env):
 
 
 @pytest.mark.control(reason="control: delete asks a question, so it stays off the contract")
-def test_delete_stays_off_the_contract_and_asks_as_dev_did(env):
+def test_delete_stays_off_the_contract_and_asks_as_dev_did(env, monkeypatch):
     """A command on the contract does not prompt (ADR-0046, amendment); the prompt
     rule is the maintainer's open question, so `delete` is exactly dev's."""
     assert not declares_shared_format(_leaf(("delete",)))
+
+    monkeypatch.setattr("typer.testing._NamedTextIOWrapper.isatty", lambda _self: True)
     seed(env)
     declined = run(env, "delete", "hello", "-k", "notes", input="n\n")
     assert declined.exit_code == 1 and "Aborted" in declined.output, declined.output
@@ -553,6 +555,7 @@ def test_add_rename_and_link_succeed_as_one_json_document_by_default(env):
                 "relation": "informs",
                 "target": "world",
                 "target_kb": "notes",
+                "resolved": True,
             }
         ],
         "outcome": "done",

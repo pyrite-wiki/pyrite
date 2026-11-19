@@ -1,42 +1,33 @@
-"""The round-trip identity gate (quality, retro 2).
+"""The round-trip identity gate (quality, retro 2), on the one write path.
 
-Loading every entry in a KB and saving it back with no edit should change
-nothing on disk. Before PR #69 this rewrote 768 of 768 real `kb/` files;
-#69 brought that down, and this test measured the remainder directly: 52 of
-770 files, split across two distinct causes (see `KNOWN_RESIDUAL_IDS` below --
-each group is a separate, precisely-identified finding, not one blob). 8
-remain, all trailing-blank-line normalization: the 46 bare-string `links:`
-files round-trip since #557. Two more groups are gone: the block-indented `links:` set
-(11 ids, issue #148 -- `pyrite/utils/yaml.py` now reads a source document's own
-sequence indentation out of the parsed tree's line/column records and hands the
-emitter those numbers, so a no-op save leaves those files byte-identical) and
-the `body:` fold set (6 ids, issue #150 -- those files were re-saved through
-the repository, which drops the surviving `body:`/`file_path:` keys).
+Writing an entry's own values back should change nothing on disk. Before
+PR #69 a no-op load -> ``Entry.save`` rewrote 768 of 768 real ``kb/`` files;
+#69, #557, #148, #150 and #151 brought the residual down to 8, all trailing
+blank lines the model's emitter normalised. Since #955 (B6 P4) the model has
+no emitter: every write is operations applied to the file's own bytes
+(ADR-0042 decisions 1 and 3, ``file_operations.apply``), published by
+``storage/entry_writer.py``. So the gate is now an **echo**: for every file,
+one ``Set`` per frontmatter key with the value the loader read, and a
+``ReplaceBody`` with the body as read, through ``KBService.apply_operations``.
+Decision 3 says equal values write nothing; this test measures that over the
+whole corpus instead of trusting it.
 
-Every write-path bug in the run-up to this test -- #46 (an incidental
-`--tags` update rewriting the whole file), #86 (`pyrite create` leaking
-`importance`/`rank` into files that never had them), #87 (`link`/`update`
-folding the body into a `body:` frontmatter scalar) -- was a special case of
-"save wrote something load did not read". This test makes that class of bug
-fail the suite instead of waiting for a human to notice a huge diff in
-review.
+Every write-path bug in the run-up to the original gate -- #46 (an
+incidental ``--tags`` update rewriting the whole file), #86 (``create``
+leaking ``importance``/``rank`` into files that never had them), #87
+(``link``/``update`` folding the body into a ``body:`` scalar) -- was a
+special case of "the write put something the read did not take". An echo
+that changes bytes is that class of bug; it fails here.
 
-Design under test (see `pyrite/models/base.py`, #69's final design, read
-before touching this file):
-  - `Entry.__setattr__` tracks `_absent_default_keys` -- a default-valued key
-    the source file lacked stays absent on save, UNLESS something assigns to
-    the attribute (which clears it from the set). So this gate loads and
-    saves WITHOUT touching any attribute in between: an incidental `setattr`
-    in a helper would make the gate fail for a reason that has nothing to do
-    with the write path.
-  - `_pristine_frontmatter(cls)` is an `@cache`d per-class probe, so it is
-    SHARED state across the whole walk of `kb/`. `test_pristine_probe_does_
-    not_leak_between_entries` pins that two entries of the same type with
-    different absent-key sets do not contaminate each other, mirroring the
-    exact bug #69's last commit fixed.
+What is not echoed: ``id`` and ``type`` (identity, never set by an update)
+and the managed lists ``links`` and ``sources`` (an update takes items of
+them, never the whole list; the walking test covers those). A file the
+write refuses (its own schema, #955's validation of the result) writes
+nothing, which is the same property; the refusals are named in
+``KNOWN_REFUSED`` so they only change on purpose.
 
-Safety: this NEVER loads or saves inside the real `kb/`. Both the full-corpus
-walk and the fixture walk copy their source into a `tmp_path` first and
+Safety: this NEVER writes inside the real ``kb/``. Both the full-corpus
+walk and the fixture walk copy their source into a ``tmp_path`` first and
 operate only on the copy, so an agent running this file cannot corrupt the
 checked-in KB no matter what the write path does.
 """
@@ -45,112 +36,121 @@ from __future__ import annotations
 
 import difflib
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
-from pyrite.config import KBConfig
+from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.kb_service import KBService
+from pyrite.storage.database import PyriteDB
+from pyrite.storage.file_operations import ReplaceBody, Set
+from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
+from pyrite.utils.frontmatter import Frontmatter, split_frontmatter
+from pyrite.utils.yaml import load_yaml
+
+pytestmark = pytest.mark.control(
+    reason="the gate pins a property the base already had (an echo through apply writes nothing); it is rewritten here because its old form used Entry.save, gone since #955 P4"
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REAL_KB_DIR = REPO_ROOT / "kb"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "roundtrip"
 
-# The exact, fully-classified set of real-kb/ ids that currently fail a
-# no-op load -> save, split by root cause. Each group traces to a specific
-# finding from this theme's investigation (quality/roundtrip-identity-gate,
-# PR #146) -- NOT a blanket "known flaky" bucket. Every id here MUST be
-# tracked by a GitHub issue (or, for the residual named in #146's own spec,
-# fixed or explicitly deferred there) so the set only shrinks on purpose.
-#
-# 1. FIXED (#557): BARE-STRING LINKS. A bare YAML string under `links:`
-#    parses into `Link(target=..., relation="related")`, and `Link.to_dict()`
-#    always emits a mapping, so a no-op save rewrote 46 files' `links:`
-#    shorthand into dicts. #557 made the write path keep any key the model
-#    cannot reproduce as the file had it, until the field itself changes
-#    (`capture_extra_frontmatter` records it; `_frontmatter_for_file` puts
-#    the source node back), so this group is empty. Kept as a named set so
-#    the count test still records which class of finding it was.
-LINKS_BARE_STRING_IDS: frozenset[str] = frozenset()
+#: Keys an echo does not send: identity (an update never sets them) and the
+#: managed lists (an update takes one item of them, never the list).
+NOT_ECHOED = frozenset({"id", "type", "links", "sources"})
 
-# 3. FIXED (issue #149): `GenericEntry` (pyrite/models/generic.py, backs
-#    `type: design`/`note`/any kb.yaml custom type) promoted undeclared
-#    frontmatter keys to `self.metadata`, while `Entry._base_frontmatter()`
-#    also re-serialized that whole mapping as a nested `metadata:` block --
-#    the same keys twice. `GenericEntry.to_frontmatter` now nests only keys
-#    that came from an explicit `metadata:` block and promotes the rest, so
-#    this group is empty. Kept as a named set so the union's shape and the
-#    count test still record which class of finding it was.
-GENERIC_METADATA_DUP_IDS: frozenset[str] = frozenset()
-
-# 5. Daily notes with more than one trailing blank line in their body.
-#    `Entry.to_markdown` always writes exactly one trailing newline after
-#    the body (a deliberate rule -- see that method's docstring; pre-commit
-#    end-of-file hook requires it, and no file in kb/ lacks a FINAL newline,
-#    only some have extra blank ones before it). This is idempotent
-#    normalization, not a write-path bug: saving twice produces identical
-#    bytes to saving once (see TestAdversarialFixtures.
-#    test_trailing_newline_shapes_load_and_normalize_idempotently for the
-#    equivalent one-shot case). Tracked here, not as an issue, because
-#    there is nothing to fix -- to_markdown is doing exactly what its
-#    docstring says.
-TRAILING_BLANK_LINE_NORMALIZE_IDS: frozenset[str] = frozenset(
-    {
-        "daily-2026-02-24",
-        "daily-2026-03-01",
-        "daily-2026-03-02",
-        "daily-2026-03-03",
-        "daily-2026-03-04",
-        "daily-2026-03-05",
-        # These two also changed `links:` shape, which hid this cause until
-        # #557 fixed that one.
-        "epic-task-dag-queries-and-orchestrator-support",
-        "epic-task-system-integration-with-qa-agent",
-    }
-)
-
-# The union is what today's gate must xfail(strict=True) on, named exactly,
-# so the set can only shrink on purpose (strict=True fails the test the
-# moment any id here stops failing, forcing this list to be updated in the
-# same commit as whatever fixed it).
-KNOWN_RESIDUAL_IDS: frozenset[str] = (
-    LINKS_BARE_STRING_IDS | GENERIC_METADATA_DUP_IDS | TRAILING_BLANK_LINE_NORMALIZE_IDS
-)
+#: Real kb/ ids whose echo the write refuses today, with the reason's text:
+#: the file itself violates its type's schema, so the validated result is
+#: refused and nothing is written (the property still holds). Named exactly,
+#: so the set changes only on purpose; fix the entry and remove it here.
+#: Empty since #676 (ADR-0042 decision 8): adr-0003's missing `superseded_by`
+#: is a violation already on disk, which an echo that does not touch it
+#: gets as a warning, not a refusal.
+KNOWN_REFUSED: dict[str, str] = {}
 
 
 def _copy_kb_to(tmp_path: Path, source: Path) -> Path:
     dest = tmp_path / "kb_copy"
-    shutil.copytree(source, dest)
+    shutil.copytree(source, dest, ignore=shutil.ignore_patterns(".git"))
+    subprocess.run(["git", "init", "-q"], cwd=dest, check=True, capture_output=True, timeout=30)
     return dest
 
 
-def _repo_for(path: Path) -> KBRepository:
-    return KBRepository(KBConfig(name="roundtrip-test", path=path, kb_type="generic"))
+def _service_for(tmp_path: Path, kb_path: Path, kb_type: str = "generic"):
+    """A service over ``kb_path``, indexed; the caller closes ``db``."""
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="roundtrip-test", path=kb_path, kb_type=kb_type)],
+        settings=Settings(index_path=tmp_path / "index.db", auto_embed=False),
+    )
+    db = PyriteDB(config.settings.index_path)
+    IndexManager(db, config).index_all()
+    return KBService(config, db), db, KBRepository(config.knowledge_bases[0])
 
 
-def _load_save_diffs(
-    repo: KBRepository, *, skip_ids: frozenset[str] = frozenset()
-) -> list[tuple[str, Path, str, str]]:
-    """Load every entry through ``repo``, save it back untouched, and collect
+def _echo_ops(text: str) -> list[object] | None:
+    """The echo of ``text``: one ``Set`` per frontmatter key with the value as
+    loaded, and the body as read; None for a file with no frontmatter.
 
-    diffs. Returns a list of (entry_id, file_path, before_text, after_text)
-    for every file whose bytes changed. Entries whose id is in ``skip_ids``
-    are loaded and saved (so a regression there is still visible if someone
-    widens the skip list) but never appear in the returned diff list -- they
-    are asserted on separately, by the caller, as xfail.
-    """
+    ``metadata`` is not a field (#1001, Andon #994): a key under the
+    ``metadata:`` block is echoed at its own spelling, ``("metadata", k)``,
+    never as one ``Set`` of the block. A field the file spells twice (``k:``
+    and ``metadata.k``) takes no write at all until one spelling goes, so the
+    echo leaves both of its spellings out: the property (nothing changes) is
+    still stated for every other key, and ``index health`` reports the pair
+    (``double_spellings``)."""
+    split = split_frontmatter(text)
+    if not isinstance(split, Frontmatter):
+        return None
+    values = load_yaml(split.text)
+    if not isinstance(values, dict):
+        return None
+    nested = values.get("metadata")
+    nested = nested if isinstance(nested, dict) else {}
+    spelled_twice = {k for k in nested if k in values}
+    ops: list[object] = [
+        Set(k, v)
+        for k, v in values.items()
+        if k not in NOT_ECHOED and k != "metadata" and k not in spelled_twice
+    ]
+    ops += [Set(("metadata", k), v) for k, v in nested.items() if k not in spelled_twice]
+    if "metadata" in values and not isinstance(values["metadata"], dict):
+        ops.append(Set("metadata", values["metadata"]))
+    ops.append(ReplaceBody(split.body))
+    return ops
+
+
+def _echo(svc: KBService, repo: KBRepository, path: Path) -> tuple[str, str, str | None]:
+    """Echo one file; returns ``(before, after, refusal)``."""
+    before = path.read_text(encoding="utf-8")
+    ops = _echo_ops(before)
+    refusal = None
+    if ops is not None:
+        try:
+            svc.apply_operations(repo.id_of_file(path), repo.name, ops)
+        except Exception as e:  # noqa: BLE001 - the refusal is the finding
+            refusal = f"{type(e).__name__}: {e}"
+    return before, path.read_text(encoding="utf-8"), refusal
+
+
+def _echo_diffs(
+    svc: KBService, repo: KBRepository
+) -> tuple[list[tuple[str, Path, str, str]], dict[str, str]]:
+    """Echo every file through the service: the files whose bytes changed
+    (entry_id, path, before, after) and the refusals by id."""
     diffs: list[tuple[str, Path, str, str]] = []
-    for entry, file_path in repo.list_entries():
-        before = file_path.read_text(encoding="utf-8")
-        # No attribute assignment between load and save -- see module
-        # docstring. `entry.save()` re-reads only what from_markdown already
-        # set on the instance.
-        entry.save(file_path)
-        after = file_path.read_text(encoding="utf-8")
-        if before != after and entry.id not in skip_ids:
-            diffs.append((entry.id, file_path, before, after))
-    return diffs
+    refused: dict[str, str] = {}
+    for path in sorted(repo.list_files()):
+        entry_id = repo.id_of_file(path)
+        before, after, refusal = _echo(svc, repo, path)
+        if refusal:
+            refused[entry_id] = refusal
+        if before != after:
+            diffs.append((entry_id, path, before, after))
+    return diffs, refused
 
 
 def _format_diffs(diffs: list[tuple[str, Path, str, str]], limit: int = 10) -> str:
@@ -166,7 +166,7 @@ def _format_diffs(diffs: list[tuple[str, Path, str, str]], limit: int = 10) -> s
         )
         chunks.append(f"--- entry {entry_id} ---\n{unified}")
     more = len(diffs) - limit
-    header = f"{len(diffs)} file(s) changed on a no-op load->save"
+    header = f"{len(diffs)} file(s) changed on an echo of their own values"
     if more > 0:
         header += f" (showing first {limit}, {more} more not shown)"
     return header + "\n\n" + "\n".join(chunks)
@@ -175,7 +175,6 @@ def _format_diffs(diffs: list[tuple[str, Path, str, str]], limit: int = 10) -> s
 @pytest.fixture(scope="module", autouse=True)
 def real_kb_walk_calls():
     """Count actual walks of real-corpus copies, including calls outside the
-
     shared fixture. Check at module teardown so a later test cannot bypass
     the guard by walking again after the assertion test has already passed.
     Smaller synthetic KBs are not part of this shared-corpus budget.
@@ -183,7 +182,7 @@ def real_kb_walk_calls():
     real_copies: set[Path] = set()
     calls: list[Path] = []
     original_copy = _copy_kb_to
-    original_walk = _load_save_diffs
+    original_walk = _echo_diffs
 
     def tracked_copy(tmp_path, source):
         copied = original_copy(tmp_path, source)
@@ -191,14 +190,14 @@ def real_kb_walk_calls():
             real_copies.add(copied.resolve())
         return copied
 
-    def tracked_walk(repo, **kwargs):
+    def tracked_walk(svc, repo):
         if repo.path.resolve() in real_copies:
             calls.append(repo.path.resolve())
-        return original_walk(repo, **kwargs)
+        return original_walk(svc, repo)
 
     with pytest.MonkeyPatch.context() as patch:
         patch.setattr(sys.modules[__name__], "_copy_kb_to", tracked_copy)
-        patch.setattr(sys.modules[__name__], "_load_save_diffs", tracked_walk)
+        patch.setattr(sys.modules[__name__], "_echo_diffs", tracked_walk)
         yield calls
         if real_copies:
             assert len(calls) == 1, (
@@ -209,110 +208,40 @@ def real_kb_walk_calls():
 
 @pytest.fixture(scope="module")
 def real_kb_walk(tmp_path_factory, real_kb_walk_calls):
-    """Walk a temp copy of the real `kb/` once per module.
+    """Echo a temp copy of the real ``kb/`` once per module, as the software
+    KB it is (its plugin types validate the result, as in production)."""
+    pytest.importorskip("pyrite_software_kb.plugin")
+    from pyrite.plugins.registry import PluginRegistry
+    from pyrite_software_kb.plugin import SoftwareKBPlugin
 
-    Every real-corpus assertion shares the full, unfiltered diff list instead
-    of re-copying and re-walking the corpus. The call-count guard checks this
-    shape directly, independently of runner load or corpus size.
-    """
+    PluginRegistry().register(SoftwareKBPlugin())
     tmp_path = tmp_path_factory.mktemp("real_kb_walk")
     kb_copy = _copy_kb_to(tmp_path, REAL_KB_DIR)
-    repo = _repo_for(kb_copy)
-    return _load_save_diffs(repo, skip_ids=frozenset())
+    svc, db, repo = _service_for(tmp_path, kb_copy, kb_type="software")
+    try:
+        return _echo_diffs(svc, repo)
+    finally:
+        db.close()
 
 
 class TestRealKBRoundTrip:
-    """The gate itself: walk the real `kb/`, on a temp copy, load->save->compare."""
+    """The full corpus: every file under the real ``kb/`` (a copy)."""
 
-    def test_real_kb_is_byte_identical_after_noop_roundtrip(self, real_kb_walk):
-        all_diffs = real_kb_walk
-        diffs = [d for d in all_diffs if d[0] not in KNOWN_RESIDUAL_IDS]
-
+    def test_real_kb_is_byte_identical_after_an_echo(self, real_kb_walk):
+        diffs, _refused = real_kb_walk
         assert not diffs, _format_diffs(diffs)
 
     def test_real_kb_walk_is_shared(self, real_kb_walk, real_kb_walk_calls):
-        """All real-corpus assertions reuse one walk; teardown also catches
-
-        duplicate walks introduced by tests that run after this assertion.
-        """
         assert len(real_kb_walk_calls) == 1
 
-    def test_known_residual_is_exactly_this_set_no_more_no_less(self, real_kb_walk):
-        """Not xfail -- a normal, passing assertion that the excluded set in
-
-        `test_real_kb_is_byte_identical_after_noop_roundtrip` (via
-        `KNOWN_RESIDUAL_IDS`) is exactly right: every id in
-        `KNOWN_RESIDUAL_IDS` still fails a no-op round trip (so the skip is
-        not hiding a stale entry that got fixed and forgotten), and nothing
-        outside that set fails either (so a NEW regression cannot hide
-        behind the skip list). Whichever direction breaks, this test fails
-        with the two sets' difference, in the ordinary way -- no xfail
-        involved, because there is nothing here that is expected to be
-        broken; the brokenness lives in the 70 real files, and this test's
-        job is to keep the list of them honest.
-
-        The actual `xfail(strict=True)` cases per #146's acceptance
-        criterion 4 are the per-id cases below
-        (`test_known_residual_id_fails_roundtrip`) and the fixture-level
-        ones in TestAdversarialFixtures. (`created_as_date.md` /
-        `created_as_string.md` were pinned here as sentinels for #151's
-        drop bug while it was open; with #151 fixed they are back in the
-        blanket byte-identity assertion.)
-        """
-        all_diffs = real_kb_walk
-        residual_ids = {entry_id for entry_id, *_ in all_diffs}
-
-        missing_from_reality = KNOWN_RESIDUAL_IDS - residual_ids
-        assert not missing_from_reality, (
-            f"these ids no longer fail a no-op round trip: {sorted(missing_from_reality)} "
-            "-- remove them from the relevant *_IDS set above (and close the "
-            "matching issue, if any)"
-        )
-        new_or_unclassified = residual_ids - KNOWN_RESIDUAL_IDS
-        assert not new_or_unclassified, (
-            f"these ids fail a no-op round trip but are not in any known-residual "
-            f"group: {sorted(new_or_unclassified)} -- this is a NEW regression, "
-            "classify and fix it, or add it to the right *_IDS set with a reason "
-            "and a GitHub issue"
-        )
-
-    @pytest.mark.control(
-        reason="bookkeeping: counts this module's own residual sets, so it "
-        "passes on any code; renamed from _is_52 when #557 emptied the links group"
-    )
-    def test_known_residual_count_is_8(self):
-        """The count, recorded here per #146 acceptance criterion 4 ("the
-
-        count in the test's docstring and in the report") as well as in the
-        module docstring: 8 ids as of this branch, all trailing-blank-line
-        normalization (two of them hidden behind the links group until it was
-        fixed). The bare-string `links:` group is empty (fixed in
-        #557), the `GenericEntry` metadata duplication group is empty (fixed
-        in #149), and the block-indented `links:` group (fixed in #148) and
-        the `body:` fold group (cleaned in #150) are gone.
-        """
-        assert len(LINKS_BARE_STRING_IDS) == 0
-        assert len(GENERIC_METADATA_DUP_IDS) == 0
-        assert len(TRAILING_BLANK_LINE_NORMALIZE_IDS) == 8
-        assert len(KNOWN_RESIDUAL_IDS) == 8
-
-    # #146 acceptance criterion 4: "xfail(strict=True) on exactly the failing
-    # ids with the count in the test's docstring and in the report, so the
-    # next tick can see it shrink". One parametrized xfail per id, at
-    # per-file granularity (reading the SAME shared `real_kb_walk` result
-    # rather than re-walking per id -- 70 separate full-corpus walks made
-    # this file take minutes instead of seconds), so fixing group 3's single
-    # id (search-failure-modes-and-agent-interface, issue #149) flips
-    # exactly that one case to XPASS(strict), failing loudly and
-    # specifically, rather than needing every id in the same group fixed
-    # before the suite notices progress.
-    @pytest.mark.parametrize("entry_id", sorted(KNOWN_RESIDUAL_IDS))
-    @pytest.mark.xfail(strict=True, reason="see KNOWN_RESIDUAL_IDS's grouped comments above")
-    def test_known_residual_id_fails_roundtrip(self, real_kb_walk, entry_id):
-        all_diffs = real_kb_walk
-        diff_ids = {d[0] for d in all_diffs}
-
-        assert entry_id not in diff_ids, f"{entry_id} still fails its no-op round trip"
+    def test_the_refused_echoes_are_exactly_the_known_set(self, real_kb_walk):
+        """A refusal writes nothing, which is the property; the set is named so
+        a new refusal (a schema the write now checks, a file that stopped
+        loading) is a finding, and a fixed entry leaves here on purpose."""
+        _diffs, refused = real_kb_walk
+        assert set(refused) == set(KNOWN_REFUSED), refused
+        for entry_id, reason in KNOWN_REFUSED.items():
+            assert reason in refused[entry_id], refused[entry_id]
 
 
 class TestAdversarialFixtures:
@@ -323,56 +252,56 @@ class TestAdversarialFixtures:
     in kb/ changed".
     """
 
-    # Fixtures with their own dedicated test below, not the blanket identity
-    # assertion:
-    #   - bare_string_links.md used to reproduce the links residual (group 1
-    #     above); since #557 it is part of the blanket byte-identity assertion.
-    #   - anchors_and_merge_keys.md: no real kb/ file uses YAML anchors or
-    #     merge keys (checked). Round-tripping a merge key through a
-    #     dict-based from_frontmatter/to_frontmatter pipeline resolves it
-    #     permanently -- inherent to that approach, not a Pyrite regression
-    #     matching #46/#86/#87's pattern -- so it's asserted on its actual,
-    #     documented (non-identical) behavior instead.
-    #   - created_as_date.md / created_as_string.md: `created_at`/
-    #     `updated_at` used to be read from frontmatter but never written
-    #     back (issue #151) -- a real, separate bug this fixture set
-    #     caught. The fix keeps them and preserves the source text, so
-    #     both fixtures are now part of the blanket byte-identity
-    #     assertion below rather than carrying dedicated tests.
-    #
-    # The "missing trailing newline" / "several trailing blank lines" cases
-    # are NOT committed files under tests/fixtures/roundtrip/: this repo's
-    # own pre-commit end-of-file-fixer hook normalizes exactly that shape on
-    # every commit (it did, the first time these were committed as files --
-    # see git history on this branch), which would silently defeat the two
-    # adversarial fixtures meant to test it. They are built as bytes at test
-    # time instead, in test_trailing_newline_shapes_load_and_normalize_
-    # idempotently below.
-    _DEDICATED_TEST_FIXTURES = frozenset(
-        {
-            "anchors_and_merge_keys.md",
-        }
-    )
+    @staticmethod
+    def _kb_with(tmp_path: Path, name: str, text: str | None = None) -> tuple[Path, object]:
+        kb = tmp_path / "kb"
+        kb.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=kb, check=True, capture_output=True, timeout=30)
+        dest = kb / name
+        if text is None:
+            shutil.copyfile(FIXTURES_DIR / name, dest)
+        else:
+            dest.write_text(text, encoding="utf-8")
+        return dest, _service_for(tmp_path, kb)
+
+    # anchors_and_merge_keys.md has its own test below: `apply` refuses a
+    # file whose frontmatter defines or uses an anchor, so its echo is a
+    # refusal (nothing written), not a byte-identical write.
+    _DEDICATED_TEST_FIXTURES = frozenset({"anchors_and_merge_keys.md"})
 
     @pytest.mark.parametrize(
         "fixture_name",
         sorted(p.name for p in FIXTURES_DIR.glob("*.md")),
     )
-    def test_fixture_is_byte_identical_after_noop_roundtrip(self, tmp_path, fixture_name):
+    def test_fixture_is_byte_identical_after_an_echo(self, tmp_path, fixture_name):
         if fixture_name in self._DEDICATED_TEST_FIXTURES:
-            pytest.skip("covered by its own dedicated test in this file, see the class docstring")
+            pytest.skip("covered by its own dedicated test in this file, see the class comment")
+        dest, (svc, db, repo) = self._kb_with(tmp_path, fixture_name)
+        try:
+            before, after, refusal = _echo(svc, repo, dest)
+        finally:
+            db.close()
 
-        src = FIXTURES_DIR / fixture_name
-        dest = tmp_path / fixture_name
-        shutil.copyfile(src, dest)
-        repo = _repo_for(tmp_path)
+        assert refusal is None, refusal
+        assert before == after, _format_diffs([(fixture_name, dest, before, after)])
 
-        entry = repo.load_entry_from_file(dest)
-        before = dest.read_text(encoding="utf-8")
-        entry.save(dest)
-        after = dest.read_text(encoding="utf-8")
+    def test_anchors_and_merge_keys_fixture_is_refused_and_left_as_written(self, tmp_path):
+        """No real kb/ file uses a YAML anchor or merge key (checked directly
+        against the corpus). The model's emitter used to resolve
+        ``<<: *defaults`` into its constituent keys on a no-op save; ``apply``
+        refuses to edit a frontmatter that defines or uses an anchor (it
+        cannot say which bytes a merged key's value owns), names the anchor,
+        and writes nothing: the file keeps its merge key.
+        """
+        dest, (svc, db, repo) = self._kb_with(tmp_path, "anchors_and_merge_keys.md")
+        try:
+            before, after, refusal = _echo(svc, repo, dest)
+        finally:
+            db.close()
 
-        assert before == after, _format_diffs([(entry.id, dest, before, after)])
+        assert refusal is not None and "anchor" in refusal, refusal
+        assert before == after
+        assert "<<: *defaults" in after
 
     _TRAILING_NEWLINE_FRONTMATTER = (
         "---\n"
@@ -398,86 +327,47 @@ class TestAdversarialFixtures:
             ),
         ],
     )
-    def test_trailing_newline_shapes_load_and_normalize_idempotently(self, tmp_path, body_suffix):
-        """Neither shape is part of the byte-identity assertion, and neither
-
-        is a committed fixture FILE: this repo's own pre-commit
-        end-of-file-fixer hook normalizes exactly "missing trailing
-        newline" / "extra trailing blank lines" on every commit, which would
-        silently defeat a fixture meant to test that normalization. Built as
-        bytes here instead, at test time.
-
-        `Entry.to_markdown` always writes exactly one trailing newline after
-        the body (see its docstring -- pre-commit's end-of-file hook
-        requires this, and no file in the real `kb/` lacks a final newline).
-        What the gate DOES assert: the load succeeds, and the normalization
-        is idempotent -- saving twice produces the same bytes as saving
-        once, in both directions (zero trailing newlines, or several
-        trailing blank lines, both collapse to exactly one and stay there).
+    def test_trailing_newline_shapes_are_left_as_written(self, tmp_path, body_suffix):
+        """Neither shape is a committed fixture FILE: this repo's own pre-commit
+        end-of-file-fixer hook normalizes exactly "missing trailing newline" /
+        "extra trailing blank lines" on every commit. Built as bytes here
+        instead. The model's emitter used to normalise both to one newline;
+        an echo through ``apply`` writes nothing, so the file keeps its shape
+        (decision 3: a request that changes nothing writes nothing).
         """
-        dest = tmp_path / "trailing_newline_shape.md"
-        dest.write_text(self._TRAILING_NEWLINE_FRONTMATTER + body_suffix, encoding="utf-8")
-        repo = _repo_for(tmp_path)
+        text = self._TRAILING_NEWLINE_FRONTMATTER + body_suffix
+        dest, (svc, db, repo) = self._kb_with(tmp_path, "trailing_newline_shape.md", text)
+        try:
+            before, after, refusal = _echo(svc, repo, dest)
+            assert refusal is None, refusal
+            assert after == before == text
+            _before, twice, refusal = _echo(svc, repo, dest)
+        finally:
+            db.close()
 
-        entry = repo.load_entry_from_file(dest)
-        entry.save(dest)
-        once = dest.read_text(encoding="utf-8")
-
-        entry2 = repo.load_entry_from_file(dest)
-        entry2.save(dest)
-        twice = dest.read_text(encoding="utf-8")
-
-        assert once == twice
-        assert once.endswith("\n") and not once.endswith("\n\n")
-
-    def test_anchors_and_merge_keys_fixture_documents_the_limitation(self, tmp_path):
-        """No real kb/ file uses a YAML anchor or merge key (checked directly
-
-        against the corpus). Resolving `<<: *defaults` into its constituent
-        keys on load, and not being able to re-collapse them into a merge
-        key on save, is inherent to reading frontmatter into a plain dict of
-        typed fields -- every loader in this codebase does that -- not a
-        Pyrite write-path regression in the #46/#86/#87 family. This test
-        documents the actual, current behavior so a future change to how
-        frontmatter is parsed either preserves merge keys (test starts
-        failing here, update it) or the limitation remains understood and
-        deliberate.
-        """
-        src = FIXTURES_DIR / "anchors_and_merge_keys.md"
-        dest = tmp_path / "anchors_and_merge_keys.md"
-        shutil.copyfile(src, dest)
-        repo = _repo_for(tmp_path)
-
-        entry = repo.load_entry_from_file(dest)
-        before = dest.read_text(encoding="utf-8")
-        entry.save(dest)
-        after = dest.read_text(encoding="utf-8")
-
-        assert before != after
-        assert "<<: *defaults" in before
-        assert "<<:" not in after
-        # The merged keys survive under their own names even though the
-        # merge-key syntax itself does not.
-        assert "kind: feature" in after
-        assert "priority: low" in after
+        assert refusal is None, refusal
+        assert twice == text
 
 
 class TestPristineProbeIsolation:
-    """Pins the exact bug #69's last commit fixed: `_pristine_frontmatter`
-
-    is an `@cache`d-per-class probe, so it is SHARED across every entry of
+    """Pins the exact bug #69's last commit fixed: ``_pristine_frontmatter``
+    is an ``@cache``d-per-class probe, so it is SHARED across every entry of
     that class loaded during one walk. If the write path ever read or wrote
     through that shared dict instead of only comparing against it, one
     entry's absent-key decisions would leak into another entry of the same
-    type.
+    type. With ``apply`` the write names only the keys it is given, so the
+    probe cannot reach the file at all; the pin stays as the guard.
     """
 
     def test_pristine_probe_does_not_leak_between_entries_of_same_type(self, tmp_path):
         # Two backlog_item entries, same type, different absent-key sets:
         # one has no `status:` at all, the other sets status explicitly.
-        # Loading both and saving both must not let the first entry's
+        # Loading both and echoing both must not let the first entry's
         # "status was absent" fact bleed into the second, or vice versa.
-        no_status = tmp_path / "no_status.md"
+        kb = tmp_path / "kb"
+        kb.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=kb, check=True, capture_output=True, timeout=30)
+        no_status = kb / "no_status.md"
         no_status.write_text(
             "---\n"
             "id: probe-no-status\n"
@@ -490,7 +380,7 @@ class TestPristineProbeIsolation:
             "Body.\n",
             encoding="utf-8",
         )
-        with_status = tmp_path / "with_status.md"
+        with_status = kb / "with_status.md"
         with_status.write_text(
             "---\n"
             "id: probe-with-status\n"
@@ -504,16 +394,17 @@ class TestPristineProbeIsolation:
             "Body.\n",
             encoding="utf-8",
         )
-
-        repo = _repo_for(tmp_path)
-
-        # Load BOTH before saving either, so any leak through the shared
-        # cached probe has the chance to happen between the two loads.
-        entry_no_status = repo.load_entry_from_file(no_status)
-        entry_with_status = repo.load_entry_from_file(with_status)
-
-        entry_no_status.save(no_status)
-        entry_with_status.save(with_status)
+        svc, db, repo = _service_for(tmp_path, kb)
+        try:
+            # Load BOTH before writing either, so any leak through the shared
+            # cached probe has the chance to happen between the two loads.
+            repo.load_entry_from_file(no_status)
+            repo.load_entry_from_file(with_status)
+            for path in (no_status, with_status):
+                _before, _after, refusal = _echo(svc, repo, path)
+                assert refusal is None, refusal
+        finally:
+            db.close()
 
         assert "status:" not in no_status.read_text(encoding="utf-8")
         assert "status: done" in with_status.read_text(encoding="utf-8")

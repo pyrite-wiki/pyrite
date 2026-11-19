@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session
 
 from ...exceptions import StorageError
 from ..models import Link
-from .base_backend import BaseBackend
+from ..virtual_tables import KEYWORD_SEARCHED_PARTS, postgres_fts_vector_expression
+from .base_backend import BaseBackend, _link_rows, shape_entry_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
@@ -164,6 +165,35 @@ def ensure_schema(engine) -> None:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS fts_vector tsvector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS embedding vector(384)"))
+        # The entry's `aliases` as a JSON list (#1001, #1011): create_all never alters
+        # an existing table, so a database from before it gets the column here.
+        conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS aliases TEXT"))
+        # The link's `kb:` prefix as written (#980): create_all never alters an
+        # existing table, so a database from before it gets the column here.
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_prefix TEXT"))
+        # The path a Markdown link names (#1723), the same way. A database
+        # from before it holds no Markdown link rows for files whose stat is
+        # unchanged, and a sync never re-reads those: so when the column is
+        # new here, the recorded stat is cleared and the next sync reads every
+        # file once (SQLite's migration v30 does the same, decision D3).
+        had_target_path = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()"
+                " AND table_name = 'link' AND column_name = 'target_path'"
+            )
+        ).first()
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_path TEXT"))
+        # Whether a Markdown link row's path matched an entry file; added with
+        # target_path (one release), so the re-read below covers both.
+        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_resolved INTEGER"))
+        if had_target_path is None:
+            conn.execute(text("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL"))
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)")
+        )
+        conn.execute(
+            text("CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)")
+        )
         # GIN index for FTS
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")
@@ -178,13 +208,11 @@ def ensure_schema(engine) -> None:
         )
         # Trigger to auto-update fts_vector on INSERT/UPDATE
         conn.execute(
-            text("""
+            text(f"""
             CREATE OR REPLACE FUNCTION entry_fts_trigger() RETURNS trigger AS $$
             BEGIN
                 NEW.fts_vector :=
-                    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-                    setweight(to_tsvector('english', coalesce(NEW.summary, '')), 'B') ||
-                    setweight(to_tsvector('english', coalesce(NEW.body, '')), 'C');
+                    {postgres_fts_vector_expression()};
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
@@ -311,23 +339,34 @@ class PostgresBackend(BaseBackend):
     # _sync_links (delete-all-reinsert — Postgres-specific)
     # =====================================================================
 
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
-        self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).delete()
-        for link in links:
-            from ...schema import get_inverse_relation
-
-            relation = link.get("relation", "related_to")
-            inverse = get_inverse_relation(relation)
-            target_kb = link.get("kb", kb_name)
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
+        # The same rows as SQLite's diff, one per written link (`_link_rows`,
+        # #1009), written by delete and re-insert.
+        query = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name)
+        if keep_path_rows:
+            query = query.filter(Link.target_path.is_(None))
+        query.delete()
+        for (target_id, target_kb, relation, target_prefix, target_path), attrs in _link_rows(
+            kb_name, links
+        ).items():
             self._session.add(
                 Link(
                     source_id=entry_id,
                     source_kb=kb_name,
-                    target_id=link.get("target"),
+                    target_id=target_id,
                     target_kb=target_kb,
                     relation=relation,
-                    inverse_relation=inverse,
-                    note=link.get("note", ""),
+                    inverse_relation=attrs["inverse_relation"],
+                    note=attrs["note"],
+                    target_prefix=target_prefix,
+                    target_path=target_path,
                 )
             )
 
@@ -335,12 +374,19 @@ class PostgresBackend(BaseBackend):
     # Full-text search (PostgreSQL tsvector/tsquery)
     # =====================================================================
 
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search reads (#1757): the ``fts_vector``'s
+        parts, whatever ``query`` is (``plainto_tsquery`` has no column filters)."""
+        return list(KEYWORD_SEARCHED_PARTS)
+
     def search(
         self,
         query: str,
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -389,6 +435,17 @@ class PostgresBackend(BaseBackend):
         if entry_type:
             sql += " AND e.entry_type = :entry_type"
             params["entry_type"] = entry_type
+        if entry_types:
+            # The #627 include-set, as the sqlite leg applies it.
+            type_keys = [f"type_{i}" for i in range(len(entry_types))]
+            for key, value in zip(type_keys, entry_types, strict=True):
+                params[key] = value
+            sql += " AND e.entry_type IN (" + ",".join(f":{key}" for key in type_keys) + ")"
+        if exclude_types:
+            ex_keys = [f"ex_type_{i}" for i in range(len(exclude_types))]
+            for key, value in zip(ex_keys, exclude_types, strict=True):
+                params[key] = value
+            sql += " AND e.entry_type NOT IN (" + ",".join(f":{key}" for key in ex_keys) + ")"
         if date_from:
             sql += " AND e.date >= :date_from"
             params["date_from"] = date_from
@@ -400,9 +457,11 @@ class PostgresBackend(BaseBackend):
             for i, t in enumerate(tags):
                 tag_params[f"tag_{i}"] = t
             tag_placeholders = ", ".join(f":tag_{i}" for i in range(len(tags)))
+            # By (id, kb_name): an id is unique within one KB only, so an id
+            # alone matched another KB's entry's tags.
             sql += f"""
-                AND e.id IN (
-                    SELECT et.entry_id FROM entry_tag et
+                AND (e.id, e.kb_name) IN (
+                    SELECT et.entry_id, et.kb_name FROM entry_tag et
                     JOIN tag t ON et.tag_id = t.id
                     WHERE t.name IN ({tag_placeholders})
                     GROUP BY et.entry_id, et.kb_name
@@ -431,7 +490,7 @@ class PostgresBackend(BaseBackend):
         params["limit"] = limit
         params["offset"] = offset
 
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     def search_by_tag(
         self, tag: str, kb_name: str | None = None, limit: int = 50
@@ -448,7 +507,7 @@ class PostgresBackend(BaseBackend):
             params["kb_name"] = kb_name
         sql += " ORDER BY e.date DESC, e.title LIMIT :limit"
         params["limit"] = limit
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     def search_by_date_range(
         self,
@@ -464,7 +523,7 @@ class PostgresBackend(BaseBackend):
             params["kb_name"] = kb_name
         sql += " ORDER BY date ASC LIMIT :limit"
         params["limit"] = limit
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     def search_by_tag_prefix(
         self, prefix: str, kb_name: str | None = None, limit: int = 50
@@ -481,7 +540,7 @@ class PostgresBackend(BaseBackend):
             params["kb_name"] = kb_name
         sql += " ORDER BY e.date DESC, e.title LIMIT :limit"
         params["limit"] = limit
-        return self._exec(sql, params)
+        return shape_entry_rows(self._exec(sql, params), self._session)
 
     # =====================================================================
     # Semantic search (pgvector embeddings)
@@ -507,6 +566,8 @@ class PostgresBackend(BaseBackend):
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -553,6 +614,15 @@ class PostgresBackend(BaseBackend):
         if entry_type:
             sql += " AND e.entry_type = :entry_type"
             params["entry_type"] = entry_type
+        if entry_types:
+            # The #627 include-set, as the sqlite leg applies it.
+            type_keys = [f"sem_type_{i}" for i in range(len(entry_types))]
+            params.update(dict(zip(type_keys, entry_types, strict=True)))
+            sql += " AND e.entry_type IN (" + ",".join(f":{key}" for key in type_keys) + ")"
+        if exclude_types:
+            ex_keys = [f"sem_ex_type_{i}" for i in range(len(exclude_types))]
+            params.update(dict(zip(ex_keys, exclude_types, strict=True)))
+            sql += " AND e.entry_type NOT IN (" + ",".join(f":{key}" for key in ex_keys) + ")"
         if date_from:
             sql += " AND e.date >= :date_from"
             params["date_from"] = date_from
@@ -565,9 +635,11 @@ class PostgresBackend(BaseBackend):
                 key = f"sem_tag_{i}"
                 tag_keys.append(f":{key}")
                 params[key] = tag
+            # By (id, kb_name): an id is unique within one KB only, so an id
+            # alone matched another KB's entry's tags.
             sql += f"""
-                AND e.id IN (
-                    SELECT et.entry_id FROM entry_tag et
+                AND (e.id, e.kb_name) IN (
+                    SELECT et.entry_id, et.kb_name FROM entry_tag et
                     JOIN tag t ON et.tag_id = t.id
                     WHERE t.name IN ({",".join(tag_keys)})
                     GROUP BY et.entry_id, et.kb_name
@@ -603,7 +675,7 @@ class PostgresBackend(BaseBackend):
         params["vec2"] = vec_str
         params["limit"] = limit
 
-        rows = self._exec(sql, params)
+        rows = shape_entry_rows(self._exec(sql, params), self._session)
         for row in rows:
             # ``distance`` here is already cosine distance (#668).
             row["similarity"] = similarity_from(row.get("distance"))

@@ -25,13 +25,57 @@ files git changed and adds history through its `enrich` hook.
   `file_size` still match is not read (`_file_changed`, the one staleness
   rule); every other file is parsed. Claims are grouped by id; the first path
   wins; ids with several files are `duplicates`; unparseable files are
-  `malformed`.
+  `malformed`. A file that resolves outside the KB's root or has more than
+  one hard link is `skipped` before its stat is trusted and never read: most
+  exports write from the index, so it holds only bytes read inside the root
+  (`tests/test_indexed_bytes_stay_inside_the_kb.py`).
+  A path the plan could not reach keeps its row (#1546): the row of every
+  known path under a folder the walk could not list (`unreadable_folders`),
+  of a file it could not stat, read or hash (an `OSError`, listed in
+  `unreadable_files` and `malformed`), unless `KBFiles.present` answers
+  absent (a loop, a file removed meanwhile: retired, as before), becomes a
+  claim built from the row (`plan.kept`, `_Claim.unreached`), so every kept
+  row is named in the result. It stands only for an id no file read now
+  holds; otherwise the file read now takes the row and the kept path is no
+  duplicate. A known path the walk did not meet under a folder whose listing
+  worked is gone: its row is retired. A file that reads and does not parse
+  holds no id and its row is retired.
 - **Apply**: write a winner whose row is missing, moved or has another content
   hash (`added`/`updated`); rewrite silently when only the stat moved (a touch);
-  retire every row no parseable file claims (`removed`). A file whose row
-  cannot be written is reported as malformed and holds no row.
+  retire every row no parseable file claims (`removed`); a kept claim is
+  neither written nor retired. A file whose row cannot be written is
+  reported as malformed and holds no row. The result names what it could not
+  reach (`unreadable_folders`, `unreadable_files`); the CLI counts each as
+  failed for its exit code, and `services/index_health.network_shape` decides
+  what REST and MCP get (a count).
 
 `DocumentManager.delete_entry` asks the plan who holds the id (#494);
 `check_health` takes duplicates, winners and staleness from it.
 `tests/test_one_reconcile_structure.py` fails when a function walks files and
 writes rows anywhere else.
+
+## What a link row names (ADR-0049 Q3)
+
+`_entry_to_dict` turns `[[x]]`, `[[kb:x]]`, `![[kb:x]]`, a `references` item and
+a frontmatter `links:` item (its `kb` is a KB field in link position) into
+link rows. The row's `target_kb` is the **full KB name** the prefix resolves to
+(`PyriteConfig.readable_kb_named(prefix, readable_kbs=None)`, unscoped: full
+name, then shortname; with duplicate shortnames the first KB in config order,
+as `config.validate` warns), the source entry's KB when there is no prefix, or
+the prefix as written when it names no KB, so the link counts as broken, which
+it is (#952, #979). The prefix as written is kept beside it in
+`target_prefix` (migration v28; NULL for no prefix, or a row from before), so
+a row can always be checked against what the file wrote (#980). Backlinks, the
+graph, `check_health`'s `broken_links` and `qa check-links` therefore agree
+with `WikilinkService.resolve_entry` on whether a `[[short:id]]` link
+resolves. `check_health`'s `links_stale_kb` counts the rows a rebuild would
+point at a different KB: the written prefix (for a row from before v28, its
+`target_kb`, which was the prefix as written) resolved now is not the stored
+KB. That catches a shortname renamed or added in config since the file was
+indexed, which no sync re-reads because the file's hash did not change, and a
+row stored before the full name was. It does not count a link whose prefix
+names no KB: that is a broken link (`broken_links`), and a rebuild writes the
+same row. `index health` warns on it and names `pyrite index build`, which
+re-reads every file and so clears the count. `tests/test_cross_kb_links.py`
+pins all of it, the renamed-shortname probe through a real `config.yaml` and
+the CLI included.

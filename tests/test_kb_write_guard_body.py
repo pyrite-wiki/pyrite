@@ -91,7 +91,6 @@ def test_put_private_entry_refused_regardless_of_content_type(w, with_header):
     path = _file(w, PRIVATE, PRIVATE_ENTRY)
     before = path.read_bytes()
     body = b'{"kb": "%s", "body": "overwritten"}' % PRIVATE.encode()
-    w.release_idle_connections()
     r = w.client.put(
         f"/api/entries/{PRIVATE_ENTRY}",
         content=body,
@@ -117,7 +116,6 @@ def test_anonymous_write_tier_put_private_entry_refused(w, with_header):
     auth.anonymous_tier = "write"
     try:
         body = b'{"kb": "%s", "body": "overwritten anonymously"}' % PRIVATE.encode()
-        w.release_idle_connections()
         r = w.client.put(
             f"/api/entries/{PRIVATE_ENTRY}", content=body, headers=_headers(with_header)
         )
@@ -143,7 +141,6 @@ def test_body_kb_is_checked_under_any_non_form_content_type(w, content_type):
     path = _file(w, PRIVATE, PRIVATE_ENTRY)
     before = path.read_bytes()
     body = b'{"kb": "%s", "body": "overwritten"}' % PRIVATE.encode()
-    w.release_idle_connections()
     r = w.client.put(
         f"/api/entries/{PRIVATE_ENTRY}",
         content=body,
@@ -157,7 +154,6 @@ def test_body_kb_is_checked_under_any_non_form_content_type(w, content_type):
 def test_unparseable_body_without_content_type_is_refused(w):
     """A body with no Content-Type is one an older FastAPI parses as JSON: a
     guard that could not parse it does not know which KB it names."""
-    w.release_idle_connections()
     r = w.client.put(
         f"/api/entries/{READABLE_ENTRY}",
         content=b'{"kb": "%s", ' % PRIVATE.encode(),
@@ -170,7 +166,6 @@ def test_unparseable_body_without_content_type_is_refused(w):
 def test_every_value_of_a_repeated_kb_query_parameter_is_checked(w):
     """FastAPI binds one value of a repeated parameter; the guard checks them
     all, so which one the handler takes cannot matter."""
-    w.release_idle_connections()
     r = w.client.delete(
         "/api/entries/no-such-entry",
         params=[("kb", PRIVATE), ("kb", READABLE)],
@@ -215,7 +210,6 @@ def test_handler_does_not_bind_a_body_without_a_json_content_type(w):
     path = _file(w, READABLE, READABLE_ENTRY)
     before = path.read_bytes()
     body = b'{"kb": "%s", "body": "written without a content type"}' % READABLE.encode()
-    w.release_idle_connections()
     r = w.client.put(
         f"/api/entries/{READABLE_ENTRY}", content=body, headers={"X-API-Key": WRITE_KEY}
     )

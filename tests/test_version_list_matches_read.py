@@ -10,10 +10,8 @@ entry, since_commit, empty walk, not-git) are in test_entry_version_integrity.py
 """
 
 import pytest
-import yaml
-from typer.testing import CliRunner
 
-from pyrite.server.api import get_config, get_db
+from tests._world import build_world
 from tests.test_entry_version_integrity import _note, _Repo, _seed_row
 
 
@@ -22,6 +20,22 @@ def repo(tmp_path):
     r = _Repo(tmp_path)
     yield r
     r.close()
+
+
+@pytest.fixture
+def serve(tmp_path):
+    """Serve a `_Repo`'s config through a world: REST on the production
+    `get_db` over the repo's index, and the CLI on the world's config dir."""
+    worlds = []
+
+    def _serve(repo):
+        world = build_world(tmp_path / "world", config=repo.config)
+        worlds.append(world)
+        return world
+
+    yield _serve
+    for world in worlds:
+        world.close()
 
 
 @pytest.fixture
@@ -37,20 +51,10 @@ def reused(repo):
     return repo, c_s1, c_p1
 
 
-def test_cli_build_then_rest_list_and_read_agree(reused, make_client, tmp_path, monkeypatch):
-    import pyrite.config as pyrite_config
-    from pyrite.cli import app
-
+def test_cli_build_then_rest_list_and_read_agree(reused, serve):
     repo, c_s1, c_p1 = reused
-    cfg_dir = tmp_path / "cfg"
-    cfg_dir.mkdir()
-    (cfg_dir / "config.yaml").write_text(yaml.safe_dump(repo.config.to_dict()))
-    monkeypatch.setattr(pyrite_config, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(pyrite_config, "CONFIG_FILE", cfg_dir / "config.yaml")
-
-    client, _, _ = make_client(
-        dependency_overrides={get_config: lambda: repo.config, get_db: lambda: repo.db}
-    )
+    world = serve(repo)
+    client = world.client
 
     def listed():
         r = client.get("/api/entries/p1/versions", params={"kb": "k"})
@@ -60,7 +64,7 @@ def test_cli_build_then_rest_list_and_read_agree(reused, make_client, tmp_path, 
     assert c_s1 in listed()
     assert client.get(f"/api/entries/p1/versions/{c_s1}", params={"kb": "k"}).status_code == 404
 
-    result = CliRunner().invoke(app, ["index", "build", "--with-attribution"])
+    result = world.cli("index", "build", "--with-attribution")
     assert result.exit_code == 0, result.output
 
     assert listed() == [c_p1]
@@ -75,15 +79,10 @@ def test_cli_build_then_rest_list_and_read_agree(reused, make_client, tmp_path, 
     reason="Dev keeps every row, so this passes there; it fails against a "
     "delete-everything-outside-the-walk implementation (round 0 of #453)."
 )
-def test_a_rename_git_does_not_detect_keeps_its_older_servable_versions(
-    repo, make_client, tmp_path, monkeypatch
-):
+def test_a_rename_git_does_not_detect_keeps_its_older_servable_versions(repo, serve):
     """Attribution never deletes a row a read still serves. A manual move plus
     a rewrite (git sees a delete and an add) ends the walk at the new path's
     add, but the older commit is still this entry's, at its recorded path."""
-    import pyrite.config as pyrite_config
-    from pyrite.cli import app
-
     repo.write("kb/q.md", _note("n1", "N", "alpha beta gamma " * 40))
     c1 = repo.commit("c1")
     repo.index()
@@ -94,16 +93,10 @@ def test_a_rename_git_does_not_detect_keeps_its_older_servable_versions(
     c2 = repo.commit("move and rewrite")
     repo.index()
 
-    cfg_dir = tmp_path / "cfg"
-    cfg_dir.mkdir()
-    (cfg_dir / "config.yaml").write_text(yaml.safe_dump(repo.config.to_dict()))
-    monkeypatch.setattr(pyrite_config, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(pyrite_config, "CONFIG_FILE", cfg_dir / "config.yaml")
-    client, _, _ = make_client(
-        dependency_overrides={get_config: lambda: repo.config, get_db: lambda: repo.db}
-    )
+    world = serve(repo)
+    client = world.client
 
-    result = CliRunner().invoke(app, ["index", "build", "--with-attribution"])
+    result = world.cli("index", "build", "--with-attribution")
     assert result.exit_code == 0, result.output
 
     r = client.get("/api/entries/n1/versions", params={"kb": "k"})
@@ -113,15 +106,11 @@ def test_a_rename_git_does_not_detect_keeps_its_older_servable_versions(
         assert client.get(f"/api/entries/n1/versions/{h}", params={"kb": "k"}).status_code == 200
 
 
-def test_a_crlf_version_reads_over_rest_as_the_lf_text_dev_returned(
-    repo, make_client, tmp_path, monkeypatch
-):
+def test_a_crlf_version_reads_over_rest_as_the_lf_text_dev_returned(repo, serve):
     """A version read returns the text dev returned for every file dev could
     read. Dev read with `text=True` (universal newlines), so a committed CRLF
     file came back with `\\n`; the one read function keeps that, and the
     servability verdict on the normalised text is unchanged."""
-    import pyrite.config as pyrite_config
-    from pyrite.cli import app
     from pyrite.services.git_service import SERVABLE, GitService
 
     crlf = b"---\r\nid: n1\r\ntitle: N\r\ntype: note\r\n---\r\n\r\nold body\rlone cr\r\n"
@@ -131,15 +120,9 @@ def test_a_crlf_version_reads_over_rest_as_the_lf_text_dev_returned(
     repo.commit("lf version")
     repo.index()
 
-    cfg_dir = tmp_path / "cfg"
-    cfg_dir.mkdir()
-    (cfg_dir / "config.yaml").write_text(yaml.safe_dump(repo.config.to_dict()))
-    monkeypatch.setattr(pyrite_config, "CONFIG_DIR", cfg_dir)
-    monkeypatch.setattr(pyrite_config, "CONFIG_FILE", cfg_dir / "config.yaml")
-    client, _, _ = make_client(
-        dependency_overrides={get_config: lambda: repo.config, get_db: lambda: repo.db}
-    )
-    result = CliRunner().invoke(app, ["index", "build", "--with-attribution"])
+    world = serve(repo)
+    client = world.client
+    result = world.cli("index", "build", "--with-attribution")
     assert result.exit_code == 0, result.output
 
     r = client.get(f"/api/entries/n1/versions/{c1}", params={"kb": "k"})

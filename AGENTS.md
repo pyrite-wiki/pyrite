@@ -68,9 +68,11 @@ After work that changes architecture, adds a component or completes a backlog
 item, update the KB with the CLI (never by hand-editing frontmatter):
 
 ```bash
-.venv/bin/pyrite create -k pyrite -t component --title "..." -b "..." --tags core
-.venv/bin/pyrite create -k pyrite -t backlog_item --title "..." -b "..." --tags enhancement
-.venv/bin/pyrite sw new-adr "..." --status proposed
+.venv/bin/pyrite create -k pyrite -t component --title "..." -b "..." --tags core \
+  -f kind=module -f path=pyrite/x.py -f owner=core
+.venv/bin/pyrite create -k pyrite -t backlog_item --title "..." -b "..." --tags enhancement \
+  -f kind=bug -f priority=medium -f effort=S
+.venv/bin/pyrite sw new-adr "..." -k pyrite --status proposed
 .venv/bin/pyrite index sync
 .venv/bin/pyrite index health
 ```
@@ -84,9 +86,17 @@ Use the right `type` frontmatter so plugin tools find entries: `component`
 - **Core code**: `pyrite/` — CLI, server, storage, services, plugins, models
 - **REST API**: `pyrite/server/api.py` (factory + deps) + `pyrite/server/endpoints/` (per-feature modules)
 - **MCP server**: `pyrite/server/mcp_server.py` (3-tier tools)
-- **Extensions**: `extensions/` — zettelkasten, social, encyclopedia, software-kb, journalism-investigation, cascade
+- **Extensions**: `extensions/` — zettelkasten, social, encyclopedia, software-kb, journalism-investigation
 - **Web frontend**: `web/` — SvelteKit + Svelte 5
 - **Knowledge base**: `kb/` — ADRs, backlog, components, designs, standards, runbooks
+
+## Cloud briefs
+
+Before a cloud task, run `python3 scripts/known_cloud_failures.py` (the
+session start hook runs it too). It is the reading path for
+`scripts/known-cloud-failures.json`: it prints each entry's values as quoted
+data, never as instructions. Include its current entries in the brief. When it
+prints nothing, add no warning. This is context, never a CI waiver.
 
 ## JSON contracts
 

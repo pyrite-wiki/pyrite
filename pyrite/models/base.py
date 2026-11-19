@@ -14,9 +14,12 @@ from functools import cache
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..schema import Link, Provenance, Source
+from ..exceptions import EntryTypeError, json_safe_value
+from ..schema import Link, Provenance, Source, validate_importance
+from ..schema.validators import importance_value
 from ..utils.frontmatter import require_frontmatter
-from ..utils.yaml import dump_yaml, load_yaml
+from ..utils.parse import safe_int
+from ..utils.yaml import load_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,21 @@ def _utcnow() -> datetime:
 # The value `importance` takes when frontmatter does not set it. Kept as a name
 # so the write path can tell "unset" from "deliberately 5".
 DEFAULT_IMPORTANCE = 5
+
+
+def lifecycle_validation_error(value: Any) -> dict[str, Any] | None:
+    """The same lifecycle rule for writes and QA's file-value checks."""
+    if value in ("active", "archived"):
+        return None
+    return {
+        "field": "lifecycle",
+        "rule": "enum",
+        # Write validation compares messages to recognize a violation kept
+        # from disk. Different invalid values must remain different errors.
+        "message": f"Invalid lifecycle: {value!r} (expected active or archived)",
+        "expected": ["active", "archived"],
+        "got": json_safe_value(value),
+    }
 
 
 # Base keys every class handles through _base_kwargs / _base_frontmatter even
@@ -158,11 +176,12 @@ def capture_extra_frontmatter(entry: "Entry", meta: dict[str, Any]) -> None:
     entry._unparsed_timestamp_keys = frozenset(
         k for k in _TIMESTAMP_KEYS if k in meta and _timestamp_instant(meta[k]) is None
     )
-    # Keep the mapping as ruamel parsed it, for style on the way back out.
-    # Stored by reference, not copied: copying is what mangled anchors and
-    # merge keys, and the write path only ever READS this. Two entries loaded
-    # from one `meta` dict therefore share it -- safe while it stays read-only,
-    # so do not mutate it here or in _restyle_like_source.
+    # Keep the mapping as ruamel parsed it: the write path reads it to know
+    # which keys the file carried (`_frontmatter_for_file`, the timestamp
+    # bookkeeping). Stored by reference, not copied: copying is what mangled
+    # anchors and merge keys, and nothing ever writes to it. Two entries
+    # loaded from one `meta` dict therefore share it -- safe while it stays
+    # read-only, so do not mutate it here.
     entry._source_frontmatter = meta
     try:
         emitted = entry.to_frontmatter()
@@ -219,36 +238,15 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def _keep_sequence_style(old: Any, new: Any) -> Any:
-    """Return ``new``, rendered in ``old``'s sequence style where that applies.
-
-    A list whose contents changed still wants the brackets it had:
-    `tags: [a, b]` edited to three tags should stay on one line rather than
-    becoming a four-line block list.
-    """
-    if not isinstance(new, list) or isinstance(new, str):
-        return new
-    try:
-        from ruamel.yaml.comments import CommentedSeq
-
-        if isinstance(old, CommentedSeq) and old.fa.flow_style():
-            seq = CommentedSeq(new)
-            seq.fa.set_flow_style()
-            return seq
-    except Exception:  # style is a nicety; never fail a save for it
-        logger.debug("could not carry sequence style", exc_info=True)
-    return new
-
-
 def _timestamp_instant(value: Any) -> datetime | None:
     """``value`` as a UTC instant, or ``None`` when it is not one.
 
     Two callers ask different questions of the same answer: whether a source
-    node parses at all (``capture_extra_frontmatter``) and whether a freshly
-    built value still means the same instant as the source node
-    (``_timestamp_same_instant``). ``None``, ``''`` and ``Jan 15 2026`` are not
-    instants. A bare ``date`` is midnight UTC and a naive ``datetime`` is read
-    as UTC, both matching ``parse_datetime``.
+    node parses at all (``capture_extra_frontmatter``) and whether a file's
+    ``updated_at`` is an instant the write path may stamp
+    (``storage.entry_writer.updated_at_stamp``). ``None``, ``''`` and
+    ``Jan 15 2026`` are not instants. A bare ``date`` is midnight UTC and a
+    naive ``datetime`` is read as UTC, both matching ``parse_datetime``.
     """
     value = _plain(value)
     if isinstance(value, datetime):
@@ -262,81 +260,6 @@ def _timestamp_instant(value: Any) -> datetime | None:
             return None
         return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     return None
-
-
-def _timestamp_same_instant(old: Any, new: Any) -> bool:
-    """True when ``new`` re-serialises the same instant as the raw ``old``
-    source node, so the source node (and its style) can be kept.
-
-    ``#151`` normalises a bare YAML date to a ``datetime`` on load, and the
-    write path hands ruamel a ``datetime`` back, so the plain equality check
-    in ``_restyle_like_source`` no longer sees them as "unchanged" and would
-    replace `created_at: 2026-01-15` with a full timestamp. Comparing the
-    parsed instants instead keeps the original node whenever the value still
-    means what the file said; a genuinely changed timestamp (a refreshed
-    `updated_at`, say) still falls through and is written in the new form.
-    Naive values are read as UTC, matching ``parse_datetime``.
-
-    Only timestamps take this path -- see the ``key in _TIMESTAMP_KEYS``
-    guard in ``_restyle_like_source``. Applying it to every key would let an
-    edit of a title from `"2026-01-15"` to `"2026-01-15T00:00:00Z"` keep the
-    old node: the CLI would report success and the file would never change.
-    """
-    parsed_old = _timestamp_instant(old)
-    parsed_new = _timestamp_instant(new)
-    return parsed_old is not None and parsed_new is not None and parsed_old == parsed_new
-
-
-def _restyle_like_source(meta: dict[str, Any], source: Any) -> dict[str, Any]:
-    """Re-emit ``meta`` in ``source``'s key order and YAML style.
-
-    ``meta`` is a freshly built plain dict: correct in content, but it has lost
-    the key order, quoting and flow/block style that ruamel preserved when the
-    file was read. Writing it as-is turns a one-field update into a diff that
-    touches every line, which is how the #46 frontmatter corruption stayed
-    invisible in review.
-
-    For each key ``source`` had and ``meta`` still has, the source node is
-    reused *by reference* when the value is unchanged (keeping `tags: [a, b]`
-    inline, `"2026-07-03"` quoted, and any anchor or merge key intact) and
-    replaced when it is not. Keys dropped from ``meta`` are dropped here too,
-    and keys ``meta`` added are appended in its own order. With no source -- a
-    newly created entry -- ``meta`` is returned untouched.
-    """
-    if not isinstance(source, Mapping):
-        return meta
-
-    try:
-        from ruamel.yaml.comments import CommentedMap
-
-        restyled: Any = CommentedMap()
-    except Exception:  # no ruamel: order still helps, style is a nicety
-        logger.debug("restyle: ruamel CommentedMap unavailable", exc_info=True)
-        restyled = {}
-
-    # Source order first, then whatever `meta` added, in its own order.
-    #
-    # Unchanged values are carried over BY REFERENCE, never copied. An earlier
-    # version deep-copied the whole source mapping to inherit its style, which
-    # also resolved YAML anchors and merge keys: `<<: *anch` came back as a
-    # literal `<<:` key whose value was the merged mapping, and the merged keys
-    # were then emitted a second time as siblings -- a duplicate key in a file
-    # that had none. Referencing the original node keeps its anchor, alias,
-    # merge and comment attachments exactly as ruamel parsed them.
-    for key, old in source.items():
-        if key not in meta:
-            continue
-        new = meta[key]
-        unchanged = _plain(old) == _plain(new) or (
-            key in _TIMESTAMP_KEYS and _timestamp_same_instant(old, new)
-        )
-        restyled[key] = old if unchanged else _keep_sequence_style(old, new)
-
-    for key, value in meta.items():
-        if key not in restyled:
-            restyled[key] = value
-
-    return restyled
 
 
 @dataclass
@@ -372,6 +295,17 @@ class Entry(ABC):
     kb_name: str = ""
     file_path: Path | None = None
     _schema_version: int = 0
+    # The `importance` value this entry was built from, as given (#1588): a
+    # file's node, a request's JSON value, a `-f` value. `importance` itself is
+    # the model's int of it (`safe_int`) for every reader; this is what the rule
+    # in `validation_errors` judges, so `10.7`, `true` and `high` are refused on
+    # a create as on an update instead of being judged as 10, 1 and 5. Set by
+    # `_base_kwargs`, which every `from_frontmatter` goes through (a create via
+    # `build_entry`, `pyrite add`, an update's reload of the new file), from the
+    # read view, so a file spelling `metadata: {importance: ...}` is judged too.
+    # Never serialized: nothing here reaches a file or the index. An assignment
+    # to `importance` resets it (see `__setattr__`). `_ABSENT` when not given.
+    _importance_given: Any = field(default=_ABSENT, repr=False, compare=False)
     # Top-level frontmatter keys this class did not declare, captured at load
     # and written back at save, so a load -> save through a typed class never
     # deletes what it does not understand (`milestone:`, `github_issue:`, a
@@ -412,6 +346,25 @@ class Entry(ABC):
         default=None, init=False, repr=False, compare=False
     )
 
+    def __post_init__(self) -> None:
+        """Reset `_importance_given` when it disagrees with `importance` (#1703).
+
+        Building an entry via `dataclasses.replace(entry, importance=X)` copies
+        the old `_importance_given` (an init field) along with all other fields.
+        If `_importance_given` disagrees with `importance`, clear it to `_ABSENT`
+        so `validation_errors` judges the replaced attribute `X`.
+
+        Limit: if an entry loaded an invalid value that read as int N (e.g. "high" as 5)
+        and `replace(importance=N)` sets that same int, the old `_importance_given` is
+        retained and fails safe by refusing.
+        """
+        if self._importance_given is not _ABSENT:
+            expected = importance_value(self._importance_given)
+            if expected is None:
+                expected = safe_int(self._importance_given, DEFAULT_IMPORTANCE)
+            if self.importance != expected:
+                super().__setattr__("_importance_given", _ABSENT)
+
     def __setattr__(self, name: str, value: Any) -> None:
         """Assigning a field makes it explicit, whatever value it is given.
 
@@ -434,6 +387,9 @@ class Entry(ABC):
             # Same rule for a timestamp the source carried but did not parse:
             # the assignment is the user's value and must reach the file.
             super().__setattr__("_unparsed_timestamp_keys", self._unparsed_timestamp_keys - {name})
+        if name == "importance" and self._importance_given is not _ABSENT:
+            # The value now is the one assigned, and that is what the rule judges.
+            super().__setattr__("_importance_given", _ABSENT)
         kept = self._unrepresented_keys
         if kept and name in kept:
             # #557: the file's own value is kept only while nobody sets the
@@ -467,10 +423,24 @@ class Entry(ABC):
     # restyling the whole block (#46). Never read as data -- only as style.
     _source_frontmatter: Any = field(default=None, init=False, repr=False, compare=False)
 
+    # A create's declared fields, ``{file key: attribute | None}`` (#86,
+    # #1108), where None identifies a metadata-held field. Set from the schema
+    # for an entry built from a request, empty for one loaded from a file.
+    # ``_frontmatter_for_file`` writes each one the class's ``to_frontmatter``
+    # leaves out when empty (``if self.kind:``), so a new file carries every
+    # declared field at the value the entry was validated and indexed with.
+    # It belongs to this object: a before_save hook that returns a different
+    # entry (``dataclasses.replace``) drops it, and the model-held empties then
+    # leave the file and the index row together, never one of them. Shipped
+    # hooks return the entry they were given.
+    _create_fields: dict[str, str | None] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
     # DEPRECATED (#697, ADR-0045 decision 8): a bare set of alias names has no
     # target. Declare `field_aliases: {alias: target}` in the type's schema
     # (core metadata, a plugin's get_type_metadata(), or kb.yaml) instead; see
-    # pyrite/schema/field_aliases.py. Still honoured for one release, with a
+    # pyrite/schema/field_aliases.py. Still honoured until 0.27, with a
     # warning per class, so a third-party plugin keeps loading.
     FRONTMATTER_ALIASES: ClassVar[frozenset[str]] = frozenset()
 
@@ -521,9 +491,9 @@ class Entry(ABC):
         # so an `id:` line cannot smuggle an unindexable title into the index.
         if isinstance(title, (list, tuple, dict)):
             kind = "a mapping" if isinstance(title, dict) else "a list"
-            raise TypeError(f"title must be a string, got {kind}")
+            raise EntryTypeError(f"title must be a string, got {kind}")
         if isinstance(title, float) and title != title:  # NaN
-            raise TypeError("title must be a string, got NaN")
+            raise EntryTypeError("title must be a string, got NaN")
         if isinstance(title, bool):
             title = "true" if title else "false"
         elif title is not None and not isinstance(title, str):
@@ -543,7 +513,15 @@ class Entry(ABC):
             "title": title,
             "body": body,
             "summary": meta.get("summary", ""),
-            "importance": safe_int(meta.get("importance"), 5),
+            # The int the one rule reads the value as (`importance_value`: `5.0`
+            # and `"05"` are 5); a value the rule refuses keeps its old reading
+            # (`safe_int`) for readers, and is refused by `validation_errors`.
+            "importance": (
+                importance_value(meta.get("importance"))
+                or safe_int(meta.get("importance"), DEFAULT_IMPORTANCE)
+            ),
+            # What the rule judges (#1588): the value as given, not its int.
+            "_importance_given": meta.get("importance", _ABSENT),
             "tags": _as_list(meta.get("tags")),
             "aliases": _as_list(meta.get("aliases")),
             "sources": parse_sources(meta.get("sources")),
@@ -598,12 +576,10 @@ class Entry(ABC):
         # them, and neither must a newly created entry (#46).
         #
         # Emitted as a datetime (second precision), not as an isoformat()
-        # string: ruamel writes a str *quoted* and keeps the microseconds,
-        # while a datetime becomes a plain YAML timestamp -- the shape such
-        # files already use. A value the source file already had is restored
-        # to its original node (and therefore its original style) by
-        # _restyle_like_source, so this only decides the shape of a *changed*
-        # value.
+        # string: `apply` writes a datetime as a plain YAML timestamp -- the
+        # shape such files already use -- and a str quoted. A key the file
+        # already holds keeps its own bytes (an update names only what it
+        # changes), so this only decides the shape of a *new* value.
         if self._source_frontmatter is not None:
             for ts_key in _TIMESTAMP_KEYS:
                 if ts_key not in self._absent_default_keys:
@@ -672,7 +648,7 @@ class Entry(ABC):
         the drop this branch fixes (#173 review). Those keys get the raw
         source node back, so the restyle keeps it verbatim.
         """
-        meta = self.to_frontmatter()
+        meta = self.declared_frontmatter()
         if self._source_frontmatter is not None:
             for ts_key in self._unparsed_timestamp_keys:
                 if ts_key in meta and ts_key in self._source_frontmatter:
@@ -695,6 +671,44 @@ class Entry(ABC):
             if not (k in absent and k in pristine and _plain(pristine[k]) == _plain(v))
         }
 
+    def declared_frontmatter(self) -> dict[str, Any]:
+        """A create's declared fields, at their canonical file spelling.
+
+        An attribute name supplies a model-held value the class omits (#86).
+        None means the schema-declared field lives in metadata; promote its
+        serialized value without changing the entry's metadata (#1108).
+
+        The one field set of a new entry: the file (``_frontmatter_for_file``),
+        the index row (``IndexManager``) and a create's validation
+        (``KBService._validated_fields``) all read it, so the entry a create
+        validates and indexes is the one it writes. For an entry loaded from
+        a file ``_create_fields`` is empty and this is ``to_frontmatter()``.
+        """
+        meta = self.to_frontmatter()
+        if not self._create_fields:
+            return meta
+        from ..schema.field_aliases import spellings_of
+
+        nested = meta.get("metadata")
+        nested = nested if isinstance(nested, Mapping) else {}
+        for key, attribute in self._create_fields.items():
+            if attribute is None:
+                if key in nested:
+                    meta[key] = nested[key]
+                    nested = dict(nested)
+                    del nested[key]
+                    if nested:
+                        meta["metadata"] = nested
+                    else:
+                        meta.pop("metadata", None)
+                continue
+            if not any(
+                path[-1] in (nested if len(path) > 1 else meta)
+                for path in spellings_of(type(self), self.entry_type, key)
+            ):
+                meta[key] = getattr(self, attribute)
+        return meta
+
     def unrepresented_frontmatter(self) -> dict[str, Any]:
         """The file's keys whose value this entry's model does not reproduce.
 
@@ -708,16 +722,6 @@ class Entry(ABC):
         if not isinstance(source, Mapping):
             return {}
         return {k: source[k] for k in (self._unrepresented_keys or {}) if k in source}
-
-    def to_markdown(self) -> str:
-        """Convert to markdown string with YAML frontmatter."""
-        meta = _restyle_like_source(self._frontmatter_for_file(), self._source_frontmatter)
-        yaml_front = dump_yaml(meta)
-        # Exactly one trailing newline: the loader strips the body anyway, and a
-        # body that already ended in newlines produced a blank last line that
-        # failed the end-of-file hook on every freshly created entry.
-        body = self.body.rstrip("\n")
-        return f"---\n{yaml_front}\n---\n" + (f"\n{body}\n" if body else "")
 
     @classmethod
     def from_markdown(cls, text: str) -> "Entry":
@@ -738,199 +742,19 @@ class Entry(ABC):
         meta = load_yaml(split.text)
         body = split.body
 
-        entry = cls.from_frontmatter(meta, body)
+        # The same lift `entry_from_frontmatter` makes (#1025): a field the
+        # file spells only under `metadata:` is read as if spelled at the
+        # top level; the class reads the view, the bookkeeping keeps the raw
+        # mapping. The type name is the file's; the class decides the fields.
+        from ..schema.field_aliases import read_view
+
+        view = read_view(meta, cls, str(meta.get("type") or ""))
+        entry = cls.from_frontmatter(view, body)
         # Restore lifecycle from frontmatter (base field, not in subclass constructors)
         if entry is not None:
-            entry.lifecycle = meta.get("lifecycle", "active")
+            entry.lifecycle = view.get("lifecycle", "active")
             capture_extra_frontmatter(entry, meta)
         return entry
-
-    @classmethod
-    def load(cls, path: Path) -> "Entry":
-        """Load entry from file."""
-        text = path.read_text(encoding="utf-8")
-        entry = cls.from_markdown(text)
-        entry.file_path = path
-        return entry
-
-    @staticmethod
-    def _publish_exclusive(tmp: str, path: Path) -> None:
-        """Publish ``tmp`` to ``path``, refusing if ``path`` already exists.
-
-        The contract: publish exactly the new file at ``path`` and leave
-        nothing behind that the caller cannot name, or raise and leave
-        ``path`` as it was. Mechanisms, in order:
-
-        1. ``os.link(tmp, path)`` -- atomic, never exposes a partial file.
-           ``FileExistsError`` stops here. Any other error (no hard links on
-           FAT/exFAT, EACCES on some network shares, FUSE-specific errnos)
-           goes on to step 2, which is still exclusive (#391 round 3; #643
-           review: an errno allow-list here failed every create on those).
-        2. ``os.open(path, O_CREAT | O_EXCL)`` claims the name, then
-           ``os.replace(tmp, path)`` fills it: the replace only targets a
-           path this call just created. If anything after the claim fails,
-           the placeholder is removed while it is still ours (#477).
-           ``FileExistsError`` stops here; so does any error other than
-           "unsupported" (ENOSPC, EDQUOT, EIO...), with ``path`` untouched.
-        3. Only if O_EXCL itself is unsupported (ENOTSUP, ENOSYS,
-           EOPNOTSUPP): a plain ``os.replace``, guarded only by the write
-           pipeline's own ``exists()`` check, as before this method existed.
-
-        ``FileExistsError`` is raised whenever step 1 or 2 finds ``path``
-        taken; this never knowingly overwrites it. ``tmp`` belongs to the
-        caller until a mechanism consumes it: on success it is gone (moved by
-        ``os.replace``, or unlinked after step 1 -- if that unlink fails twice
-        the save still succeeds and a warning names the leftover); on a raise
-        it is still there, and ``save()`` removes it.
-        """
-        import errno
-        import os
-
-        unsupported_errnos = {errno.ENOTSUP, errno.ENOSYS}
-        unsupported_errnos.add(getattr(errno, "EOPNOTSUPP", errno.ENOTSUP))
-
-        try:
-            os.link(tmp, path)
-        except FileExistsError:
-            raise
-        except OSError:
-            pass  # step 2 is still exclusive, and re-raises real I/O errors
-        else:
-            # The target is already published. Keep cleanup outside the try
-            # above so an unlink error can never be mistaken for a link failure.
-            # Retry once for transient filesystem/antivirus sharing errors;
-            # publication already succeeded, so persistent cleanup failure
-            # must not turn the save into a reported failure.
-            try:
-                os.unlink(tmp)
-            except OSError:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    # Not harmless since #752: a second hard link to the entry
-                    # blocks `ids pin` (nlink > 1) and keeps today's content
-                    # after the next update gives the entry a new inode.
-                    logger.warning(
-                        "saved %s, but could not remove its temp name %s, a second "
-                        "hard link to the same file; delete it by hand",
-                        path,
-                        tmp,
-                        exc_info=True,
-                    )
-            return
-
-        try:
-            claim_fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            raise
-        except OSError as exc:
-            if exc.errno not in unsupported_errnos:
-                raise
-            # This filesystem supports neither atomic mechanism. Preserve the
-            # historical best-effort behavior only for that explicit case.
-            os.replace(tmp, path)
-            return
-
-        # From here the placeholder at `path` is ours: everything up to a
-        # successful replace runs inside one cleanup scope (#643 review item 3).
-        claim_stat = None
-        try:
-            try:
-                claim_stat = os.fstat(claim_fd)
-            finally:
-                os.close(claim_fd)
-            os.replace(tmp, path)
-        except BaseException:
-            Entry._remove_claim(path, claim_stat)
-            raise
-
-    @staticmethod
-    def _remove_claim(path: Path, claim_stat: Any) -> None:
-        """Remove the O_EXCL placeholder at ``path`` if it is still ours.
-
-        With the claim's identity (``claim_stat``), remove ``path`` only while
-        it names that same file: a writer that replaced it in the meantime
-        owns the new target. Without it (``fstat`` failed), remove ``path``
-        only while it is empty: the placeholder is 0 bytes and no entry file
-        ever is. Best effort either way; the caller is already raising.
-
-        There is a narrow gap between the ``os.stat`` and the ``os.unlink``:
-        a concurrent non-exclusive replace landing inside it would be removed.
-        POSIX has no unlink-if-inode; the window is a few syscalls wide and
-        needs a second writer that bypassed the exclusive path. The identity
-        test shares that window in one more way: if the placeholder is unlinked
-        and a new file reuses its inode number, ``samestat`` matches the new
-        file. That needs the same outside writer inside the same window.
-        """
-        import os
-
-        try:
-            current = os.stat(path)
-            if claim_stat is not None:
-                ours = os.path.samestat(claim_stat, current)
-            else:
-                ours = current.st_size == 0
-            if ours:
-                os.unlink(path)
-        except OSError:
-            pass
-
-    def save(self, path: Path | None = None, *, exclusive: bool = False) -> Path:
-        """Save entry to file.
-
-        Args:
-            path: Target path; defaults to ``self.file_path``.
-            exclusive: ``True`` publishes exclusively (see
-                :meth:`_publish_exclusive`) instead of with ``os.replace`` --
-                it raises ``FileExistsError`` if ``path`` already exists,
-                instead of silently overwriting it. For the create path only
-                (#391 cold read round 2): the write-pipeline's own
-                `resolved_path.exists()` check and this publish step are two
-                different moments, so two truly concurrent creates can both
-                pass the check before either publishes. This closes that
-                window at the one place a filesystem call can enforce it
-                atomically; it does not replace the check (which gives the
-                friendlier error message and DB-index-consistency path in
-                the common, non-racing case).
-        """
-        if path is None:
-            path = self.file_path
-        if path is None:
-            raise ValueError("No path specified and no file_path set")
-
-        path.parent.mkdir(parents=True, exist_ok=True)
-        # Atomic replace: agents race on the same file (claim vs reset, claim
-        # vs claim) and a plain write_text lets a concurrent load() read a
-        # truncated file. Temp file in the same directory so the rename is
-        # atomic on POSIX and Windows; a failed write leaves the old file intact.
-        import os
-        import tempfile
-
-        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                f.write(self.to_markdown())
-            # mkstemp gives 0600; keep the existing file's mode, or what a
-            # plain write would have produced under the current umask.
-            try:
-                mode = os.stat(path).st_mode & 0o777
-            except FileNotFoundError:
-                umask = os.umask(0)
-                os.umask(umask)
-                mode = 0o666 & ~umask
-            os.chmod(tmp, mode)
-            if exclusive:
-                self._publish_exclusive(tmp, path)
-            else:
-                os.replace(tmp, path)
-        except BaseException:
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise
-        self.file_path = path
-        return path
 
     def add_link(self, target: str, relation: str, note: str = "", kb: str = "") -> None:
         """Add a link to another entry."""
@@ -940,14 +764,100 @@ class Entry(ABC):
         """Add a source reference."""
         self.sources.append(Source(title=title, url=url, **kwargs))
 
-    def validate(self) -> list[str]:
-        """Validate entry. Returns list of errors."""
-        errors = []
+    def validation_errors(self) -> list[dict[str, Any]]:
+        """Structured form of :meth:`validate`: one row per problem (#1284).
+
+        Each row carries ``field``, ``rule`` and ``message``, plus ``expected``
+        where the fix is mechanical. A write refusal ships these rows as
+        ``errors`` on REST, MCP and the CLI through ``refusal_fields``, so the
+        caller learns which field failed instead of having to read the
+        sentence. ``validate()`` stays the string view every existing caller
+        (plugins, ``pyrite qa``, the loader) already reads.
+        """
+        errors: list[dict[str, Any]] = []
         if not self.id:
-            errors.append("Entry must have an ID")
+            errors.append({"field": "id", "rule": "required", "message": "Entry must have an ID"})
         if not self.title:
-            errors.append("Entry must have a title")
+            errors.append(
+                {"field": "title", "rule": "required", "message": "Entry must have a title"}
+            )
+        elif isinstance(self.title, (list, tuple, dict)) or (
+            isinstance(self.title, float) and self.title != self.title
+        ):
+            # A scalar title is stringified when the file is loaded (#704);
+            # a collection or NaN title cannot be indexed at all and is
+            # reported by `pyrite qa` (#711). Both checks say the same thing.
+            if isinstance(self.title, dict):
+                kind = "a mapping"
+            elif not isinstance(self.title, (list, tuple)):
+                kind = "NaN"
+            else:
+                kind = "a list"
+            errors.append(
+                {
+                    "field": "title",
+                    "rule": "type",
+                    "message": f"Entry title must be a string, got {kind} (#711)",
+                    "expected": "a string",
+                }
+            )
+        if problem := lifecycle_validation_error(self.lifecycle):
+            errors.append(problem)
+
+        # `importance` is a base field, a whole number 1-10 on every type
+        # (#1537, #1588). Judged on the value as given (`_importance_given`),
+        # never on the model's int of it, so a create, an update and either
+        # spelling in a file get one answer. A blank or null `importance:` is
+        # absent, not a violation: the file is a person's, and a blank key is
+        # common in a hand-made template.
+        importance = self.rule_input("importance")
+        if importance is not None and not validate_importance(importance):
+            errors.append(
+                {
+                    "field": "importance",
+                    "rule": "range",
+                    "message": f"Importance must be 1-10, got: {importance}",
+                    "expected": "1-10",
+                }
+            )
         return errors
+
+    def file_value(self, field_name: str, value: Any) -> Any:
+        """The form an update's ``Set`` stores ``value`` in, for ``field_name``.
+
+        An accepted ``importance`` is stored as the int the one rule reads it
+        as (``importance_value``): an update writes ``5`` for ``5.0`` or
+        ``"05"``, as a create does (#1588, maintainer decision of 2026-11-17).
+        A value the rule refuses is returned as it is, for the rule to refuse
+        on the written result. Every other field: the value as sent. The
+        update's write path (``KBService._value_for_file``) asks this for
+        every field it sets, so no field's storage rule lives there. A create
+        does not call it: it stores the model's serialisation (``_base_kwargs``),
+        so an override here changes updates only.
+        """
+        if field_name == "importance":
+            accepted = importance_value(value)
+            if accepted is not None:
+                return accepted
+        return value
+
+    def rule_input(self, field_name: str) -> Any:
+        """The value :meth:`validation_errors` judges for ``field_name``.
+
+        For ``importance`` that is the value as given (``_importance_given``),
+        not the model's int of it (#1588); for every other field, the
+        attribute. The write gate (``KBService._validate_write``) asks this
+        too, to tell a violation the file already had ("kept") from a write
+        that sends a different value whose row reads the same: ``5.5`` and
+        ``"5.5"`` print alike in a message but are not the same value.
+        """
+        if field_name == "importance" and self._importance_given is not _ABSENT:
+            return self._importance_given
+        return getattr(self, field_name, None)
+
+    def validate(self) -> list[str]:
+        """Validate entry. Returns list of error messages."""
+        return [error["message"] for error in self.validation_errors()]
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(id={self.id!r}, title={self.title!r})"

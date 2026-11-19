@@ -38,7 +38,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -86,8 +86,10 @@ def resolve_api_key_role(key: str | None, config: PyriteConfig) -> str | None:
     Returns:
         - "admin" when no keys are configured and auth is disabled (open access)
         - None when no keys are configured and auth is enabled: no key is
-          valid, so the caller falls through to its session or the anonymous
-          tier (any key used to answer "admin" here)
+          valid (any key used to answer "admin" here). A presented key that
+          resolves to None is refused with 401 by every surface: it never
+          falls through to a session cookie or the anonymous tier
+          (``server/credentials.py``, #1754)
         - "admin" when key matches the legacy single api_key
         - The configured role when key hash matches an api_keys entry
         - None when key is invalid or missing (auth enabled but key wrong)
@@ -230,6 +232,26 @@ class Principal:
         return self.scoped and self.role != "admin"
 
 
+class Landing(StrEnum):
+    """Where a write lands (ADR-0044 §1): on the KB's own files, in the
+    writer's change set, or nowhere (refused)."""
+
+    CANONICAL = "canonical"
+    CHANGE_SET = "change_set"
+    DENY = "deny"
+
+
+def is_operator(principal: Principal | None) -> bool:
+    """The operator: the local process (CLI, stdio MCP), an operator API key
+    with no user identity, or a signed-in global admin (ADR-0044 §1, as
+    revised 2026-10-20). Its writes always land canonical."""
+    if principal is None:
+        return False
+    if principal.kind in ("local", "operator_key"):
+        return True
+    return principal.kind == "user" and principal.role == "admin"
+
+
 class Action(StrEnum):
     """A closed vocabulary of what a principal may ask to do (ADR-0037 §1)."""
 
@@ -299,9 +321,15 @@ NOT_FOUND = "NOT_FOUND"
 
 @dataclass(frozen=True)
 class Decision:
-    """Allow (`code` None), or a denial with its code."""
+    """Allow (`code` None), or a denial with its code.
+
+    A NOT_FOUND for a named KB carries the resolver's own refusal
+    (`services/kb_resolver.py`, #952) so `require` raises it with its
+    suggestion and near matches; two decisions compare equal on `code` alone.
+    """
 
     code: str | None = None
+    refusal: KBNotFoundError | None = field(default=None, compare=False, repr=False)
 
     @property
     def allowed(self) -> bool:
@@ -351,7 +379,7 @@ UNSCOPED: None = None
 def named_kb(value: object) -> str | None:
     """The KB a request or call names by ``value``, or None when it names none.
 
-    A blank or whitespace-only name is **never a KB** (private #74). The REST
+    A blank or whitespace-only name is **never a KB**. The REST
     resolver, the MCP chokepoint and the service lookups all read it the same
     way -- as "no KB named" -- so none of them refuses it as a KB while
     another treats it as one; a read naming no KB is then bounded by the
@@ -438,21 +466,74 @@ class AccessPolicy:
     # -- facts about a KB -----------------------------------------------------
 
     def kb_exists(self, kb_name: str) -> bool:
-        """Is `kb_name` a KB this instance knows -- in config or the registry?"""
-        if self.config.get_kb(kb_name):
-            return True
-        return self._kb_registry().is_registered(kb_name)
+        """Is `kb_name` a KB this instance knows -- in config or the registry?
+
+        The one existence lookup, `kb_resolver.resolve_kb` with no scope
+        (#952, #925): a shortname is not a KB here either.
+        """
+        from .kb_resolver import resolve_kb
+
+        try:
+            return resolve_kb(self.config, kb_name, readable_kbs=UNSCOPED, db=self.db) is not None
+        except KBNotFoundError:
+            return False
+
+    def resolve_kb_for(self, principal: Principal, kb_name: object):
+        """The KB `kb_name` means for `principal`, or the one refusal
+        (`kb_resolver.resolve_kb` with the principal's read scope).
+
+        None when `kb_name` names no KB.
+        """
+        from .kb_resolver import resolve_kb
+
+        return resolve_kb(
+            self.config, kb_name, readable_kbs=self.read_scope(principal).as_set(), db=self.db
+        )
 
     def kb_default_role(self, kb_name: str) -> str | None:
-        """A KB's default_role: config first, then the registry.
+        """A KB's default_role, from the KB's one source.
+
+        - A KB declared in config.yaml: the file's value, validated at load;
+          None (the line absent) is the instance default. The registry row,
+          which an earlier load may have left with a value the file no longer
+          holds, counts only when it is "none" and the file has no line: an
+          upgrade never opens a KB that was closed.
+        - A registry KB: the value loaded from its row, else the row as it is
+          now, through the same validator (`validate_kb_default_role`); a
+          value it refuses gives no access.
+        - A name the load left out (its path cannot be resolved, its row is
+          refused) or that names no KB: "none", decided here and not only by
+          each route's existence check.
 
         Under an untrusted config the index belongs to the tree: a registry
         value that opens a KB is ignored (`PyriteConfig.confined_default_role`).
         """
-        kb_config = self.config.get_kb(kb_name)
-        if kb_config and kb_config.default_role is not None:
+        from ..config import validate_kb_default_role
+        from ..exceptions import ConfigError
+
+        declared = self.config.yaml_kb(kb_name)
+        registry = self._kb_registry()
+        if declared is not None:
+            if declared.default_role is not None:
+                return declared.default_role
+            # An upgrade never opens a KB that was closed: with no line in
+            # the file, a stored "none" stays (the seed keeps it too,
+            # `KBRegistryService._seeded_default_role`); any other stored
+            # value is not the file's and is ignored.
+            if registry.registered_default_role(kb_name) == "none":
+                return "none"
+            return None
+        kb_config = self.config.get_kb(kb_name) or registry.user_kb_config(kb_name)
+        if kb_config is None:
+            return "none"
+        if kb_config.default_role is not None:
             return kb_config.default_role
-        stored = self._kb_registry().registered_default_role(kb_name)
+        try:
+            stored = validate_kb_default_role(
+                registry.registered_default_role(kb_name), f"KB '{kb_name}' (registry row)"
+            )
+        except ConfigError:
+            return "none"
         if stored is None:
             return None
         return self.config.confined_default_role(stored)
@@ -515,9 +596,15 @@ class AccessPolicy:
 
         if isinstance(resource, KB | Row):
             kb_name = resource.name if isinstance(resource, KB) else resource.kb_name
-            if not self.kb_exists(kb_name):
+            # The resolver decides existence, readability and the shortname
+            # rule in one place (#952); a NOT_FOUND carries its refusal.
+            try:
+                kb = self.resolve_kb_for(principal, kb_name)
+            except KBNotFoundError as refusal:
+                return Decision(NOT_FOUND, refusal=refusal)
+            if kb is None:
                 return Decision(NOT_FOUND)
-            effective = self.effective_kb_role(principal, kb_name)
+            effective = self.effective_kb_role(principal, kb.name)
             if role_at_least(effective, tier):
                 return ALLOW
             if not role_at_least(effective, "read"):
@@ -533,6 +620,34 @@ class AccessPolicy:
 
         raise NotImplementedError(f"{resource!r} is not decided by the policy yet (ADR-0037 3c)")
 
+    def lands_in(self, principal: Principal | None, kb_name: str) -> Landing:
+        """Where `principal`'s write to `kb_name` lands: the one landing rule
+        (ADR-0044 §1). Every surface asks this; none decides for itself.
+
+        | Principal                     | `landing: canonical` | `landing: review` |
+        |-------------------------------|----------------------|-------------------|
+        | the operator (`is_operator`)  | Canonical            | Canonical         |
+        | a user with a write grant     | Canonical            | ChangeSet         |
+        | anonymous, granted a write    | Canonical            | Deny              |
+        | no write permission           | Deny                 | Deny              |
+
+        A KB not in the config file (registered in the index, ephemeral) is
+        `canonical`: `landing` is set only in the operator's file.
+        """
+        decision = self.authorize(principal, Action.KB_WRITE, KB(kb_name))
+        if principal is None or not decision.allowed:
+            return Landing.DENY
+        if is_operator(principal):
+            return Landing.CANONICAL
+        kb = self.resolve_kb_for(principal, kb_name)
+        if kb is None or getattr(kb, "landing", "canonical") != "review":
+            return Landing.CANONICAL
+        if principal.user_id is None:
+            # A change set belongs to a user. The anonymous visitor, even with
+            # an `anonymous_tier` that grants a write, has none to own one.
+            return Landing.DENY
+        return Landing.CHANGE_SET
+
     def require(self, principal: Principal | None, action: Action, resource: Resource) -> None:
         """`authorize`, raising on a denial: `KBNotFoundError` for NOT_FOUND
         (the same exception, and message, a missing KB gets), `PolicyDeniedError`
@@ -540,6 +655,8 @@ class AccessPolicy:
         decision = self.authorize(principal, action, resource)
         if decision.allowed:
             return
+        if decision.refusal is not None:
+            raise decision.refusal
         if decision.code == NOT_FOUND:
             kb_name = (
                 resource.name if isinstance(resource, KB) else getattr(resource, "kb_name", "")

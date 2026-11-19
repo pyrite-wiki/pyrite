@@ -114,3 +114,45 @@ def test_step_summary_is_written(baseline, tmp_path, monkeypatch):
 def test_committed_baseline_is_well_formed():
     data = json.loads((Path(__file__).resolve().parent.parent / ".mypy-baseline.json").read_text())
     assert data["total"] == sum(f["count"] for f in data["files"].values())
+
+
+# --- #1084: red means THIS change added errors, whatever the committed file says ---
+
+
+def test_a_base_run_replaces_the_committed_baseline(baseline):
+    # dev already sits above the committed baseline by B1; a PR that adds
+    # nothing must not inherit that red (#1084).
+    code, text = ratchet.run(out(A1, A2, B1), baseline, base_output=out(A1, A2, B1))
+    assert code == 0 and "base commit" in text
+
+
+def test_a_rise_over_the_base_fails_even_when_the_committed_baseline_allows_it(baseline):
+    code, text = ratchet.run(out(A1, A2), baseline, base_output=out(A1))
+    assert code == 1 and "RISE pyrite/a.py" in text
+
+
+def test_a_drop_elsewhere_cannot_hide_a_rise_over_the_base(baseline):
+    code, text = ratchet.run(out(A1, B1), baseline, base_output=out(A1, A2))
+    assert code == 1 and "RISE pyrite/b.py" in text
+
+
+def test_a_base_run_that_did_not_finish_is_not_zero_errors(baseline):
+    code, text = ratchet.run(out(A1), baseline, base_output="Traceback (most recent call last):\n")
+    assert code == 2 and "base" in text
+
+
+def test_update_is_refused_against_a_base_run(baseline):
+    before = baseline.read_text()
+    code, text = ratchet.run(out(A1), baseline, base_output=out(A1, A2), update=True)
+    assert code == 2 and "--update" in text
+    assert baseline.read_text() == before
+
+
+def test_main_reads_the_base_output_file(baseline, tmp_path):
+    head, base = tmp_path / "head.out", tmp_path / "base.out"
+    head.write_text(out(A1, A2, B1))
+    base.write_text(out(A1, A2, B1))
+    argv = [str(head), "--baseline", str(baseline), "--base", str(base)]
+    assert ratchet.main(argv) == 0
+    base.write_text(out(A1, A2))
+    assert ratchet.main(argv) == 1

@@ -22,10 +22,8 @@ if TYPE_CHECKING:
 # ``(entry_type, fields)`` form is not supported (#379, #376, #48).
 Validator = Callable[[str, dict, dict], list[dict]]
 
-# The plugin hook contract: a hook binds ``(entry, ctx)``. ``before_*`` hooks
-# may raise to abort the operation or return a (possibly modified) entry;
-# ``after_*`` hook exceptions are logged and swallowed (HookRunner owns this
-# raise/swallow contract).
+# Hooks bind ``(entry, ctx)``; see PyritePlugin.get_hooks for the lifecycle
+# contract. HookRunner owns before-hook propagation and after-hook logging.
 Hook = Callable[[Any, dict], Any]
 
 
@@ -58,6 +56,36 @@ class PyritePlugin(Protocol):
         Returns:
             Dict mapping type name to Entry subclass.
             Example: {"investigation": InvestigationEntry}
+
+        A type's loader (``from_frontmatter``) should convert leniently
+        (``pyrite.utils.parse.safe_int``) or keep a value as written, and
+        leave the judgement to a validator, whose finding on a field a write
+        does not touch is a warning (ADR-0042 decision 8). A loader that
+        raises makes the file read-only through Pyrite until it is fixed by
+        hand: reads return the declared type without the refused fields, and
+        every write is refused with ``ENTRY_UNREADABLE`` (decision 8a).
+        """
+        ...
+
+    def get_type_mappings(self) -> dict[str, str]:
+        """
+        Return the core types this plugin stores as one of its own (#468).
+
+        Optional. Returns:
+            Dict mapping a core type name to one of this plugin's entry types.
+            Example: {"event": "investigation_event"}
+
+        A create that names the core type in a KB this plugin is active for
+        (``get_kb_types``) stores the plugin's type instead -- in a KB whose
+        ``kb.yaml`` declares types, only when it declares both. Nothing else
+        maps a type: subclassing a core class does NOT (a ``NoteEntry``
+        subclass that only reuses its fields leaves ``note`` alone). Checked
+        at load: the key must be a core type, the value one of this plugin's
+        ``get_entry_types``, the plugin must name at least one KB type, and
+        no two plugins active for an overlapping KB type may map the same
+        core type (refused, naming both). ``orient`` and ``kb_schema`` show
+        the pairs a KB applies as ``type_mappings``.
+        Needs the SCHEMA capability.
         """
         ...
 
@@ -90,7 +118,56 @@ class PyritePlugin(Protocol):
 
         Returns:
             Dict mapping tool name to tool definition.
-            Each tool has "description", "inputSchema", "handler".
+            Each tool has "description", "inputSchema", "handler", and,
+            for a tool that takes an entry id, "locates_entry"; a write
+            tool whose KB may be omitted, "default_kb".
+
+        A tool registered at the read tier that takes a KB argument (any name
+        in ``mcp_server.KB_ARGUMENT_NAMES``) also takes ``readable_kbs`` as a
+        keyword: the caller's readable set, None for an unscoped caller. The
+        dispatcher checks only the KB the call names; what the handler reads
+        after that (backlinks, a search, a graph, a report that crosses KBs)
+        it filters by this set itself, so nothing from a KB the caller cannot
+        read reaches the answer. A read tool that names no KB and does not
+        take the set is refused to a scoped caller.
+        ``tests/test_plugin_read_tools_take_the_readable_set.py`` holds every
+        registered read tool to this rule.
+
+        A tool registered above the read tier works in ``args["kb_name"]``
+        and nowhere else: the MCP dispatcher hands its handler a ``kb_name``
+        that its read, write, read-only and landing checks ran on, or refuses
+        the call. ``default_kb``: ``(args, readable_kbs) -> str
+        | None``, the KB the tool works in when the call names none. The
+        dispatcher asks it before its checks and sets ``kb_name`` to the
+        answer; ``readable_kbs`` is the caller's readable set (None for an
+        unscoped caller), and the answer must be one of them, so a refusal
+        never names a KB the caller cannot read. None, or no ``default_kb``,
+        and a call with no ``kb_name`` is refused ``VALIDATION_FAILED``. A KB
+        named under another argument (``kb``, ``source_kb``) is checked but
+        never chooses the handler's KB. The handler never falls back to a
+        default of its own.
+
+        ``locates_entry`` (#1310): ``{"id_args": [...], "entry_type": ...}``.
+        ``id_args`` names every argument that carries an entry id (a string
+        or a list of strings); ``entry_type`` is the one type the tool acts
+        on, omitted for a tool that takes any type. The MCP dispatcher finds
+        the ids through ``KBService.locate`` within the caller's readable
+        KBs -- with ``kb_name`` absent or blank, the one KB that holds them,
+        ``AMBIGUOUS`` when several do, ``ENTRY_NOT_FOUND`` when none does --
+        and sets ``args["kb_name"]`` to that KB before its read, write and
+        landing checks, so the handler always works in a checked KB. The
+        handler reads ``args["kb_name"]``; it never resolves the id itself,
+        never falls back to a default KB, and never works in
+        ``kb_name or ""``. A call whose id arguments are all blank (missing,
+        empty, whitespace) is refused ``VALIDATION_FAILED`` before any check,
+        so the handler always receives a located id. ``kb_name`` is optional
+        in the registered schema whatever the plugin's ``required`` says (the
+        SDK validates arguments before the dispatcher). With no ``kb_name``
+        the lookup reads the canonical index: an id only in the caller's
+        pending change set is found only when the call names its KB. Only the
+        top-level ``id_args`` are located; an id nested in an object argument
+        (``investigation_promote_claim``'s ``endpoint_fields``) is not, and
+        must only be written in the located KB, never used to choose one.
         """
         ...
 
@@ -170,8 +247,20 @@ class PyritePlugin(Protocol):
             Hook names: before_save, after_save, before_delete, after_delete, before_index
             Each callable receives (entry, context) where context contains:
                 kb_name, user, kb_schema, operation ("create"|"update"|"delete")
-            before_* hooks can modify the entry or raise to abort.
-            after_* hooks are for side effects (e.g. updating reputation).
+            A before_save hook may raise to refuse a write; do not use it to
+            set fields (ADR-0042 decision 4: refuse, never change). Return the
+            entry unchanged for compatibility with the current create path.
+
+            Current implementation gaps (kb/design.md): on create the returned
+            entry is validated and persisted. On update the return value is
+            ignored; in-place changes reach only this write's index row until
+            the next sync, never the file. Do not rely on either gap. Computed
+            values belong at read/index time under derived, not in frontmatter.
+
+            after_* hooks run after persistence; exceptions are logged and
+            swallowed. An after_save hook must not write another entry.
+            See tests/test_after_save_hooks_write_no_other_entry.py and the
+            KBService hook tests for the existing behavioural coverage.
         """
         ...
 
@@ -227,6 +316,9 @@ class PyritePlugin(Protocol):
                     file may spell another way, e.g. {"participants": "actors"}.
                     The type's class reads the target; the platform resolves the
                     alias through pyrite.schema.field_aliases.field_aliases().
+                settled_statuses: list[str] - the statuses after which an entry of the
+                    type is no longer live work (e.g. ["done", "retired"]); `qa
+                    duplicates` skips them by default. Omit it and every entry is live.
                 protocols, guidelines, goals, evaluation_rubric - as in kb.yaml
         """
         ...
@@ -277,11 +369,11 @@ class PyritePlugin(Protocol):
                 existing_entry: Entry | None - the entry before an update,
                     or None for a create
 
-            Validators run twice per write: once on the entry as the caller
-            built it, and again after the ``before_save`` hooks, because a
-            hook may change the entry that is persisted. Both passes get the
-            same context (an update's ``existing_entry`` is set on both), so
-            a validator must be cheap and free of side effects: no I/O that
+            Creates validate the prepared entry and validate again after the
+            hooks. Updates validate the entry parsed from the proposed file
+            operations before running hooks (including a no-op update).
+            See get_hooks for the lifecycle contract and its current gaps.
+            A validator must be cheap and free of side effects: no I/O that
             changes state, no counters it relies on, no assumption that it
             runs once.
 

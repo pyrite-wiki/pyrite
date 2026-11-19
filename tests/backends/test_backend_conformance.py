@@ -98,6 +98,33 @@ class TestEntryLifecycle:
         ids2 = {e["id"] for e in page2}
         assert ids1.isdisjoint(ids2)
 
+    def test_list_entries_issues_two_statements_not_n_plus_one(self, backend_with_db):
+        """list_entries(limit=50) issues two statements: 1 for entries, 1 for batch tags (#1044)."""
+        from sqlalchemy import event
+
+        backend, db = backend_with_db
+        for i in range(50):
+            backend.upsert_entry(_make_entry(f"e{i:02d}", kb_name="test", tags=[f"tag{i % 5}"]))
+
+        statement_count = 0
+
+        def count_statement(conn, cursor, statement, parameters, context, executemany):
+            nonlocal statement_count
+            statement_count += 1
+
+        # Postgres fixtures have a real backend/session but no PyriteDB.
+        engine = backend._session.get_bind()
+        event.listen(engine, "before_cursor_execute", count_statement)
+        try:
+            entries = backend.list_entries(kb_name="test", limit=50)
+            assert len(entries) == 50
+            for e in entries:
+                num = int(e["id"][1:])
+                assert e["tags"] == [f"tag{num % 5}"]
+            assert statement_count == 2, f"Expected 2 queries, got {statement_count}"
+        finally:
+            event.remove(engine, "before_cursor_execute", count_statement)
+
     def test_count_entries(self, backend):
         for i in range(3):
             backend.upsert_entry(_make_entry(f"e{i}"))
@@ -392,19 +419,19 @@ class TestGraph:
         backend.upsert_entry(
             _make_entry(
                 "stale-source",
-                links=[{"target": "target", "relation": "transclusion"}],
+                links=[{"target": "target", "relation": "late_declared_relation_621"}],
             )
         )
 
         declared_types = dict(provenance.get_all_relationship_types())
-        assert "transclusion" not in declared_types
+        assert "late_declared_relation_621" not in declared_types
         monkeypatch.setattr(
             provenance,
             "get_all_relationship_types",
             lambda: {
                 **declared_types,
-                "transclusion": {
-                    "inverse": "transcluded_by",
+                "late_declared_relation_621": {
+                    "inverse": "late_inverse_621",
                     "description": "Declared after the link was indexed",
                 },
             },
@@ -422,9 +449,9 @@ class TestGraph:
                 "inverse_relation": None,
             },
             "stale-source": {
-                "forward_relation": "transclusion",
+                "forward_relation": "late_declared_relation_621",
                 "relation": "related_to",
-                "inverse_relation": "transcluded_by",
+                "inverse_relation": "late_inverse_621",
             },
         }
 
@@ -716,6 +743,38 @@ class TestTimeline:
         assert timeline[0]["id"] == "e1"
         assert timeline[1]["id"] == "e2"
 
+    def test_timeline_status_filters_use_the_effective_status(self, backend):
+        """One conformance case for #62: `status` matches the effective
+        status (a parent done by its children counts though its file says
+        `open`), `exclude_status` keeps rows with no status, and both run
+        before `LIMIT`."""
+        backend.upsert_entry(_make_entry("e1", date="2024-01-15", importance=1))
+        backend.upsert_entry(
+            _make_entry("p", date="2024-01-20", importance=1, entry_type="task", status="open")
+        )
+        backend.upsert_entry(
+            _make_entry("p-a", entry_type="task", status="done", metadata={"parent": "p"})
+        )
+        backend.upsert_entry(
+            _make_entry("p-b", entry_type="task", status="cancelled", metadata={"parent": "p"})
+        )
+
+        timeline = backend.get_timeline(status="done")
+        assert [row["id"] for row in timeline] == ["p"]
+
+        timeline = backend.get_timeline(exclude_status=["done"], limit=1)
+        # `p` (effective `done`) is dropped, `e1` has no status and is kept:
+        # what fills the one-row page proves the filter ran before LIMIT.
+        assert [row["id"] for row in timeline] == ["e1"]
+
+    def test_timeline_status_and_exclude_status_serve_both_kinds(self, backend):
+        backend.upsert_entry(_make_entry("e1", date="2024-01-15", importance=1, status="draft"))
+        backend.upsert_entry(_make_entry("e2", date="2024-01-16", importance=1))
+        timeline = backend.get_timeline(exclude_status=["draft"])
+        assert [row["id"] for row in timeline] == ["e2"]
+        timeline = backend.get_timeline(status="draft")
+        assert [row["id"] for row in timeline] == ["e1"]
+
 
 # =========================================================================
 # Folder queries
@@ -803,6 +862,161 @@ class TestMultiKB:
         backend.delete_entry("e1", "test")
         assert backend.get_entry("e1", "test") is None
         assert backend.get_entry("e1", "other") is not None
+
+
+class TestOneRowPerWrittenLink:
+    """The link rows a backend stores for an entry's ``links``: one per written
+    link, keyed by (target, KB, relation, written prefix) as stored text, the
+    same on SQLite's diff and Postgres's re-insert (#1009, #1022). The links
+    are given as the indexer passes them: the KB resolved, the prefix as
+    written beside it."""
+
+    @staticmethod
+    def _link(target, kb, prefix=None, relation="wikilink", note=""):
+        return {"target": target, "kb": kb, "prefix": prefix, "relation": relation, "note": note}
+
+    @staticmethod
+    def _outlinks(backend):
+        return sorted(
+            (r["id"], r["kb_name"], r["relation"])
+            for r in backend.get_outlinks("s", "test", readable_kbs=UNSCOPED)
+        )
+
+    @pytest.mark.control(
+        reason="the backend key always held the KB; the loss was at extraction (tested there)"
+    )
+    def test_one_id_in_two_kbs_is_two_backlinked_rows(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x", kb_name="test"))
+        backend.upsert_entry(_make_entry("x", kb_name="other"))
+        links = [self._link("x", "test", "test"), self._link("x", "other", "other")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        for kb in ("test", "other"):
+            rows = backend.get_backlinks("x", kb, readable_kbs=UNSCOPED)
+            assert [(r["id"], r["kb_name"]) for r in rows] == [("s", "test")], kb
+
+    def test_two_prefixes_of_one_target_are_two_rows(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x", kb_name="other"))
+        links = [self._link("x", "other", "other"), self._link("x", "other", "o")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        assert self._outlinks(backend) == [("x", "other", "wikilink")] * 2
+
+    def test_one_link_spelled_twice_is_one_row(self, backend_with_db):
+        """`2024` and `'2024'`, and `true` and `'1'`: one stored text, one row;
+        the first spelling's note is kept."""
+        backend, _ = backend_with_db
+        links = [
+            self._link(2024, "test", relation="related_to", note="first"),
+            self._link("2024", "test", relation="related_to", note="second"),
+            self._link(True, "test", relation="related_to"),
+            self._link("1", "test", relation="related_to"),
+        ]
+        backend.upsert_entry(_make_entry("s", links=links))
+        rows = backend.get_outlinks("s", "test", readable_kbs=UNSCOPED)
+        assert sorted((r["id"], r["note"]) for r in rows) == [("1", ""), ("2024", "first")]
+
+    def test_reindexing_the_same_links_changes_no_row(self, backend_with_db):
+        backend, _ = backend_with_db
+        links = [
+            self._link("x", "test"),
+            self._link("x", "test", "test"),
+            self._link("x", "other", "other"),
+            self._link("x", "test", relation="related_to"),
+        ]
+        backend.upsert_entry(_make_entry("s", links=links))
+        first = self._outlinks(backend)
+        assert len(first) == 4
+        backend.upsert_entry(_make_entry("s", links=links))
+        assert self._outlinks(backend) == first
+
+    def test_the_whole_index_graph_has_one_edge_per_pair(self, backend_with_db):
+        backend, _ = backend_with_db
+        backend.upsert_entry(_make_entry("x"))
+        links = [self._link("x", "test"), self._link("x", "test", relation="related_to")]
+        backend.upsert_entry(_make_entry("s", links=links))
+        graph = backend.get_graph_data(readable_kbs=UNSCOPED)
+        assert [(e["source_id"], e["target_id"]) for e in graph["edges"]] == [("s", "x")]
+
+
+class TestMarkdownLinkRows:
+    """A Markdown link row keeps its path and names the entry at that path now,
+    on both backends' syncs and through the one shared resolver (#1723). The
+    entries are given as the indexer passes them: an absolute ``file_path``
+    under the KB root, the root as ``_kb_root``, and each path link with its
+    KB-relative ``path``."""
+
+    ROOT = "/kb"
+
+    @classmethod
+    def _entry(cls, entry_id, rel, links=()):
+        return _make_entry(
+            entry_id,
+            file_path=f"{cls.ROOT}/{rel}",
+            _kb_root=cls.ROOT,
+            links=[
+                {
+                    "target": path,
+                    "kb": "test",
+                    "prefix": None,
+                    "relation": "markdown_link",
+                    "note": note,
+                    "path": path,
+                }
+                for path, note in links
+            ],
+        )
+
+    @staticmethod
+    def _out(backend, source="s"):
+        return sorted(
+            (r["id"], r["relation"], r["note"])
+            for r in backend.get_outlinks(source, "test", readable_kbs=UNSCOPED)
+        )
+
+    def test_the_row_names_the_entry_at_its_path_in_any_write_order(self, backend):
+        backend.upsert_entry(self._entry("s", "s.md", [("notes/a.md", "#H")]))
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        backend.upsert_entry(self._entry("a", "notes/a.md"))
+        assert self._out(backend) == [("a", "markdown_link", "#H")]
+        # A rename: the new id is written at the same file, then the old row goes.
+        backend.upsert_entry(self._entry("a2", "notes/a.md"))
+        backend.delete_entry("a", "test")
+        assert self._out(backend) == [("a2", "markdown_link", "#H")]
+        # A move: the same id at another file; the path now names nothing.
+        backend.upsert_entry(self._entry("a2", "notes/moved.md"))
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        backend.upsert_entry(self._entry("b", "notes/a.md"))
+        backend.delete_entry("b", "test")
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        assert [
+            (r["id"], r["forward_relation"])
+            for r in backend.get_backlinks("a2", "test", readable_kbs=UNSCOPED)
+        ] == []
+
+    def test_a_markdown_link_and_a_wikilink_to_one_entry_are_two_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        entry = self._entry("s", "s.md", [("a.md", "")])
+        entry["links"].append(
+            {"target": "a", "kb": "test", "prefix": None, "relation": "wikilink", "note": ""}
+        )
+        backend.upsert_entry(entry)
+        assert self._out(backend) == [("a", "markdown_link", ""), ("a", "wikilink", "")]
+
+    def test_rewriting_the_same_links_keeps_the_resolved_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", ""), ("gone.md", "")]))
+        first = self._out(backend)
+        assert first == [("a", "markdown_link", ""), ("gone.md", "markdown_link", "")]
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", ""), ("gone.md", "")]))
+        assert self._out(backend) == first
+
+    def test_a_write_without_the_root_leaves_the_markdown_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", "")]))
+        from_read = backend.get_entry("s", "test")
+        backend.upsert_entry(from_read)
+        assert self._out(backend) == [("a", "markdown_link", "")]
 
 
 # =========================================================================
@@ -953,6 +1167,25 @@ def embedded_backend(backend):
     if not backend.has_embeddings():
         pytest.skip("backend cannot store embeddings (no vector support)")
     return backend
+
+
+class TestRepeatedTypeFilterConformance:
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        ("filters", "expected"),
+        [
+            ({"entry_types": ["mechanism", "theme"]}, {"mech", "theme"}),
+            ({"exclude_types": ["mechanism"]}, {"theme", "task"}),
+            ({"entry_types": ["mechanism"], "exclude_types": ["mechanism"]}, set()),
+        ],
+        ids=["include-many", "exclude", "same-type-included-and-excluded"],
+    )
+    def test_type_sets_filter_real_backend_rows(self, embedded_backend, leg, filters, expected):
+        if leg == "keyword":
+            rows = embedded_backend.search("Title", kb_name="test", **filters)
+        else:
+            rows = embedded_backend.search_semantic(_near_vector(), kb_name="test", **filters)
+        assert {row["id"] for row in rows} == expected
 
 
 class TestSemanticFilterConformance:
@@ -1829,3 +2062,91 @@ class TestArchivedExclusionRetry:
         knn = self._knn(sql_log)
         assert [p[1] for _, p in knn] == [4, 8], knn
         assert all("rowid IN" in q for q, _ in knn), knn
+
+
+# Filters on a column of the row itself, correlated with its KB before the fix;
+# the tag filters were not.
+_FILTERS_SAFE_BEFORE = {
+    "entry_type",
+    "entry_types",
+    "state",
+    "fips",
+    "status",
+    "date_from",
+    "date_to",
+}
+
+
+class TestEveryFilterIsScopedToTheRowsKB:
+    """A filter on a search of KB K is evaluated against K's row only.
+
+    Entry ids are unique within a KB, not across KBs. Every filter of both
+    legs is listed here, each with a same-id entry in a second KB that
+    satisfies it while K's entry does not: K's entry must not match.
+    """
+
+    # (search kwargs, what the other KB's same-id entry carries)
+    FILTERS = {
+        "tags": ({"tags": ["only-elsewhere"]}, {"tags": ["only-elsewhere"]}),
+        "two-tags": (
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+        ),
+        "entry_type": ({"entry_type": "event"}, {"entry_type": "event"}),
+        "entry_types": ({"entry_types": ["event"]}, {"entry_type": "event"}),
+        "state": ({"state": "MI"}, {"state": "MI"}),
+        "fips": ({"fips": "26163"}, {"fips": "26163"}),
+        "status": ({"status": "processed"}, {"status": "processed"}),
+        "date_from": ({"date_from": "2030-01-01"}, {"date": "2030-06-01"}),
+        "date_to": ({"date_to": "2000-01-01"}, {"date": "1999-06-01"}),
+    }
+
+    @pytest.fixture
+    def two_kbs(self, backend_with_db):
+        backend, _ = backend_with_db
+        return backend
+
+    @pytest.mark.parametrize("scope", ["kb_name", "kb_names"])
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param(
+                n,
+                marks=[pytest.mark.control(reason="a column of the row itself, never wrong")]
+                if n in _FILTERS_SAFE_BEFORE
+                else [],
+                id=n,
+            )
+            for n in FILTERS
+        ],
+    )
+    def test_a_same_id_entry_in_another_kb_does_not_satisfy_the_filter(
+        self, two_kbs, name, leg, scope
+    ):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        where = {"kb_name": "test"} if scope == "kb_name" else {"kb_names": ["test"]}
+        if leg == "keyword":
+            rows = backend.search("Title", **where, **search)
+        else:
+            if not (
+                backend.upsert_embedding("dup", "test", _near_vector(1))
+                and backend.upsert_embedding("dup", "other", _near_vector(2))
+                and backend.has_embeddings()
+            ):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+            rows = backend.search_semantic(_near_vector(), limit=10, **where, **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == []
+
+    @pytest.mark.control(reason="each filter still matches the entry that carries it")
+    @pytest.mark.parametrize("name", list(FILTERS))
+    def test_the_filter_matches_its_own_kbs_entry(self, two_kbs, name):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        rows = backend.search("Title", kb_name="other", **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == [("other", "dup")]

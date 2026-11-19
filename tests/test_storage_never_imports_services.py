@@ -9,6 +9,9 @@ Every import statement counts, wherever it sits: module level, inside a
 function body, under ``if TYPE_CHECKING``. ``from pyrite import services``
 counts too. ``ALLOWLIST`` starts empty and can only shrink: an entry is
 ``"file:line"`` -> the ticket that removes the import, and a stale entry fails.
+
+
+Rule and contributor guidance: ../CONTRIBUTING.md#architecture
 """
 
 from __future__ import annotations

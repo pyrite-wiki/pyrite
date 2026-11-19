@@ -203,9 +203,9 @@ its text in.
      row**, merges into it and writes the whole map back (:150-160). That is
      the index acting as tiebreaker (P5).
    - #788: a failed write is reported as `manual`, with exit 0.
-4. **`qa check-urls` checks five hard-coded types.**
-   - `timeline_event`, `solidarity_event`, `scene`, `investigation_event`,
-     `note` (`url_checker.py:76-82`).
+4. **`qa check-urls` checks three hard-coded types.**
+   - `timeline_event`, `investigation_event`, `note` (`url_checker.py`;
+     five until #953 deleted cascade's `solidarity_event` and `scene`).
    - `sources` is on the base `Entry` (`models/base.py:363`), so every other
      type's sources are skipped, including core `event`.
    - It reads sources from the index (`db.get_entry`, :96).
@@ -392,7 +392,8 @@ correction to prose is a whole `ReplaceBody`, computed from the current file
 and guarded by a unique match. If a correction must survive a concurrent edit
 elsewhere in the body, that needs a body-span operation. Question 4.
 
-`qa fix` keeps its own rules (dates, missing defaults, links, tag case).
+`qa fix` keeps its own rules (dates, links, tag case). Required fields stay manual
+with `no_safe_default`; the author must choose their values.
 ADR-0042 decision 12 already moves those onto operations as part of B6.
 `apply-verdicts` is a separate command, not a `--fix-rule`. A verdict file
 carries outside evidence, and `qa fix` repairs only what validation itself

@@ -9,6 +9,24 @@ tags: [testing, pytest]
 
 ## Framework
 - pytest with rich output
+
+## Deadlines and waits
+
+Every test subprocess call, `Popen` wait, thread join and barrier has an
+explicit finite deadline. `timeout=None` is an unbounded wait, not a deadline;
+pytest's overall timeout is a backstop, not a replacement. Read test
+websockets through `tests.ws_helpers.receive_json` rather than an unbounded
+receive. [The test-rules guard](../../tests/test_test_rules.py) enforces this.
+
+## CLI rendering
+
+Use the session-pinned environment and `_plain_cli_environment` in
+`tests/conftest.py`; CLI assertions use plain deterministic rendering.
+Colour-specific cases opt into the `terminal_colour` fixture instead of changing
+every test's rendering. Subprocesses need their own explicit environment.
+See [the colour environment tests](../../tests/test_cli_color_environment.py).
+
+## Framework and isolation rules
 - The commit hooks run no tests; the pre-push hook runs the core plus the
   affected tests (`scripts/test-affected --run`); CI is the authority
 - The pre-push hook does not run when the pushed tree already passed here
@@ -47,3 +65,4 @@ tags: [testing, pytest]
 - A test that drives an entry point (`CliRunner`, `TestClient`, MCP dispatch, `PluginContext`) does not patch the service behind it. Seed the world (`tests/search_verdict_seed.py`: `make_cli_world`, `seed_entry_world`, `install_fake_model`; `tests/auth_seed.py`) and let the real service answer. `tests/test_tests_drive_the_surface_not_the_mock.py` enforces it: `file:line: <target> is the service behind <entry point>`. Existing violators are on its `ALLOWLIST`, which can only shrink.
 - The process edge may be patched: `subprocess`, `httpx`, `requests`, `urllib`, `socket`, `smtplib`, `time`, `datetime`, `os`, `sys`, `shutil`, `webbrowser`, `_import_anthropic`/`_import_openai`, the embedding model (`embedding_service.is_available`, `_load_model`; a model failure is `FailingModel`), config loading (`load_config`), and module constants (an ALL_CAPS name, such as `_SQLITE_VEC_MAX_K`, by string or object target alike). A patch the walk cannot trace to a name (a local instance, a variable, an f-string) is reported as `<unresolved>` and listed, never ignored. The allowlist is per file, not per site.
 - To model a different backend, hand the database one (`_with_backend` in `tests/test_search_filters_across_modes.py`: a subclass instance with its own `capabilities` or `search_semantic`); do not patch the shipped class.
+- A test process's memory stays bounded however many tests it runs (#1098). FastAPI caches every dependency and endpoint callable it classifies, so each `create_app()` closure and `lambda: db` override kept its whole app alive; the repo-root `conftest.py` clears those caches after every test (`clear_fastapi_caches`), and `tests/test_test_process_memory_is_bounded.py` fails if apps survive teardown. Do not add per-fixture cleanup for it.

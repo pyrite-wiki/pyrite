@@ -8,12 +8,14 @@ from typing import Any
 
 from .utils import parse_meta, strip_wikilink
 
-# Map user-facing entity type names to DB-stored types.
-# Core types like "person" and "organization" get resolved to plugin
-# subtypes ("actor", "cascade_org") by KBService._resolve_entry_type.
+# Map user-facing entity type names to DB-stored types. A core type like
+# "person" may be stored under another type in an older KB: an `actor`
+# written by the former cascade plugin, when the write path still inferred a
+# plugin subtype from subclassing (removed by #468; only declared mappings
+# retype now, and this plugin declares none for `person`).
 ENTITY_TYPE_ALIASES: dict[str, list[str]] = {
     "person": ["person", "actor"],
-    "organization": ["organization", "cascade_org"],
+    "organization": ["organization"],
     "asset": ["asset"],
     "account": ["account"],
 }

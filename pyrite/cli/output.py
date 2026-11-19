@@ -1,6 +1,41 @@
 """CLI output formatting utilities."""
 
+from typing import Any
+
 import typer
+from rich.console import Console
+from rich.text import Text
+
+
+def cli_console(*, stderr: bool = False, highlight: bool = True) -> Console:
+    """Keep CLI text, including paths, whole when output is captured or copied.
+
+    Rich renderables (tables, panels, etc.) still use the terminal width.
+    Strings retain their literal line breaks instead of being folded or cropped.
+    """
+    return Console(soft_wrap=True, stderr=stderr, highlight=highlight)
+
+
+def path_line(
+    prefix: str,
+    path: object,
+    suffix: str = "",
+    *,
+    style: str = "",
+    path_style: str = "",
+) -> Text:
+    """Style the labels while keeping every path character literal.
+
+    Use this for any path printed next to Rich markup.
+    A Text value also preserves trailing backslashes, which markup escaping
+    can duplicate or consume when combined with surrounding style tags.
+    """
+    return Text.assemble(
+        Text.from_markup(prefix),
+        Text(str(path), style=path_style),
+        Text.from_markup(suffix),
+        style=style,
+    )
 
 
 def validate_output_format(value: str) -> str:
@@ -73,8 +108,29 @@ def _two_answers() -> typer.BadParameter:
     return typer.BadParameter("-f and --format were both given; use --format only.")
 
 
-def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str) -> str:
-    value = validate_shared_format(value)
+#: Set when a command declares ``OUTPUT_FORMAT_UNASKED`` and no format was
+#: asked for (no ``--format``, no ``PYRITE_FORMAT``): the root prints the
+#: command's answer as it printed before it joined the contract (#1691).
+UNASKED_META_KEY = "pyrite.output_format.unasked"
+
+#: The format an outcome is printed in when ``UNASKED_META_KEY`` is set.
+UNASKED_OUTCOME_FORMAT = "rich"
+
+#: The format a refusal is printed in when ``UNASKED_META_KEY`` is set: one
+#: ``ERROR [CODE]`` line, as the command printed its own refusals. A storage
+#: fault, which only the root printed, stays the default (JSON) error shape
+#: (``PyriteCLIGroup._refusal_format``).
+UNASKED_REFUSAL_FORMAT = "rich"
+
+
+def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str | None) -> str | None:
+    if value is None:
+        # Only OUTPUT_FORMAT_UNASKED has no default, and only when neither
+        # --format nor PYRITE_FORMAT gave one (click reads the variable first).
+        ctx.meta[UNASKED_META_KEY] = True
+    else:
+        value = validate_shared_format(value)
+        ctx.meta.pop(UNASKED_META_KEY, None)
     if _given_on_the_command_line(ctx, param):
         # Click runs the callbacks of options given on the command line in the
         # order they were given, so whichever of -f and --format comes second
@@ -88,8 +144,12 @@ def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str) -
     # leaf command (only this callback has it) and wraps its body; the watch
     # starts when click calls that (ADR-0046, decision 7).
     guard = ctx.meta.get(BODY_GUARD_META_KEY)
-    if guard is not None:
-        guard.watch_body_of(ctx)
+    if guard is None:
+        raise typer.BadParameter(
+            "the shared --format option requires a PyriteCLIGroup root; "
+            "invoke the main CLI instead of a standalone sub-app"
+        )
+    guard.watch_body_of(ctx)
     return value
 
 
@@ -100,7 +160,7 @@ def _record_short_format(ctx: typer.Context, value: str | None) -> str | None:
         raise _two_answers()
     value = validate_shared_format(value)
     typer.echo(
-        f"Warning: -f is deprecated and will stop meaning --format in the next release; "
+        f"Warning: -f is deprecated and will stop meaning --format in 0.27; "
         f"use --format {value} (or set PYRITE_FORMAT).",
         err=True,
     )
@@ -122,8 +182,25 @@ OUTPUT_FORMAT = typer.Option(
     help="Output format: json (default), yaml, or rich for text. PYRITE_FORMAT sets the default.",
 )
 
-#: ``-f`` meant ``--format`` on the task commands. #303: it keeps working for one
-#: release, with a warning on stderr, then goes. Declared beside OUTPUT_FORMAT on
+#: The shared option for a command whose answer, when no format is asked
+#: for, keeps the shapes it had before it joined the contract (``index sync``,
+#: #1691): its result as text for a person, its refusals as one ``ERROR
+#: [CODE]`` line, and a storage fault as the JSON error shape. The same option,
+#: check and ``PYRITE_FORMAT``; only the default is unset, and the root resolves
+#: it (``UNASKED_META_KEY``). An asked-for format (``--format`` or
+#: ``PYRITE_FORMAT``) applies to the whole answer.
+OUTPUT_FORMAT_UNASKED = typer.Option(
+    None,
+    "--format",
+    envvar="PYRITE_FORMAT",
+    callback=_record_format,
+    show_default=False,
+    help="Output format: json, yaml or rich. Unset: text, as before (a storage fault as JSON). "
+    "PYRITE_FORMAT sets the default.",
+)
+
+#: ``-f`` meant ``--format`` on the task commands. #303: it keeps working until
+#: 0.27, with a warning on stderr, then goes. Declared beside OUTPUT_FORMAT on
 #: a command that had ``-f``; hidden from help.
 LEGACY_FORMAT_SHORT = typer.Option(None, "-f", hidden=True, callback=_record_short_format)
 
@@ -159,7 +236,25 @@ def format_output(data: dict, fmt: str, **kwargs) -> str | None:
     from ..formats import format_response
 
     content, _ = format_response(data, fmt, **kwargs)
+    if fmt == "csv":
+        note_entry_warnings(data)
     return content
+
+
+def note_entry_warnings(data: Any) -> None:
+    """CSV has no place for an entry's warnings: say them on stderr (#1761)."""
+    import sys
+
+    from ..services.read_shaping import ENTRY_WARNINGS_KEY
+
+    if not isinstance(data, dict):
+        return
+    rows = (data.get("results") or data.get("entries")) or [data]
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        for warning in row.get(ENTRY_WARNINGS_KEY) or ():
+            print(f"warning: {row.get('id', '')}: {warning}", file=sys.stderr)
 
 
 def backlinks_table(entry_id: str, links: list[dict]):
@@ -170,6 +265,11 @@ def backlinks_table(entry_id: str, links: list[dict]):
     no declared inverse); ``Written as`` is what the source's file says, so an
     undeclared relation such as ``informs`` is still visible (#527). An
     edge-derived row has no ``forward_relation`` and leaves the cell empty.
+
+    One table row per source (its KB and id): the index holds one row per
+    link the source writes (#1009), so a frontmatter link and a body
+    ``[[x]]`` are two rows from one source. Their relations stand one per
+    line in the cells, in the order the rows came.
     """
     from rich.markup import escape
     from rich.table import Table
@@ -180,13 +280,17 @@ def backlinks_table(entry_id: str, links: list[dict]):
     table.add_column("Type", style="dim")
     table.add_column("Relation", style="dim")
     table.add_column("Written as", style="dim")
+    sources: dict[tuple[str, str], list[dict]] = {}
     for link in links:
+        sources.setdefault((link.get("kb_name", ""), link.get("id", "")), []).append(link)
+    for rows in sources.values():
+        first = rows[0]
         # Cells are Rich markup: a relation is free text and may hold brackets.
         table.add_row(
-            link.get("id", ""),
-            link.get("title", ""),
-            link.get("entry_type", ""),
-            escape(link.get("relation") or ""),
-            escape(link.get("forward_relation") or ""),
+            first.get("id", ""),
+            first.get("title", ""),
+            first.get("entry_type", ""),
+            "\n".join(escape(r.get("relation") or "") for r in rows),
+            "\n".join(escape(r.get("forward_relation") or "") for r in rows),
         )
     return table

@@ -43,5 +43,5 @@ Add `ai_instructions`, field `description`, and `display` hints to type definiti
 
 ## References
 
-- [ADR-0009](../adrs/0009-type-metadata-and-plugin-documentation.md)
-- [ADR-0008](../adrs/0008-structured-data-and-schema.md)
+- [ADR-0009](../../adrs/0009-type-metadata-and-plugin-documentation.md)
+- [ADR-0008](../../adrs/0008-structured-data-and-schema.md)

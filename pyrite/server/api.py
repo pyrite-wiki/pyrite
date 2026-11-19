@@ -8,13 +8,10 @@ the ``endpoints/`` subpackage; this module provides shared dependencies, the rat
 limiter, and the application factory.
 """
 
-import hashlib
 import logging
-import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -22,19 +19,22 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
+from .. import __version__
 from ..config import PyriteConfig, Settings, load_config
+from ..exceptions import KBNotFoundError
 from ..services import access_policy
 from ..services.access_policy import (
     FORBIDDEN,
     ROLE_LEVELS,
     AccessPolicy,
     Action,
+    Landing,
     Principal,
     authorize_tier,
+    is_operator,
     named_kb,
-    resolve_api_key_role,
+    resolve_api_key_role,  # noqa: F401  (re-exported: callers import it from here)
 )
 from ..services.block_service import BlockService
 from ..services.ephemeral_service import EphemeralKBService
@@ -55,13 +55,12 @@ from ..services.version_service import VersionService
 from ..storage.database import PyriteDB
 from ..storage.index import IndexManager
 from .authz import get_principal, not_authenticated
+from .client_key import client_key
 
 if TYPE_CHECKING:
     from ..services.auth_service import AuthService
     from ..services.embedding_worker import EmbeddingWorker
     from ..services.qa_service import QAService
-    from ..services.site_cache import SiteCacheService
-    from ..services.sitemap_service import SitemapService
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +78,7 @@ def _anonymized_key_func(request: Request) -> str:
     Uses SHA-256 truncated to 16 chars — sufficient for rate limiting,
     not reversible to the original IP address.
     """
-    raw_ip = get_remote_address(request)
-    return hashlib.sha256(raw_ip.encode()).hexdigest()[:16]
+    return client_key(request)
 
 
 # =============================================================================
@@ -146,12 +144,106 @@ def get_index_worker() -> IndexWorker:
     return IndexWorker(db, config)
 
 
-def get_kb_service(
+_WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _landed(request: Request, config: PyriteConfig, db: PyriteDB) -> tuple[PyriteConfig, PyriteDB]:
+    """The `(config, db)` this request writes with: the target
+    `requires_kb_tier("write")` recorded from the landing rule.
+
+    Fails closed. A write-method request whose route never asked the rule
+    (no `requires_kb_tier("write")`) is refused for any caller but the
+    operator, rather than handed the canonical files: a route that only reads
+    takes `get_read_kb_service` instead (ADR-0044 §1).
+    """
+    state = request.state
+    target = getattr(state, "write_target", None)
+    if target is not None:
+        return target
+    if getattr(state, "landing_asked", False) or request.method not in _WRITE_METHODS:
+        return config, db
+    if is_operator(get_principal(request)):
+        return config, db
+    from ..services.write_target import LandingRefusedError
+
+    raise LandingRefusedError("This route did not ask where its write lands; nothing was written")
+
+
+class NobodyActingMiddleware:
+    """Every request starts with nobody acting (`services.acting`), whatever
+    the serving process had bound (`pyrite serve` runs under the CLI, which
+    binds the operator). Only `bind_acting_account`, from the request's own
+    principal, makes a request the operator. Pure ASGI, so the value is set
+    in the request's own task and reaches its routes."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        from ..services.acting import acting_as, local_process, read_grant
+
+        with acting_as(None), local_process(False), read_grant(None):
+            await self.app(scope, receive, send)
+
+
+async def bind_acting_account(
+    request: Request,
+    config: PyriteConfig = Depends(get_config),
+    db: PyriteDB = Depends(get_db),
+) -> None:
+    """Bind who this request acts for (`services.acting.acting_for`: the
+    account, the operator, or nobody), for the write pipeline's rules that
+    depend on the caller. On every `/api` route, after `verify_api_key`.
+    Async on purpose: it runs in the request's own task, so the binding
+    reaches the worker thread a sync endpoint runs in; a sync dependency's
+    would not.
+
+    Also binds the caller's read grants (`acting.read_grant`), asked only
+    when text quoting a KB's bytes is about to be shown (D4), and then
+    through `readable_kbs_for_user`, the one rule the routes apply."""
+    from ..services.acting import acting_for, bind_read_grant
+    from ..services.acting import bind_acting_account as bind
+
+    principal = get_principal(request)
+    bind(acting_for(principal))
+    if principal is None or principal.kind == "anonymous":
+        # An anonymous visitor reads no text quoted from a KB file, whatever
+        # the KB's default_role allows (maintainer decision on D4,
+        # 2026-11-16): the grant stays unbound, so it covers no KB.
+        return
+    readable: list[set[str] | None] = []
+
+    def may_read(kb_name: str) -> bool:
+        if not readable:
+            readable.append(
+                readable_kbs_for_user(
+                    config, db, principal.user_id, principal.role, scoped=principal.scoped
+                )
+            )
+        scope = readable[0]
+        return scope is None or kb_name in scope
+
+    bind_read_grant(may_read)
+
+
+def get_read_kb_service(
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> KBService:
-    """Get or create KB service via DI."""
+    """The KB service for a route that only reads (a read by POST among them):
+    the instance's own config and index. A route that writes takes
+    `get_kb_service`, which is bound to where the write lands."""
     return KBService(config, db)
+
+
+def get_kb_service(
+    request: Request,
+    config: PyriteConfig = Depends(get_config),
+    db: PyriteDB = Depends(get_db),
+) -> KBService:
+    """The KB service for this request, bound to where its write lands
+    (ADR-0044 §1). No route decides that itself."""
+    return KBService(*_landed(request, config, db))
 
 
 def _drain_embed_queue(db: PyriteDB, *, label: str = "", model_name: str | None = None) -> int:
@@ -167,11 +259,12 @@ def _drain_embed_queue(db: PyriteDB, *, label: str = "", model_name: str | None 
 
 
 def get_task_service(
+    request: Request,
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> TaskService:
-    """Get or create TaskService via DI."""
-    return TaskService(config, db)
+    """The task service for this request, bound to where its write lands."""
+    return TaskService(*_landed(request, config, db))
 
 
 def get_worktree_resolver(
@@ -304,10 +397,22 @@ def get_ephemeral_service(
 
 
 def get_review_service(
+    request: Request,
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ) -> ReviewService:
-    """Get ReviewService instance via DI."""
+    """The review service, bound to where the request's write lands: on a
+    change-set target a review record is refused (it is database-only, and
+    the change set's index is discarded at merge; ADR-0044 §1)."""
+    return ReviewService(*_landed(request, config, db))
+
+
+def get_read_review_service(
+    config: PyriteConfig = Depends(get_config),
+    db: PyriteDB = Depends(get_db),
+) -> ReviewService:
+    """The review service for a lookup that writes nothing (a write guard
+    finding a review's KB before it is authorised): the instance's own."""
     return ReviewService(config, db)
 
 
@@ -337,7 +442,7 @@ def get_link_discovery_service(
 
 def get_starred_service(
     db: PyriteDB = Depends(get_db),
-    kb_service: KBService = Depends(get_kb_service),
+    kb_service: KBService = Depends(get_read_kb_service),
 ) -> StarredService:
     """Get StarredService instance via DI."""
     return StarredService(db, kb_service)
@@ -393,16 +498,6 @@ def get_qa_service(
     return QAService(config, db, llm_service=llm_service)
 
 
-def get_sitemap_service(
-    config: PyriteConfig = Depends(get_config),
-    db: PyriteDB = Depends(get_db),
-) -> "SitemapService":
-    """Get SitemapService instance via DI."""
-    from ..services.sitemap_service import SitemapService
-
-    return SitemapService(config, db)
-
-
 def get_embedding_worker(
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
@@ -411,25 +506,6 @@ def get_embedding_worker(
     from ..services.embedding_worker import EmbeddingWorker
 
     return EmbeddingWorker(db, model_name=config.settings.embedding_model)
-
-
-def get_site_cache_factory(
-    config: PyriteConfig = Depends(get_config),
-    db: PyriteDB = Depends(get_db),
-) -> "Callable[[], SiteCacheService]":
-    """A zero-argument builder for SiteCacheService.
-
-    A factory, not the service: the constructor reads ``branding.yaml`` and
-    may raise ``BrandingInvalidError``, which ``POST /site/render`` answers
-    with a 409 -- so the handler must be the one that calls it.
-    """
-
-    def build() -> "SiteCacheService":
-        from ..services.site_cache import SiteCacheService
-
-        return SiteCacheService(config, db)
-
-    return build
 
 
 def get_kb_default_role_resolver(
@@ -490,68 +566,77 @@ async def verify_api_key(
     config: PyriteConfig = Depends(get_config),
     db: PyriteDB = Depends(get_db),
 ):
-    """Verify API key, session cookie, or anonymous tier. Stores role in request.state.
+    """Resolve the caller and store its role in ``request.state``.
 
-    Checks in order:
-    1. X-API-Key header / api_key query param (existing behaviour)
-    2. Session cookie (web UI auth)
-    3. Anonymous tier (configurable public access)
-    4. No auth configured → admin (backwards-compatible)
+    The credential is decided by the one resolver every surface asks
+    (``server/credentials.py``, #1754): an API key (``Authorization: Bearer``,
+    ``X-API-Key`` or ``?api_key``) or a session (Bearer, or the
+    ``pyrite_session`` cookie). Then:
+
+    1. a credential that verifies -> its principal;
+    2. a credential that is presented and does not verify -> 401, whatever
+       ``anonymous_tier`` says (only "no credential" is the anonymous
+       visitor, ADR-0043 §2). When it was the session cookie, the 401 also
+       clears it: it is ``httponly``, so the web client cannot;
+    3. no credential, auth enabled with an ``anonymous_tier`` -> anonymous;
+    4. no credential, auth disabled and no keys -> admin (backwards-compatible,
+       decided by the resolver);
+    5. otherwise 401.
 
     This dependency is ``async``, so its body runs on the event-loop thread.
-    Everything here must therefore be non-blocking — the one synchronous DB
-    call (``AuthService.verify_session``) is offloaded with
-    ``run_in_threadpool`` below (#131 criterion 4). Calling it inline both
-    blocked the loop for the duration of the query and put event-loop DB work
-    in the same session as the threadpool handlers' — the second, distinct
-    exposure of the shared-session bug, specifically on the auth-enabled path.
+    Everything here must therefore be non-blocking -- a session lookup (the
+    one synchronous DB call) is offloaded with ``run_in_threadpool`` below
+    (#131 criterion 4). Calling it inline both blocked the loop for the
+    duration of the query and put event-loop DB work in the same session as
+    the threadpool handlers' -- the second, distinct exposure of the
+    shared-session bug, specifically on the auth-enabled path.
     """
-    # 1. API key (header or query param)
-    key = request.headers.get("X-API-Key") or request.query_params.get("api_key")
-    if key:
-        role = resolve_api_key_role(key, config)
-        if role is not None:
-            request.state.api_role = role
+    from starlette.concurrency import run_in_threadpool
+
+    from .credentials import (
+        SESSION_COOKIE,
+        Outcome,
+        needs_threadpool,
+        presented_credential,
+        resolve_credential,
+    )
+
+    presented = presented_credential(request, config, query_key=True)
+
+    def _resolve():
+        # `db` is this request's handle, so a session lookup on a worker
+        # thread uses this request's session -- nothing shared with a
+        # concurrent request.
+        policy = AccessPolicy(config, db)
+        return resolve_credential(request, config, policy, query_key=True, presented=presented)
+
+    if needs_threadpool(presented, config):
+        resolution = await run_in_threadpool(_resolve)
+    else:
+        resolution = _resolve()
+
+    if resolution.outcome is Outcome.VERIFIED:
+        ctx = resolution.principal
+        request.state.api_role = ctx["role"]
+        if ctx.get("user") is not None:
+            request.state.auth_user = ctx["user"]
+        return
+
+    headers = None
+    if resolution.outcome is Outcome.NONE:
+        if config.settings.auth.enabled and config.settings.auth.anonymous_tier:
+            request.state.api_role = config.settings.auth.anonymous_tier
+            # Not an operator key: per-KB roles apply (a private KB is hidden).
+            request.state.anonymous = True
             return
+    elif resolution.failed_cookie:
+        # Presented and not verified: refused below whatever the anonymous
+        # tier says. A stale cookie is also cleared.
+        clear = Response()
+        clear.delete_cookie(key=SESSION_COOKIE, path="/")
+        headers = {"set-cookie": clear.headers["set-cookie"]}
 
-    # 2. Session cookie (when auth enabled)
-    if config.settings.auth.enabled:
-        token = request.cookies.get("pyrite_session")
-        if token:
-            from starlette.concurrency import run_in_threadpool
-
-            from ..services.auth_service import AuthService
-
-            def _verify() -> dict | None:
-                # Runs on a worker thread. `db` is this request's handle, so
-                # the lookup uses this request's session — no scope to open,
-                # and nothing shared with a concurrent request.
-                auth_service = AuthService(db, config.settings.auth)
-                return auth_service.verify_session(token)
-
-            user = await run_in_threadpool(_verify)
-            if user:
-                request.state.api_role = user["role"]
-                request.state.auth_user = user
-                return
-
-    # 3. Anonymous tier
-    if config.settings.auth.enabled and config.settings.auth.anonymous_tier:
-        request.state.api_role = config.settings.auth.anonymous_tier
-        # Not an operator key: per-KB roles apply (a private KB is hidden).
-        request.state.anonymous = True
-        return
-
-    # 4. No auth configured → admin (existing behavior)
-    if (
-        not config.settings.api_key
-        and not config.settings.api_keys
-        and not config.settings.auth.enabled
-    ):
-        request.state.api_role = "admin"
-        return
-
-    raise HTTPException(status_code=401, detail="Invalid or missing API key")
+    raise HTTPException(status_code=401, detail="Invalid or missing API key", headers=headers)
 
 
 def requires_tier(tier: str):
@@ -591,7 +676,7 @@ def _enforce_tier(principal: Principal | None, tier: str) -> None:
 # a readable KB in one parameter and serves from a private one in the other
 # (#186). `center_kb` (`/api/graph`) is checked too: it was once left out on
 # the grounds that the graph was filtered after it was built, but a private
-# centre still answered differently from a missing one (private #57), so it is
+# centre still answered differently from a missing one, so it is
 # refused the same way as any other unreadable KB -- and a missing one alike.
 KB_PARAM_NAMES = ("kb", "kb_name", "source_kb", "target_kb", "center_kb")
 
@@ -640,7 +725,7 @@ async def _resolve_kb_names(request: Request) -> list[str]:
     names: list[str] = []
 
     def add(value: object) -> None:
-        # A blank or whitespace-only name names no KB (private #74): see
+        # A blank or whitespace-only name names no KB (one reading everywhere): see
         # `access_policy.named_kb`, which the services read the same way.
         name = named_kb(value)
         if name and name not in names:
@@ -902,15 +987,17 @@ async def _enforce_kb_tier(
     db: PyriteDB,
     kb_name: str,
     tier: str,
-    not_found: HTTPException,
+    not_found: HTTPException | None,
 ) -> None:
     """The per-KB write rule for one KB.
 
     Passes when the caller's effective role on `kb_name` is at least `tier`.
-    Otherwise: 404 (`not_found`) when the caller may not read the KB or the KB
-    does not exist -- the two must answer alike, or the answer is an oracle
-    for private KB names -- and 403 when the caller can read it but not
-    write it.
+    Otherwise: 404 when the caller may not read the KB or the KB does not
+    exist -- the two must answer alike, or the answer is an oracle for
+    private KB names -- and 403 when the caller can read it but not write
+    it. The 404 is `not_found` (a row's own not-found, for a row resource)
+    or, when None, the resolver's refusal for the KB the request named,
+    with its suggestion (#952).
     """
     # The policy checks existence before role (ADR-0037 §4): a missing KB
     # answers exactly like a private one, for every caller and on every write
@@ -927,7 +1014,44 @@ async def _enforce_kb_tier(
         )
     # NOT_FOUND -- and UNAUTHENTICATED, which both callers answer with 401
     # before reaching here, and which this guard always answered as 404.
+    if not_found is None:
+        raise decision.refusal or KBNotFoundError(f"KB '{kb_name}' not found")
     raise not_found
+
+
+async def _record_write_target(
+    request: Request, config: PyriteConfig, db: PyriteDB, kb_names
+) -> None:
+    """Ask the landing rule where this authorised write lands, once, and
+    record the target for the route's services (`get_kb_service`,
+    `get_task_service`). Every KB-file-writing REST route passes through
+    `requires_kb_tier("write")`, so this is REST's one point (ADR-0044 §1).
+
+    A canonical landing records nothing. A write that names several KBs, one
+    of them landing in a change set, is refused: one call lands in one place.
+    A change set that cannot be made is refused (`LandingRefusedError`); a
+    write never falls back to the canonical files.
+    """
+    from starlette.concurrency import run_in_threadpool
+
+    from ..services.write_target import LandingRefusedError, write_target
+
+    request.state.landing_asked = True
+    principal = get_principal(request)
+    names = set(kb_names)
+    policy = AccessPolicy(config, db)
+    moved = sorted(n for n in names if policy.lands_in(principal, n) is not Landing.CANONICAL)
+    if not moved:
+        return
+    if len(names) > 1:
+        raise LandingRefusedError(
+            "This write names several knowledge bases and one of them lands in a change set; "
+            "write to one knowledge base at a time"
+        )
+    cache = getattr(request.app.state, "pyrite_diff_db_cache", None)
+    request.state.write_target = await run_in_threadpool(
+        write_target, config, db, principal, moved[0], diff_cache=cache
+    )
 
 
 def requires_kb_tier(tier: str, *, resolve_kb=None):
@@ -981,6 +1105,8 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             db: PyriteDB = Depends(get_db),
         ):
             await _enforce_kb_tier(request, config, db, row.kb_name, tier, row.not_found)
+            if tier == "write":
+                await _record_write_target(request, config, db, [row.kb_name])
 
         return _check_row_kb_tier
 
@@ -1016,9 +1142,11 @@ def requires_kb_tier(tier: str, *, resolve_kb=None):
             )
 
         for kb_name in kb_names:
-            await _enforce_kb_tier(
-                request, config, db, config.kb_name_for(kb_name), tier, kb_not_found(kb_name)
-            )
+            # The name as the caller spelled it: the policy resolves it
+            # (#952), so a shortname is refused with the full name suggested.
+            await _enforce_kb_tier(request, config, db, kb_name, tier, None)
+        if tier == "write":
+            await _record_write_target(request, config, db, kb_names)
 
     return _check_kb_tier
 
@@ -1037,10 +1165,6 @@ def negotiate_response(request: Request, data: Any, **kwargs) -> Response | None
     the endpoint can use its normal Pydantic response model.
     """
     accept = request.headers.get("accept", "application/json")
-
-    # Skip negotiation for standard JSON requests
-    if not accept or accept == "*/*" or "application/json" in accept.split(",")[0]:
-        return None
 
     from ..formats import format_response, negotiate_format
 
@@ -1091,7 +1215,7 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     application = FastAPI(
         title="pyrite API",
         description="REST API for pyrite knowledge management",
-        version="0.12.0",
+        version=__version__,
         docs_url="/docs",
         redoc_url="/redoc",
     )
@@ -1283,6 +1407,17 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
             )
         )
 
+    # A workspace cloned by an earlier version carries its clone token in the
+    # remote URL; every registered workspace is cleaned once, at start.
+    @application.on_event("startup")
+    async def _scrub_workspace_remotes() -> None:
+        from starlette.concurrency import run_in_threadpool
+
+        from ..services.repo_service import RepoService
+
+        db = _app_db()
+        await run_in_threadpool(lambda: RepoService(config, db).scrub_workspace_remotes())
+
     # Sync routes and IndexWorker threads have no running loop; they hand
     # WebSocket events to this one (#326, #322). Captured here, not at import,
     # because the loop that serves the sockets exists only once the server
@@ -1330,12 +1465,24 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
             await asyncio.wait({sweep}, timeout=5)
         unbind_loop(application.state.pyrite_ws_loop)
 
-    # CORS — use configured origins; disable credentials with wildcard (spec compliance)
-    origins = config.settings.cors_origins
+    # One bound on every request body (settings.max_request_body_bytes): added
+    # before CORS so a 413 still carries the CORS headers a browser needs to
+    # read it, and so it wraps every route, the /mcp mount and plugin routers.
+    from .body_limit import RequestBodyLimitMiddleware
+
+    application.add_middleware(RequestBodyLimitMiddleware, get_config=_app_get_config)
+    application.add_middleware(NobodyActingMiddleware)
+
+    # CORS: the configured origins. A "*" anywhere in the list admits every
+    # origin, so credentials are allowed only when no item is "*" -- never
+    # every site's page reading a response made with the visitor's cookie.
+    from ..config import cors_origin_list
+
+    origins = cors_origin_list(config.settings.cors_origins)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=origins != ["*"],
+        allow_credentials="*" not in origins,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -1373,11 +1520,6 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
 
     application.include_router(branding_router)
 
-    # SEO endpoints: sitemap.xml + robots.txt (public — crawlers don't auth)
-    from .seo_endpoints import seo_router
-
-    application.include_router(seo_router)
-
     # MCP SSE transport (mounted outside /api — handles its own Bearer auth)
     from .mcp_routes import mount_mcp_routes
 
@@ -1389,7 +1531,11 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
     # Collect endpoint routers under /api with auth + read-tier baseline
     api_router = APIRouter(
         prefix="/api",
-        dependencies=[Depends(verify_api_key), Depends(requires_tier("read"))],
+        dependencies=[
+            Depends(verify_api_key),
+            Depends(requires_tier("read")),
+            Depends(bind_acting_account),
+        ],
     )
     for r in all_routers:
         api_router.include_router(r)
@@ -1462,29 +1608,16 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
         except WebSocketDisconnect:
             manager.disconnect(ws)
 
-    # Mount static files if dist directory exists
-    # Check env override first (for containerised deploys where the package is
-    # installed as a site-package and the relative path won't resolve).
-    dist_dir = (
-        Path(os.environ.get("PYRITE_STATIC_DIR", ""))
-        if os.environ.get("PYRITE_STATIC_DIR")
-        else None
-    )
-    if dist_dir is None:
-        dist_dir = Path(__file__).parent.parent.parent / "web" / "dist"
-    # Always mount /site and /viewer routes (independent of SPA dist)
+    # Every non-API response carries one set of headers, whether or not the
+    # SPA bundle is mounted (branding assets, refusals and 404s too); added
+    # last, so it is the outermost middleware.
+    from .static import install_security_headers, mount_static, resolve_dist_dir
 
-    from .static import SiteRefresher, mount_site_routes
-
-    application.state.site_refresh = SiteRefresher(
-        get_config=lambda: application.state.pyrite_config, open_db=_app_db
-    )
-    mount_site_routes(application)
-
-    # Mount SPA static files if dist directory exists
+    install_security_headers(application)
+    # The SPA bundle's directory, resolved once (PYRITE_STATIC_DIR for a
+    # containerised deploy, else the source tree's web/dist).
+    dist_dir = resolve_dist_dir()
     if dist_dir.is_dir():
-        from .static import mount_static
-
         mount_static(application, dist_dir)
 
     return application
@@ -1494,7 +1627,20 @@ def create_app(config: PyriteConfig | None = None) -> FastAPI:
 # Default application instance (used by uvicorn / existing imports)
 # =============================================================================
 
-app = create_app()
+_default_app: FastAPI | None = None
+
+
+def __getattr__(name: str):
+    """The uvicorn import-string entry point owns logging; the factory does not."""
+    global _default_app
+    if name != "app":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    if _default_app is None:
+        from ..logging import configure_entry_point_logging
+
+        configure_entry_point_logging(default="INFO")
+        _default_app = create_app()
+    return _default_app
 
 
 # =============================================================================

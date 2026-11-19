@@ -4,7 +4,7 @@ Pyrite exposes an MCP (Model Context Protocol) server that OpenAI's Codex CLI ca
 
 ## Prerequisites
 
-- Pyrite installed from source (`pip install -e .` — no PyPI wheel yet)
+- Pyrite installed from source (`pip install -e ".[all]"` — no PyPI wheel yet; a bare `pip install -e .` has no CLI, so `pyrite init` and `pyrite mcp` fail)
 - At least one knowledge base initialized (`pyrite init`)
 - [Codex CLI](https://github.com/openai/codex) installed
 
@@ -44,12 +44,15 @@ args = ["mcp", "--tier", "read"]
 
 ### Remote Pyrite instance (HTTP transport)
 
-`pyrite serve` always mounts the MCP server at `/mcp` (no separate flag needed). If you're running `pyrite serve` on a remote server:
+`pyrite serve` mounts an MCP server over **SSE only**: `GET /mcp/sse` opens the stream and `POST /mcp/messages/` takes the messages. Nothing answers at `/mcp` itself, and every request needs `Authorization: Bearer <key>` or `X-API-Key: <key>` unless the server has no auth. Codex's `url` setting expects streamable HTTP, so it cannot connect to a remote Pyrite directly. Use the local command above (`pyrite mcp`, run on the machine that holds the KBs), or put a stdio-to-SSE bridge in front, for example [`mcp-remote`](https://www.npmjs.com/package/mcp-remote):
 
 ```toml
 [mcp_servers.pyrite]
-url = "http://localhost:8088/mcp"
+command = "npx"
+args = ["-y", "mcp-remote", "http://<host>:8088/mcp/sse", "--header", "Authorization: Bearer <key>"]
 ```
+
+The tier you get is the role of that key (see **Tool not available** below).
 
 ### Optional settings
 
@@ -88,4 +91,4 @@ args = ["mcp"]
 
 **Timeout errors** -- Increase `startup_timeout_sec` if Pyrite takes time to initialize (e.g., building the index on first run).
 
-**Tool not available** -- Check the tier. `pyrite mcp` (used above) defaults to `write` if `--tier` is omitted; the separate `pyrite-server` binary defaults to `read` instead -- always pass `--tier` explicitly rather than relying on either default. Use `--tier admin` if you need index and git operations.
+**Tool not available** -- Check the tier. Over stdio, `pyrite mcp` and `pyrite-admin mcp` default to `write` if `--tier` is omitted; pass `--tier admin` if you need index and git operations. Over HTTP there is no tier option (`pyrite-server` has none): the tier is the role of the API key or user you connect with, and it is `admin` when the server has no credentials at all.

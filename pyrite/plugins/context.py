@@ -37,6 +37,32 @@ class PluginContext:
     kb_schema: KBSchema | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
+    def __getattribute__(self, name: str) -> Any:
+        """`config` and `db` are the bound write target while one is bound.
+
+        One PluginContext serves every caller of a server process, so it
+        cannot hold a caller's write target. While an MCP call whose write
+        lands in a change set runs, `services.write_target.binding` holds that
+        target, and a plugin handler that reads `ctx.config` / `ctx.db` -- or
+        builds a `KBService` from them -- writes where the landing rule says
+        (ADR-0044 §1). Outside such a call they are the values given.
+        """
+        if name == "config" or name == "db":
+            from ..services.write_target import current_target
+
+            bound = current_target()
+            if bound is not None:
+                return getattr(bound, name)
+        return object.__getattribute__(self, name)
+
+    @property
+    def kb_service(self):
+        """The `KBService` a plugin writes with: the bound call's, else one on
+        this context's config and index."""
+        from ..services.write_target import context_kb_service
+
+        return context_kb_service(self)
+
     def __getitem__(self, key: str) -> Any:
         """Dict-style access for backwards compat with hooks expecting context['kb_name']."""
         if hasattr(self, key):
@@ -66,7 +92,7 @@ class PluginContext:
             List of matching entry dicts with id, kb_name, title, entry_type,
             snippet. Rows from the vector index also carry ``similarity``
             (cosine, 3 places, the same on every backend) and ``distance``
-            (backend-specific; leaves after one release). Rows from the
+            (backend-specific; removed in 0.27; use ``similarity``). Rows from the
             keyword fallback carry neither. No verdict is attached: that is
             `SearchService.search_response`, for a surface that shows a page.
         """

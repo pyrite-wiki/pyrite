@@ -28,9 +28,11 @@ def export_svc(mock_config, mock_db):
 class TestExportKBToDirectory:
     def test_exports_entries_as_markdown(self, export_svc, mock_config, mock_db, tmp_path):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -55,7 +57,7 @@ class TestExportKBToDirectory:
         assert "Hello world" in content
 
     def test_raises_on_unknown_kb(self, export_svc, mock_config, tmp_path):
-        mock_config.get_kb.return_value = None
+        mock_config.require_kb.side_effect = KBNotFoundError("KB 'nonexistent' not found")
         with pytest.raises(KBNotFoundError):
             export_svc.export_kb_to_directory("nonexistent", tmp_path / "out")
 
@@ -64,9 +66,11 @@ class TestExportKBToDirectory:
     ):
         """Titles with YAML-special characters must be properly quoted."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -94,9 +98,11 @@ class TestExportKBToDirectory:
     ):
         """Newlines in title must not inject additional YAML fields."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -125,30 +131,38 @@ class TestCommitKB:
     @patch("pyrite.services.git_service.GitService")
     def test_delegates_to_git_service(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
         kb_cfg.path = Path("/fake/kb")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = True
         mock_git_svc.commit.return_value = (True, {"commit_hash": "abc123", "files_changed": 2})
 
         result = export_svc.commit_kb("test", "my commit")
 
+        # A commit made for a caller runs no repository hook unless asked.
         mock_git_svc.commit.assert_called_once_with(
-            Path("/fake/kb"), "my commit", paths=None, sign_off=False
+            Path("/fake/kb"),
+            "my commit",
+            paths=None,
+            sign_off=False,
+            run_hooks=False,
+            identity=mock_config.settings.git_identity,
         )
         assert result["success"] is True
         assert result["commit_hash"] == "abc123"
 
     @patch("pyrite.services.git_service.GitService")
     def test_raises_on_unknown_kb(self, mock_git_svc, export_svc, mock_config):
-        mock_config.get_kb.return_value = None
+        mock_config.require_kb.side_effect = KBNotFoundError("KB 'nonexistent' not found")
         with pytest.raises(KBNotFoundError):
             export_svc.commit_kb("nonexistent", "msg")
 
     @patch("pyrite.services.git_service.GitService")
     def test_raises_on_non_git_repo(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
         kb_cfg.path = Path("/fake/kb")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = False
 
         with pytest.raises(PyriteError, match="not in a git repository"):
@@ -162,9 +176,11 @@ class TestPathTraversalPrevention:
         self, export_svc, mock_config, mock_db, tmp_path
     ):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -196,9 +212,11 @@ class TestPathTraversalPrevention:
 
     def test_entry_id_with_backslash_traversal(self, export_svc, mock_config, mock_db, tmp_path):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -226,9 +244,11 @@ class TestPathTraversalPrevention:
         """CodeQL #16: an entry_type that is an absolute path must not become
         an absolute path join -- it must land inside target_dir."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         outside = tmp_path / "outside"
         mock_db.list_entries.return_value = [
@@ -257,9 +277,11 @@ class TestPathTraversalPrevention:
         self, export_svc, mock_config, mock_db, tmp_path
     ):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -284,9 +306,11 @@ class TestPathTraversalPrevention:
     def test_normal_type_still_gets_own_subdir(self, export_svc, mock_config, mock_db, tmp_path):
         """A normal plugin type name must still get its own, unchanged subdirectory."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -308,9 +332,11 @@ class TestPathTraversalPrevention:
         "a_b" both -> note/a_b.md) must not let one entry's export silently
         overwrite the other's (#221 redispatch cold read)."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {"id": "a/b", "entry_type": "note", "title": "One", "body": "one content", "tags": []},
@@ -332,9 +358,11 @@ class TestPathTraversalPrevention:
         ("note" and "note_" both -> note/) must not let one type's export
         silently overwrite the other's (#221 redispatch cold read)."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         mock_db.list_entries.return_value = [
             {
@@ -369,9 +397,11 @@ class TestPathTraversalPrevention:
         """The stored/exported frontmatter `type:` must keep the raw value --
         only the directory name is sanitized."""
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
+        kb_cfg.path = tmp_path  # kb.yaml is read only inside the KB's folder
         kb_cfg.kb_yaml_path = tmp_path / "kb.yaml"
         kb_cfg.kb_yaml_path.write_text("name: test")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
 
         raw_type = "../../outside"
         mock_db.list_entries.return_value = [
@@ -401,19 +431,32 @@ class TestPushKB:
     @patch("pyrite.services.git_service.GitService")
     def test_delegates_to_git_service(self, mock_git_svc, export_svc, mock_config):
         kb_cfg = MagicMock()
+        kb_cfg.read_only = False
         kb_cfg.path = Path("/fake/kb")
-        mock_config.get_kb.return_value = kb_cfg
+        mock_config.require_kb.return_value = kb_cfg
         mock_git_svc.is_git_repo.return_value = True
         mock_git_svc.push.return_value = (True, "pushed successfully")
 
         result = export_svc.push_kb("test")
 
-        mock_git_svc.push.assert_called_once_with(Path("/fake/kb"), remote="origin", branch=None)
+        # Held to the operator's host rule and credentials; only the local
+        # process's own push is exempt (operator_push, decided in GitService).
+        mock_git_svc.push.assert_called_once_with(
+            Path("/fake/kb"),
+            remote="origin",
+            branch=None,
+            allowed_hosts=mock_config.settings.git_allowed_hosts,
+            credentials=mock_config.settings.git_credentials,
+            kb_name="test",
+            operator_push=True,
+            registered_remote=True,
+            proxy=mock_config.settings.git_proxy,
+        )
         assert result["success"] is True
         assert result["message"] == "pushed successfully"
 
     @patch("pyrite.services.git_service.GitService")
     def test_raises_on_unknown_kb(self, mock_git_svc, export_svc, mock_config):
-        mock_config.get_kb.return_value = None
+        mock_config.require_kb.side_effect = KBNotFoundError("KB 'nonexistent' not found")
         with pytest.raises(KBNotFoundError):
             export_svc.push_kb("nonexistent")

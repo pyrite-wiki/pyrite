@@ -1,7 +1,7 @@
 """Golden error bodies for every `PyriteError` subclass, per transport (ADR-0037 theme 0).
 
 Regenerate: ``PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest
-tests/characterization/test_error_bodies.py -n4``, then review the diff to
+tests/characterization/test_error_bodies.py (serial, no `-n`)``, then review the diff to
 ``tests/characterization/goldens/error_bodies.json`` and commit it as its
 own reviewed change (never in the same commit as a behaviour change --
 ADR-0037's migration rule). Never set in CI or the pre-push hook.
@@ -33,6 +33,8 @@ as that code change (not a later, unreviewed drift).
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 
@@ -136,17 +138,10 @@ def test_kb_read_only_live_over_rest(world):
     assert resp.json()["detail"]["code"] == "READ_ONLY"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="#491: kb_index_sync silently flips a config KB's registry `source` to "
-    "'user', so a config KB is no longer protected once it has been synced. Pins "
-    "TODAY's real behaviour rather than routing around it by re-seeding source="
-    "'config' first (#476 blocker 6). xfail(strict=True): this must always fail "
-    "for as long as #491 stands -- an unexpected PASS means #491 was fixed (or "
-    "this test regressed), and CI, not silent order-dependence, is what would "
-    "say so.",
-)
 def test_kb_protected_live_over_rest(world):
+    """A config KB stays PROTECTED after an index sync (#491): the sync makes
+    the registry row only when it is missing and never rewrites its `source`
+    (`ensure_kb`)."""
     # Deterministically triggers #491's precondition ITSELF (rather than
     # depending on whether some earlier, unrelated test in the same worker
     # happened to sync READABLE first -- that was the actual bug in the
@@ -226,7 +221,7 @@ def test_clipper_blocked_host_live_over_rest(world):
     assert resp.json()["detail"]["code"] == "CLIPPER_BLOCKED_HOST"
 
 
-def test_kb_registry_add_duplicate_name_agrees_over_rest_and_mcp(write_world):
+def test_kb_registry_add_duplicate_name_agrees_over_rest_and_mcp(write_world, request):
     """#506 item 1: `kb_registry_add` over MCP used to answer a duplicate KB
     name with the generic, fixed `ConfigError.public_message` ("The
     configuration is invalid...") once #501 gave the base class one -- REST's
@@ -250,6 +245,10 @@ def test_kb_registry_add_duplicate_name_agrees_over_rest_and_mcp(write_world):
     and closed at module teardown, so there is nothing to clean up by hand."""
     kb_name = "characterization-506-dup-kb"
     p = write_world.principals["admin_key"]
+    # A network caller registers a path only under settings.kb_roots.
+    saved_roots = write_world.config.settings.kb_roots
+    write_world.config.settings.kb_roots = [Path(write_world.tmpdir).resolve()]
+    request.addfinalizer(lambda: setattr(write_world.config.settings, "kb_roots", saved_roots))
     first = write_world.client.post(
         "/api/kbs",
         json={"name": kb_name, "path": str(write_world.tmpdir / kb_name)},

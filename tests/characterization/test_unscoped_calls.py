@@ -24,9 +24,9 @@ CALL SHAPE with its own golden key format,
 ``"{route/tool} UNSCOPED | {principal}"``.
 
 Regenerate: ``PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest
-tests/characterization/test_unscoped_calls.py -n4``, then review the diff to
-``tests/characterization/goldens/unscoped.json``. Never set in CI or the
-pre-push hook.
+tests/characterization/test_unscoped_calls.py (serial, no `-n`)``, then review
+the diff to ``tests/characterization/goldens/unscoped.json``. Never set in CI
+or the pre-push hook.
 """
 
 from __future__ import annotations

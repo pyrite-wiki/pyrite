@@ -82,7 +82,7 @@ class TestAgentSchemaIntent:
 
     def test_system_defaults_present_when_no_kb_intent(self):
         schema = KBSchema.from_dict({"name": "test"})
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         # System default guidelines should be present
         assert "guidelines" in agent
         assert "sourcing" in agent["guidelines"]
@@ -98,7 +98,7 @@ class TestAgentSchemaIntent:
             "guidelines": {"sourcing": "Use only primary sources."},
         }
         schema = KBSchema.from_dict(data)
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         # KB override wins
         assert agent["guidelines"]["sourcing"] == "Use only primary sources."
         # Other system defaults still present
@@ -110,7 +110,7 @@ class TestAgentSchemaIntent:
             "evaluation_rubric": ["Custom rubric item"],
         }
         schema = KBSchema.from_dict(data)
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         rubric = agent["evaluation_rubric"]
         # System items present (now dicts with text/checker keys)
         rubric_texts = [i.get("text", "") if isinstance(i, dict) else i for i in rubric]
@@ -124,12 +124,12 @@ class TestAgentSchemaIntent:
             "goals": {"primary": "Be the best KB"},
         }
         schema = KBSchema.from_dict(data)
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         assert agent["goals"] == {"primary": "Be the best KB"}
 
     def test_no_goals_key_when_empty(self):
         schema = KBSchema.from_dict({"name": "test"})
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         assert "goals" not in agent
 
     def test_type_level_intent_in_agent_schema(self):
@@ -145,7 +145,7 @@ class TestAgentSchemaIntent:
             },
         }
         schema = KBSchema.from_dict(data)
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         note = agent["types"]["note"]
         assert note["guidelines"] == "Stay focused."
         assert note["goals"] == "Single topic."
@@ -154,7 +154,7 @@ class TestAgentSchemaIntent:
     def test_core_type_rubric_in_agent_schema(self):
         """Core types with evaluation_rubric in CORE_TYPE_METADATA appear in output."""
         schema = KBSchema.from_dict({"name": "test"})
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         # Event has core rubric items (now dicts with text/covered_by)
         event = agent["types"]["event"]
         assert "evaluation_rubric" in event

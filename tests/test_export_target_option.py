@@ -15,6 +15,8 @@ from typer.testing import CliRunner
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 
@@ -28,7 +30,11 @@ def config(tmp_path):
     kb_path = tmp_path / "notes"
     kb_path.mkdir()
     for i in range(2):
-        NoteEntry(id=f"n{i}", title=f"Note {i}", body=f"body {i}").save(kb_path / f"n{i}.md")
+        create_entry_text(
+            kb_path / f"n{i}.md",
+            new_entry_text(NoteEntry(id=f"n{i}", title=f"Note {i}", body=f"body {i}")),
+            root=(kb_path / f"n{i}.md").parent,
+        )
     (kb_path / "stuff.md").write_text(
         "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: query\n"
         "query: 'type:note'\n---\n"
@@ -202,3 +208,19 @@ class TestCollectionTarget:
         text = _say(result)
         assert "--target" in text
         assert "--format" not in text
+
+
+class TestCollectionDepth:
+    def test_negative_depth_is_a_usage_error_and_writes_nothing(self, config, tmp_path):
+        out = tmp_path / "x"
+        result = _export(config, *COLLECTION, "-o", str(out), "--depth", "-1")
+        assert result.exit_code == 2
+        assert "--depth" in _say(result)
+        assert not out.exists()
+
+    @pytest.mark.parametrize("depth", ["0", "1"])
+    def test_zero_and_positive_depth_still_work(self, config, tmp_path, depth):
+        out = tmp_path / "d"
+        result = _export(config, *COLLECTION, "-o", str(out), "--depth", depth)
+        assert result.exit_code == 0, result.output
+        assert (out / "_manifest.md").exists()

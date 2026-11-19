@@ -13,14 +13,19 @@ Concrete subclasses must implement:
 from __future__ import annotations
 
 import json
+import math
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from ...utils.json_utils import SafeEncoder as _SafeEncoder
+from ...utils.metadata import parse_metadata as decode_metadata
 from ..models import Block, EdgeEndpoint, Entry, EntryRef, EntryTag, Link, Source, Tag
 from .protocol import DEFAULT_MIN_SIMILARITY
 
@@ -51,6 +56,67 @@ def kb_names_clause(
     return f"{column} IN ({', '.join(keys)})"
 
 
+#: A link row's identity: (target, target_kb, relation, target_prefix,
+#: target_path). For a link that names an id, ``target`` is that id and
+#: ``target_path`` is None; for a Markdown link to an entry file (#1723) both
+#: are the path, so resolving the row's ``target_id`` never changes its key.
+LinkKey = tuple[Any, Any, Any, Any, Any]
+
+
+def _row_key(row: Link) -> LinkKey:
+    """The key of a stored link row: what ``_link_rows`` would key it by."""
+    target = row.target_path if row.target_path is not None else row.target_id
+    return (target, row.target_kb, row.relation, row.target_prefix, row.target_path)
+
+
+def _link_rows(kb_name: str, links: list[dict[str, Any]]) -> dict[LinkKey, dict[str, Any]]:
+    """The link rows an entry's ``links`` make: one per written link (#1009).
+
+    Two links are one row when they have the same key: the target, KB and
+    relation as the TEXT their columns hold (``as_stored_text``, the one
+    conversion the write path's duplicate check uses too, #1022), and the
+    prefix as written. The prefix is part of the key, not a value: ``[[ops:x]]``
+    and ``[[ops-kb:x]]`` resolve to one KB but are two links, and each is
+    checked for a stale prefix on its own (``links_stale_kb``). The first link
+    with a key gives the row its note (``[[x]]`` before ``[[x#Part]]``).
+
+    Every value is converted here, so the row an insert writes is the key the
+    next sync compares. An explicit null stays None, so the refusals the index
+    already gave it are unchanged; a *missing* key is "" and stays storable.
+    """
+    from ...models.core_types import as_stored_text
+    from ...schema import get_inverse_relation
+
+    rows: dict[LinkKey, dict[str, Any]] = {}
+    for link in links:
+        relation = as_stored_text(link.get("relation", "related_to"))
+        key = (
+            as_stored_text(link.get("target", "")),
+            as_stored_text(link.get("kb", kb_name)),
+            relation,
+            as_stored_text(link.get("prefix")),
+            as_stored_text(link.get("path")),
+        )
+        rows.setdefault(
+            key,
+            {
+                "note": as_stored_text(link.get("note", "")),
+                "inverse_relation": get_inverse_relation(relation),
+            },
+        )
+    return rows
+
+
+def _kb_relative(file_path: str | None, root: str) -> str | None:
+    """``file_path`` as KB-relative POSIX text under ``root``, or None."""
+    if not file_path:
+        return None
+    try:
+        return Path(file_path).relative_to(root).as_posix()
+    except ValueError:
+        return None
+
+
 def _with_inverse_relation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Add ``inverse_relation`` to backlink rows: the declared inverse of
     ``forward_relation``, or None when it is not a declared relationship type.
@@ -63,6 +129,248 @@ def _with_inverse_relation(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         d["inverse_relation"] = known_inverse_relation(d["forward_relation"])
         out.append(d)
     return out
+
+
+def _with_resolved(
+    rows: list[dict[str, Any]],
+    lookup: Callable[[list[str]], dict[str, list[str]]],
+) -> list[dict[str, Any]]:
+    """Add ``resolved`` -- and ``resolved_in_kbs`` on the unresolved -- to outlink rows (#64).
+
+    The outlink LEFT JOIN answers ``resolved`` itself: the joined target row is
+    there, or the target is missing-or-unreadable and ``title`` comes back null
+    (``entry.title`` is NOT NULL; P-R5). ``resolved_in_kbs`` needs one batched
+    existence lookup for the unresolved ids, over the KBs this caller can read:
+    an id that lives in two other KBs names both, and an id in a KB the caller
+    cannot read is never named -- it reads exactly as a missing one does
+    (concealment, ADR-0037 section 4).
+
+    ``lookup(ids)`` answers ``{id: [kb, ...]}`` in one query and is called only
+    when a row is unresolved. Every surface (MCP ``kb_get``, REST entry reads,
+    CLI ``get``, plugin network tools) carries the same fields from this one
+    implementation. A backlink row needs none of it: it is ``resolved: true`` by
+    construction (``get_backlinks``).
+    """
+    out = [{**row, "resolved": row.get("title") is not None} for row in rows]
+    unresolved = [row for row in out if not row["resolved"]]
+    if not unresolved:
+        return out
+    hits = lookup(sorted({str(row["id"]) for row in unresolved}))
+    for row in unresolved:
+        row["resolved_in_kbs"] = sorted(hits.get(str(row["id"]), []))
+    return out
+
+
+# =========================================================================
+# The one shape of an entry row (#1503)
+# =========================================================================
+#
+# Every reader of entry rows -- the ORM readers (`_entry_to_dict`), the raw
+# SQL readers (search, the finds, folders), on SQLite and Postgres -- returns
+# its rows through `shape_entry_row`, so a field has one JSON type whichever
+# reader a caller used: `metadata` an object, `aliases` a list, a declared
+# field lifted from the bag, and a TEXT column's value read by the field's
+# declared type. The single-entry read (`IndexManager.read_fields`) casts with
+# `cast_declared_columns` too, so it and the rows agree, and a value read and
+# written back leaves the file as it was.
+# `tests/test_index_rows_have_one_shape.py` fails on a reader that goes round.
+
+#: The entry columns the index keeps as TEXT (`storage/models.py`) whose
+#: value a type may declare typed. `importance` is an INTEGER column, already
+#: an int on every reader.
+TEXT_FIELD_COLUMNS = (
+    "date",
+    "status",
+    "location",
+    "lifecycle",
+    "assignee",
+    "assigned_at",
+    "priority",
+    "due_date",
+    "start_date",
+    "end_date",
+    "coordinates",
+)
+
+#: `decode_metadata` (imported above) is `utils.metadata.parse_metadata`: the
+#: one decoder of the `metadata` column, for the shaper and every consumer.
+
+#: The only text a ``number`` field's column is read as a number from: plain
+#: ASCII digits with an optional leading minus, no plus, no surrounding
+#: whitespace, no leading zero, no exponent, no digit from another script; a
+#: decimal has digits on both sides of its point. The maintainer's decisions
+#: on #1628 (2026-11-17: the strictness of the importance rule, #1588; a
+#: leading minus allowed in fix round 2): anything else (``"007"``, ``"+7"``,
+#: ``" 7 "``, ``"1e3"``, ``"٧"``, ``"-0"``) stays the text the file wrote,
+#: so a value read and written back cannot respell it.
+_WHOLE_TEXT = re.compile(r"-?(0|[1-9][0-9]*)", re.ASCII)
+_DECIMAL_TEXT = re.compile(r"-?(0|[1-9][0-9]*)\.[0-9]+", re.ASCII)
+
+#: How each backend spells a bool in a TEXT column: SQLite binds a bool as an
+#: integer (``"1"``/``"0"``); Postgres casts it on assignment (``"true"``/
+#: ``"false"``). Exactly these four, nothing folded or stripped.
+_CHECKBOX_TEXT = {"1": True, "0": False, "true": True, "false": False}
+
+
+def decode_aliases(raw: Any) -> list[Any]:
+    """The ``aliases`` column (a JSON list) as a list; empty when unset."""
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str) and raw:
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def read_declared_number(text: str) -> Any:
+    """A TEXT column's value as the number a ``number`` field holds: plain
+    ASCII whole-number text an int, plain decimal text a float (either with a
+    leading minus), and only when the number's own spelling is that text
+    (``"7.50"`` and ``"-0"`` stay text: they would write back as ``7.5`` and
+    ``0``). Any other text is returned as it is: the cast
+    never loses or respells a value (a file's ``priority: high`` reads
+    ``"high"``, and ``qa validate`` reports it)."""
+    if _WHOLE_TEXT.fullmatch(text) and text != "-0":
+        return int(text)
+    if _DECIMAL_TEXT.fullmatch(text):
+        value = float(text)
+        if math.isfinite(value) and repr(value) == text:
+            return value
+    return text
+
+
+def _castable(value: Any) -> bool:
+    """Whether a column's value is text some declared type reads differently
+    (``read_declared_number``, ``_CHECKBOX_TEXT``): the gate in front of the
+    schema lookup."""
+    if not isinstance(value, str):
+        return False
+    return value in _CHECKBOX_TEXT or read_declared_number(value) is not value
+
+
+def cast_declared_columns(row: dict[str, Any], field_types: Mapping[str, str]) -> None:
+    """Read each TEXT column's value in ``row`` by its field's declared type
+    (``field_types``: ``{field: FieldSchema.field_type}``, from
+    ``KBSchema.type_fields``), in place. A ``number`` reads as an int or a
+    float, a ``checkbox`` as a bool; every other type, and a field the type
+    does not declare, keeps the column's text.
+
+    Option (i) of the maintainer's decision on #1503 (2026-11-16): the cast
+    reads the index's text, which cannot tell the file's ``7`` from its
+    ``"7"``, so a quoted ``"7"`` in a field declared a number reads as 7, and
+    a write of the value read stores 7 (the decision on #1628, 2026-11-17;
+    ``qa validate`` reports the text). A read writes nothing."""
+    for key in TEXT_FIELD_COLUMNS:
+        value = row.get(key)
+        if not isinstance(value, str):
+            continue
+        kind = field_types.get(key)
+        if kind == "number":
+            row[key] = read_declared_number(value)
+        elif kind == "checkbox":
+            row[key] = _CHECKBOX_TEXT.get(value, value)
+
+
+#: One `KBConfig` per (name, path) the index's `kb` table names, so its
+#: `kb_schema` cache (stamp-checked against kb.yaml, #1547) outlives a call.
+_KB_CONFIGS: dict[tuple[str, str], Any] = {}
+
+
+class DeclaredFieldTypes:
+    """The declared type of each field, by (KB, entry type), for one batch of
+    rows: ``KBSchema.type_fields`` of the KB's own schema, and nothing else.
+
+    The KB's folder comes from the index's own ``kb`` table, so storage needs
+    no service (the layer rule, `tests/test_layer_boundaries.py`) and both
+    backends answer alike; its schema is the config loader's
+    (``KBConfig.kb_schema``). A kb.yaml that does not load is read as
+    declaring nothing beyond the core and plugin layers: a listing does not
+    fail on one KB's broken kb.yaml (a single read of that KB refuses it,
+    #1547)."""
+
+    def __init__(self, session: Any):
+        self._session = session
+        self._paths: dict[str, str | None] = {}
+        self._types: dict[tuple[str, str], dict[str, str]] = {}
+
+    def _schema(self, kb_name: str) -> Any:
+        from ...schema import KBSchema
+
+        if kb_name not in self._paths:
+            self._paths[kb_name] = self._kb_path(kb_name)
+        path = self._paths[kb_name]
+        if not path:
+            return KBSchema()
+        key = (kb_name, path)
+        config = _KB_CONFIGS.get(key)
+        if config is None:
+            from ...config import KBConfig
+
+            try:
+                config = KBConfig(name=kb_name, path=Path(path))
+            except Exception:
+                return KBSchema()
+            _KB_CONFIGS[key] = config
+        try:
+            return config.kb_schema
+        except Exception:
+            return KBSchema()
+
+    def _kb_path(self, kb_name: str) -> str | None:
+        if self._session is None:
+            return None
+        from sqlalchemy import text
+
+        try:
+            row = self._session.execute(
+                text("SELECT path FROM kb WHERE name = :name"), {"name": kb_name}
+            ).fetchone()
+        except Exception:
+            return None
+        return str(row[0]) if row and row[0] else None
+
+    def __call__(self, kb_name: Any, entry_type: Any) -> dict[str, str]:
+        if not kb_name or not entry_type:
+            return {}
+        key = (str(kb_name), str(entry_type))
+        cached = self._types.get(key)
+        if cached is None:
+            fields = self._schema(key[0]).type_fields(key[1])
+            cached = self._types[key] = {name: f.field_type for name, f in fields.items()}
+        return cached
+
+
+def shape_entry_row(row: dict[str, Any], declared: DeclaredFieldTypes) -> dict[str, Any]:
+    """An index entry row in its one shape, in place; returns ``row``.
+
+    Only the keys the row already has are read: ``metadata`` decoded to an
+    object (NULL reads ``{}``), ``aliases`` to a list, and each TEXT column's
+    value cast by its field's declared type (``cast_declared_columns``). No
+    key is added or removed: a reader's projection is its own, so a search
+    hit gains no ``priority`` and a ``*`` row no ``actors`` (#1503). The
+    lift of declared bag fields to their own names stays with the two
+    projections that have always carried them, the ORM row
+    (``_entry_to_dict``) and the single read (``read_fields``)."""
+    if "metadata" in row:
+        row["metadata"] = decode_metadata(row["metadata"])
+    if "aliases" in row:
+        row["aliases"] = decode_aliases(row["aliases"])
+    # The declared types are looked up (once per KB and type, for a batch)
+    # only when a column holds text a cast could change: a row of words and
+    # NULLs needs no schema, and a listing stays one statement for the rows.
+    if any(_castable(row.get(key)) for key in TEXT_FIELD_COLUMNS):
+        cast_declared_columns(row, declared(row.get("kb_name"), row.get("entry_type")))
+    return row
+
+
+def shape_entry_rows(rows: Iterable[Any], session: Any) -> list[dict[str, Any]]:
+    """``rows`` (mappings: a SQL row's ``dict``) in their one shape, as dicts;
+    the declared types are looked up once per (KB, type) for the batch."""
+    declared = DeclaredFieldTypes(session)
+    return [shape_entry_row(dict(row), declared) for row in rows]
 
 
 class BaseBackend(ABC):
@@ -102,13 +410,27 @@ class BaseBackend(ABC):
 
     def upsert_entry(self, entry_data: dict[str, Any]) -> None:
         """Insert or update an entry with tags, sources, links, refs, blocks."""
-        entry_id = entry_data.get("id")
-        kb_name = entry_data.get("kb_name")
+        # Read from an untyped row dict; a missing key reaches the ORM as None
+        # and is refused there, as before.
+        entry_id: Any = entry_data.get("id")
+        kb_name: Any = entry_data.get("kb_name")
         try:
             self._upsert_entry_main(entry_id, kb_name, entry_data)
             self._sync_tags(entry_id, kb_name, entry_data.get("tags", []))
             self._sync_sources(entry_id, kb_name, entry_data.get("sources", []))
-            self._sync_links(entry_id, kb_name, entry_data.get("links", []))
+            if entry_data.get("_kb_root"):
+                self._sync_links(entry_id, kb_name, entry_data.get("links", []))
+                self._resolve_path_links(entry_id, kb_name, entry_data)
+            else:
+                # A row not made from its file (written back from a read,
+                # `dedup`) cannot name paths: its Markdown link rows stay as
+                # they are until a write from the file re-derives them (#1723).
+                links = [
+                    link
+                    for link in entry_data.get("links", [])
+                    if link.get("relation") != "markdown_link"
+                ]
+                self._sync_links(entry_id, kb_name, links, keep_path_rows=True)
             self._sync_entry_refs(entry_id, kb_name, entry_data)
             self._sync_blocks(entry_id, kb_name, entry_data)
             self._sync_edge_endpoints(entry_id, kb_name, entry_data)
@@ -120,6 +442,11 @@ class BaseBackend(ABC):
     def _upsert_entry_main(self, entry_id: str, kb_name: str, entry_data: dict[str, Any]) -> None:
         metadata = entry_data.get("metadata", {})
         metadata_json = json.dumps(metadata, cls=_SafeEncoder) if metadata is not None else "{}"
+        # `aliases` has its own column (#1001, decision 5): a read spells a
+        # field where the file does, so a top-level `aliases:` is never put
+        # under the row's `metadata`; the wikilink alias pass reads this.
+        aliases = entry_data.get("aliases") or []
+        aliases_json = json.dumps(list(aliases), cls=_SafeEncoder) if aliases else None
 
         existing = self._session.get(Entry, (entry_id, kb_name))
         if existing:
@@ -147,6 +474,7 @@ class BaseBackend(ABC):
             existing.state = entry_data.get("state")
             existing.lifecycle = entry_data.get("lifecycle", "active")
             existing.extra_data = metadata_json
+            existing.aliases = aliases_json  # type: ignore[assignment]
             existing.updated_at = entry_data.get("updated_at")
             # Microsecond precision + explicit UTC offset — second-level
             # truncation caused `_is_stale` to fire immediately after
@@ -184,6 +512,7 @@ class BaseBackend(ABC):
                 state=entry_data.get("state"),
                 lifecycle=entry_data.get("lifecycle", "active"),
                 extra_data=metadata_json,
+                aliases=aliases_json,
                 created_at=entry_data.get("created_at"),
                 updated_at=entry_data.get("updated_at"),
                 # Always set indexed_at explicitly — the Column's
@@ -231,8 +560,19 @@ class BaseBackend(ABC):
             )
 
     @abstractmethod
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
-        """Sync links — implementation differs between SQLite and Postgres."""
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
+        """Sync links — implementation differs between SQLite and Postgres.
+
+        ``keep_path_rows``: leave the source's Markdown link rows (a
+        ``target_path``) untouched, for a write that cannot name paths (#1723).
+        """
         ...
 
     def _sync_entry_refs(self, entry_id: str, kb_name: str, entry_data: dict) -> None:
@@ -281,8 +621,96 @@ class BaseBackend(ABC):
                 )
             )
 
+    def _resolve_path_links(self, entry_id: str, kb_name: str, entry_data: dict) -> None:
+        """Keep every Markdown link row that this write touches pointing at
+        the entry indexed at its path now (#1723).
+
+        A row of a Markdown link keeps the path it was written with
+        (``target_path``); its ``target_id`` is the id of the entry whose
+        file is at that path, or the path text when none is (a broken link,
+        decision D1). Three sets of rows can change when ``entry_id`` is
+        written: its own path rows (just synced), rows elsewhere in the KB
+        that name its path (it appeared there, or its id changed), and rows
+        that named it under another path (it moved). Each is re-derived from
+        the entry table as it is now, so the result does not depend on the
+        order of writes; a delete re-derives the rows that named the gone id
+        (``delete_entry``). Called only for a write that carries ``_kb_root``
+        (a row made from its file).
+        """
+        root = entry_data["_kb_root"]
+        self._session.flush()
+        own_path = _kb_relative(entry_data.get("file_path"), root)
+        # One query per set, each naming only the columns of its own index
+        # (`idx_link_source`, `idx_link_target`, `idx_link_target_path`), and
+        # the path-row test made here: an OR of the three, or a
+        # `target_path IS NOT NULL` in SQL, lets SQLite range over every path
+        # row in the KB, and a write must cost its own links, not the KB.
+        queries = [
+            self._session.query(Link).filter(Link.source_id == entry_id, Link.source_kb == kb_name),
+            self._session.query(Link).filter(Link.target_id == entry_id, Link.target_kb == kb_name),
+        ]
+        if own_path is not None:
+            queries.append(
+                self._session.query(Link).filter(
+                    Link.target_kb == kb_name, Link.target_path == own_path
+                )
+            )
+        with self._session.no_autoflush:  # flushed once, above
+            rows = list(
+                {
+                    row.id: row
+                    for query in queries
+                    for row in query.all()
+                    if row.target_path is not None and row.target_kb == kb_name
+                }.values()
+            )
+            self._resolve_rows(rows, kb_name, lambda path: str(Path(root) / path))
+
+    def _resolve_rows(self, rows: list, kb_name: str, file_of: Callable[[str], str]) -> None:
+        """Set each path row's ``target_id`` to the entry at ``file_of(path)``
+        and ``target_resolved`` to 1, or to the path text and 0 (broken). Two entries at one file (a duplicate id's winner
+        and a row a rename has not removed yet) resolve to the smaller id; the
+        write that removes the other resolves the row again."""
+        if not rows:
+            return
+        files = {row.target_path: file_of(row.target_path) for row in rows}
+        # One lookup for every file, on `idx_entry_kb_file_path`.
+        at_file: dict[str, str] = {}
+        for entry_id, file_path in (
+            self._session.query(Entry.id, Entry.file_path)
+            .filter(Entry.kb_name == kb_name, Entry.file_path.in_(set(files.values())))
+            .all()
+        ):
+            if file_path not in at_file or entry_id < at_file[file_path]:
+                at_file[file_path] = entry_id
+        for row in rows:
+            hit = at_file.get(files[row.target_path])
+            target, resolved = (hit, 1) if hit is not None else (row.target_path, 0)
+            if row.target_id != target:
+                row.target_id = target
+            if row.target_resolved != resolved:
+                row.target_resolved = resolved
+
     def delete_entry(self, entry_id: str, kb_name: str) -> bool:
+        gone = self._session.get(Entry, (entry_id, kb_name))
+        file_path = gone.file_path if gone is not None else None
         count = self._session.query(Entry).filter_by(id=entry_id, kb_name=kb_name).delete()
+        if count and file_path:
+            # Rows that named the gone entry by its path: another entry may
+            # still be at that file (a rename writes the new id first), else
+            # the row is broken and holds its path again (#1723). Only a
+            # resolved row named the gone entry by its file; a broken row whose
+            # path text equals the gone id names a path, not this entry, and
+            # stays broken.
+            self._session.flush()
+            rows = [
+                row
+                for row in self._session.query(Link)
+                .filter(Link.target_id == entry_id, Link.target_kb == kb_name)
+                .all()
+                if row.target_path is not None and row.target_resolved == 1
+            ]
+            self._resolve_rows(rows, kb_name, lambda _path: file_path)
         self._session.commit()
         return count > 0
 
@@ -304,33 +732,24 @@ class BaseBackend(ABC):
 
         entries = self._session.query(Entry).filter(tuple_(Entry.id, Entry.kb_name).in_(ids)).all()
         tag_map = self._get_tags_for_entries(ids)
+        declared = DeclaredFieldTypes(self._session)
         results = []
         for entry in entries:
-            d = self._entry_to_dict(entry)
+            d = self._entry_to_dict(entry, declared)
             d["tags"] = tag_map.get((entry.id, entry.kb_name), [])
             d["sources"] = self._get_entry_sources(entry.id, entry.kb_name)
             d["links"] = self._get_entry_links(entry.id, entry.kb_name)
             results.append(d)
         return results
 
-    @staticmethod
-    def _parse_metadata(raw: Any) -> dict:
-        """Parse extra_data into a dict, handling JSON strings and edge cases."""
-        if not raw:
-            return {}
-        if isinstance(raw, dict):
-            return raw
-        if isinstance(raw, str):
-            try:
-                parsed = json.loads(raw)
-                return parsed if isinstance(parsed, dict) else {}
-            except (json.JSONDecodeError, TypeError):
-                return {}
-        return {}
+    #: The column decoders, kept under their old names: the shaper's own.
+    _parse_aliases = staticmethod(decode_aliases)
+    _parse_metadata = staticmethod(decode_metadata)
 
-    def _entry_to_dict(self, entry: Entry) -> dict[str, Any]:
-        metadata = self._parse_metadata(entry.extra_data)
-        result = {
+    def _entry_to_dict(
+        self, entry: Entry, declared: DeclaredFieldTypes | None = None
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {
             "id": entry.id,
             "kb_name": entry.kb_name,
             "entry_type": entry.entry_type,
@@ -351,40 +770,34 @@ class BaseBackend(ABC):
             "start_date": entry.start_date,
             "end_date": entry.end_date,
             "coordinates": entry.coordinates,
-            "metadata": metadata,
+            "metadata": entry.extra_data,
+            "aliases": entry.aliases,
             "created_at": entry.created_at,
             "updated_at": entry.updated_at,
             "indexed_at": entry.indexed_at,
             "created_by": entry.created_by,
             "modified_by": entry.modified_by,
         }
-        # Lift well-known top-level fields that live in metadata for legacy
-        # reasons (the software-kb plugin stores rank/effort/kind in the
-        # `metadata` JSON bag rather than as Prioritizable protocol fields).
-        # Consumers expect them at the top level — `pyrite sw backlog` already
-        # does this lift in its own projection. Surface them here so
-        # `pyrite get`, REST `/entries/{id}`, and the MCP `kb_get` tool all
-        # see the same shape. Regression for Tier A 1200
-        # (bug-pyrite-get-omits-rank-field-in-json-output).
-        for key in ("rank", "effort", "kind"):
-            if key in metadata and key not in result:
-                result[key] = metadata[key]
-        # status_reason is the per-transition audit field for the
-        # relaxed-mode state machine (Tier A r1175). Plugins and the
-        # task migration script read it directly off the entry dict;
-        # lift here so consumers don't have to special-case
-        # entry["metadata"]["status_reason"].
-        if "status_reason" in metadata and "status_reason" not in result:
-            result["status_reason"] = metadata["status_reason"]
-        # parked_awaiting is the conductor/dispatch-classifier convention for
-        # marking a task legitimately waiting rather than stalled (not a
-        # schema field on TaskEntry — it now round-trips into metadata via
-        # TaskEntry's unknown-frontmatter-key preservation). Lift here so
-        # TaskService.list_tasks()'s hydration path (which reads
-        # entry.get("parked_awaiting") directly) sees it.
-        # See: issue-pyrite-task-update-strips-non-schema-frontmatter-fields-silently-unparks-monitors
-        if "parked_awaiting" in metadata and "parked_awaiting" not in result:
-            result["parked_awaiting"] = metadata["parked_awaiting"]
+        # A field the type declares but the row has no column for (a backlog
+        # item's `rank`/`effort`/`kind`, a task's `status_reason`) lives in the
+        # `metadata` bag; a read spells it at its own name too, so `pyrite
+        # get`, REST `/entries/{id}` and MCP `kb_get` see the file's shape
+        # (Tier A 1200, r1175). The rule is `lift_declared_fields` (#1025),
+        # shared with `IndexManager.read_fields`; a key the type does not
+        # declare stays the bag's. The bag itself is kept whole here: this
+        # is the storage dict the plugins read declared fields from; only
+        # the single-entry read drops them from its `metadata`.
+        from ...models.core_types import get_entry_class
+        from ...schema.field_aliases import lift_declared_fields
+
+        # The row's one shape (#1503): `metadata` an object, `aliases` a
+        # list, a column read by its declared type, as every reader returns it.
+        shape_entry_row(
+            result, declared if declared is not None else DeclaredFieldTypes(self._session)
+        )
+        entry_type = str(entry.entry_type)
+        metadata: dict[str, Any] = result["metadata"]
+        lift_declared_fields(result, metadata, get_entry_class(entry_type), entry_type)
         return result
 
     def _get_entry_tags(self, entry_id: str, kb_name: str) -> list[str]:
@@ -433,13 +846,35 @@ class BaseBackend(ABC):
 
     def _get_entry_links(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
         links = (
-            self._session.query(Link.target_id, Link.target_kb, Link.relation, Link.note)
+            self._session.query(
+                Link.target_id,
+                Link.target_kb,
+                Link.relation,
+                Link.note,
+                Link.target_path,
+                Link.target_resolved,
+            )
             .filter_by(source_id=entry_id, source_kb=kb_name)
             .all()
         )
-        return [
-            {"target_id": l[0], "target_kb": l[1], "relation": l[2], "note": l[3]} for l in links
-        ]
+        items = []
+        for target_id, target_kb, relation, note, target_path, target_resolved in links:
+            item: dict[str, Any] = {
+                "target_id": target_id,
+                "target_kb": target_kb,
+                "relation": relation,
+                "note": note,
+            }
+            if target_path is not None:
+                # A Markdown link row (#1723): name the path it names and
+                # whether an entry file is there. A broken row's target_id
+                # is its path text, which a hand-set id may equal, so the
+                # flag is the only way to tell it from a link to that entry
+                # (#1765).
+                item["target_path"] = target_path
+                item["broken"] = target_resolved != 1
+            items.append(item)
+        return items
 
     # =====================================================================
     # List / count / types (ORM-based — shared)
@@ -498,10 +933,13 @@ class BaseBackend(ABC):
 
         query = query.limit(limit).offset(offset)
         rows = query.all()
+        entry_keys = [(entry.id, entry.kb_name) for entry in rows]
+        tags_by_entry = self._get_tags_for_entries(entry_keys)
+        declared = DeclaredFieldTypes(self._session)
         entries = []
         for entry in rows:
-            e = self._entry_to_dict(entry)
-            e["tags"] = self._get_entry_tags(entry.id, entry.kb_name)
+            e = self._entry_to_dict(entry, declared)
+            e["tags"] = tags_by_entry.get((entry.id, entry.kb_name), [])
             entries.append(e)
         return entries
 
@@ -585,11 +1023,17 @@ class BaseBackend(ABC):
     # =====================================================================
 
     @abstractmethod
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads (#1757)."""
+
+    @abstractmethod
     def search(
         self,
         query: str,
         kb_name: str | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -639,6 +1083,8 @@ class BaseBackend(ABC):
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -691,6 +1137,10 @@ class BaseBackend(ABC):
         - ``inverse_relation``: the declared inverse of ``forward_relation``,
           ``None`` when it is not a declared type. Computed at query time, so
           an index built before a plugin registered the type still answers.
+        - ``prefix``: the KB prefix the source wrote for this link, exactly
+          as written (``None`` for a row indexed before #980). It is part of
+          the link's identity: ``[[ops:x]]`` and ``[[ops-kb:x]]`` are two
+          rows, and a reader that merges rows must keep them apart (#1062).
 
         ``readable_kbs`` (the caller's ``ReadScope`` set; ``None`` unscoped)
         drops a source the caller cannot read -- the same answer as a source
@@ -699,10 +1149,11 @@ class BaseBackend(ABC):
         sql = """
             SELECT e.id, e.kb_name, e.title, e.entry_type,
                    l.inverse_relation as relation, l.relation as forward_relation,
-                   l.note
+                   l.target_prefix as prefix, l.note
             FROM link l
             JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
             WHERE l.target_id = :entry_id AND l.target_kb = :kb_name
+              AND COALESCE(l.target_resolved, 1) = 1
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
         scope = kb_names_clause("e.kb_name", readable_kbs, params)
@@ -712,7 +1163,10 @@ class BaseBackend(ABC):
             sql += " LIMIT :limit OFFSET :offset"
             params["limit"] = limit
             params["offset"] = offset
-        return _with_inverse_relation(self._exec(sql, params))
+        # The row exists because both ends do: `resolved` is true by construction.
+        return [
+            {**row, "resolved": True} for row in _with_inverse_relation(self._exec(sql, params))
+        ]
 
     def get_outlinks(
         self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
@@ -723,20 +1177,55 @@ class BaseBackend(ABC):
         ``readable_kbs`` set the join to the target only matches a readable
         KB, and a target the caller cannot read comes back exactly as a
         missing one does -- ``title`` and ``entry_type`` null (P-R5).
+
+        Every row carries ``resolved`` (#64): whether the target exists *for
+        this caller*. An unresolved row whose id exists in other readable KBs
+        names them in ``resolved_in_kbs``; an id that exists only in KBs the
+        caller cannot read is named nowhere. The existence check is one
+        batched query, not one per link.
         """
         params: dict[str, Any] = {"entry_id": entry_id, "kb_name": kb_name}
         scope = kb_names_clause("e.kb_name", readable_kbs, params)
-        return self._exec(
+        rows = self._exec(
             f"""
             SELECT l.target_id as id, l.target_kb as kb_name,
-                   e.title, e.entry_type, l.relation, l.note
+                   e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
                 {f"AND {scope}" if scope else ""}
             WHERE l.source_id = :entry_id AND l.source_kb = :kb_name
             """,
             params,
         )
+
+        return _with_resolved(
+            rows, lambda ids: self.get_kbs_holding(ids, readable_kbs=readable_kbs)
+        )
+
+    def get_kbs_holding(
+        self, ids: list[str], *, readable_kbs: set[str] | None
+    ) -> dict[str, list[str]]:
+        """In which readable KBs does each id exist? One query for all ids (#64).
+
+        A KB outside ``readable_kbs`` is never in the answer, so an unreadable
+        KB stays indistinguishable from a missing target (P-R5, ADR-0037
+        section 4). An empty scope matches nothing.
+        """
+        params: dict[str, Any] = {}
+        keys = [f"lid_{i}" for i, _ in enumerate(ids)]
+        for key, value in zip(keys, ids, strict=True):
+            params[key] = value
+        sql = "SELECT e.id, e.kb_name FROM entry e WHERE e.id IN ({})".format(
+            ", ".join(f":{key}" for key in keys)
+        )
+        scope = kb_names_clause("e.kb_name", readable_kbs, params)
+        if scope:
+            sql += f" AND {scope}"
+        hits: dict[str, list[str]] = defaultdict(list)
+        for hit in self._exec(sql, params):
+            hits[str(hit["id"])].append(str(hit["kb_name"]))
+        return hits
 
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
         """Get ALL backlinks targeting entries in a KB in one query."""
@@ -744,10 +1233,10 @@ class BaseBackend(ABC):
             """
             SELECT l.target_id, e.id, e.kb_name, e.title, e.entry_type,
                    l.inverse_relation as relation, l.relation as forward_relation,
-                   l.note
+                   l.target_prefix as prefix, l.note
             FROM link l
             JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
-            WHERE l.target_kb = :kb_name
+            WHERE l.target_kb = :kb_name AND COALESCE(l.target_resolved, 1) = 1
             """,
             {"kb_name": kb_name},
         )
@@ -764,9 +1253,10 @@ class BaseBackend(ABC):
             """
             SELECT l.source_id,
                    l.target_id as id, l.target_kb as kb_name,
-                   e.title, e.entry_type, l.relation, l.note
+                   e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE l.source_kb = :kb_name
             """,
             {"kb_name": kb_name},
@@ -851,6 +1341,7 @@ class BaseBackend(ABC):
                                   e.title, e.entry_type
                            FROM link l
                            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                               AND COALESCE(l.target_resolved, 1) = 1
                                {f"AND {entry_clause}" if entry_clause else ""}
                            WHERE l.source_id = :eid AND l.source_kb = :ekb
                                {f"AND {source_clause}" if source_clause else ""}""",
@@ -891,6 +1382,7 @@ class BaseBackend(ABC):
                            FROM link l
                            JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
                            WHERE l.target_id = :eid AND l.target_kb = :ekb
+                               AND COALESCE(l.target_resolved, 1) = 1
                                {f"AND {entry_clause}" if entry_clause else ""}""",
                         {"eid": eid, "ekb": ekb, **scope},
                     )
@@ -926,30 +1418,25 @@ class BaseBackend(ABC):
                 frontier = next_frontier
         else:
             params: dict[str, Any] = {}
-            if readable_kbs is None:
-                sql = """
-                    SELECT e.id, e.kb_name, e.title, e.entry_type
-                    FROM entry e
-                    WHERE (e.id IN (SELECT source_id FROM link)
-                       OR e.id IN (SELECT target_id FROM link))
-                """
-            else:
-                # A node earns its place by a link the caller can see: one it
-                # makes itself, or one made to it from a readable source.
-                # Otherwise a readable entry linked only from a private KB
-                # would appear, and take a slot of `limit`, because of it.
-                inbound = kb_names_clause("l.source_kb", readable_kbs, params)
-                entry_scope = kb_names_clause("e.kb_name", readable_kbs, params)
-                sql = f"""
-                    SELECT e.id, e.kb_name, e.title, e.entry_type
-                    FROM entry e
-                    WHERE (EXISTS (SELECT 1 FROM link l
-                                   WHERE l.source_id = e.id AND l.source_kb = e.kb_name)
-                       OR EXISTS (SELECT 1 FROM link l
-                                  WHERE l.target_id = e.id AND l.target_kb = e.kb_name
-                                    AND {inbound}))
-                      AND {entry_scope}
-                """
+            # A node earns its place by a link that names it by id *and* KB:
+            # one it makes itself, or one made to it from a readable source
+            # (when the caller is scoped). The id alone pulled in `kb:x`
+            # because `ka:x` was linked (#1058), and a readable entry linked
+            # only from a private KB would appear, and take a slot of
+            # `limit`, because of it.
+            inbound = kb_names_clause("l.source_kb", readable_kbs, params)
+            entry_scope = kb_names_clause("e.kb_name", readable_kbs, params)
+            sql = f"""
+                SELECT e.id, e.kb_name, e.title, e.entry_type
+                FROM entry e
+                WHERE (EXISTS (SELECT 1 FROM link l
+                               WHERE l.source_id = e.id AND l.source_kb = e.kb_name)
+                   OR EXISTS (SELECT 1 FROM link l
+                              WHERE l.target_id = e.id AND l.target_kb = e.kb_name
+                                AND COALESCE(l.target_resolved, 1) = 1
+                                {f"AND {inbound}" if inbound else ""}))
+                  {f"AND {entry_scope}" if entry_scope else ""}
+            """
             if kb_name:
                 sql += " AND e.kb_name = :kb_name"
                 params["kb_name"] = kb_name
@@ -963,11 +1450,16 @@ class BaseBackend(ABC):
             if nodes:
                 link_rows = self._exec(
                     "SELECT source_id, source_kb, target_id, target_kb, relation FROM link"
+                    " WHERE COALESCE(target_resolved, 1) = 1"
                 )
                 for r in link_rows:
                     src = (r["source_id"], r["source_kb"])
                     tgt = (r["target_id"], r["target_kb"])
-                    if src in nodes and tgt in nodes:
+                    # One edge per pair of entries, as the centred walk draws
+                    # it: a source writes one link row per link (#1009), and
+                    # two links between one pair are not two edges.
+                    if src in nodes and tgt in nodes and (*src, *tgt) not in edge_set:
+                        edge_set.add((*src, *tgt))
                         edges.append(r)
 
         node_list = []
@@ -988,6 +1480,7 @@ class BaseBackend(ABC):
                    COUNT(l.id) as link_count
             FROM entry e
             LEFT JOIN link l ON e.id = l.target_id AND e.kb_name = l.target_kb
+                AND COALESCE(l.target_resolved, 1) = 1
         """
         params: dict[str, Any] = {}
         if kb_name:
@@ -1018,6 +1511,7 @@ class BaseBackend(ABC):
             )
             AND e.id NOT IN (
                 SELECT target_id FROM link WHERE target_kb = e.kb_name
+                AND COALESCE(target_resolved, 1) = 1
                 {f"AND {inbound}" if inbound else ""}
             )
         """
@@ -1097,7 +1591,18 @@ class BaseBackend(ABC):
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
+        """Get timeline events ordered by date.
+
+        The status filters run through the *effective* status in this same
+        ``WHERE`` (#62), before ``LIMIT``: a task whose children are all
+        resolved counts as ``done`` though its file says ``open``
+        (``effective_status.status_sql`` -- the seq of the search finders,
+        one copy of the rule). ``exclude_status`` keeps rows with no status;
+        ``status`` drops them.
+        """
         sql = """
             SELECT id, kb_name, title, date, importance, location, summary
             FROM entry
@@ -1116,6 +1621,21 @@ class BaseBackend(ABC):
         if date_to:
             sql += " AND date <= :date_to"
             params["date_to"] = date_to
+        if status or exclude_status:
+            from .. import effective_status
+
+            keys = effective_status.derived_done_keys(self._session, kb_name, kb_names)
+            expr = effective_status.status_sql("", keys, params)  # no table alias here
+            if status:
+                sql += f" AND {expr} = :status"
+                params["status"] = status
+            if exclude_status:
+                binds = ", ".join(f":eks_{i}" for i in range(len(exclude_status)))
+                for i, value in enumerate(exclude_status):
+                    params[f"eks_{i}"] = value
+                # A row with no status is NULL, and NULL NOT IN (...) is NULL:
+                # keep it on purpose -- `exclude_status` drops only the named.
+                sql += f" AND ({expr} IS NULL OR {expr} NOT IN ({binds}))"
         order = "DESC" if sort_order.lower() == "desc" else "ASC"
         sql += f" ORDER BY date {order} LIMIT :limit OFFSET :offset"
         params["limit"] = limit
@@ -1172,7 +1692,7 @@ class BaseBackend(ABC):
             ORDER BY {sort_by} {sort_order}
             LIMIT :limit OFFSET :offset
         """
-        return self._exec(
+        rows = self._exec(
             sql,
             {
                 "kb_name": kb_name,
@@ -1181,6 +1701,7 @@ class BaseBackend(ABC):
                 "offset": offset,
             },
         )
+        return shape_entry_rows(rows, self._session)
 
     def count_entries_in_folder(self, kb_name: str, folder_path: str) -> int:
         folder_prefix = folder_path.rstrip("/") + "/"

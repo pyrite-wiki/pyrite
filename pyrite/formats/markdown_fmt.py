@@ -34,19 +34,27 @@ def markdown_serialize(data: Any, **kwargs) -> str:
 
 def _entry_to_markdown(entry: dict) -> str:
     """Single entry as markdown with frontmatter."""
-    lines = ["---"]
+    from copy import deepcopy
+
+    from ruamel.yaml.comments import CommentedSeq
+
+    from ..utils.yaml import dump_yaml
+
+    header = {}
     for key in ("id", "title", "type", "kb_name", "date", "importance", "tags"):
-        if key in entry and entry[key]:
-            val = entry[key]
-            if isinstance(val, list):
-                lines.append(f"{key}: [{', '.join(str(v) for v in val)}]")
-            else:
-                lines.append(f"{key}: {val}")
-    lines.append("---")
-    lines.append("")
-    if entry.get("body"):
-        lines.append(entry["body"])
-    return "\n".join(lines)
+        value = entry.get(key)
+        if key == "type" and value is None:
+            value = entry.get("entry_type")
+        if value is not None and value != "" and value != []:
+            # dump_yaml quotes YAML1.1-ambiguous strings recursively; copy so
+            # rendering cannot change the caller's nested tag list.
+            value = deepcopy(value)
+            if isinstance(value, list):
+                value = CommentedSeq(value)
+                value.fa.set_flow_style()
+            header[key] = value
+    body = entry.get("body") or ""
+    return "---\n" + dump_yaml(header) + "\n---\n\n" + body
 
 
 def _entry_list_to_markdown(data: dict) -> str:

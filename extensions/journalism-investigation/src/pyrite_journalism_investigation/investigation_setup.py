@@ -7,16 +7,17 @@ Provides functions for:
 
 from typing import Any
 
+from pyrite.exceptions import PyriteError, public_text, refusal_fields
 from pyrite.schema import generate_entry_id
 
 from .queries import (
     ENTITY_TYPE_ALIASES,
 )
-from .utils import parse_meta
+from .utils import parse_meta, persist_entry
 
 
 def create_investigation(
-    db: Any,
+    kb_service: Any,
     kb_name: str,
     title: str,
     scope: str = "",
@@ -25,8 +26,15 @@ def create_investigation(
 ) -> dict[str, Any]:
     """Create a new investigation with optional initial entities.
 
+    Every entry is created through ``kb_service``: a file and an
+    index row, with the pipeline's read-only, id, type and validator checks,
+    landing where the landing rule says (ADR-0044). An initial entity that
+    already exists is linked as it is, never written again.
+
     Args:
-        db: PyriteDB instance
+        kb_service: the KBService the entries are created through (the
+            plugin context's over MCP; one over the operator's config from
+            the CLI)
         kb_name: Target KB name
         title: Investigation title
         scope: Description of investigation scope
@@ -35,21 +43,67 @@ def create_investigation(
 
     Returns:
         Dict with created investigation ID and any created entities
+
+    Raises:
+        KBReadOnlyError: if the KB is read-only
     """
+    from pyrite.exceptions import KBNotFoundError, KBReadOnlyError
+
     if not title.strip():
         return {"error": "Investigation title is required"}
-    # Without this the insert below dies on the entry->kb foreign key and the
-    # caller sees a raw IntegrityError instead of being told which KB is missing.
-    if db.get_kb_stats(kb_name) is None:
+    db = kb_service.db
+    try:
+        kb_config = kb_service.config.require_kb(kb_name, db=db)  # the one resolver (#952)
+    except KBNotFoundError:
+        kb_config = None
+    if kb_config is None:
         return {
             "error": f"KB '{kb_name}' not found",
             "error_code": "NOT_FOUND",
             "suggestion": "Pass kb_name, or create an investigation KB first",
         }
+    if kb_config.read_only:
+        raise KBReadOnlyError(f"KB is read-only: {kb_name}")
 
     entry_id = generate_entry_id(title)
+    if db.get_entry(entry_id, kb_name) is not None:
+        # Refused before anything is written, so a retry is told plainly.
+        return {
+            "error": f"An entry '{entry_id}' already exists in KB '{kb_name}'",
+            "error_code": "ENTRY_EXISTS",
+            "suggestion": "Choose another title, or work in the existing investigation",
+        }
 
-    # Build body from scope and key questions
+    # Sort the initial entities before any write: one that already exists (in
+    # the KB, or earlier in this list) is linked, never created again, so it
+    # cannot fail the call after the investigation's own entry is written.
+    to_create: list[dict[str, str]] = []
+    linked: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for ent in initial_entities or []:
+        ent_name = ent.get("name", "")
+        ent_type = ent.get("type", "person")
+        if not ent_name:
+            continue
+        ent_id = generate_entry_id(ent_name)
+        existing = None if ent_id in seen else db.get_entry(ent_id, kb_name)
+        if ent_id in seen or existing is not None:
+            item = {"id": ent_id, "title": ent_name, "type": ent_type}
+            found = (existing or {}).get("entry_type")
+            if found and found != ent_type:
+                # Linked as it is, never retyped; the caller is told.
+                item["type"] = found
+                item["requested_type"] = ent_type
+                item["warning"] = (
+                    f"'{ent_id}' already exists as a {found}, not a {ent_type}; "
+                    "it is linked as it is"
+                )
+            linked.append(item)
+        else:
+            to_create.append({"id": ent_id, "title": ent_name, "type": ent_type})
+        seen.add(ent_id)
+
+    # Build body from scope, key questions, and links to the initial entities
     body_parts = []
     if scope:
         body_parts.append(scope)
@@ -57,45 +111,64 @@ def create_investigation(
         body_parts.append("\n## Key Questions\n")
         for q in key_questions:
             body_parts.append(f"- {q}")
+    entity_ids = list(dict.fromkeys(e["id"] for e in to_create + linked))
+    if entity_ids:
+        body_parts.append("\n## Initial Entities\n")
+        for ent_id in entity_ids:
+            body_parts.append(f"- [[{ent_id}]]")
 
     body = "\n".join(body_parts)
 
-    db.upsert_entry(
-        {
-            "id": entry_id,
-            "kb_name": kb_name,
-            "title": title,
-            "entry_type": "note",
-            "body": body,
-            "importance": 8,
-            "tags": ["investigation"],
-            "metadata": {"investigation_status": "active"},
-        }
-    )
+    try:
+        persist_entry(
+            kb_service,
+            {
+                "id": entry_id,
+                "kb_name": kb_name,
+                "title": title,
+                "entry_type": "note",
+                "body": body,
+                "importance": 8,
+                "tags": ["investigation"],
+                "metadata": {"investigation_status": "active"},
+            },
+        )
+    except PyriteError as e:
+        return {"error": public_text(e), "error_code": e.error_code, **refusal_fields(e)}
 
     result: dict[str, Any] = {"created": entry_id, "title": title}
 
-    # Create initial entities
     if initial_entities:
-        entities_created = []
-        for ent in initial_entities:
-            ent_name = ent.get("name", "")
-            ent_type = ent.get("type", "person")
-            if not ent_name:
-                continue
-            ent_id = generate_entry_id(ent_name)
-            db.upsert_entry(
-                {
-                    "id": ent_id,
-                    "kb_name": kb_name,
-                    "title": ent_name,
-                    "entry_type": ent_type,
-                    "importance": 5,
-                    "tags": ["investigation"],
-                }
-            )
-            entities_created.append({"id": ent_id, "title": ent_name, "type": ent_type})
-        result["entities_created"] = entities_created
+        created: list[dict[str, str]] = []
+        errors: list[dict[str, str]] = []
+        for ent in to_create:
+            try:
+                persist_entry(
+                    kb_service,
+                    {
+                        "id": ent["id"],
+                        "kb_name": kb_name,
+                        "title": ent["title"],
+                        "entry_type": ent["type"],
+                        "importance": 5,
+                        "tags": ["investigation"],
+                    },
+                )
+                created.append(ent)
+            except PyriteError as e:
+                # One entity refused is reported; the rest still go ahead.
+                errors.append(
+                    {
+                        **ent,
+                        "error": public_text(e),
+                        "error_code": e.error_code,
+                        **refusal_fields(e),
+                    }
+                )
+        result["entities_created"] = created
+        result["entities_linked"] = linked
+        if errors:
+            result["entity_errors"] = errors
 
     return result
 

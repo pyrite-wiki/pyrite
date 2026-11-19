@@ -4,35 +4,44 @@ import io
 import logging
 from typing import Any
 
+import anyio.to_thread
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ...config import PyriteConfig
 from ...exceptions import (
+    AccessDenied,
+    ConflictError,
+    EntryLoadError,
     EntryNotFoundError,
-    KBNotFoundError,
     KBReadOnlyError,
+    KBUnreadableError,
     PyriteError,
+    StorageError,
     ValidationError,
+    outside_text,
+    public_text,
 )
-from ...services.access_policy import KB, Action, AnyKB, ReadScope
+from ...services.access_policy import KB, AccessPolicy, Action, AnyKB, ReadScope
 from ...services.block_service import BlockService
 from ...services.kb_service import KBService
 from ...services.read_shaping import IDENTITY_FIELDS, parse_fields_param, project_fields
 from ..api import (
+    get_access_policy,
     get_block_service,
     get_config,
     get_kb_service,
+    get_read_kb_service,
     get_worktree_resolver,
     limiter,
     negotiate_response,
     requires_kb_tier,
 )
-from ..authz import authorize
+from ..authz import authorize, read_scope
 from ..schemas import (
     CreateEntryRequest,
     CreateResponse,
-    DeleteResponse,
+    EntryDeleteResponse,
     EntryListResponse,
     EntryResponse,
     EntryTitle,
@@ -47,7 +56,11 @@ from ..schemas import (
     WantedPage,
     WantedPagesResponse,
 )
-from .write_refusal import refusal_http, refuses_truncated_body
+from .write_refusal import (
+    refusal_http,
+    refuses_truncated_body,
+    refuses_undeclared_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +342,7 @@ def list_entry_titles(
 def resolve_batch(
     request: Request,
     req: ResolveBatchRequest,
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Batch-resolve wikilink targets. Returns which targets exist.
@@ -345,7 +358,7 @@ def resolve_batch(
 def batch_read_entries(
     request: Request,
     body: dict,
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, AnyKB)),
 ):
     """Batch-read multiple entries in one call."""
@@ -544,11 +557,7 @@ def export_entries(
     """Export entries as JSON, Markdown, or CSV."""
     from ...formats import get_format_registry
 
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     entries = svc.list_entries(kb_name=kb, entry_type=entry_type, limit=limit, offset=0)
 
@@ -597,7 +606,11 @@ async def import_entries(
         None, description="Format: json, markdown, csv (auto-detected from extension if omitted)"
     ),
     allow_undeclared: bool = Query(
-        False, description="Allow entry types the KB's kb.yaml does not declare"
+        False,
+        description="Allow an entry_type the KB does not declare. Only a KB whose "
+        "kb.yaml declares types refuses others (core types included); "
+        "`pyrite index health` then lists the entry. A KB that declares no "
+        "types accepts any type.",
     ),
     stream: bool = Query(
         False,
@@ -610,11 +623,7 @@ async def import_entries(
     """Import entries from an uploaded file."""
     from ...formats.importers import get_importer_registry
 
-    if not svc.get_kb(kb):
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "KB_NOT_FOUND", "message": f"KB '{kb}' not found"},
-        )
+    svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     # Auto-detect format from filename
     fmt = format
@@ -646,28 +655,70 @@ async def import_entries(
             status_code=400,
             detail={"code": "STREAM_NOT_SUPPORTED", "message": "stream applies to markdown only"},
         )
+    # The request body, file included, is already bounded by
+    # settings.max_request_body_bytes (server/body_limit.py): a larger upload
+    # is answered 413 before this handler runs past the form parse.
     content = await file.read()
+    # The importer and the bulk write are synchronous and scale with the
+    # upload, so they run in a worker thread: on this coroutine's loop they
+    # held up every other request. `to_thread` carries the contextvars over.
     try:
-        parsed = importer(content, stream=True) if stream else importer(content)
+        parsed = await anyio.to_thread.run_sync(
+            lambda: list(importer(content, stream=True)) if stream else importer(content)
+        )
     except Exception as e:
+        # The importer marks what its parser says about the upload as the
+        # caller's; anything else it raised is the operator's, logged
+        # here, and answered with Pyrite's own words (ADR-0052 N3).
+        logger.warning(
+            "Import into %r: the uploaded %s file %r did not parse",
+            kb,
+            fmt,
+            file.filename,
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=400,
-            detail={"code": "PARSE_ERROR", "message": f"Failed to parse file: {e}"},
-        )
+            detail={
+                "code": "PARSE_ERROR",
+                "message": (
+                    f"The file could not be read as {fmt}: "
+                    f"{outside_text(e, already_logged=True)}. Check that it is UTF-8 "
+                    f"text in the {fmt} import format."
+                ),
+                "retryable": False,
+            },
+        ) from None
 
     # Every per-record decision (the ADR-0034 truncated-body refusal, the
     # declared type, an existing id, schema and plugin validation) is the
     # service's write pipeline, the same one POST /entries uses (#378).
-    results = svc.bulk_create_entries(kb, parsed, allow_undeclared=allow_undeclared)
+    def _create() -> list[dict[str, Any]]:
+        return svc.bulk_create_entries(
+            kb, parsed, allow_undeclared=allow_undeclared, drop_managed=True
+        )
+
+    results = await anyio.to_thread.run_sync(_create)
 
     created = []
     errors = []
     for entry_data, r in zip(parsed, results, strict=True):
         title = entry_data.get("title", "?") if isinstance(entry_data, dict) else "?"
         if r.get("created"):
-            created.append({"id": r["entry_id"], "title": title})
+            created.append(
+                {
+                    "id": r["entry_id"],
+                    "title": title,
+                    **({"ignored": r["ignored"]} if r.get("ignored") else {}),
+                }
+            )
         else:
-            errors.append({"title": title, "error": r["error"], "error_code": r["error_code"]})
+            detail = {"title": title, "error": r["error"], "error_code": r["error_code"]}
+            if r.get("errors"):
+                # Rows stay per record: the top-level `errors` is a count, so a
+                # row belongs beside the record it refused (#1381 review).
+                detail["errors"] = r["errors"]
+            errors.append(detail)
 
     return {
         "imported": len(created),
@@ -735,8 +786,12 @@ def get_entry(
             },
         )
 
-    result.setdefault("sources", [])
-    result.setdefault("tags", [])
+    # A column the file's type refused (ADR-0042 8a) is left out of the reply,
+    # never a default and never null: the model's `[]` or `{}` would read as
+    # the file's value, and a client that indexes `.length` on a list must
+    # not meet null. Every other column keeps the value the read gave it, or
+    # the model's default (round 4, B2).
+    refused = apply_refused_columns(result)
 
     # Apply field projection. One rule for every read surface (#193): the
     # identity pair always survives, and keys the entry does not have are not
@@ -749,36 +804,67 @@ def get_entry(
             return neg
         return JSONResponse(content=result)
 
-    neg = negotiate_response(request, result)
+    neg = negotiate_response(request, result, single_entry=True)
     if neg is not None:
         return neg
-    return EntryResponse(**result)
+    return entry_response(result, refused)
 
 
 _CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
+
+#: The EntryResponse columns that default to a placeholder (``[]``, ``{}``).
+_DEFAULTED_COLUMNS = ("tags", "participants", "sources", "metadata")
+
+
+def apply_refused_columns(result: dict) -> set[str]:
+    """Apply the refused-column rule to a single-entry read dict.
+
+    A ``load_problems`` entry names a column the file's type refused
+    (ADR-0042 8a); when it is one of the columns ``EntryResponse`` defaults
+    (``_DEFAULTED_COLUMNS``), the reply leaves it out, never a default and
+    never null. Skips the empty-list default for a refused ``sources`` or
+    ``tags`` and returns the refused set, so the caller can drop those keys
+    from the dumped response body. ``metadata`` and ``participants`` take no
+    default here; the dump step drops them when refused.
+    """
+    refused = {
+        p["field"] for p in result.get("load_problems") or () if p["field"] in _DEFAULTED_COLUMNS
+    }
+    for key in ("sources", "tags"):
+        if key not in refused:
+            result.setdefault(key, [])
+    return refused
+
+
+def entry_response(result: dict, refused: set[str]) -> EntryResponse | JSONResponse:
+    """Render a single-entry read, leaving refused columns out.
+
+    The dumped ``EntryResponse`` fills every defaulted column, so a refused
+    one is dropped from the dumped body: ``[]`` or ``{}`` would read as the
+    file's value.
+    """
+    if refused:
+        body = EntryResponse(**result).model_dump(mode="json")
+        return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
+    return EntryResponse(**result)
 
 
 @router.post(
     "/entries",
     response_model=CreateResponse,
-    dependencies=[Depends(requires_kb_tier("write")), Depends(refuses_truncated_body)],
+    dependencies=[
+        Depends(requires_kb_tier("write")),
+        Depends(refuses_truncated_body),
+        Depends(refuses_undeclared_keys(CreateEntryRequest, "create")),
+    ],
 )
 @limiter.limit("30/minute")
 def create_entry(
     request: Request,
     req: CreateEntryRequest,
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Create a new entry."""
-    # Route writes through worktree for authenticated users
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(req.kb, auth_user)
-        except ValueError:
-            pass  # KB not in a git repo — fall back to main
-
     if not svc.get_kb(req.kb):
         raise HTTPException(
             status_code=404,
@@ -809,14 +895,24 @@ def create_entry(
 
     try:
         written = svc.create(req.kb, spec, allow_undeclared=req.allow_undeclared)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
+    except (AccessDenied, KBUnreadableError):
+        # FORBIDDEN 403, and KB_UNREADABLE (#1542): the central handler's
+        # answer, the same on every verb, not this handler's catch-all.
+        raise
     except (PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "CREATE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "CREATE_FAILED", "message": public_text(e, log=logger)}
+        )
     entry = written.entry
 
     # Broadcast WebSocket event
@@ -832,7 +928,11 @@ def create_entry(
 @router.put(
     "/entries/{entry_id}",
     response_model=UpdateResponse,
-    dependencies=[Depends(requires_kb_tier("write")), Depends(refuses_truncated_body)],
+    dependencies=[
+        Depends(requires_kb_tier("write")),
+        Depends(refuses_truncated_body),
+        Depends(refuses_undeclared_keys(UpdateEntryRequest, "update")),
+    ],
 )
 @limiter.limit("30/minute")
 def update_entry(
@@ -840,24 +940,11 @@ def update_entry(
     entry_id: str,
     req: UpdateEntryRequest,
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Update an existing entry."""
-    # Route writes through worktree for authenticated users
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(req.kb, auth_user)
-        except ValueError:
-            pass  # KB not in a git repo — fall back to main
-
-    # `id` is not a field `UpdateEntryRequest` can carry (FastAPI drops an
-    # unknown key before this handler sees it, Pydantic's default
-    # extra="ignore"), so a client that reads an entry and PUTs it straight
-    # back cannot trip `split_echoed_update`'s own "this looks like an
-    # echoed read" heuristic (`id`/`file_path`/index-only keys) the way MCP
-    # `kb_update` does. A REST PUT to `/entries/{id}` is always that
-    # caller's current view of the resource, so `id` is added here to put
+    # A whole GET response is not a valid PUT body: read-only `id`,
+    # `file_path` and other unknown request keys are refused above. Clients
+    # must select accepted fields. Add the path id internally to put
     # every PUT through the same reading-comparison MCP gets for an echo:
     # `importance`/`tags` sent back unchanged from a GET are left alone
     # instead of rewriting `importance: high` as `5` or `tags: Foo` as
@@ -885,19 +972,36 @@ def update_entry(
 
     try:
         written = svc.update(entry_id, req.kb, updates)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+    except StorageError:
+        # A storage fault on the write (a hard-linked file, the lock
+        # directory, a lock held too long) is the central handler's
+        # `STORAGE_ERROR` 500 with the class's public text, not a 400 that
+        # would show the path.
+        raise
+    except AccessDenied:
+        raise  # the central handler's 403 FORBIDDEN
     except (PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "UPDATE_FAILED", "message": public_text(e, log=logger)}
+        )
 
     # Broadcast WebSocket event
     from ..websocket import broadcast_event
 
-    broadcast_event("entry_updated", entry_id=entry_id, kb_name=req.kb)
+    if written.changed:
+        broadcast_event("entry_updated", entry_id=entry_id, kb_name=req.kb)
 
     return UpdateResponse(
         updated=True,
@@ -905,13 +1009,20 @@ def update_entry(
         warnings=written.warnings,
         ignored=ignored,
         unchanged=unchanged,
+        changed=written.changed,
+        locked=written.locked,
+        not_moved=written.not_moved,
     )
 
 
 @router.patch(
     "/entries/{entry_id}",
     response_model=UpdateResponse,
-    dependencies=[Depends(requires_kb_tier("write")), Depends(refuses_truncated_body)],
+    dependencies=[
+        Depends(requires_kb_tier("write")),
+        Depends(refuses_truncated_body),
+        Depends(refuses_undeclared_keys(PatchEntryRequest, "patch")),
+    ],
 )
 @limiter.limit("30/minute")
 def patch_entry_field(
@@ -919,34 +1030,52 @@ def patch_entry_field(
     entry_id: str,
     body: PatchEntryRequest,
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
 ):
     """Update a single field on an entry (used by kanban drag-drop)."""
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(body.kb, auth_user)
-        except (ValueError, Exception):
-            logger.warning("Worktree routing failed for PATCH, falling back to main")
-
-    updates = {body.field: body.value}
+    updates = {body.field: body.value} if body.op == "set" else {}
     try:
-        written = svc.update(entry_id, body.kb, updates)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+        written = svc.update(
+            entry_id,
+            body.kb,
+            updates,
+            append={body.field: body.value} if body.op == "append" else None,
+            remove={body.field: body.value} if body.op == "remove" else None,
+            unset=[body.field] if body.op == "unset" else None,
+        )
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
+    except ConflictError as e:
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+    except StorageError:
+        raise  # the central handler's STORAGE_ERROR 500, as on PUT
+    except AccessDenied:
+        raise  # the central handler's 403 FORBIDDEN
     except (PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "UPDATE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "UPDATE_FAILED", "message": public_text(e, log=logger)}
+        )
 
-    return UpdateResponse(updated=True, id=entry_id, warnings=written.warnings)
+    return UpdateResponse(
+        updated=True,
+        id=entry_id,
+        warnings=written.warnings,
+        changed=written.changed,
+        locked=written.locked,
+        not_moved=written.not_moved,
+    )
 
 
 @router.delete(
     "/entries/{entry_id}",
-    response_model=DeleteResponse,
+    response_model=EntryDeleteResponse,
     dependencies=[Depends(requires_kb_tier("write"))],
 )
 @limiter.limit("30/minute")
@@ -955,25 +1084,28 @@ def delete_entry(
     entry_id: str,
     kb: str = Query(..., description="KB name"),
     svc: KBService = Depends(get_kb_service),
-    resolver=Depends(get_worktree_resolver),
+    policy: AccessPolicy = Depends(get_access_policy),
 ):
     """Delete an entry."""
-    # Route deletes through worktree for authenticated users
-    auth_user = getattr(request.state, "auth_user", None)
-    if auth_user and auth_user.get("role") != "admin":
-        try:
-            svc = resolver.get_write_service(kb, auth_user)
-        except ValueError:
-            pass  # KB not in a git repo — fall back to main
-
+    readable = read_scope(request, policy).as_set()
     try:
-        deleted = svc.delete_entry(entry_id, kb)
-    except (KBNotFoundError, EntryNotFoundError) as e:
+        deleted = svc.delete_entry(entry_id, kb, readable_kbs=readable)
+    except EntryNotFoundError as e:
+        # A KBNotFoundError is never caught here: the write tier resolves the
+        # named KB before the handler runs (#952), and one that still arrives
+        # (a blank name is a ValidationError, below) carries the class code
+        # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except EntryLoadError as e:
+        raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
+    except KBUnreadableError:
+        raise  # KB_UNREADABLE from the central handler, as on every verb (#1542)
     except (ValidationError, PyriteError, ValueError) as e:
-        raise HTTPException(status_code=400, detail={"code": "DELETE_FAILED", "message": str(e)})
+        raise HTTPException(
+            status_code=400, detail={"code": "DELETE_FAILED", "message": public_text(e)}
+        )
 
     if not deleted:
         raise HTTPException(
@@ -986,4 +1118,4 @@ def delete_entry(
 
     broadcast_event("entry_deleted", entry_id=entry_id, kb_name=kb)
 
-    return DeleteResponse(deleted=True, id=entry_id)
+    return EntryDeleteResponse(id=entry_id, **deleted.as_dict())

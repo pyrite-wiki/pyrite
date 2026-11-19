@@ -38,6 +38,7 @@ _TASK_KNOWN_KEYS = {
     "lifecycle",
     "status",
     "status_reason",
+    "parked_awaiting",
     "assignee",
     "parent",
     "parent_task",
@@ -45,6 +46,10 @@ _TASK_KNOWN_KEYS = {
     "evidence",
     "priority",
     "due_date",
+    "date",
+    "start_date",
+    "end_date",
+    "assigned_at",
     "agent_context",
     "status_change_log",
 }
@@ -142,6 +147,17 @@ def task_priority_problem(value: Any) -> str | None:
 # a failed task is not resolved (it can be reopened), so it should not roll up a
 # parent or unblock dependents.
 TASK_RESOLVED_STATUSES = ("done", "cancelled")
+
+#: The task type's metadata as `resolve_type_metadata` reads it: what ends a
+#: task's live work is what resolves it (one definition; #934). ``fields``
+#: is what `KBSchema.type_fields` declares for a task, spelled as
+#: `CORE_TYPES` spells a field: a task's `priority` is a number, so every
+#: reader of the index returns it as one (#1503, decision (a) of 2026-11-17).
+#: No default is declared, so a create adds nothing to the file.
+TASK_TYPE_METADATA: dict[str, Any] = {
+    "settled_statuses": list(TASK_RESOLVED_STATUSES),
+    "fields": {"priority": "int"},
+}
 
 # =========================================================================
 # Workflow
@@ -348,6 +364,50 @@ def resolve_workflow_for_type(entry_type: str, kb_schema: Any) -> dict:
     return TASK_WORKFLOW
 
 
+def status_walk(workflow: dict, from_status: str, to_status: str) -> list[str] | None:
+    """The shortest path of states from ``from_status`` to ``to_status``.
+
+    ``[from_status, ..., to_status]``, or None when the workflow has no path.
+    A strict workflow's edges are its declared transitions (for the write
+    role); a relaxed one's are any move to a declared state, so its walk is
+    the direct edge. Structure only: a reason an edge requires is not judged
+    here. The walk is an input to ``validate_status_change``, which judges
+    every edge of it on the write (``_task_validate_transition``); computing
+    a path never permits one. Ties go to the table's order.
+    """
+    if from_status == to_status:
+        return [from_status]
+    if workflow.get("enforce_transitions", True):
+
+        def nexts(state: str) -> list[str]:
+            return [t["to"] for t in get_allowed_transitions(workflow, state, "write")]
+    else:
+        states = list(workflow.get("states", []))
+
+        def nexts(state: str) -> list[str]:
+            return [s for s in states if s != state]
+
+    previous: dict[str, str] = {}
+    frontier = [from_status]
+    seen = {from_status}
+    while frontier:
+        following: list[str] = []
+        for state in frontier:
+            for nxt in nexts(state):
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                previous[nxt] = state
+                if nxt == to_status:
+                    path = [nxt]
+                    while path[-1] != from_status:
+                        path.append(previous[path[-1]])
+                    return path[::-1]
+                following.append(nxt)
+        frontier = following
+    return None
+
+
 def validate_status_change(
     workflow: dict,
     old_status: str,
@@ -367,8 +427,8 @@ def validate_status_change(
       - **relaxed** (``enforce_transitions=False``): any ``new_status``
         that's a member of ``workflow["states"]`` is accepted, IFF
         ``status_reason`` is non-empty (when
-        ``require_reason_on_transition=True``, the default for relaxed
-        mode). Loosens transitions but NOT state membership — typos in
+        ``require_reason_on_transition=True``; the one exception is
+        ``open → claimed``, which never needs a reason). Loosens transitions but NOT state membership — typos in
         status still fail, which keeps the index queryable.
 
     The atomic ``open→claimed`` invariant lives at the repo/db
@@ -423,7 +483,11 @@ def validate_status_change(
             f"({', '.join(states) or '(empty)'}). Relaxed mode loosens "
             f"transitions, not state membership — check for typos.",
         )
-    if require_reason and not status_reason.strip():
+    # `open -> claimed` is exempt from the reason rule (maintainer decision on
+    # #1709): `task claim` passes no reason, and a claim keeps working in a
+    # relaxed reasons-required KB as it did before a declared machine applied.
+    claim_edge = old_status == "open" and new_status == "claimed"
+    if require_reason and not claim_edge and not status_reason.strip():
         return (
             False,
             f"Relaxed-mode transition '{old_status}' → '{new_status}' "
@@ -484,6 +548,11 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
 
     status: str = "open"  # overrides Statusable default
     status_reason: str = ""  # Free-string reason for the current status (Tier A r1175)
+    # Why a task is parked (the conductor's parked-monitor convention; the
+    # human worklist board groups by it). A declared field since #1025: a
+    # read spells only a declared field at the top level, and
+    # `TaskService.list_tasks` and the web UI read it there.
+    parked_awaiting: str = ""
     parent: str = ""  # overrides Parentable default
     dependencies: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
@@ -494,6 +563,12 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
     # is supplied, so the *why* of a transition lives with the task rather than
     # only in git history.
     status_change_log: list[dict[str, Any]] = field(default_factory=list)
+    # The nested value of a key the source spells twice (`rank: 1` and
+    # `metadata: {rank: 2}`): read at the top level, kept here, written back
+    # under `metadata:` so a save loses nothing (#1001, decision 4).
+    _shadowed_nested: dict[str, Any] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     #: Written by TaskService (claim, checkpoint, transitions), never by a
     #: caller's field update: the audit trail must say what really happened.
@@ -511,8 +586,12 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         meta["status"] = self.status
         if self.status_reason:
             meta["status_reason"] = self.status_reason
+        if self.parked_awaiting:
+            meta["parked_awaiting"] = self.parked_awaiting
         if self.assignee:
             meta["assignee"] = self.assignee
+        if self.assigned_at:
+            meta["assigned_at"] = self.assigned_at
         if self.parent:
             meta["parent"] = self.parent
         if self.dependencies:
@@ -520,6 +599,12 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         if self.evidence:
             meta["evidence"] = self.evidence
         meta["priority"] = self.priority
+        if self.date:
+            meta["date"] = self.date
+        if self.start_date:
+            meta["start_date"] = self.start_date
+        if self.end_date:
+            meta["end_date"] = self.end_date
         if self.due_date:
             meta["due_date"] = self.due_date
         if self.agent_context:
@@ -538,6 +623,10 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             if key not in meta:
                 meta[key] = value
         meta.pop("metadata", None)
+        if self._shadowed_nested:
+            # A key the source spelled twice: its nested value stays nested
+            # beside the promoted top-level one (decision 4: lose nothing).
+            meta["metadata"] = dict(self._shadowed_nested)
         return meta
 
     @classmethod
@@ -547,20 +636,33 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         parent = meta.get("parent", "") or meta.get("parent_task", "")
         # Collect any top-level frontmatter keys this schema doesn't know
         # about into metadata, so a round-trip load->save doesn't drop them.
-        # Explicit nested `metadata:` block (rare) wins on key collision.
+        # `metadata.k` is a second spelling of field `k` (Andon #994, decision
+        # A), so on a collision the field's own name wins, as it does for a
+        # declared field; the double spelling is reported by `index health`
+        # and `qa validate`, and an update of that field is refused.
         explicit_metadata = meta.get("metadata", {}) or {}
         extra_metadata = {k: v for k, v in meta.items() if k not in _TASK_KNOWN_KEYS}
-        kwargs["metadata"] = {**extra_metadata, **explicit_metadata}
-        return cls(
+        kwargs["metadata"] = {**explicit_metadata, **extra_metadata}
+        # The nested value of a key spelled twice is kept, so a save loses
+        # nothing (#1001, decision 4); `to_frontmatter` writes it back nested.
+        shadowed = {k: v for k, v in explicit_metadata.items() if k in extra_metadata}
+        entry = cls(
             **kwargs,
             status=meta.get("status", "open"),
             status_reason=meta.get("status_reason", "") or "",
+            parked_awaiting=meta.get("parked_awaiting", "") or "",
             assignee=meta.get("assignee", ""),
+            assigned_at=meta.get("assigned_at", "") or "",
             parent=parent,
             dependencies=meta.get("dependencies", []) or [],
             evidence=meta.get("evidence", []) or [],
             priority=coerce_task_priority(meta.get("priority"), kwargs["id"]),
+            date=meta.get("date", "") or "",
+            start_date=meta.get("start_date", "") or "",
+            end_date=meta.get("end_date", "") or "",
             due_date=meta.get("due_date", ""),
             agent_context=meta.get("agent_context", {}) or {},
             status_change_log=meta.get("status_change_log", []) or [],
         )
+        entry._shadowed_nested = shadowed
+        return entry

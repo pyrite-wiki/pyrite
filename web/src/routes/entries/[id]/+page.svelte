@@ -18,10 +18,13 @@
 	import { buildEntrySeo } from '$lib/utils/seo';
 	import { jsonForScriptTag } from '$lib/utils/sanitize';
 	import { api, ApiError } from '$lib/api/client';
-	import { page } from '$app/stores';
+	import { kbStore } from '$lib/stores/kbs.svelte';
+	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
 	import { parseWikilinks } from '$lib/editor/wikilink-utils';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
+	import DeleteEntryButton from '$lib/components/entry/DeleteEntryButton.svelte';
+	import { goto } from '$app/navigation';
 
 	const canEdit = $derived(
 		!authStore.authConfig.enabled || authStore.isAuthenticated
@@ -31,14 +34,20 @@
 	let editorContent = $state('');
 	let resolvedIds = $state<Set<string>>(new Set());
 
-	const entryId = $derived($page.params.id as string);
-	const entryKb = $derived($page.url.searchParams.get('kb') || undefined);
+	const entryId = $derived(page.params.id as string);
+	const requestedKb = $derived(page.url.searchParams.get('kb') || undefined);
+	// `?kb=` may be a shortname (a link built before the KB list was known,
+	// or typed): the API takes the full name only, so it is resolved here,
+	// against the KB list, before anything is requested.
+	const entryKb = $derived(kbStore.resolveName(requestedKb));
 
 	// The layout remounts the page only when the pathname changes, so
 	// /entries/dup -> /entries/dup?kb=a (the chooser's links) and a -> b
 	// reuse it: load again whenever the id or the KB changes (#912).
 	$effect(() => {
 		const id = entryId;
+		// Derived from the KB list too: a shortname link opened before the
+		// list arrived loads again, under the full name, once it does.
 		const kb = entryKb;
 		untrack(() => {
 			editing = false;
@@ -100,7 +109,10 @@
 
 	// Hydrate transclusion placeholders in the rendered (non-editing) view
 	$effect(() => {
-		if (!entryStore.current || editing) return;
+		// A `[[short:id]]` prefix is resolved against the KB list, so the
+		// list must have arrived: on a cold load this runs again once
+		// kbStore.load() settles (the entry-load effect above does the same).
+		if (!entryStore.current || editing || !kbStore.initialized) return;
 
 		// Wait for DOM to render
 		const timer = setTimeout(async () => {
@@ -109,14 +121,17 @@
 				const target = (placeholder as HTMLElement).dataset.transclusionTarget;
 				if (!target) continue;
 
-				const targetKb = (placeholder as HTMLElement).dataset.transclusionKb || undefined;
+				// The attribute holds the link's prefix as written (a shortname
+				// or a name); the API takes the full name only, so the call
+				// below resolves it against the KB list, as the editors do.
+				const linkKb = (placeholder as HTMLElement).dataset.transclusionKb || undefined;
 				const heading = (placeholder as HTMLElement).dataset.transclusionHeading || undefined;
 				const blockId = (placeholder as HTMLElement).dataset.transclusionBlock || undefined;
 				const loadingEl = placeholder.querySelector('.transclusion-loading');
 				if (!loadingEl) continue;
 
 				try {
-					const res = await api.resolveEntry(target, targetKb);
+					const res = await api.resolveEntry(target, kbStore.resolveName(linkKb));
 					if (!res.resolved || !res.entry) {
 						loadingEl.textContent = 'Entry not found';
 						(loadingEl as HTMLElement).style.color = '#9ca3af';
@@ -290,6 +305,23 @@
 											{editing ? 'View' : 'Edit'}
 										</button>
 										{/if}
+									{#if canEdit && !editing}
+										<DeleteEntryButton
+											entryId={entryStore.current?.id ?? ''}
+											kbName={entryStore.current?.kb_name ?? ''}
+											entryTitle={entryStore.current?.title ?? ''}
+											onDeleted={(deletedFrom) => {
+												// The KB the delete request named, not a re-read of the
+												// store afterwards: land back in the KB the reader
+												// deleted from, not in whatever the list defaults to.
+												goto(
+													deletedFrom
+														? `/entries?kb=${encodeURIComponent(deletedFrom)}`
+														: '/entries'
+												);
+											}}
+										/>
+									{/if}
 										{#if editing}
 											<button
 												onclick={() => uiStore.toggleEditorMode()}

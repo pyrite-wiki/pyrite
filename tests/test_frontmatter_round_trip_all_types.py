@@ -11,6 +11,7 @@ import pytest
 
 import pyrite.models  # noqa: F401  (registers core types)
 from pyrite.models.core_types import ENTRY_TYPE_REGISTRY, entry_from_frontmatter, get_entry_class
+from pyrite.storage.repository import new_entry_text
 from pyrite.plugins import get_registry
 
 EXTRAS = {
@@ -127,6 +128,9 @@ def test_base_fields_survive_round_trip(entry_type):
             assert out.get(key) == value, (entry_type, out)
 
 
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 @pytest.mark.parametrize("entry_type", _all_types())
 def test_base_fields_absent_keep_class_defaults(entry_type):
     """Regime: base fields absent from frontmatter.
@@ -142,7 +146,7 @@ def test_base_fields_absent_keep_class_defaults(entry_type):
     assert entry.importance == 5, entry_type
     assert entry._schema_version == 0, entry_type
 
-    written = entry.to_markdown()
+    written = new_entry_text(entry)
     assert "aliases:" not in written, (entry_type, written)
     assert "_schema_version:" not in written, (entry_type, written)
 
@@ -158,6 +162,9 @@ def test_base_fields_absent_keep_class_defaults(entry_type):
         ("talk_page", "extensions/encyclopedia"),
     ],
 )
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 def test_base_fields_survive_disk_round_trip(entry_type, source_path):
     """Regime: round trip through disk, one class per extension.
 
@@ -170,7 +177,7 @@ def test_base_fields_survive_disk_round_trip(entry_type, source_path):
     cls = get_entry_class(entry_type)
     meta = {"id": "disk-probe", "title": "Disk Round Trip", "type": entry_type, **_BASE_FIXTURE}
     entry = entry_from_frontmatter(meta, "some body text")
-    text = entry.to_markdown()
+    text = new_entry_text(entry)
 
     reloaded = cls.from_markdown(text)
 

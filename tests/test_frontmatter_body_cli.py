@@ -28,10 +28,10 @@ def cli_env(tmp_path):
     )
     runner = CliRunner()
 
-    def invoke(args):
+    def invoke(args, expect_exit=0):
         with patch("pyrite.cli.context.load_config", return_value=config):
             result = runner.invoke(app, args)
-        assert result.exit_code == 0, result.output
+        assert result.exit_code == expect_exit, result.output
         return result
 
     return invoke, kb_path
@@ -128,7 +128,9 @@ def test_qa_validate_reports_matching_first_body_line_without_repair(
     if single_entry:
         args.extend(["--entry", path.stem])
 
-    result = invoke(args)
+    # The whole-KB check sees the stale index entry the hand edit left, which
+    # is an error and exits 1 (ADR-0046); --entry scopes that check out.
+    result = invoke(args, expect_exit=0 if single_entry else 1)
 
     findings = [
         i for i in json.loads(result.output)["issues"] if i["rule"] == "frontmatter_line_in_body"

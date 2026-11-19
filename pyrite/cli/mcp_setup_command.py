@@ -67,7 +67,7 @@ from rich.text import Text
 
 from ..utils.atomic_write import atomic_write_text
 from ..utils.errors import cli_error
-from .output import format_output, validate_output_format
+from .output import cli_console, format_output, validate_output_format
 
 SERVER_NAME = "pyrite"
 CLAUDE_CODE = "claude-code"
@@ -787,11 +787,26 @@ def _add_reproduces(entry: Any) -> bool:
     nothing but a stdio command and args. Env would need its values on a
     command line, unknown keys cannot be passed at all, and no command line,
     run or printed, can carry a NUL."""
+    return _restore_unavailable_reason(entry) is None
+
+
+def _restore_unavailable_reason(entry: Any) -> str | None:
+    """The first reason add cannot restore the whole entry, or None.
+
+    Env/extra-key limitations precede NULs, preserving their existing wording
+    when an entry carries both. Values are never included in the reason.
+    """
     try:
         command, args = _command_and_args(entry)
     except _StopError:
-        return False
-    return set(_normal(entry)) <= {"command", "args"} and "\0" not in "".join([command, *args])
+        if not isinstance(entry, dict):
+            return "the previous entry was not an object"
+        return "the previous command or args were not a valid stdio entry"
+    if not set(_normal(entry)) <= {"command", "args"}:
+        return "`claude mcp add` cannot write env without its values, or other keys"
+    if "\0" in "".join([command, *args]):
+        return "a NUL no command line can carry"
+    return None
 
 
 def _runs(entry: Any) -> str:
@@ -1022,7 +1037,7 @@ def _setup_claude_code(
         if gone and not restorable:
             lost = (
                 ". `removed` names what the previous entry held; no command can add it back "
-                "(`claude mcp add` cannot write env without its values, or other keys)"
+                f"({_restore_unavailable_reason(existing)})"
             )
         if now is _UNKNOWN:
             # Claude Code replaces a file it cannot read, so it was not called
@@ -1218,9 +1233,14 @@ def _explicit_config_env() -> dict[str, str]:
     }
 
 
+def _print_safe_text(out: Console, text: str) -> None:
+    # JSON may contain lone surrogates; terminals may not support all Unicode.
+    safe = text.encode(out.encoding, errors="backslashreplace").decode(out.encoding)
+    out.print(Text(safe))
+
+
 def _print_report(out: Console, report: dict) -> None:
-    def line(text: str) -> None:
-        out.print(Text(text))
+    line = partial(_print_safe_text, out)
 
     new = report["new_entry"]
     served = f"{new['tools']} tools at the " if new["tools"] is not None else ""
@@ -1444,16 +1464,15 @@ def mcp_setup(
         if not work:
             manual = {"mcpServers": {SERVER_NAME: plain}}
             if fmt == "rich":
-                out = Console(soft_wrap=True, highlight=False)
-                out.print(Text("No MCP client found. To add the Pyrite server by hand, run:"))
-                out.print(Text(f"  {manual_claude}"))
-                out.print(
-                    Text(
-                        "or put this in your client's MCP config "
-                        f"(Claude Desktop: {desktop}; a project: .mcp.json):"
-                    )
+                out = cli_console(highlight=False)
+                _print_safe_text(out, "No MCP client found. To add the Pyrite server by hand, run:")
+                _print_safe_text(out, f"  {manual_claude}")
+                _print_safe_text(
+                    out,
+                    "or put this in your client's MCP config "
+                    f"(Claude Desktop: {desktop}; a project: .mcp.json):",
                 )
-                out.print(Text(json.dumps(manual, indent=2, ensure_ascii=False)))
+                _print_safe_text(out, json.dumps(manual, indent=2, ensure_ascii=False))
             stop(
                 _StopError(
                     "CLIENT_NOT_FOUND",
@@ -1543,7 +1562,7 @@ def mcp_setup(
         "notes": notes,
     }
     if fmt == "rich":
-        _print_report(Console(soft_wrap=True, highlight=False), report)
+        _print_report(cli_console(highlight=False), report)
     else:
         typer.echo(format_output(report, fmt))
     if not report["ok"]:

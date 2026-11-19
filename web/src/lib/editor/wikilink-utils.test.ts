@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { parseWikilinks, parseTransclusions, renderWikilinks } from './wikilink-utils';
+import { kbStore } from '$lib/stores/kbs.svelte';
 import {
 	activeTransclusions,
 	isCircularTransclusion,
@@ -373,4 +374,29 @@ it('wikilinks and transclusions rendered from [[kb:id]] carry the KB', () => {
 	expect(html).toContain('href="/entries/dup?kb=kb-b"');
 	expect(html).toContain('data-transclusion-kb="kb-b"');
 	expect(html).toContain('href="/entries/dup"'); // no KB named: nothing guessed
+});
+
+describe('renderWikilinks with a shortname prefix', () => {
+	// A shortname is link syntax only: the href and the API take the full
+	// name, so the prefix is resolved against the KB list before either.
+	beforeEach(() => {
+		kbStore.kbs = [
+			{ name: 'pub', type: 'generic', path: '/tmp/pub', entries: 0, indexed: true, source: 'local', description: '', read_only: false, last_indexed: null, shortname: 'pb', default_role: null }
+		];
+	});
+
+	it('links [[pb:note]] to the entry in the full-named KB', () => {
+		const html = renderWikilinks('<p>[[pb:note]]</p>');
+		expect(html).toContain('href="/entries/note?kb=pub"');
+		expect(html).toContain('data-wikilink-kb="pb"');
+	});
+
+	it('embeds ![[pb:note]] with a cite to the full-named KB', () => {
+		const html = renderWikilinks('<p>![[pb:note]]</p>');
+		expect(html).toContain('href="/entries/note?kb=pub"');
+	});
+
+	it('keeps a full-name prefix as it is', () => {
+		expect(renderWikilinks('<p>[[pub:note]]</p>')).toContain('href="/entries/note?kb=pub"');
+	});
 });

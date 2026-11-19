@@ -5,13 +5,18 @@ from collections.abc import Callable
 from datetime import UTC
 from typing import Any, ClassVar
 
-from pyrite.exceptions import public_text
+from pyrite.exceptions import PyriteError, SchemaViolationError, public_text, refusal_fields
 from pyrite.plugins.capabilities import Capability
+from pyrite.plugins.identity import CALLER, PERSON_ARGUMENTS
 from pyrite.plugins.scoping import kb_scope_clause
-from pyrite.schema import generate_entry_id
 
 from .adr_listing import adr_relations, adr_sort_key
 from .entry_types import (
+    ADR_SETTLED_STATUSES,
+    BACKLOG_KINDS,
+    BACKLOG_SETTLED_STATUSES,
+    DESIGN_DOC_SETTLED_STATUSES,
+    MILESTONE_SETTLED_STATUSES,
     ADREntry,
     BacklogItemEntry,
     ComponentEntry,
@@ -44,6 +49,14 @@ def _safe_error(e: Exception) -> str:
     other transport already shows; the real detail still reaches the log.
     """
     return public_text(e, log=_masked_log)
+
+
+def _saved_filename(kb, entry) -> str:
+    from pyrite.storage.repository import KBRepository
+
+    repo = KBRepository(kb)
+    path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
+    return str(path.relative_to(kb.path))
 
 
 # Default page size for list-shaped sw_* surfaces (#233). These commands are
@@ -84,11 +97,20 @@ class SoftwareKBPlugin:
         """Get DB from injected context, falling back to self-bootstrap."""
         if self.ctx is not None:
             return self.ctx.db, False
-        from pyrite.config import load_config
         from pyrite.storage.database import PyriteDB
 
-        config = load_config()
-        return PyriteDB(config.settings.index_path), True
+        return PyriteDB(self._get_config().settings.index_path), True
+
+    def _get_config(self):
+        """The server's config from the injected context; the process's own
+        only when there is no context (the CLI). A handler never loads a
+        config of its own: a KB resolved against another config than the
+        server's loses the attributes config.yaml gives it (#952)."""
+        if self.ctx is not None:
+            return self.ctx.config
+        from pyrite.config import load_config
+
+        return load_config()
 
     def get_entry_types(self) -> dict[str, type]:
         return {
@@ -305,6 +327,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_context_for_item,
             }
             tools["sw_pull_next"] = {
@@ -343,7 +366,7 @@ class SoftwareKBPlugin:
                         },
                         "kind": {
                             "type": "string",
-                            "enum": ["feature", "bug", "tech_debt", "improvement", "spike", "epic"],
+                            "enum": list(BACKLOG_KINDS),
                             "description": "Filter by kind",
                         },
                         "epic": {
@@ -409,6 +432,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["epic_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["epic_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_epic_detail,
             }
             tools["sw_check_ready"] = {
@@ -421,6 +445,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_check_ready,
             }
             tools["sw_refine"] = {
@@ -467,6 +492,10 @@ class SoftwareKBPlugin:
                     },
                     "required": ["kb_name"],
                 },
+                "locates_entry": {
+                    "id_args": ["item_ids", "item_id", "after", "before"],
+                    "entry_type": "backlog_item",
+                },
                 "handler": self._mcp_prioritize,
             }
             tools["sw_create_adr"] = {
@@ -476,6 +505,11 @@ class SoftwareKBPlugin:
                     "properties": {
                         "kb_name": {"type": "string", "description": "KB name"},
                         "title": {"type": "string", "description": "ADR title"},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tags for the ADR",
+                        },
                         "context": {"type": "string", "description": "Context section"},
                         "decision": {"type": "string", "description": "Decision section"},
                         "consequences": {"type": "string", "description": "Consequences section"},
@@ -493,6 +527,7 @@ class SoftwareKBPlugin:
                     "required": ["title"],
                 },
                 "handler": self._mcp_create_adr,
+                "default_kb": self._default_adr_kb,
             }
             tools["sw_claim"] = {
                 "description": "Claim a backlog item: transition to in_progress and set assignee (atomic CAS)",
@@ -501,11 +536,16 @@ class SoftwareKBPlugin:
                     "properties": {
                         "item_id": {"type": "string", "description": "Backlog item ID"},
                         "kb_name": {"type": "string", "description": "KB name"},
-                        "assignee": {"type": "string", "description": "Who is claiming the item"},
+                        "assignee": {
+                            "type": "string",
+                            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                     },
-                    "required": ["item_id", "kb_name", "assignee"],
+                    "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_claim,
+                PERSON_ARGUMENTS: {"assignee": CALLER},
             }
             tools["sw_review"] = {
                 "description": "Record review outcome for a backlog item in review status",
@@ -520,11 +560,16 @@ class SoftwareKBPlugin:
                             "description": "Review outcome",
                         },
                         "feedback": {"type": "string", "description": "Review notes/feedback"},
-                        "reviewer": {"type": "string", "description": "Who is reviewing"},
+                        "reviewer": {
+                            "type": "string",
+                            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                     },
-                    "required": ["item_id", "kb_name", "outcome", "reviewer"],
+                    "required": ["item_id", "kb_name", "outcome"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_review,
+                PERSON_ARGUMENTS: {"reviewer": CALLER},
             }
             tools["sw_submit"] = {
                 "description": "Submit an in-progress item for review",
@@ -536,6 +581,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_submit,
             }
             tools["sw_create_backlog_item"] = {
@@ -547,7 +593,7 @@ class SoftwareKBPlugin:
                         "title": {"type": "string", "description": "Item title"},
                         "kind": {
                             "type": "string",
-                            "enum": ["feature", "bug", "tech_debt", "improvement", "spike", "epic"],
+                            "enum": list(BACKLOG_KINDS),
                             "description": "Item kind",
                         },
                         "priority": {
@@ -586,6 +632,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name", "to_status"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_transition,
             }
             tools["sw_log"] = {
@@ -617,6 +664,7 @@ class SoftwareKBPlugin:
                     },
                     "required": ["item_id", "kb_name", "summary"],
                 },
+                "locates_entry": {"id_args": ["item_id"], "entry_type": "backlog_item"},
                 "handler": self._mcp_log,
             }
 
@@ -700,6 +748,15 @@ class SoftwareKBPlugin:
 
     def get_db_tables(self) -> list[dict]:
         return []
+
+    def get_type_metadata(self) -> dict[str, dict]:
+        """Which statuses end a type's live work (read by `qa duplicates`, #934)."""
+        return {
+            "backlog_item": {"settled_statuses": list(BACKLOG_SETTLED_STATUSES)},
+            "adr": {"settled_statuses": list(ADR_SETTLED_STATUSES)},
+            "milestone": {"settled_statuses": list(MILESTONE_SETTLED_STATUSES)},
+            "design_doc": {"settled_statuses": list(DESIGN_DOC_SETTLED_STATUSES)},
+        }
 
     def get_workflows(self) -> dict[str, dict]:
         return {
@@ -1019,12 +1076,21 @@ class SoftwareKBPlugin:
             # If filtering by epic, get the set of subtask IDs
             epic_subtask_ids: set[str] | None = None
             if epic_filter:
+                from pyrite.services.kb_service import KBService
+
+                # A locates_entry declaration would require an epic even for ordinary lists.
+                kb_name = KBService(self._get_config(), db).locate(
+                    epic_filter,
+                    kb_name,
+                    readable_kbs=readable_kbs,
+                    entry_type="backlog_item",
+                )
                 epic_subtask_ids = set()
-                for link in db.get_outlinks(epic_filter, kb_name or "", readable_kbs=readable_kbs):
+                for link in db.get_outlinks(epic_filter, kb_name, readable_kbs=readable_kbs):
                     if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
-                for link in db.get_backlinks(epic_filter, kb_name or "", readable_kbs=readable_kbs):
-                    if link.get("relation") == "subtask_of":
+                for link in db.get_backlinks(epic_filter, kb_name, readable_kbs=readable_kbs):
+                    if link.get("relation") == "has_subtask":
                         epic_subtask_ids.add(link["id"])
 
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item'"
@@ -1138,14 +1204,22 @@ class SoftwareKBPlugin:
         item_to_epic: dict[str, str] = {}
         epic_titles: dict[str, str] = {}
         for item in items:
-            for link in db.get_outlinks(
-                item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+            for links in (
+                db.get_outlinks(
+                    item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+                ),
+                db.get_backlinks(
+                    item["id"], item.get("kb_name", kb_name), readable_kbs=readable_kbs
+                ),
             ):
-                if link.get("relation") == "subtask_of":
-                    item_to_epic[item["id"]] = link["id"]
-                    if link["id"] not in epic_titles:
-                        # `or`: a target with no entry row has the key, as None.
-                        epic_titles[link["id"]] = link.get("title") or link["id"]
+                for link in links:
+                    if link.get("relation") == "subtask_of":
+                        item_to_epic[item["id"]] = link["id"]
+                        if link["id"] not in epic_titles:
+                            # `or`: a target with no entry row has the key, as None.
+                            epic_titles[link["id"]] = link.get("title") or link["id"]
+                        break
+                if item["id"] in item_to_epic:
                     break
 
         # Group items
@@ -1294,10 +1368,9 @@ class SoftwareKBPlugin:
         before_id = args.get("before")
 
         try:
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
 
             if item_ids:
@@ -1472,28 +1545,22 @@ class SoftwareKBPlugin:
             return None
 
         import json
-        from pathlib import Path
 
-        from .board import load_board_config
+        from pyrite.exceptions import public_text
+
+        from .board import BoardConfigError
 
         db, should_close = self._get_db()
         try:
-            # Load board config
-            board_config = {"lanes": [], "wip_policy": "warn"}
+            # Load board config. The one catch of BoardConfigError (#1538): an
+            # orient that raised would lose the whole software block, so the
+            # first call of a session says what is wrong with the board instead.
+            board_error = None
             try:
-                if self.ctx is not None:
-                    from pyrite.config import load_config
-
-                    config = load_config()
-                    kb_conf = config.get_kb(kb_name)
-                    if kb_conf:
-                        board_config = load_board_config(kb_conf.path)
-                    else:
-                        board_config = load_board_config(Path("."))
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                pass
+                lanes = self._board_config(db, kb_name, readable_kbs={kb_name})["lanes"]
+            except BoardConfigError as e:
+                lanes = []
+                board_error = public_text(e)
 
             # Query all backlog items for this KB
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item' AND kb_name = ?"
@@ -1501,14 +1568,12 @@ class SoftwareKBPlugin:
 
             # Build status→lane mapping
             status_to_lane: dict[str, int] = {}
-            for i, lane in enumerate(board_config.get("lanes", [])):
+            for i, lane in enumerate(lanes):
                 for s in lane["statuses"]:
                     status_to_lane[s] = i
 
             # Group items into lanes and collect in_progress/review
-            lane_counts: dict[int, int] = dict.fromkeys(
-                range(len(board_config.get("lanes", []))), 0
-            )
+            lane_counts: dict[int, int] = dict.fromkeys(range(len(lanes)), 0)
             in_progress_items: list[dict] = []
             review_items: list[dict] = []
 
@@ -1539,7 +1604,7 @@ class SoftwareKBPlugin:
 
             # Board summary (lane name → count + WIP status)
             board_summary = []
-            for i, lane_def in enumerate(board_config.get("lanes", [])):
+            for i, lane_def in enumerate(lanes):
                 count = lane_counts.get(i, 0)
                 entry = {"name": lane_def["name"], "count": count}
                 wip_limit = lane_def.get("wip_limit")
@@ -1596,17 +1661,21 @@ class SoftwareKBPlugin:
                     }
                 )
 
-            # Recommended next (reuse pull_next logic)
-            try:
-                pull_result = self._mcp_pull_next({"kb_name": kb_name})
-                rec = pull_result.get("recommendation")
-                recommended_next = (
-                    {"id": rec["id"], "title": rec["title"], "priority": rec["priority"]}
-                    if rec
-                    else None
-                )
-            except Exception:
-                recommended_next = None
+            # Recommended next (reuse pull_next logic). With a board that
+            # cannot be loaded there is no WIP limit to honour, so nothing is
+            # recommended; the board_error below says why.
+            recommended_next = None
+            if board_error is None:
+                try:
+                    pull_result = self._mcp_pull_next({"kb_name": kb_name})
+                    rec = pull_result.get("recommendation")
+                    recommended_next = (
+                        {"id": rec["id"], "title": rec["title"], "priority": rec["priority"]}
+                        if rec
+                        else None
+                    )
+                except Exception:
+                    recommended_next = None
 
             # Active epics with progress
             active_epics = []
@@ -1625,17 +1694,18 @@ class SoftwareKBPlugin:
             except Exception:
                 pass
 
-            return {
-                "software": {
-                    "board_summary": board_summary,
-                    "in_progress": in_progress_items,
-                    "review_queue": review_items,
-                    "active_epics": active_epics,
-                    "recent_adrs": recent_adrs,
-                    "top_components": top_components,
-                    "recommended_next": recommended_next,
-                }
+            software: dict[str, Any] = {
+                "board_summary": board_summary,
+                "in_progress": in_progress_items,
+                "review_queue": review_items,
+                "active_epics": active_epics,
+                "recent_adrs": recent_adrs,
+                "top_components": top_components,
+                "recommended_next": recommended_next,
             }
+            if board_error is not None:
+                software["board_error"] = board_error
+            return {"software": software}
         finally:
             if should_close:
                 db.close()
@@ -1652,9 +1722,6 @@ class SoftwareKBPlugin:
         full per-lane item list.
         """
         import json
-        from pathlib import Path
-
-        from .board import load_board_config
 
         db, should_close = self._get_db()
         kb_name = args.get("kb_name")
@@ -1662,16 +1729,9 @@ class SoftwareKBPlugin:
 
         try:
             # Load board config
-            if self.ctx is not None and kb_name:
-                from pyrite.config import load_config
-
-                config = load_config()
-                kb_conf = config.get_kb(kb_name)
-                board_config = (
-                    load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-                )
-            else:
-                board_config = load_board_config(Path("."))
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
 
             # Query all backlog items
             query = "SELECT * FROM entry WHERE entry_type = 'backlog_item'"
@@ -1733,59 +1793,82 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
+    def _default_adr_kb(self, args: dict[str, Any], readable_kbs: set[str] | None) -> str | None:
+        """The KB ``sw_create_adr`` writes when the call names none: the one
+        ADR KB the caller may read (``resolve_adr_kb``), or None when there is
+        no single one. Asked by the MCP dispatcher before its checks (the
+        ``default_kb`` declaration), so the handler's ``kb_name``
+        is always a KB those checks ran on."""
+        from .adr_listing import resolve_adr_kb
+
+        kb_conf = resolve_adr_kb(self._get_config(), None, readable_kbs=readable_kbs)
+        return kb_conf.name if kb_conf is not None else None
+
     def _mcp_create_adr(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
-        """Create a new ADR with auto-numbering."""
-        import json
+        """Create a new ADR with auto-numbering from files (#1082, #1175)."""
+        from .adr_listing import next_adr_number, resolve_adr_kb
+
+        config = self._get_config()
+        kb_name = args.get("kb_name")
+        kb_conf = resolve_adr_kb(config, kb_name, readable_kbs=readable_kbs)
+        if kb_conf is None:
+            return {
+                "created": False,
+                "error": "No KB resolved for the ADR (pass kb_name).",
+                "error_code": "KB_NOT_FOUND" if kb_name else "VALIDATION_FAILED",
+            }
+
+        next_num = next_adr_number(kb_conf)
+        title = args["title"]
+        status = args.get("status", "proposed")
+
+        # Build structured body
+        context = args.get("context", "")
+        decision = args.get("decision", "")
+        consequences = args.get("consequences", "")
+        body_parts = []
+        body_parts.append(f"## Context\n\n{context or 'TODO'}")
+        body_parts.append(f"## Decision\n\n{decision or 'TODO'}")
+        body_parts.append(f"## Consequences\n\n{consequences or 'TODO'}")
+        body = "\n\n".join(body_parts)
+
+        from datetime import date
+
+        from pyrite.services.kb_service import KBService
 
         db, should_close = self._get_db()
-        kb_name = args.get("kb_name")
-
         try:
-            # Find next ADR number
-            query = "SELECT * FROM entry WHERE entry_type = 'adr'"
-            clause, scope_params = kb_scope_clause("kb_name", kb_name, readable_kbs)
-            query += clause
-            params = list(scope_params)
-            rows = db._raw_conn.execute(query, params).fetchall()
-
-            max_num = 0
-            for row in rows:
-                meta = {}
-                if row["metadata"]:
-                    try:
-                        meta = json.loads(row["metadata"])
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                num = meta.get("adr_number", 0)
-                if isinstance(num, int) and num > max_num:
-                    max_num = num
-
-            next_num = max_num + 1
-            title = args["title"]
-            slug = generate_entry_id(title)
-            status = args.get("status", "proposed")
-
-            # Build structured body
-            context = args.get("context", "")
-            decision = args.get("decision", "")
-            consequences = args.get("consequences", "")
-            body_parts = []
-            body_parts.append(f"## Context\n\n{context or 'TODO'}")
-            body_parts.append(f"## Decision\n\n{decision or 'TODO'}")
-            body_parts.append(f"## Consequences\n\n{consequences or 'TODO'}")
-            body = "\n\n".join(body_parts)
-
+            entry = KBService(config, db).create_entry(
+                kb_conf.name,
+                f"adr-{next_num:04d}",
+                title,
+                "adr",
+                body,
+                owns=frozenset({"adr_number"}),
+                adr_number=next_num,
+                tags=args.get("tags", []),
+                status=status,
+                date=date.today().isoformat(),
+                deciders=args.get("deciders", []),
+            )
             return {
                 "created": True,
+                "id": entry.id,
                 "adr_number": next_num,
                 "title": title,
                 "status": status,
-                "filename": f"adrs/{next_num:04d}-{slug}.md",
+                "filename": _saved_filename(kb_conf, entry),
                 "body": body,
                 "deciders": args.get("deciders", []),
-                "note": "Create the markdown file with this frontmatter and body to complete.",
+            }
+        except PyriteError as exc:
+            return {
+                "created": False,
+                "error": _safe_error(exc),
+                "error_code": exc.error_code,
+                **refusal_fields(exc),
             }
         finally:
             if should_close:
@@ -1796,9 +1879,6 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """View items in review status, sorted by wait time."""
         import json
-        from pathlib import Path
-
-        from .board import load_board_config
 
         db, should_close = self._get_db()
         kb_name = args.get("kb_name")
@@ -1847,24 +1927,13 @@ class SoftwareKBPlugin:
 
             # Load board config for review lane WIP limit
             wip_limit = None
-            try:
-                if self.ctx is not None and kb_name:
-                    from pyrite.config import load_config
-
-                    config = load_config()
-                    kb_conf = config.get_kb(kb_name)
-                    board_config = (
-                        load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-                    )
-                else:
-                    board_config = load_board_config(Path("."))
-
-                for lane in board_config["lanes"]:
-                    if "review" in lane.get("statuses", []):
-                        wip_limit = lane.get("wip_limit")
-                        break
-            except Exception:
-                pass
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
+            for lane in board_config["lanes"]:
+                if "review" in lane["statuses"]:
+                    wip_limit = lane.get("wip_limit")
+                    break
 
             result: dict[str, Any] = {
                 "items": items,
@@ -1879,6 +1948,9 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
+    # Drives dependency unblocking and epic progress. Deliberately narrower than
+    # BACKLOG_SETTLED_STATUSES (which adds `superseded`, for `qa duplicates`):
+    # this set's behaviour is unchanged by #934.
     _RESOLVED_STATUSES = frozenset({"done", "retired", "wont_do"})
 
     @staticmethod
@@ -1898,79 +1970,63 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """Return dependency info for a backlog item.
 
-        Returns dict with blocked_by, blocks, and is_blocked. Within
-        `readable_kbs` (`None`: unscoped): a blocker the caller cannot read is
-        reported as a missing one is -- no title, status unknown, unresolved
-        -- and an item it cannot read that this one blocks is left out.
+        The storage layer reports a relation from the perspective of the
+        entry being queried for both outlinks and backlinks. Keep the caller's
+        read scope on each lookup: an unreadable blocker is reported without a
+        title, with unknown status, and remains unresolved; an unreadable item
+        this one blocks is omitted.
         """
         import json
 
-        blocked_by: list[dict[str, Any]] = []
-        blocks: list[dict[str, Any]] = []
+        dependencies: dict[str, dict[tuple[str, str], dict[str, Any]]] = {
+            "blocked_by": {},
+            "blocks": {},
+        }
 
-        # Outlinks with relation "blocked_by" → this item is blocked by those targets
-        for link in db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs):
-            if link.get("relation") != "blocked_by":
-                continue
-            dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
-            )
-            if dep_entry:
-                meta = {}
-                if dep_entry.get("metadata"):
-                    try:
-                        meta = (
-                            json.loads(dep_entry["metadata"])
-                            if isinstance(dep_entry["metadata"], str)
-                            else dep_entry["metadata"]
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                dep_status = dep_entry.get("status") or meta.get("status", "proposed")
-            else:
-                dep_status = "unknown"
-            blocked_by.append(
-                {
-                    "id": link["id"],
-                    "title": link.get("title", ""),
-                    "status": dep_status,
-                    "resolved": dep_status in self._RESOLVED_STATUSES,
-                }
-            )
+        for links in (
+            db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs),
+            db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs),
+        ):
+            for link in links:
+                relation = link.get("relation")
+                if relation not in dependencies:
+                    continue
 
-        # Backlinks with relation "blocked_by" → the source item is blocked by *this* item,
-        # meaning this item blocks that source.
-        for link in db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs):
-            if link.get("relation") != "blocked_by":
-                continue
-            dep_entry = self._readable_entry(
-                db, link["id"], link.get("kb_name", kb_name), readable_kbs=readable_kbs
-            )
-            if dep_entry:
-                meta = {}
-                if dep_entry.get("metadata"):
-                    try:
-                        meta = (
-                            json.loads(dep_entry["metadata"])
-                            if isinstance(dep_entry["metadata"], str)
-                            else dep_entry["metadata"]
-                        )
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-                dep_status = dep_entry.get("status") or meta.get("status", "proposed")
-            else:
-                dep_status = "unknown"
-            blocks.append(
-                {
-                    "id": link["id"],
+                dep_kb = link.get("kb_name", kb_name)
+                dep_id = link["id"]
+                key = (dep_kb, dep_id)
+                if key in dependencies[relation]:
+                    continue
+
+                dep_entry = self._readable_entry(db, dep_id, dep_kb, readable_kbs=readable_kbs)
+                if dep_entry:
+                    meta = {}
+                    if dep_entry.get("metadata"):
+                        try:
+                            meta = (
+                                json.loads(dep_entry["metadata"])
+                                if isinstance(dep_entry["metadata"], str)
+                                else dep_entry["metadata"]
+                            )
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    dep_status = dep_entry.get("status") or meta.get("status", "proposed")
+                else:
+                    dep_status = "unknown"
+
+                dependency = {
+                    "id": dep_id,
                     "title": link.get("title", ""),
                     "status": dep_status,
                 }
-            )
+                if relation == "blocked_by":
+                    dependency["resolved"] = dep_status in self._RESOLVED_STATUSES
+                dependencies[relation][key] = dependency
 
+        blocked_by = list(dependencies["blocked_by"].values())
         return {
             "blocked_by": blocked_by,
-            "blocks": blocks,
+            "blocks": list(dependencies["blocks"].values()),
             "is_blocked": any(not dep["resolved"] for dep in blocked_by),
         }
 
@@ -2113,12 +2169,22 @@ class SoftwareKBPlugin:
         if not gate_config:
             return None
 
-        from pyrite.services.rubric_checkers import NAMED_CHECKERS
+        from .board import BoardConfigError, check_criterion, evaluating, gate_checker
+
+        # `board.load_board_config` has validated the config; these checks are
+        # the gate's own, so it never records a criterion it could not run as
+        # passed, nor reads an unknown policy as `warn` (#1538).
+        policy = gate_config.get("policy", "warn")
+        if policy not in ("warn", "enforce"):
+            raise BoardConfigError("has a gate whose 'policy' is not 'warn' or 'enforce'")
 
         criteria_results = []
         all_checkers_passed = True
+        entry_dict: dict[str, Any] | None = None
 
-        for criterion in gate_config.get("criteria", []):
+        for n, criterion in enumerate(gate_config.get("criteria", []), 1):
+            where = f"criterion {n} of the gate for this status"
+            check_criterion(where, criterion)
             crit_type = criterion.get("type", "checker")
             text = criterion.get("text", "")
             hint = criterion.get("hint")
@@ -2130,16 +2196,17 @@ class SoftwareKBPlugin:
                 criteria_results.append(result)
                 continue
 
-            # Checker-based criterion
-            checker_name = criterion.get("checker")
-            if not checker_name:
-                criteria_results.append({"text": text, "passed": True, "type": "checker"})
-                continue
+            # Checker-based criterion (check_criterion refused one with none)
+            checker_name = criterion["checker"]
 
             # Special case: no_open_blockers needs DB access
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
+                # Not inside `evaluating`: the lookup reads the KB's index, not
+                # board.yaml, so a failure of it keeps its own error and
+                # `retryable` (as `sw_claim`'s earlier lookup does) and is never
+                # reported as a problem in the file (#1585).
                 failure = self._check_no_open_blockers(
                     db, item_id, kb_name, readable_kbs=readable_kbs
                 )
@@ -2151,30 +2218,24 @@ class SoftwareKBPlugin:
                 criteria_results.append(result)
                 continue
 
-            # Standard named checker
-            checker_fn = NAMED_CHECKERS.get(checker_name)
-            if not checker_fn:
-                criteria_results.append({"text": text, "passed": True, "type": "checker"})
-                continue
+            # Standard named checker (check_criterion refused an unknown one)
+            checker_fn = gate_checker(checker_name)
 
-            # Build entry dict for the checker
-            entry_dict = dict(row) if not isinstance(row, dict) else row
-            entry_dict["metadata"] = meta
+            # The entry a checker sees, built as QA builds it (#1587): the
+            # item's fields wherever the index keeps them, from the row's own
+            # metadata (`meta` is the same bag, parsed by the caller). Not
+            # inside `evaluating`: the builder reads the KB's index, not
+            # board.yaml, so a failure keeps its own error (#1585).
+            if entry_dict is None:
+                from pyrite.services.checker_entry import checker_entry
 
-            # Enrich with link data for checkers that need it (e.g. not_oversized)
-            if "_links" not in entry_dict:
-                item_id = entry_dict.get("id", "")
-                kb_name = entry_dict.get("kb_name", "")
-                link_rows = db._raw_conn.execute(
-                    "SELECT target_id, relation FROM link WHERE source_id = ? AND source_kb = ?",
-                    (item_id, kb_name),
-                ).fetchall()
-                entry_dict["_links"] = [
-                    {"target": lr["target_id"], "relation": lr["relation"]} for lr in link_rows
-                ]
+                entry_dict = checker_entry(db, row)
 
             params = criterion.get("params")
-            failure = checker_fn(entry_dict, None, params)
+            # Three outcomes: a failure row, None because it holds, or a
+            # refusal because it could not be evaluated on this item.
+            with evaluating(where):
+                failure = checker_fn(entry_dict, None, params)
             passed = failure is None
             result = {"text": text, "passed": passed, "type": "checker"}
             if not passed:
@@ -2186,27 +2247,45 @@ class SoftwareKBPlugin:
 
         return {
             "gate_name": gate_config.get("name", to_status),
-            "policy": gate_config.get("policy", "warn"),
+            "policy": policy,
             "passed": all_checkers_passed,
             "criteria": criteria_results,
         }
 
-    def _load_board_config_safe(self, kb_name: str | None) -> dict[str, Any]:
-        """Load board config, falling back to defaults on error."""
-        from pathlib import Path
+    def _board_config(
+        self,
+        db,
+        kb_name: object,
+        *,
+        readable_kbs: set[str] | None,
+        unnamed_gives_defaults: bool = False,
+    ):
+        """The board config of the KB ``kb_name`` names: the one path to
+        ``board.load_board_config`` (#1538).
 
-        from .board import load_board_config
+        The KB goes through the one resolver (config, the registry, then the
+        index's ``kb`` table), so the file read is the resolved KB's own root
+        and nowhere else. A name that does not resolve is ``KBNotFoundError``.
+        A call naming no KB is refused, except for the cross-KB views
+        (``unnamed_gives_defaults``), which answer from the built-in defaults
+        and read no file. A ``board.yaml`` that cannot be loaded is
+        ``BoardConfigError``; nothing here catches it."""
+        from pyrite.exceptions import ValidationError
+        from pyrite.services.access_policy import named_kb
+        from pyrite.services.kb_resolver import resolve_kb
 
-        try:
-            from pyrite.config import load_config as _load_config
+        from .board import default_board_config, load_board_config
 
-            cfg = _load_config()
-            kb_conf = cfg.get_kb(kb_name) if kb_name else None
-            if kb_conf:
-                return load_board_config(kb_conf.path)
-            return load_board_config(Path("."))
-        except Exception:
-            return {"lanes": [], "wip_policy": "warn"}
+        if named_kb(kb_name) is None:
+            if unnamed_gives_defaults:
+                return default_board_config()
+            raise ValidationError(
+                "This tool needs a KB: a board config is read from a KB's own root."
+            )
+        # The caller's readable set: a KB it may not read is not found, as
+        # at dispatch; the resolved KB's root holds its board.yaml.
+        kb = resolve_kb(self._get_config(), kb_name, readable_kbs=readable_kbs, db=db)
+        return load_board_config(kb)
 
     def _mcp_check_ready(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
@@ -2216,7 +2295,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
 
         try:
             query = (
@@ -2236,7 +2315,7 @@ class SoftwareKBPlugin:
             status = row["status"] or meta.get("status", "proposed")
             priority = row["priority"] or meta.get("priority", "medium")
 
-            board_config = self._load_board_config_safe(kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
@@ -2261,7 +2340,7 @@ class SoftwareKBPlugin:
         import json
 
         db, should_close = self._get_db()
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         status_filter = args.get("status")
 
         try:
@@ -2271,7 +2350,7 @@ class SoftwareKBPlugin:
 
             rows = db._raw_conn.execute(query, params).fetchall()
 
-            board_config = self._load_board_config_safe(kb_name)
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
             not_ready_items: list[dict[str, Any]] = []
@@ -2336,6 +2415,66 @@ class SoftwareKBPlugin:
             if should_close:
                 db.close()
 
+    @staticmethod
+    def _context_buckets(
+        db,
+        item_id: str,
+        kb_name: str,
+        dep_status: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None,
+    ) -> dict[str, list]:
+        """Group context for both the full bundle and pull-next's preview.
+
+        Keep both link directions and duplicate links, excluding the ids
+        already classified as dependencies by the existing dependency rules.
+        """
+        outlinks = db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs)
+        backlinks = db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs)
+        dep_link_ids = {d["id"] for d in dep_status["blocked_by"]} | {
+            d["id"] for d in dep_status["blocks"]
+        }
+
+        # Categorize by entry_type
+        buckets: dict[str, list] = {
+            "adrs": [],
+            "components": [],
+            "validations": [],
+            "conventions": [],
+            "milestones": [],
+            "work_logs": [],
+            "related": [],
+        }
+        type_to_bucket = {
+            "adr": "adrs",
+            "component": "components",
+            "programmatic_validation": "validations",
+            "development_convention": "conventions",
+            "milestone": "milestones",
+            "work_log": "work_logs",
+        }
+
+        for link in outlinks + backlinks:
+            # Skip dependency links — they go in the dependencies bucket
+            if link.get("id", "") in dep_link_ids:
+                continue
+            entry_type = link.get("entry_type", "")
+            bucket = type_to_bucket.get(entry_type, "related")
+            entry = SoftwareKBPlugin._readable_entry(
+                db, link["id"], link["kb_name"], readable_kbs=readable_kbs
+            )
+            body = (entry.get("body", "") or "") if entry else ""
+            buckets[bucket].append(
+                {
+                    "id": link.get("id", ""),
+                    "title": link.get("title", ""),
+                    "entry_type": entry_type,
+                    "relation": link.get("relation", ""),
+                    "body_preview": body[:200] if body else "",
+                }
+            )
+        return buckets
+
     def _mcp_context_for_item(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
@@ -2376,53 +2515,12 @@ class SoftwareKBPlugin:
                 "body": entry.get("body", ""),
             }
 
-            # Get linked entries (both directions)
-            outlinks = db.get_outlinks(item_id, kb_name, readable_kbs=readable_kbs)
-            backlinks = db.get_backlinks(item_id, kb_name, readable_kbs=readable_kbs)
-
-            # Build dependency info from blocks/blocked_by links
             dep_status = self._get_dependency_status(
                 db, item_id, kb_name, readable_kbs=readable_kbs
             )
-            dep_link_ids = {d["id"] for d in dep_status["blocked_by"]} | {
-                d["id"] for d in dep_status["blocks"]
-            }
-
-            # Categorize by entry_type
-            buckets: dict[str, list] = {
-                "adrs": [],
-                "components": [],
-                "validations": [],
-                "conventions": [],
-                "milestones": [],
-                "work_logs": [],
-                "related": [],
-            }
-            type_to_bucket = {
-                "adr": "adrs",
-                "component": "components",
-                "programmatic_validation": "validations",
-                "development_convention": "conventions",
-                "milestone": "milestones",
-                "work_log": "work_logs",
-            }
-
-            for link in outlinks + backlinks:
-                # Skip dependency links — they go in the dependencies bucket
-                if link.get("id", "") in dep_link_ids:
-                    continue
-                entry_type = link.get("entry_type", "")
-                bucket = type_to_bucket.get(entry_type, "related")
-                body = link.get("body", "") or ""
-                buckets[bucket].append(
-                    {
-                        "id": link.get("id", ""),
-                        "title": link.get("title", ""),
-                        "entry_type": entry_type,
-                        "relation": link.get("relation", ""),
-                        "body_preview": body[:200] if body else "",
-                    }
-                )
+            buckets = self._context_buckets(
+                db, item_id, kb_name, dep_status, readable_kbs=readable_kbs
+            )
 
             dependencies = {
                 "blocked_by": dep_status["blocked_by"],
@@ -2456,28 +2554,15 @@ class SoftwareKBPlugin:
     ) -> dict[str, Any]:
         """Recommend next work item based on priority and WIP limits."""
         import json
-        from pathlib import Path
-
-        from .board import load_board_config
 
         db, should_close = self._get_db()
         kb_name = args.get("kb_name")
 
         try:
             # Load board config for WIP limits
-            try:
-                if self.ctx is not None and kb_name:
-                    from pyrite.config import load_config
-
-                    config = load_config()
-                    kb_conf = config.get_kb(kb_name)
-                    board_config = (
-                        load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-                    )
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                board_config = {"lanes": [], "wip_policy": "warn"}
+            board_config = self._board_config(
+                db, kb_name, readable_kbs=readable_kbs, unnamed_gives_defaults=True
+            )
 
             # Count in_progress items and find WIP limit
             ip_query = "SELECT COUNT(*) as cnt FROM entry WHERE entry_type = 'backlog_item'"
@@ -2534,6 +2619,7 @@ class SoftwareKBPlugin:
                 candidates.append(
                     {
                         "id": row["id"],
+                        "kb_name": row["kb_name"],
                         "title": row["title"],
                         "kind": meta.get("kind", ""),
                         "priority": priority,
@@ -2566,7 +2652,7 @@ class SoftwareKBPlugin:
             top = None
             for candidate in candidates:
                 dep = self._get_dependency_status(
-                    db, candidate["id"], kb_name or "", readable_kbs=readable_kbs
+                    db, candidate["id"], candidate["kb_name"], readable_kbs=readable_kbs
                 )
                 if dep["is_blocked"]:
                     blocked_items.append(
@@ -2578,6 +2664,7 @@ class SoftwareKBPlugin:
                     )
                 elif top is None:
                     top = candidate
+                    top_dependencies = dep
 
             if top is None:
                 return {
@@ -2587,26 +2674,23 @@ class SoftwareKBPlugin:
                     "wip_status": wip_status,
                 }
 
-            # Get context preview counts
-            outlinks = db.get_outlinks(top["id"], kb_name or "", readable_kbs=readable_kbs)
-            adr_count = sum(1 for l in outlinks if l.get("entry_type") == "adr")
-            component_count = sum(1 for l in outlinks if l.get("entry_type") == "component")
-            validation_count = sum(
-                1 for l in outlinks if l.get("entry_type") == "programmatic_validation"
+            buckets = self._context_buckets(
+                db, top["id"], top["kb_name"], top_dependencies, readable_kbs=readable_kbs
             )
 
             result = {
                 "recommendation": {
                     "id": top["id"],
+                    "kb_name": top["kb_name"],
                     "title": top["title"],
                     "kind": top["kind"],
                     "priority": top["priority"],
                     "effort": top["effort"],
                 },
                 "context_preview": {
-                    "adr_count": adr_count,
-                    "component_count": component_count,
-                    "validation_count": validation_count,
+                    "adr_count": len(buckets["adrs"]),
+                    "component_count": len(buckets["components"]),
+                    "validation_count": len(buckets["validations"]),
                 },
                 "wip_status": wip_status,
             }
@@ -2618,17 +2702,21 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _mcp_claim(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Claim a backlog item: transition to in_progress and set assignee."""
+        """Claim a backlog item: transition to in_progress and set the
+        assignee, a person argument the dispatcher has set from the session."""
         import json
 
         from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
+        assignee = args["assignee"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
-        assignee = args["assignee"]
+        kb_name = args.get("kb_name")
 
         try:
             # Get current entry
@@ -2678,23 +2766,7 @@ class SoftwareKBPlugin:
                 }
 
             # Evaluate DoR gate
-            from pathlib import Path
-
-            from .board import load_board_config
-
-            board_config = {"lanes": [], "wip_policy": "warn"}
-            try:
-                from pyrite.config import load_config as _load_config
-
-                cfg = _load_config()
-                kb_conf = cfg.get_kb(kb_name)
-                if kb_conf:
-                    board_config = load_board_config(kb_conf.path)
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                pass
-
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, "in_progress", row, meta, readable_kbs=readable_kbs
             )
@@ -2702,10 +2774,9 @@ class SoftwareKBPlugin:
                 return {"claimed": False, "error": "Gate check failed", "gate": gate_result}
 
             # Use KBService CAS pattern
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             result = svc.claim_entry(
                 item_id,
@@ -2763,10 +2834,9 @@ class SoftwareKBPlugin:
                 }
 
             # Use KBService CAS — preserve current assignee
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             current_assignee = row["assignee"] or meta.get("assignee", "")
             cas_result = svc.claim_entry(
@@ -2807,7 +2877,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         to_status = args["to_status"]
         reason = args.get("reason")
 
@@ -2849,23 +2919,7 @@ class SoftwareKBPlugin:
                 }
 
             # Evaluate quality gate
-            from pathlib import Path
-
-            from .board import load_board_config
-
-            board_config = {"lanes": [], "wip_policy": "warn"}
-            try:
-                from pyrite.config import load_config as _load_config
-
-                cfg = _load_config()
-                kb_conf = cfg.get_kb(kb_name)
-                if kb_conf:
-                    board_config = load_board_config(kb_conf.path)
-                else:
-                    board_config = load_board_config(Path("."))
-            except Exception:
-                pass
-
+            board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
             gate_result = self._evaluate_gate(
                 db, board_config, to_status, row, meta, readable_kbs=readable_kbs
             )
@@ -2877,10 +2931,9 @@ class SoftwareKBPlugin:
                 }
 
             # Use KBService CAS pattern — preserve current assignee
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             current_assignee = row["assignee"] or meta.get("assignee", "")
             cas_result = svc.claim_entry(
@@ -2912,19 +2965,23 @@ class SoftwareKBPlugin:
                 db.close()
 
     def _mcp_review(
-        self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
+        self,
+        args: dict[str, Any],
+        *,
+        readable_kbs: set[str] | None = None,
     ) -> dict[str, Any]:
-        """Record review outcome for a backlog item in review status."""
+        """Record review outcome for a backlog item in review status. The
+        reviewer is a person argument the dispatcher has set from the session."""
         import json
 
         from .workflows import BACKLOG_WORKFLOW, can_transition, get_allowed_transitions
 
+        reviewer = args["reviewer"]
         db, should_close = self._get_db()
         item_id = args["item_id"]
-        kb_name = args["kb_name"]
+        kb_name = args.get("kb_name")
         outcome = args["outcome"]
         feedback = args.get("feedback")
-        reviewer = args["reviewer"]
 
         try:
             # Get current entry
@@ -2976,7 +3033,7 @@ class SoftwareKBPlugin:
             # Evaluate DoD gate when approving (transition to done)
             gate_result = None
             if target == "done":
-                board_config = self._load_board_config_safe(kb_name)
+                board_config = self._board_config(db, kb_name, readable_kbs=readable_kbs)
                 gate_result = self._evaluate_gate(
                     db, board_config, "done", row, meta, readable_kbs=readable_kbs
                 )
@@ -2988,10 +3045,9 @@ class SoftwareKBPlugin:
                     }
 
             # Use KBService CAS pattern — pass current assignee to preserve it
-            from pyrite.config import load_config
             from pyrite.services.kb_service import KBService
 
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
             current_assignee = row["assignee"] or meta.get("assignee", "")
             cas_result = svc.claim_entry(
@@ -3037,7 +3093,6 @@ class SoftwareKBPlugin:
         """Create a new backlog item and persist it to the KB."""
         import re
 
-        from pyrite.config import load_config
         from pyrite.services.kb_service import KBService
 
         title = args["title"]
@@ -3054,7 +3109,7 @@ class SoftwareKBPlugin:
 
         db, should_close = self._get_db()
         try:
-            config = load_config()
+            config = self._get_config()
             svc = KBService(config, db)
 
             kwargs: dict[str, Any] = {
@@ -3079,7 +3134,10 @@ class SoftwareKBPlugin:
                 "effort": effort,
             }
         except Exception as e:
-            return {"created": False, "error": _safe_error(e)}
+            refused: dict[str, Any] = {"created": False, "error": _safe_error(e)}
+            if isinstance(e, PyriteError):
+                refused["error_code"] = e.error_code  # KB_NOT_FOUND, KB_READ_ONLY, ...
+            return refused
         finally:
             if should_close:
                 db.close()
@@ -3087,6 +3145,8 @@ class SoftwareKBPlugin:
     def _mcp_log(self, args: dict[str, Any]) -> dict[str, Any]:
         """Log a work session for a backlog item."""
         from datetime import datetime
+
+        from pyrite.services.kb_service import KBService
 
         item_id = args["item_id"]
         kb_name = args["kb_name"]
@@ -3127,6 +3187,19 @@ class SoftwareKBPlugin:
                 "inverse": "has_session",
             }
 
+            config = self._get_config()
+            svc = KBService(config, db)
+            kb_config = svc.require_kb(kb_name)
+            saved = svc.create_entry(
+                kb_name,
+                log_id,
+                f"Work session for {entry['title']}",
+                "work_log",
+                summary,
+                links=[link],
+                **{key: value for key, value in frontmatter.items() if key != "type"},
+            )
+
             return {
                 "created": True,
                 "id": log_id,
@@ -3135,9 +3208,23 @@ class SoftwareKBPlugin:
                 "frontmatter": frontmatter,
                 "body": summary,
                 "link": link,
-                "filename": f"work-logs/{log_id}.md",
-                "note": "Create the markdown file with this frontmatter, body, and link to complete.",
+                "filename": _saved_filename(kb_config, saved),
             }
+        except PyriteError as exc:
+            refused = {
+                "created": False,
+                "error": _safe_error(exc),
+                "error_code": exc.error_code,
+                **refusal_fields(exc),
+            }
+            if isinstance(exc, SchemaViolationError):
+                schema = kb_config.kb_schema
+                if "work_log" not in schema.types:
+                    refused["suggestion"] = (
+                        "Add work_log under types: in this KB's kb.yaml, with "
+                        "subdirectory: work-logs/ and required: [title]."
+                    )
+            return refused
         finally:
             if should_close:
                 db.close()

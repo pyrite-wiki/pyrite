@@ -112,6 +112,46 @@ class TestNoDoubleLinks:
         assert len(updated.links) <= initial_count
 
 
+class TestTheHooksLinkOnUpdateIsAKnownGap:
+    def test_an_update_does_not_write_the_hooks_link_to_the_file(self, setup):
+        """Known issue (KNOWN-ISSUES.md; ADR-0042 decision 4, #955 B6 P3a): on
+        an update a `before_save` hook's return is ignored and what it sets on
+        the entry never reaches the file. `enrich_connection_links` adds the
+        link for a changed `person` to the entry: it is in this write's index
+        row, until the next reindex, and the stale link stays in the file. On
+        the base the link was written. P6's index-time derivation closes it;
+        until then this pins the gap."""
+        from pyrite.storage.index import IndexManager
+
+        svc, db, config = setup["svc"], setup["db"], setup["config"]
+        entry = svc.create_entry(
+            "test",
+            "membership-doe-acme",
+            "Doe at ACME",
+            "membership",
+            person="[[john-doe]]",
+            organization="[[acme-corp]]",
+        )
+        path = entry.file_path
+        assert "target: john-doe" in path.read_text(encoding="utf-8")
+
+        svc.update_entry("membership-doe-acme", "test", person="[[jane-roe]]")
+
+        after = path.read_text(encoding="utf-8")
+        assert "person: '[[jane-roe]]'" in after or 'person: "[[jane-roe]]"' in after, after
+        assert "target: jane-roe" not in after, "the hook's link reached the file: close the issue"
+        assert "target: john-doe" in after, "the stale link is still the file's"
+        outlinks = {
+            o["id"] for o in db.get_outlinks("membership-doe-acme", "test", readable_kbs=UNSCOPED)
+        }
+        assert "jane-roe" in outlinks, "this write's row carries the hook's link"
+        IndexManager(db, config).index_all()
+        outlinks = {
+            o["id"] for o in db.get_outlinks("membership-doe-acme", "test", readable_kbs=UNSCOPED)
+        }
+        assert "jane-roe" not in outlinks, "a reindex reads the file, which never got the link"
+
+
 class TestNonConnectionEntriesUnaffected:
     def test_asset_no_extra_links(self, setup):
         """Non-connection entry types should not get auto-links."""

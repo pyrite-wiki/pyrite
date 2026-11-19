@@ -3,7 +3,8 @@
 	import { goto } from '$app/navigation';
 	import { entryHref } from '$lib/utils/entry-href';
 	import type { GraphNode, GraphEdge } from '$lib/api/types';
-	import { typeColor } from '$lib/constants';
+	import { defaultTypeColor, typeColor } from '$lib/constants';
+	import { uiStore } from '$lib/stores/ui.svelte';
 	import { buildNodeTooltipLines, buildEdgeTooltipLines, type TooltipLine } from './tooltip';
 	import type cytoscape from 'cytoscape';
 
@@ -25,6 +26,7 @@
 	let cy = $state.raw<cytoscape.Core>();
 	let initializing = false;
 	let disposed = false;
+	const labelColor = () => uiStore.theme === 'dark' ? '#a1a1aa' : defaultTypeColor;
 
 	function buildElements() {
 		const nodeElements = nodes.map((n) => {
@@ -135,7 +137,7 @@
 							'text-valign': 'bottom',
 							'text-halign': 'center',
 							'text-margin-y': 5,
-							color: '#a1a1aa',
+							color: labelColor(),
 							width: 'data(size)',
 							height: 'data(size)',
 							opacity: 'data(nodeOpacity)',
@@ -275,6 +277,12 @@
 
 	$effect(applySearchHighlight);
 
+	$effect(() => {
+		const color = labelColor();
+		// Change the stylesheet default so later replacement nodes inherit it.
+		cy?.style?.()?.selector('node').style({ color }).update();
+	});
+
 	export function resetLayout() {
 		cy?.layout({
 			...getLayoutConfig(layoutName),
@@ -290,15 +298,20 @@
 
 <style>
 	.graph-container {
+		background-color: var(--color-zinc-50);
+		background-image: radial-gradient(circle, var(--color-zinc-200) 1px, transparent 1px);
+		background-size: 24px 24px;
+	}
+	.graph-container[data-theme='dark'] {
 		background-color: #09090b;
 		background-image: radial-gradient(circle, #27272a 1px, transparent 1px);
-		background-size: 24px 24px;
 	}
 </style>
 
 <div class="relative h-full w-full">
 	<div
 		bind:this={container}
+		data-theme={uiStore.theme}
 		class="graph-container h-full w-full {compact ? '' : 'rounded-lg border border-zinc-200 dark:border-zinc-800'}"
 	></div>
 	<div

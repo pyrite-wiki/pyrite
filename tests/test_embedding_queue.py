@@ -357,3 +357,67 @@ class TestEmbedStatusEndpoint:
         assert "pending" in data
         assert "failed" in data
         assert "processing" in data
+
+
+class TestOfflineEmbeddingModel:
+    def test_unavailable_model_does_not_consume_entry_attempts(self, tmp_db):
+        from pyrite.services.embedding_service import EmbeddingService
+        from pyrite.services.embedding_worker import EmbeddingWorker
+
+        db, _, _ = tmp_db
+        db.backend.vec_available = True
+        worker = EmbeddingWorker(db)
+        worker.enqueue("entry-1", "test-kb")
+        service = EmbeddingService(db, model_name="offline-test-model")
+        worker._embedding_svc = service
+
+        assert db.get_entry("entry-1", "test-kb") is not None
+
+        with (
+            patch("pyrite.services.embedding_service.is_available", return_value=True),
+            patch(
+                "pyrite.services.embedding_service._load_model",
+                side_effect=OSError("model unavailable offline"),
+            ) as load_model,
+        ):
+            for _ in range(3):
+                worker.drain(batch_size=10)
+
+        row = db._raw_conn.execute(
+            "SELECT attempts, status, error FROM embed_queue "
+            "WHERE entry_id = 'entry-1' AND kb_name = 'test-kb'"
+        ).fetchone()
+        assert tuple(row) == (0, "pending", None)
+        assert load_model.call_count == 3
+
+    def test_model_unavailable_names_the_workers_configured_model(self, tmp_db):
+        from pyrite.services.embedding_worker import EmbeddingWorker
+
+        db, _, _ = tmp_db
+        db.backend.vec_available = True
+        worker = EmbeddingWorker(db, model_name="configured-offline-model")
+
+        with (
+            patch("pyrite.services.embedding_service.is_available", return_value=True),
+            patch(
+                "pyrite.services.embedding_service._load_model",
+                side_effect=OSError("model unavailable offline"),
+            ),
+        ):
+            reason = worker.model_unavailable()
+
+        assert reason is not None
+        assert "'configured-offline-model'" in reason
+
+    def test_model_unavailable_is_none_when_the_model_loads(self, tmp_db):
+        from pyrite.services.embedding_worker import EmbeddingWorker
+
+        db, _, _ = tmp_db
+        db.backend.vec_available = True
+        worker = EmbeddingWorker(db, model_name="loadable-model")
+
+        with (
+            patch("pyrite.services.embedding_service.is_available", return_value=True),
+            patch("pyrite.services.embedding_service._load_model", return_value=MagicMock()),
+        ):
+            assert worker.model_unavailable() is None

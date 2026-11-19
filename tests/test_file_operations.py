@@ -588,6 +588,47 @@ def test_a_double_quoted_scalar_stays_double_quoted():
     ]
 
 
+@pytest.mark.parametrize(
+    ("line", "value", "expected"),
+    [
+        # An empty string can only be written quoted: its quotes were forced,
+        # not chosen, so a value filling it follows the plain rule (#86: a
+        # create writes `kind: ""` for a declared field left empty).
+        ('kind: ""', "bug", "kind: bug"),
+        ("kind: ''", "bug", "kind: bug"),
+        # The comment stays at its column, so the gap before it narrows to fit.
+        ('kind: ""  # fill me', "bug", "kind: bug # fill me"),
+        # ... and the plain rule still quotes what YAML would misread.
+        ("kind: ''", "yes", 'kind: "yes"'),
+        pytest.param(
+            'kind: ""',
+            "a: b",
+            'kind: "a: b"',
+            marks=pytest.mark.control(reason="quoted before #86 too: the plain rule's own case"),
+        ),
+        # A non-empty quoted scalar was quoted by its author: it stays quoted.
+        pytest.param(
+            'kind: "feature"',
+            "bug",
+            'kind: "bug"',
+            marks=pytest.mark.control(reason="a non-empty quoted scalar stayed quoted before #86"),
+        ),
+        pytest.param(
+            "kind: 'feature'",
+            "bug",
+            "kind: 'bug'",
+            marks=pytest.mark.control(reason="a non-empty quoted scalar stayed quoted before #86"),
+        ),
+    ],
+)
+def test_an_empty_quoted_scalar_is_filled_unstyled(line, value, expected):
+    text = f"---\nid: x\n{line}\n---\n"
+    after, _ = run(text, Set("kind", value))
+    assert after.splitlines()[2] == expected
+    parsed = load_frontmatter(after)
+    assert parsed is not None and parsed[0]["kind"] == value
+
+
 def test_a_new_key_goes_last_with_the_files_line_ending():
     after, _ = run(SHAPES["crlf"], Set("status", "draft"))
     assert after.endswith(
@@ -598,6 +639,201 @@ def test_a_new_key_goes_last_with_the_files_line_ending():
 def test_a_flow_list_append_copies_its_neighbours_quoting():
     after, _ = run(SHAPES["hugo"], Append("tags", "go"))
     assert 'tags: ["hugo", "notes", "go"]\n' in after
+
+
+def _spell(style, text):
+    """A scalar spelled in one of the styles a neighbour's item can carry."""
+    if style == '"':
+        return f'"{text}"'
+    if style == "'":
+        return f"'{text}'"
+    return text
+
+
+@pytest.mark.parametrize(
+    ("target_style", "relation_style"),
+    [("", ""), ('"', '"'), ("'", "'"), ('"', "")],
+    ids=["bare", "double", "single", "mixed"],
+)
+def test_a_block_item_copies_its_neighbours_quoting(target_style, relation_style):
+    """ADR-0042 decision 2: an appended item spells its scalars as the item
+    beside it spells the same kind of scalar, where that spelling reads back
+    as the value (#1023). `[bare]` is the control: it passed before too."""
+    before = (
+        "---\nid: x\nlinks:\n"
+        f"  - target: {_spell(target_style, 'foo')}\n"
+        f"    relation: {_spell(relation_style, 'related_to')}\n"
+        "---\n"
+    )
+    after, _ = run(before, Append("links", {"target": "bar", "relation": "related_to"}))
+
+    assert f"  - target: {_spell(target_style, 'bar')}\n" in after
+    assert f"    relation: {_spell(relation_style, 'related_to')}\n" in after
+    parsed = load_frontmatter(after)
+    assert parsed is not None
+    assert parsed[0]["links"] == [
+        {"target": "foo", "relation": "related_to"},
+        {"target": "bar", "relation": "related_to"},
+    ]
+
+
+def test_a_flow_mapping_item_copies_its_neighbours_quoting():
+    before = '---\nid: x\nlinks: [{target: "foo", relation: related_to}]\n---\n'
+    after, _ = run(before, Append("links", {"target": "bar", "relation": "related_to"}))
+    assert (
+        'links: [{target: "foo", relation: related_to}, {target: "bar", relation: related_to}]'
+        in after
+    )
+
+
+def test_a_key_the_neighbour_lacks_takes_the_emitters_default():
+    """The groom's acceptance: `note` is not a key of the item beside it, so there
+    is nothing to copy; `target` still copies its neighbour's double quotes."""
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n---\n'
+    after, _ = run(before, Append("links", {"target": "bar", "note": "n"}))
+
+    assert '  - target: "bar"\n    note: n\n' in after
+    assert _diff(before, after) == ['+  - target: "bar"\n', "+    note: n\n"]
+    parsed = load_frontmatter(after)
+    assert parsed is not None
+    assert parsed[0]["links"] == [{"target": "foo"}, {"target": "bar", "note": "n"}]
+
+
+@pytest.mark.control(
+    reason="passes before the change too (the emitter always quoted a misreading value); "
+    "pins that copying a bare neighbour's spelling never un-quotes one"
+)
+@pytest.mark.parametrize("value", ["yes", "1.0", "null", "true", "2026-01-01"])
+def test_a_bare_neighbour_beside_a_value_that_would_misread_is_quoted(value):
+    """The groom's acceptance: a bare neighbour's spelling is copied only where it
+    reads back as the value. A bare `yes` is a bool, `1.0` a float, `null` None."""
+    before = "---\nid: x\nlinks:\n  - target: foo\n---\n"
+    after, _ = run(before, Append("links", {"target": value}))
+
+    parsed = load_frontmatter(after)
+    assert parsed is not None
+    assert parsed[0]["links"] == [{"target": "foo"}, {"target": value}], after
+    assert f"  - target: {value}\n" not in after, after  # not the bare spelling
+
+
+def test_an_update_that_inserts_into_a_block_list_copies_the_neighbours_quoting():
+    """Through `_edit_seq` (a Set of the whole list), not `_append`."""
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n    relation: "related_to"\n---\n'
+    new = [
+        {"target": "foo", "relation": "related_to"},
+        {"target": "bar", "relation": "related_to"},
+    ]
+    after, report = run(before, Set("links", new))
+
+    assert report.widened == (), "this edit has a narrow form"
+    assert _diff(before, after) == ['+  - target: "bar"\n', '+    relation: "related_to"\n']
+
+
+def test_an_update_that_inserts_into_a_flow_list_of_mappings_copies_the_quoting():
+    before = '---\nid: x\nlinks: [{target: "foo", relation: related_to}]\n---\n'
+    new = [
+        {"target": "foo", "relation": "related_to"},
+        {"target": "bar", "relation": "related_to"},
+    ]
+    after, report = run(before, Set("links", new))
+
+    assert report.widened == ()
+    assert (
+        'links: [{target: "foo", relation: related_to}, {target: "bar", relation: related_to}]'
+        in after
+    )
+
+
+def test_a_widened_list_insert_copies_the_neighbours_quoting_too(monkeypatch):
+    """The widen path (`_widen_seq`) rebuilds the list item-wise when the narrow
+    edit fails its post-check. It spells the new item like the narrow path does."""
+    from pyrite.storage import file_operations as fo
+
+    monkeypatch.setattr(fo, "_narrow_edits", lambda doc, op: None)
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n    relation: "related_to"\n---\n'
+    after, report = run(before, Append("links", {"target": "bar", "relation": "related_to"}))
+
+    assert report.widened == ("links",)
+    assert _diff(before, after) == ['+  - target: "bar"\n', '+    relation: "related_to"\n']
+
+
+def test_a_flow_list_rewritten_afresh_takes_the_emitters_rule_not_a_level_up():
+    """Nothing is kept, so the whole list is written afresh: item 0's styles are
+    the styles of the items one level down, not of the new list's own items."""
+    before = '---\nid: x\nk: [["a", "b"]]\n---\n'
+    after, _ = run(before, Set("k", ["c", "d"]))
+
+    assert "k: [c, d]\n" in after  # dev writes the same
+    parsed = load_frontmatter(after)
+    assert parsed is not None and parsed[0]["k"] == ["c", "d"]
+
+
+@pytest.mark.control(
+    reason="passes on dev: a flat flow list rewritten afresh keeps its own quoting; "
+    "pins that the fresh-rewrite fix does not drop it"
+)
+def test_a_flat_quoted_flow_list_rewritten_afresh_keeps_its_quoting():
+    before = '---\nid: x\nk: ["a", "b"]\n---\n'
+    after, _ = run(before, Set("k", ["c", "d"]))
+
+    assert 'k: ["c", "d"]\n' in after
+
+
+def test_a_widened_list_rewritten_afresh_takes_the_emitters_rule(monkeypatch):
+    """The widen's fresh rewrite (no old item kept) passes no style: item 0 is
+    not a neighbour of anything written afresh. The narrow path writes `- - b`."""
+    from pyrite.storage import file_operations as fo
+
+    before = "---\nid: x\nk:\n  - ['a']\n---\n"
+    narrow, _ = run(before, Set("k", [["b"]]))
+    monkeypatch.setattr(fo, "_narrow_edits", lambda doc, op: None)
+    widened, report = run(before, Set("k", [["b"]]))
+
+    assert report.widened == ("k",)
+    assert "  - - b\n" in narrow
+    assert widened == narrow
+
+
+def test_a_widened_flow_list_insert_copies_the_neighbours_quoting(monkeypatch):
+    """The item-wise rebuild of a flow list spells a new item like the narrow
+    path does: after the item it sits beside."""
+    from pyrite.storage import file_operations as fo
+
+    before = '---\nid: x\nlinks: [{target: "foo", relation: related_to}]\n---\n'
+    op = Append("links", {"target": "bar", "relation": "related_to"})
+    narrow, _ = run(before, op)
+    monkeypatch.setattr(fo, "_narrow_edits", lambda doc, op: None)
+    widened, report = run(before, op)
+
+    assert report.widened == ("links",)
+    assert '{target: "bar", relation: related_to}' in narrow
+    assert widened == narrow
+
+
+def test_a_neighbours_quoting_is_copied_for_a_non_string_key():
+    """The style tree is keyed by the loaded key (`1`), as the emitters look it up,
+    not by the key's text (`"1"`)."""
+    before = "---\nid: x\nlinks:\n  - 1: 'a'\n---\n"
+    after, _ = run(before, Append("links", {1: "b"}))
+
+    assert "  - 1: 'b'\n" in after
+    parsed = load_frontmatter(after)
+    assert parsed is not None and parsed[0]["links"] == [{1: "a"}, {1: "b"}]
+
+
+@pytest.mark.control(
+    reason="passes at the previous head too: pins that a replaced item in the item-wise "
+    "rebuild is spelled like the item it replaces (said in the changelog fragment)"
+)
+def test_a_replaced_item_in_the_item_wise_rebuild_takes_the_old_items_quoting(monkeypatch):
+    from pyrite.storage import file_operations as fo
+
+    monkeypatch.setattr(fo, "_narrow_edits", lambda doc, op: None)
+    before = '---\nid: x\nlinks:\n  - target: "foo"\n  - target: "keep"\n---\n'
+    after, report = run(before, Set("links", [{"target": "swapped"}, {"target": "keep"}]))
+
+    assert report.widened == ("links",)
+    assert '  - target: "swapped"\n' in after
 
 
 def test_an_append_takes_each_lists_own_indent():
@@ -1826,13 +2062,14 @@ def test_a_key_pyrite_cannot_name_is_refused_as_a_tagged_key_in_every_container(
         _refused(full, op, category="tagged key")
 
 
-def test_limit_a_tag_inside_a_set_members_value_is_not_seen():
-    """#769 item 2, a limit stated in the module doc: ruamel discards the
-    value of a set member, so the tagged key inside it cannot be detected.
-    The edit is applied elsewhere and the member's bytes are kept."""
+def test_a_tag_inside_a_set_members_value_is_refused_too():
+    """Was a stated limit (#769 item 2): ruamel discards the value of a set
+    member, so the loaded document never showed the tagged key inside it.
+    The guard now asks ruamel per key node (#972 round 1), so the key is
+    seen where it is written and the file is refused like any tagged key."""
     full = "---\ns: !!set {? a: {!!str k: 1}}\nb: 1\n---\nx\n"
-    after, _ = run(full, Set("b", 2))
-    assert after == full.replace("b: 1", "b: 2")
+    for op in [Set("b", 2), ReplaceBody("y")]:
+        _refused(full, op, category="tagged key")
 
 
 _SHAPE_REFUSALS = {
@@ -1858,17 +2095,6 @@ def test_every_frontmatter_shape_refusal_says_the_body_write_is_refused_too(name
     for op in _EVERY_OP:
         reason = _refused(full, op, category=category)
         assert "body" in reason, (name, op, reason)
-
-
-def test_a_key_item_with_no_key_is_refused_not_a_crash():
-    """#769 item 5: ruamel never loads an empty ``!!pairs`` item (it refuses
-    the document first), so no file reaches this; the guard is called as the
-    function it is, so a future loader change cannot turn it into a
-    ``ValueError`` from ``key, *rest = ()``."""
-    from pyrite.storage.file_operations import _loaded_tagged_key
-
-    with pytest.raises(OperationRefusedError):
-        _loaded_tagged_key((), set())
 
 
 @pytest.mark.control(

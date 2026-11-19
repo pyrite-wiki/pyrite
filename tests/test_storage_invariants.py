@@ -254,7 +254,7 @@ class StorageMachine(RuleBasedStateMachine):
 
     @rule(id=st.sampled_from(IDS))
     def delete(self, id):
-        self._pyrite_op("delete", lambda: self.svc.delete_entry(id, KB), id=id)
+        self._pyrite_op("delete", lambda: self.svc.delete_entry(id, KB, readable_kbs=None), id=id)
 
     # -- index operations ------------------------------------------------
 
@@ -485,13 +485,12 @@ def test_i4_delete_by_filename_removes_another_entry():
     _run("I4", [NO_ID_BETA_AT_ALPHA, ("delete", {"id": "alpha"})])
 
 
-@_violates("I6", "#488", "update moves a KB-root file into the type's folder")
-def test_i6_update_moves_a_root_file():
+def test_i6_update_does_not_move_a_root_file():
+    """#488, fixed by #955: an update never moves a file (ADR-0042 decision 12)."""
     steps = [("ext_write", {"name": "alpha.md", "id": "gamma", "t": "Alpha"})]
     _run("I6", [*steps, ("update", {"id": "gamma", "what": "title"})])
 
 
-@_violates("I6", "#489", "rename moves an id-named file")
 def test_i6_rename_moves_an_id_named_file():
     steps = [("create_note", {"title": "Alpha", "id": None})]
     _run("I6", [*steps, ("rename", {"old": "alpha", "new": "renamed-1"})])
@@ -571,7 +570,6 @@ def _history_after_rename(git_kb, spec: dict, new_id: str) -> list[str]:
     return [v["message"] for v in db.get_entry_versions(new_id, KB)]
 
 
-@_violates("I10", "#489", "rename of an id-named file loses history")
 def test_i10_history_survives_rename_of_an_id_named_file(git_kb):
     msgs = _history_after_rename(git_kb, {"entry_type": "note", "title": "Alpha"}, "omega")
     assert sorted(msgs) == ["create", "edit", "rename"], f"I10: history of 'omega' is {msgs}"

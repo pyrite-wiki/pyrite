@@ -10,6 +10,7 @@ import pytest
 fastapi = pytest.importorskip("fastapi", reason="fastapi not installed")
 from fastapi.testclient import TestClient
 
+import pyrite
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models import EventEntry, PersonEntry
 from pyrite.server.api import create_app
@@ -419,6 +420,11 @@ class TestKBEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "ok"
+
+    def test_openapi_version_matches_package(self, test_env):
+        response = test_env["client"].get("/openapi.json")
+        assert response.status_code == 200
+        assert response.json()["info"]["version"] == pyrite.__version__
 
 
 class TestSearchEndpoints:

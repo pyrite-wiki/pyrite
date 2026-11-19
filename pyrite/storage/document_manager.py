@@ -5,7 +5,10 @@ Consolidates the repeated save-register-index pattern from KBService
 into a single class, completing the ODM abstraction layer.
 """
 
+from __future__ import annotations
+
 import logging
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 
 from ..config import KBConfig
@@ -21,7 +24,7 @@ class DocumentManager:
     """Coordinates file storage and index updates for KB entries.
 
     Encapsulates the write-path pattern:
-        KBRepository.save() → PyriteDB.register_kb() → IndexManager.index_entry()
+        KBRepository.save() → PyriteDB.ensure_kb() → IndexManager.index_entry()
 
     Read paths remain on PyriteDB / KBService directly.
     """
@@ -36,10 +39,17 @@ class DocumentManager:
         kb_name: str,
         kb_config: KBConfig,
         *,
-        touch_updated_at: bool = True,
         is_create: bool = False,
+        taken: AbstractSet[Path] = frozenset(),
+        taken_keys: AbstractSet[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """Save an entry to disk, register the KB, and index it.
+
+        The whole-file emit of a create (``is_create=True`` is its only
+        caller). An update, ``add_link`` and ``add_links`` no longer come
+        here: they are operations applied to the file's own bytes in
+        ``KBService._update``, published by ``storage/entry_writer.py``
+        (#955, B6 P3a and P4).
 
         If the entry's resolved path has changed (e.g. due to a templated
         subdirectory like ``backlog/{status}``), the old file is removed.
@@ -48,8 +58,6 @@ class DocumentManager:
             entry: The entry to save.
             kb_name: Name of the knowledge base.
             kb_config: KB configuration (provides path, type, description).
-            touch_updated_at: Passed through to ``KBRepository.save``; ``False``
-                keeps a caller-supplied ``updated_at`` (#151).
             is_create: ``True`` only for a brand-new entry (the sole caller is
                 ``KBService``'s create pipeline). A file's name is fixed at
                 creation (#391 cold read): the default ``False`` keeps the
@@ -72,8 +80,14 @@ class DocumentManager:
         """
         repo = KBRepository(kb_config)
 
-        # Find current on-disk location before saving to new path
-        old_path = repo.find_file(entry.id)
+        # Find current on-disk location before saving to new path. A create
+        # has none: KBService looked the id up (exists(), again after a
+        # before_save hook that changed it), and a second walk here doubled a
+        # create's cost (#135). The exclusive publish refuses only a file at
+        # this same path: a concurrent create of the same id at another path
+        # between the lookup and the write is not guarded, as it was not
+        # when this lookup ran here.
+        old_path = None if is_create else repo.find_file(entry.id)
 
         # Preserve deliberate placement on update. By default repo.save()
         # re-infers the type-default subdirectory, which would relocate a file
@@ -90,16 +104,18 @@ class DocumentManager:
         file_path = repo.save(
             entry,
             subdir=subdir,
-            touch_updated_at=touch_updated_at,
             keep_filename=not is_create,
             exclusive=is_create,
+            taken=taken,
+            taken_keys=taken_keys,
         )
 
         # Clean up old file if path changed (template-driven move)
         if old_path and old_path.resolve() != file_path.resolve() and old_path.exists():
             self._remove_old_file(old_path, kb_config.path)
 
-        self._db.register_kb(
+        # Make the KB's row if it has none; never rewrite one.
+        self._db.ensure_kb(
             name=kb_name,
             kb_type=kb_config.kb_type,
             path=str(kb_config.path),
@@ -138,8 +154,15 @@ class DocumentManager:
         return None if str(parent) == "." else str(parent)
 
     def _remove_old_file(self, old_path: Path, kb_root: Path) -> None:
-        """Remove old file after a template-driven path change. Git-aware."""
+        """Remove old file after a template-driven path change. Git-aware.
+        Only a name inside ``kb_root`` is removed."""
         import subprocess
+
+        from ..utils.git_hardening import git_env
+        from ..utils.kb_files import KBFiles
+
+        files = KBFiles(kb_root)
+        files.require_removable(old_path)
 
         try:
             # Check if this is a git repo
@@ -148,6 +171,7 @@ class DocumentManager:
                 cwd=str(kb_root),
                 capture_output=True,
                 timeout=5,
+                env=git_env(),
             )
             if result.returncode == 0:
                 subprocess.run(
@@ -155,11 +179,12 @@ class DocumentManager:
                     cwd=str(kb_root),
                     capture_output=True,
                     timeout=10,
+                    env=git_env(),
                 )
             else:
-                old_path.unlink(missing_ok=True)
+                files.unlink(old_path)
         except Exception:
-            old_path.unlink(missing_ok=True)
+            files.unlink(old_path)
             logger.warning("Git-aware move failed, deleted old file directly", exc_info=True)
 
         # Clean up empty parent directories up to kb_root
@@ -183,6 +208,17 @@ class DocumentManager:
         Returns:
             True if the file was deleted, False if not found.
         """
+        return self.delete_entry_leaving(entry_id, kb_name, kb_config)[0]
+
+    def delete_entry_leaving(
+        self, entry_id: str, kb_name: str, kb_config: KBConfig
+    ) -> tuple[bool, list[dict[str, str]]]:
+        """``delete_entry``, and the in-KB links it left pointing at nothing
+        (#1262): ``[{"path", "target"}]``, KB-relative. A link is the user's
+        file (guest standard), so the delete removes the entry's real file
+        only and keeps every link to it; the caller reports them. They come
+        from the plan the delete already makes (its ``aliases``): each alias
+        whose target is no longer there once the delete is done."""
         repo = KBRepository(kb_config)
         # The index row's file is a candidate the repository verifies before
         # it walks the KB (ADR-0038 step 1). Every file holding the id comes
@@ -195,7 +231,18 @@ class DocumentManager:
         holders = [claim.path for claim in plan.holders.get(entry_id, [])]
         file_deleted = repo.delete(entry_id, indexed_path=indexed, holders=holders)
         self._db.delete_entry(entry_id, kb_name)
-        return file_deleted
+        # What is on disk once the delete is done, never the plan alone: each
+        # alias the plan saw that is still a link inside the KB and now
+        # points at nothing (``dangling_target``). A link gone by now, or
+        # whose target is still there, is not listed.
+        left: list[dict[str, str]] = []
+        if file_deleted:
+            left = [
+                {"path": alias["path"], "target": alias["target"]}
+                for alias in plan.aliases
+                if repo.dangling_target(kb_config.path / alias["path"]) is not None
+            ]
+        return file_deleted, left
 
     def index_entry(self, entry: Entry, kb_name: str, file_path: Path) -> None:
         """Index an entry without writing to disk (re-index from existing file).

@@ -25,7 +25,7 @@ import typer
 from typer.testing import CliRunner
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings, save_config
-from tests.outcome_walk import leaves
+from tests.outcome_walk import leaves, param_kind
 
 # (command path, parameter name) -> argv builder, given the path under test.
 # Each is an input FILE the user names: read, never written.
@@ -42,6 +42,24 @@ INPUT_FILE_PARAMS: dict[tuple[tuple[str, ...], str], object] = {
         p,
     ],  # fmt: skip
     (("update",), "body_file"): lambda p: ["update", "hello", "-k", "k", "--body-file", p],
+    (("task", "create"), "body_file"): lambda p: [
+        "task",
+        "create",
+        "T",
+        "-k",
+        "k",
+        "--body-file",
+        p,
+    ],
+    (("task", "update"), "body_file"): lambda p: [
+        "task",
+        "update",
+        "hello",
+        "-k",
+        "k",
+        "--body-file",
+        p,
+    ],
     (("add",), "file_path"): lambda p: ["add", p, "-k", "k"],
     (("links", "bulk-create"), "file_option"): lambda p: [
         "links",
@@ -86,14 +104,6 @@ INPUT_FILE_PARAMS: dict[tuple[tuple[str, ...], str], object] = {
         "-k",
         "k",
     ],  # fmt: skip
-    (("cascade", "extract-actors"), "alias_file"): lambda p: [
-        "cascade",
-        "extract-actors",
-        "-k",
-        "k",
-        "--alias-file",
-        p,
-    ],  # fmt: skip
     (("db", "restore"), "backup_path"): lambda p: ["db", "restore", p, "--force"],
 }
 
@@ -118,16 +128,29 @@ NOT_INPUT_FILE: dict[tuple[tuple[str, ...], str], str] = {
     (("social", "vote"), "direction"): "not a path",
 }
 
+NOT_INPUT_FILE.update(
+    {
+        (("pyrite-admin", "kb", "add"), "path"): "a KB directory to register",
+        (("pyrite-admin", "kb", "discover"), "path"): "a directory to discover KBs in",
+        (("pyrite-admin", "repo", "add"), "path"): "a repository directory",
+        (("pyrite-read", "search"), "use_files"): "a boolean",
+    }
+)
+
 _NAME = re.compile(r"file|input|backup|cache|config|schema|alias|path|dir", re.I)
 
 
 def _candidates():
     from pyrite.cli import app
+    from pyrite.admin_cli import app as admin_app
+    from pyrite.read_cli import app as read_app
 
-    for path, command in leaves(typer.main.get_command(app)):
-        for param in command.params:
-            if _NAME.search(param.name) and "output" not in param.name:
-                yield tuple(path), param.name
+    for prefix, root in [((), app), (("pyrite-admin",), admin_app), (("pyrite-read",), read_app)]:
+        for path, command in leaves(typer.main.get_command(root)):
+            for param in command.params:
+                is_path_type = param_kind(param) == "path"
+                if (_NAME.search(param.name) or is_path_type) and "output" not in param.name:
+                    yield (*prefix, *path), param.name
 
 
 @pytest.mark.control(
@@ -183,7 +206,7 @@ def _run(env, key, path: Path):
     argv = INPUT_FILE_PARAMS[key](str(path))
     # The legacy plugin commands spell machine output `--json`; the rest `--format`.
     machine = ["--json"] if key[0][0] == "investigation" else ["--format", "json"]
-    if key[0] in (("db", "restore"), ("cascade", "extract-actors"), ("import",)):
+    if key[0] in (("db", "restore"), ("import",)):
         machine = []  # no machine format: the error is the rich line
     return CliRunner().invoke(app, [*argv, *machine], env={"COLUMNS": "500"})
 
@@ -324,7 +347,7 @@ def test_a_refusal_comes_before_any_config_lookup_that_opens_the_index(env, key,
     from pyrite.cli import app
 
     machine = ["--json"] if key[0][0] == "investigation" else ["--format", "json"]
-    if key[0] in (("db", "restore"), ("cascade", "extract-actors"), ("import",)):
+    if key[0] in (("db", "restore"), ("import",)):
         machine = []
     out = CliRunner().invoke(app, [*argv, *machine], env={"COLUMNS": "500"})
     assert out.exit_code == 1, out.output

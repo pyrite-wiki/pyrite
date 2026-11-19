@@ -19,6 +19,7 @@ fixtures are covered too. tests/test_git_env_isolation.py is the canary.
 import atexit
 import os
 import shutil
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -28,6 +29,25 @@ import pytest
 # Identity and repository-location variables git exports to hook subprocesses.
 # Everything GIT_* is dropped except the few that only tune behaviour.
 _KEEP = frozenset({"GIT_TERMINAL_PROMPT", "GIT_PAGER", "GIT_EDITOR", "GIT_SSH_COMMAND"})
+
+
+def _check_checkout_imports() -> None:
+    """Refuse to run tests against packages from a different checkout."""
+    if os.environ.get("PYRITE_SKIP_CHECKOUT_IMPORTS") == "1":
+        return
+
+    from scripts.check_checkout_imports import check
+
+    root = Path(__file__).resolve().parent
+    failures = check(root)
+    if failures:
+        details = "\n".join(failures)
+        raise pytest.UsageError(
+            "Checkout import isolation failed:\n"
+            f"{details}\n"
+            "Run scripts/setup-checkout.sh for this checkout; do not share its editable venv.\n"
+            "Set PYRITE_SKIP_CHECKOUT_IMPORTS=1 only for an environment with non-editable installs."
+        )
 
 
 def _isolate_git_environment() -> None:
@@ -82,6 +102,9 @@ def _isolate_pyrite_config_environment() -> None:
 
 
 _isolate_pyrite_config_environment()
+
+
+_check_checkout_imports()
 
 
 def _isolate_hypothesis_storage() -> None:
@@ -251,3 +274,41 @@ def _cheap_password_hashing(request, monkeypatch):
         _cheap_dummy_hash = real.hashpw(b"dummy-password", shim.gensalt()).decode()
     monkeypatch.setattr(auth_service, "_bcrypt", shim)
     monkeypatch.setattr(auth_service, "_DUMMY_PASSWORD_HASH", _cheap_dummy_hash)
+
+
+def clear_fastapi_caches() -> int:
+    """Empty every ``functools`` cache in the loaded ``fastapi`` modules (#1098).
+
+    FastAPI caches each dependency and endpoint callable it classifies in
+    module-level ``lru_cache``s (``fastapi/dependencies/models.py``), holding
+    the callable strongly. ``create_app()`` defines its dependencies as
+    closures over the app, and fixtures add ``lambda: db`` overrides, so every
+    test-built app, with its routes, schemas and ``PyriteDB``s, stayed alive
+    until 4,096 entries were evicted: 2.5 GB over 885 tests, and a 4-5 GB
+    xdist worker killed by the OOM killer. Clearing only costs FastAPI a
+    reclassification. The caches are found by walking the modules, not named,
+    so a FastAPI release that renames one is still covered; the number cleared
+    is returned so tests/test_test_process_memory_is_bounded.py can fail when
+    a release moves them out of reach.
+    """
+    cleared = 0
+    for name, module in list(sys.modules.items()):
+        if module is None or not (name == "fastapi" or name.startswith("fastapi.")):
+            continue
+        for value in list(vars(module).values()):
+            if callable(getattr(value, "cache_clear", None)) and hasattr(value, "cache_info"):
+                value.cache_clear()
+                cleared += 1
+    return cleared
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Free the apps this test built, after every fixture has finalized (#1098).
+
+    trylast, so a fixture that still reads an app while it tears down is done
+    first. Module- and session-scoped app fixtures keep their apps: FastAPI
+    reclassifies on the next request. A process without fastapi has nothing to
+    clear.
+    """
+    clear_fastapi_caches()

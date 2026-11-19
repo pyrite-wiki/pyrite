@@ -1,0 +1,25 @@
+name: Cancel obsolete merge groups
+on:
+  push:
+    branches: [dev]
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+concurrency:
+  group: cleanup-stale-queue
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: dev
+      - name: Cancel only runs whose temporary queue ref is gone
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/cancel_stale_queue_runs.py

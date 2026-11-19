@@ -187,9 +187,23 @@ RELATIONSHIP_TYPES: dict[str, dict[str, Any]] = {
     "answers_question": {"inverse": "asks_question", "description": "Answers a question"},
     "is_part_of": {"inverse": "contains_part", "description": "Part of a larger whole"},
     "contains_part": {"inverse": "is_part_of", "description": "Contains a part"},
+    # Relations emitted by the indexer, with their reverse directions (#621).
+    "transclusion": {"inverse": "transcluded_by", "description": "Embeds the target entry"},
+    "transcluded_by": {"inverse": "transclusion", "description": "Embedded by another entry"},
+    "references": {"inverse": "referenced_by", "description": "Object-reference field target"},
+    "referenced_by": {"inverse": "references", "description": "Referenced by an object field"},
     # Body wikilink references
     "wikilink": {"inverse": "wikilinked_by", "description": "Inline wikilink reference"},
     "wikilinked_by": {"inverse": "wikilink", "description": "Referenced by inline wikilink"},
+    # Body Markdown links to entry files (#1723)
+    "markdown_link": {
+        "inverse": "markdown_linked_by",
+        "description": "Markdown link to the entry's file",
+    },
+    "markdown_linked_by": {
+        "inverse": "markdown_link",
+        "description": "Linked to by a Markdown link",
+    },
 }
 
 
@@ -264,6 +278,9 @@ class Provenance:
         )
 
 
+RELATIONSHIP_ALIASES = {"related": "related_to"}
+
+
 def get_all_relationship_types() -> dict[str, dict[str, Any]]:
     """Get all relationship types: core + plugin-provided."""
     all_types = dict(RELATIONSHIP_TYPES)
@@ -283,7 +300,7 @@ def known_inverse_relation(relation: str) -> str | None:
     which is right for writing a link on the other side (vague but true) and
     wrong for reporting what the relation is. Use this to tell the two apart.
     """
-    declared = get_all_relationship_types().get(relation)
+    declared = get_all_relationship_types().get(RELATIONSHIP_ALIASES.get(relation, relation))
     return declared["inverse"] if declared else None
 
 
@@ -295,6 +312,7 @@ def get_inverse_relation(relation: str) -> str:
     the fallback must stay a claim that is true in both directions (#527).
     """
     all_types = get_all_relationship_types()
+    relation = RELATIONSHIP_ALIASES.get(relation, relation)
     if relation in all_types:
         return all_types[relation]["inverse"]
     return "related_to"

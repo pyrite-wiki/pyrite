@@ -295,15 +295,16 @@ class InvestigationEventEntry(EventEntry):
     @classmethod
     def from_frontmatter(cls, meta: dict[str, Any], body: str) -> "InvestigationEventEntry":
         kw = cls._base_kwargs(meta, body)
+        actors = meta.get("actors", meta.get("participants", [])) or []
 
         return cls(
             **kw,
             date=_str_or_empty(meta.get("date", "")),
             status=_parse_event_status(meta),
             location=meta.get("location", ""),
-            participants=meta.get("actors", meta.get("participants", [])) or [],
+            participants=actors,
             notes=meta.get("notes", ""),
-            actors=meta.get("actors", []) or [],
+            actors=actors,
             source_refs=meta.get("source_refs", []) or [],
             verification_status=meta.get("verification_status", "unverified"),
         )

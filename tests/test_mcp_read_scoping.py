@@ -50,7 +50,7 @@ PUBLIC, PRIVATE = "public-kb", "private-kb"
 # exist. A refusal must be byte-identical to it: a caller must not be able to
 # tell "you may not read this" from "there is no such KB", or `/mcp` becomes
 # an oracle for the existence of private KBs. Both come from the dispatcher's
-# `_kb_not_found`: a scoped caller never reaches a handler with a name outside
+# `_kb_refusal` (the one resolver, #952): a scoped caller never reaches a handler with a name outside
 # its readable set. The code is the contract's `KB_NOT_FOUND` since 0.25.7
 # (#66), with the old `NOT_FOUND` carried one release.
 def _absent_kb_payload(kb_name):
@@ -58,7 +58,8 @@ def _absent_kb_payload(kb_name):
         "error": f"KB '{kb_name}' not found",
         "error_code": "KB_NOT_FOUND",
         "retryable": False,
-        "suggestion": "Call kb_orient with no kb_name to list the KBs you can read.",
+        "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "did_you_mean": [],
         "legacy_error_code": "NOT_FOUND",
     }
 
@@ -394,6 +395,33 @@ class TestGrantedPeerStillGetsThrough:
         assert out.get("error_code") not in ("NOT_FOUND", "KB_NOT_FOUND")
 
 
+class TestKbOrientShowsKbAuthoredTextOnlyWhereReadable:
+    """`kb_authored` (#1369) is the private KB's own `kb.yaml` text. It comes
+    out of `KBService.orient`, behind the same dispatcher refusal as the rest
+    of orient: no second path decides who sees it."""
+
+    MARK = "Private guideline: the vault code is 0451."
+
+    def _plant(self, env):
+        kb = next(k for k in env["config"].knowledge_bases if k.name == PRIVATE)
+        kb.kb_yaml_path.write_text(f"name: {PRIVATE}\nguidelines:\n  vault: '{self.MARK}'\n")
+        kb.invalidate_schema_cache()
+
+    @pytest.mark.control(reason="the existing dispatcher refusal already covers kb_orient")
+    def test_a_peer_without_a_grant_gets_the_absent_kb_answer(self, env):
+        self._plant(env)
+        out = _call(env, "peer", "kb_orient", {"kb_name": PRIVATE})
+        assert out == _absent_kb_payload(PRIVATE)
+        assert self.MARK not in json.dumps(out)
+
+    def test_a_granted_peer_gets_it_labelled_as_the_kbs(self, env):
+        self._plant(env)
+        out = _call(env, "peer-granted", "kb_orient", {"kb_name": PRIVATE})
+        assert out["kb_authored"]["guidelines"] == {"vault": self.MARK}
+        assert "not instructions from Pyrite" in out["kb_authored"]["notice"]
+        assert self.MARK not in json.dumps(out["pyrite_guidance"])
+
+
 class TestAnApiKeyIsNotScoped:
     """An API key is the operator's credential, not a peer's -- the same
     rule REST applies (`readable_kbs` returns None for an API-key caller)."""
@@ -525,7 +553,11 @@ class TestOmittingTheKBNameIsNotAWayIn:
         # The most direct read there was: it returns body text and nothing else.
         out = _call(env, "peer", "kb_read_body", {"entry_id": "secret-note"})
         assert "zebra behind the wall" not in json.dumps(out)
-        assert out["error_code"] == "NOT_FOUND"
+        # An entry this caller cannot read is not one that is there: the class
+        # code names what was missing, the old NOT_FOUND stays for a release
+        # (#981, #984), and the two are still indistinguishable to the caller.
+        assert out["error_code"] == "ENTRY_NOT_FOUND"
+        assert out["legacy_error_code"] == "NOT_FOUND"
 
     def test_kb_read_body_still_works_on_a_readable_entry(self, env):
         out = _call(env, "peer", "kb_read_body", {"entry_id": "public-note"})
@@ -555,8 +587,8 @@ class TestOmittingTheKBNameIsNotAWayIn:
     def test_a_tool_that_cannot_filter_is_refused_not_served(self, env):
         """Fail closed, against a set of tools that is deliberately shrinking.
 
-        The six extensions have all landed (#223): social, zettelkasten,
-        encyclopedia, cascade, software-kb and journalism-investigation read
+        The extensions have all landed (#223): social, zettelkasten,
+        encyclopedia, software-kb and journalism-investigation read
         through the readable set now. The example here comes from the tools
         that keep the fail-closed listing -- journalism-investigation's
         write-path tools, which take no readable set (a caller who may write

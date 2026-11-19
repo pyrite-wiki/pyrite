@@ -209,7 +209,7 @@ class TestToAgentSchema:
     def test_core_types_include_metadata(self):
         """to_agent_schema() should include metadata for core types."""
         schema = KBSchema()
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         for type_name in CORE_TYPES:
             type_info = agent["types"][type_name]
             assert "ai_instructions" in type_info, f"{type_name}: missing ai_instructions"
@@ -230,7 +230,7 @@ class TestToAgentSchema:
                 }
             }
         )
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         custom = agent["types"]["custom"]
         assert custom["ai_instructions"] == "Custom instructions"
         assert custom["field_descriptions"] == {"x": "The x field"}
@@ -242,7 +242,7 @@ class TestPluginTypeMetadata:
 
     @pytest.mark.control(
         reason="passes on dev, where no installed plugin returns type metadata; "
-        "the test only breaks once cascade and journalism do (#697), and isolates itself now"
+        "the test only breaks once journalism does (#697), and isolates itself now"
     )
     def test_registry_get_all_type_metadata_empty(self):
         """Registry with no plugins should return empty metadata."""
@@ -250,7 +250,7 @@ class TestPluginTypeMetadata:
 
         registry = PluginRegistry()
         # "No plugins" means none discovered: a bare registry would discover the
-        # installed ones (cascade and journalism declare field_aliases, #697).
+        # installed ones (journalism declares field_aliases, #697).
         registry._discovered = True
         assert registry.get_all_type_metadata() == {}
 

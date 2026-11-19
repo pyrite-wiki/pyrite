@@ -1,5 +1,8 @@
 @import 'tailwindcss';
 
+/* uiStore toggles this class; theme utilities must follow the same choice. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
 	--color-zinc-850: #1f1f23;
 	--color-gold-400: #D4A843;

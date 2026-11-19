@@ -40,6 +40,19 @@ from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
 
+
+@pytest.fixture(autouse=True)
+def _as_the_local_operator():
+    """These tests call ``KBRegistryService.add_kb`` directly, as the
+    operator's own process does (``acting.is_local_process``). A network
+    caller is held to ``settings.kb_roots``:
+    ``tests/test_kb_roots_limit_network_registration.py``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
+
+
 REFUSED = 1
 PARTIAL = 3
 
@@ -287,7 +300,10 @@ INGEST_SHAPES = [
     ("float-target", "- target: 3.5\n", True),
     ("bool-target", "- target: true\n", True),
     ("date-target", "- target: 2024-01-01\n", True),
-    ("blank-target", "- target: ''\n", True),
+    # Spelled "" rather than '': a create writes a new empty string
+    # double-quoted (the emitter's rule for a value that cannot be bare,
+    # #955 C2), and this test reads the first link line back verbatim.
+    ("blank-target", '- target: ""\n', True),
     ("no-target-key", "- relation: informs\n", True),
     ("blank-relation", "- target: fresh\n  relation: ''\n", True),
     ("int-relation", "- target: fresh\n  relation: 5\n", True),
@@ -415,7 +431,19 @@ class TestMCPKbLinkReplyMatchesItsSchema:
 
     @pytest.mark.parametrize(
         ("on_disk", "typed"),
-        [("2024", "2024"), ("true", "True"), ("2024-01-01", "2024-01-01")],
+        # `target: true` is the id text "1", as the index stores it (#1022);
+        # "True" was str()'s spelling, which no id has.
+        [
+            pytest.param(
+                "2024", "2024", marks=pytest.mark.control(reason="str() spelled it so too")
+            ),
+            ("true", "1"),
+            pytest.param(
+                "2024-01-01",
+                "2024-01-01",
+                marks=pytest.mark.control(reason="str() spelled it so too"),
+            ),
+        ],
         ids=["int", "bool", "date"],
     )
     def test_target_id_and_relation_are_strings(self, env, mcp, on_disk, typed):

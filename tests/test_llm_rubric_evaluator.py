@@ -193,12 +193,34 @@ class TestResponseParsing:
         rows = [*json.loads(_reply()), {"item": ["stray"], "pass": False}]
         assert evaluator._parse_response(json.dumps(rows), sample_entry, SAMPLE_RUBRIC_ITEMS) == []
 
-    @pytest.mark.parametrize("confidence", ["high", None, True, [0.9]])
+    @pytest.mark.parametrize(
+        "confidence",
+        [
+            "high",
+            None,
+            True,
+            [0.9],
+            float("nan"),
+            float("inf"),
+            -0.1,
+            7,
+            pytest.param(10**400, id="int-too-big-for-a-float"),
+        ],
+    )
     def test_a_failed_item_needs_a_numeric_confidence(self, evaluator, sample_entry, confidence):
+        """A confidence that is NaN, infinite or not between 0 and 1 is not an answer (#1055)."""
         rows = json.loads(_reply({SAMPLE_RUBRIC_ITEMS[0]: (0.5, "no why")}))
         rows[0]["confidence"] = confidence
         with pytest.raises(EvaluationFailedError, match="not a number"):
             evaluator._parse_response(json.dumps(rows), sample_entry, SAMPLE_RUBRIC_ITEMS)
+
+    @pytest.mark.control(reason="the ends of the range were accepted before #1055 and still are")
+    @pytest.mark.parametrize("confidence", [0, 0.5, 1])
+    def test_a_confidence_from_0_to_1_is_kept(self, evaluator, sample_entry, confidence):
+        rows = json.loads(_reply({SAMPLE_RUBRIC_ITEMS[0]: (0.5, "no why")}))
+        rows[0]["confidence"] = confidence
+        issues = evaluator._parse_response(json.dumps(rows), sample_entry, SAMPLE_RUBRIC_ITEMS)
+        assert [issue["confidence"] for issue in issues] == [float(confidence)]
 
     @complete_reply
     def test_all_pass_no_issues(self, evaluator, sample_entry):
@@ -259,12 +281,24 @@ class TestEvaluation:
         issues = asyncio.run(ev.evaluate(sample_entry, SAMPLE_RUBRIC_ITEMS))
         assert issues[0]["evaluator"] == "anthropic/claude-sonnet-4-20250514"
 
+    @pytest.mark.control(reason="the local operator keeps the provider's text, as before")
     def test_llm_error_did_not_run(self, mock_llm, sample_entry):
-        """An LLM call that raised is a check that did not run, with its reason."""
+        """An LLM call that raised is a check that did not run, with its reason;
+        the provider's own text is the local operator's alone (ADR-0052 N3)."""
+        from pyrite.services.acting import local_process
+
         mock_llm.complete = AsyncMock(side_effect=RuntimeError("API error"))
         ev = LLMRubricEvaluator(mock_llm)
-        with pytest.raises(EvaluationFailedError, match="API error"):
+        with local_process(True), pytest.raises(EvaluationFailedError, match="API error"):
             asyncio.run(ev.evaluate(sample_entry, SAMPLE_RUBRIC_ITEMS))
+
+    def test_llm_error_text_is_not_shown_to_a_network_caller(self, mock_llm, sample_entry):
+        mock_llm.complete = AsyncMock(side_effect=RuntimeError("API error at /srv/key"))
+        ev = LLMRubricEvaluator(mock_llm)
+        with pytest.raises(EvaluationFailedError) as raised:
+            asyncio.run(ev.evaluate(sample_entry, SAMPLE_RUBRIC_ITEMS))
+        assert "/srv/key" not in str(raised.value)
+        assert "the model call failed: RuntimeError" in str(raised.value)
 
 
 # =========================================================================

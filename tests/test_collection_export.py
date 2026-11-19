@@ -54,11 +54,13 @@ def kb_with_entries(tmp_path):
         ),
     ]
 
-    # Save entries to disk
+    # Save entries to disk, as a create writes them
+    from pyrite.storage.repository import new_entry_text
+
     for entry in entries:
         entry_dir = kb_path / entry.entry_type
         entry_dir.mkdir(exist_ok=True)
-        entry.save(entry_dir / f"{entry.id}.md")
+        (entry_dir / f"{entry.id}.md").write_text(new_entry_text(entry), encoding="utf-8")
 
     return kb_path, entries
 

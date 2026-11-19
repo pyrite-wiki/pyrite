@@ -87,6 +87,7 @@ class TestConnDeprecation:
             assert len(w) == 1
             assert issubclass(w[0].category, DeprecationWarning)
             assert "deprecated" in str(w[0].message).lower()
+            assert "removed in 0.27" in str(w[0].message)
 
     def test_conn_still_works(self, db):
         """db.conn still returns a usable connection for backward compat."""

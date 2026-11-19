@@ -20,6 +20,7 @@ from fastapi.testclient import TestClient
 from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.server import authz
 from pyrite.server.api import get_config, get_db
+from pyrite.server.errors import register_pyrite_exception_handler
 from pyrite.services.access_policy import KB, Action, AnyKB, ReadScope, Row
 from pyrite.storage.database import PyriteDB
 
@@ -55,6 +56,7 @@ def app():
         )
         db = PyriteDB(config.settings.index_path)
         application = FastAPI(dependencies=[Depends(_set_principal)])
+        register_pyrite_exception_handler(application)
         application.dependency_overrides[get_config] = lambda: config
         application.dependency_overrides[get_db] = lambda: db
 
@@ -134,10 +136,10 @@ def test_an_unreadable_named_kb_answers_like_a_missing_one(client):
     private = client.get("/named", params={"kb": PRIVATE}, headers=_as("anonymous"))
     missing = client.get("/named", params={"kb": "no-such-kb"}, headers=_as("anonymous"))
     assert private.status_code == missing.status_code == 404
-    assert private.json() == {
-        "detail": {"code": "KB_NOT_FOUND", "message": f"KB '{PRIVATE}' not found"}
-    }
-    assert missing.json()["detail"]["code"] == "KB_NOT_FOUND"
+    assert private.json()["detail"]["code"] == "KB_NOT_FOUND"
+    assert private.json()["detail"]["message"] == f"KB '{PRIVATE}' not found"
+    # The one resolver's refusal (#952), byte for byte with the name swapped.
+    assert private.text.replace(PRIVATE, "<kb>") == missing.text.replace("no-such-kb", "<kb>")
 
 
 def test_every_named_kb_is_checked_not_only_the_first(client):
@@ -169,13 +171,17 @@ def test_naming_no_kb_passes_with_the_scope(client):
     assert resp.json() == {"kbs": [PUBLIC]}
 
 
-def test_an_operator_key_is_unscoped_and_is_not_asked_about_named_kbs(client):
-    """Unchanged from `requires_kb_read`: a caller with no identity to scope
-    by passes, even for a KB the instance does not have; the handler answers
-    for a missing KB as it always has."""
-    resp = client.get("/named", params={"kb": "no-such-kb"}, headers=_as("operator"))
+def test_an_operator_key_is_unscoped_but_an_unknown_kb_is_still_refused(client):
+    """A caller with no identity to scope by passes for any KB the instance
+    has (`{"kbs": None}`), but a name that is no KB is refused for it too
+    (#952): a scope parameter never fails open, and the handler never sees
+    an unknown name."""
+    resp = client.get("/named", params={"kb": PRIVATE}, headers=_as("operator"))
     assert resp.status_code == 200
     assert resp.json() == {"kbs": None}
+    resp = client.get("/named", params={"kb": "no-such-kb"}, headers=_as("operator"))
+    assert resp.status_code == 404
+    assert resp.json()["detail"]["code"] == "KB_NOT_FOUND"
 
 
 def test_no_principal_is_refused_not_treated_as_unscoped(client):

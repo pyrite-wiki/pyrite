@@ -1,10 +1,16 @@
-"""Rules about how the test suite itself is wired (test-architecture review, rule 11)."""
+"""Rules about how the test suite itself is wired (test-architecture review, rule 11).
+
+Rule and contributor guidance: ../CONTRIBUTING.md#writing-tests
+"""
 
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.guard
 def test_cheap_bcrypt_patch_lives_only_in_the_root_conftest():
     """The test-only bcrypt cost is set in one place, the root conftest.py.
 
@@ -181,6 +187,7 @@ def _scanned_files() -> list[Path]:
     return sorted(files)
 
 
+@pytest.mark.guard
 @pytest.mark.parametrize("path", _scanned_files(), ids=lambda p: str(p.relative_to(ROOT)))
 def test_no_test_call_can_wait_forever(path):
     offenders = unbounded_calls(path.read_text())
@@ -327,13 +334,13 @@ def test_pytest_config_bounds_every_test_and_dumps_stacks():
     assert 0 < opts["faulthandler_timeout"] < opts["timeout"]
 
 
-def test_ci_pytest_jobs_have_a_job_timeout():
+def test_ci_jobs_have_a_job_timeout():
     import yaml
 
-    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())["jobs"]
-    for name, job in jobs.items():
-        runs_pytest = any("pytest" in str(step.get("run", "")) for step in job.get("steps", []))
-        if runs_pytest:
-            assert "timeout-minutes" in job, (
-                f"ci.yml job {name!r} runs pytest with no timeout-minutes"
-            )
+    jobs = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))[
+        "jobs"
+    ]
+    missing = [
+        name for name, job in jobs.items() if "uses" not in job and "timeout-minutes" not in job
+    ]
+    assert not missing, f"ci.yml jobs have no timeout-minutes: {missing}"

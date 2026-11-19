@@ -69,7 +69,10 @@ def test_check_urls_cli_includes_core_event_sources(db, monkeypatch):
     add(db, "event")
 
     @contextmanager
-    def context():
+    def context(*_args, **_kwargs):
+        # The same shape as cli_context(kbs=..., output_format=...): the
+        # command resolves its KB on entry (#952, #924) and this fake stands
+        # in for the whole context, KB check included.
         yield None, db, None
 
     monkeypatch.setattr(qa_commands, "cli_context", context)

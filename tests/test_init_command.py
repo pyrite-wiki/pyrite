@@ -1,6 +1,7 @@
 """Tests for headless KB init command."""
 
 import json
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,8 @@ from typer.testing import CliRunner
 from pyrite.cli.init_command import init_kb
 from pyrite.config import PyriteConfig, Settings
 from pyrite.models.core_types import NoteEntry
+from pyrite.storage.entry_writer import create_entry_text
+from pyrite.storage.repository import new_entry_text
 from pyrite.utils.errors import PARTIAL_EXIT
 
 runner = CliRunner()
@@ -138,14 +141,80 @@ class TestInitCommand:
         assert data["template"] == "software"
         assert "types" in data
 
+    def test_init_research_template_declares_source(self, cli_world):
+        """Research template declares a source type with a sources/ directory (#1384)."""
+        from pyrite.cli.init_command import BUILTIN_TEMPLATES
+
+        template = BUILTIN_TEMPLATES["research"]
+        assert "source" in template["types"]
+        assert template["types"]["source"]["subdirectory"] == "sources/"
+        assert "sources" in template["directories"]
+
+        world = cli_world()
+        kb_path = world.config_dir / "research-kb"
+        result = runner.invoke(test_app, ["--template", "research", "--path", str(kb_path)])
+
+        assert result.exit_code == 0, result.output
+        assert (kb_path / "sources").is_dir()
+
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="create takes the file lock, which refuses to run on Windows",
+    )
+    def test_create_source_after_research_init(self, cli_world):
+        """`create -t source` works after a research init, end to end (#1384).
+
+        The reported failure was the CLI refusing the type (UNDECLARED_TYPE),
+        so drive create through the real CLI rather than checking the dict.
+        """
+        world = cli_world()
+        kb_path = world.config_dir / "research-kb"
+        result = runner.invoke(test_app, ["--template", "research", "--path", str(kb_path)])
+        assert result.exit_code == 0, result.output
+
+        created = world.cli(
+            "create",
+            "-k",
+            "research-kb",
+            "-t",
+            "source",
+            "--title",
+            "Source One",
+            "-f",
+            "author=A",
+            "-f",
+            "url=https://example.org",
+        )
+        assert created.exit_code == 0, created.output
+        source_file = kb_path / "sources" / "source-one.md"
+        assert source_file.is_file(), list(kb_path.rglob("*.md"))
+        text = source_file.read_text(encoding="utf-8")
+        assert "type: source" in text
+        assert "author: A" in text
+
+    @pytest.mark.control(
+        reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+    )
     def test_init_reports_entries_indexed_for_seeded_entries(self, init_env):
         """Init on a directory pre-seeded with entries reports entries_indexed matching the count (#909)."""
         kb_path = init_env["tmpdir"] / "seeded-kb"
         notes_dir = kb_path / "notes"
         notes_dir.mkdir(parents=True)
-        NoteEntry(id="n1", title="Note 1", body="body 1").save(notes_dir / "n1.md")
-        NoteEntry(id="n2", title="Note 2", body="body 2").save(notes_dir / "n2.md")
-        NoteEntry(id="n3", title="Note 3", body="body 3").save(notes_dir / "n3.md")
+        create_entry_text(
+            notes_dir / "n1.md",
+            new_entry_text(NoteEntry(id="n1", title="Note 1", body="body 1")),
+            root=(notes_dir / "n1.md").parent,
+        )
+        create_entry_text(
+            notes_dir / "n2.md",
+            new_entry_text(NoteEntry(id="n2", title="Note 2", body="body 2")),
+            root=(notes_dir / "n2.md").parent,
+        )
+        create_entry_text(
+            notes_dir / "n3.md",
+            new_entry_text(NoteEntry(id="n3", title="Note 3", body="body 3")),
+            root=(notes_dir / "n3.md").parent,
+        )
         config = init_env["config"]
 
         with (

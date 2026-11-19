@@ -13,4 +13,4 @@ owner: markr
 
 Example plugin. `zettelkasten` exists to show how a Pyrite plugin adds entry types, CLI commands, MCP tools and a preset; it is a reference for plugin authors, not a supported product.
 
-Personal knowledge management extension implementing the Zettelkasten method. Provides zettel (atomic note) and literature_note entry types with CEQRC workflow, maturity tracking, and sequential ID generation. Includes validators for maturity stages and the zettelkasten KB preset.
+Personal knowledge management extension implementing the Zettelkasten method. Provides `zettel` and `literature_note` types with a `maturity` level and a CEQRC `processing_stage` field, validators for both, and the zettelkasten preset.

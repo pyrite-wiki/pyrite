@@ -6,8 +6,20 @@ import json
 import pytest
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
-from pyrite.exceptions import StorageError
+from pyrite.exceptions import StorageBusyError, StorageError
 from pyrite.server.mcp_server import PyriteMCPServer
+
+
+@pytest.fixture(autouse=True)
+def _as_the_local_operator():
+    """These tests call ``KBRegistryService.add_kb`` directly, as the
+    operator's own process does (``acting.is_local_process``). A network
+    caller is held to ``settings.kb_roots``:
+    ``tests/test_kb_roots_limit_network_registration.py``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
 
 
 @pytest.fixture
@@ -49,30 +61,45 @@ def _call(server, tool, arguments, *, scoped=False):
     return asyncio.run(run())
 
 
-@pytest.mark.parametrize("tool", ["kb_get", "kb_update"])
+#: The code MCP answered for a missing *entry* before #981/#984, beside the
+#: class's own code for one release (ADR-0037 theme 2). The same table holds
+#: for a missing *KB*: an unscoped write tool reached its handler, whose
+#: catch-all answered that tool's failure code (UPDATE_FAILED); kb_delete was
+#: refused by the resolver with NOT_FOUND for every caller, so it keeps that.
+_LEGACY_MISSING_CODE = {
+    "kb_delete": "NOT_FOUND",
+    "kb_get": "NOT_FOUND",
+    "kb_read_body": "NOT_FOUND",
+    "kb_update": "UPDATE_FAILED",
+}
+
+
+@pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 def test_missing_entry_has_domain_code_and_legacy_code(mcp_server, tool):
     args = {"kb_name": "notes", "entry_id": "missing"}
     if tool == "kb_update":
         args["title"] = "New title"
     result = _call(mcp_server, tool, args)
     assert result["error_code"] == "ENTRY_NOT_FOUND", result
-    assert result["legacy_error_code"] == ("UPDATE_FAILED" if tool == "kb_update" else "NOT_FOUND")
+    assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
     assert result["retryable"] is False
 
 
-@pytest.mark.parametrize("tool", ["kb_get", "kb_update"])
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
+@pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 def test_missing_kb_has_domain_code(mcp_server, tool):
-    result = _call(
-        mcp_server,
-        tool,
-        {"kb_name": "missing", "entry_id": "missing", "title": "New title"},
-    )
+    args = {"kb_name": "missing", "entry_id": "missing"}
+    if tool == "kb_update":
+        args["title"] = "New title"
+    result = _call(mcp_server, tool, args)
     assert result["error_code"] == "KB_NOT_FOUND", result
-    assert result["legacy_error_code"] == ("UPDATE_FAILED" if tool == "kb_update" else "NOT_FOUND")
+    assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
     assert result["retryable"] is False
 
 
-@pytest.mark.parametrize("tool", ["kb_get", "kb_update"])
+@pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 @pytest.mark.control(
     reason="existing dispatcher scoping must keep absent and unreadable KBs indistinguishable"
 )
@@ -88,25 +115,36 @@ def test_scoped_caller_cannot_distinguish_unreadable_kb_from_absent(mcp_server, 
     assert private["retryable"] is False
 
 
-@pytest.mark.control(
-    reason="unrelated storage failures retain the existing safe UPDATE_FAILED response"
+@pytest.mark.parametrize(
+    ("exc", "retryable"),
+    [(StorageError, False), (StorageBusyError, True)],
+    ids=["storage-error", "storage-busy"],
 )
-def test_unrelated_update_failure_keeps_safe_message_and_retry_semantics(mcp_server, monkeypatch):
+def test_unrelated_update_failure_keeps_safe_message_and_retry_semantics(
+    mcp_server, monkeypatch, exc, retryable
+):
+    """A storage fault on the write is the class's own answer (#971, merged
+    with #981): `STORAGE_ERROR`, `retryable` from the class (a lock held too
+    long is `StorageBusyError`, retryable; a fault is not), the public text
+    naming no path. Before #971 both were `UPDATE_FAILED`, `retryable: true`,
+    which is still `kb_update`'s answer for any other `PyriteError`."""
     mcp_server.svc.create_entry("notes", "present", "Present", "note", "body")
 
     def fail(*_args, **_kwargs):
-        raise StorageError("sensitive/path/index.db is locked")
+        raise exc("sensitive/path/index.db is locked")
 
     # The file write's OS edge, so the real update path runs up to it (the
     # rule in test_tests_drive_the_surface_not_the_mock.py).
-    monkeypatch.setattr("pyrite.utils.atomic_write.os.replace", fail)
+    # The one call that publishes an entry's replace (KBFiles, through the
+    # folder opened beneath the KB root).
+    monkeypatch.setattr("pyrite.utils.kb_files.os.rename", fail)
     result = _call(
         mcp_server,
         "kb_update",
         {"kb_name": "notes", "entry_id": "present", "title": "New title"},
     )
-    assert result["error_code"] == "UPDATE_FAILED"
-    assert result["retryable"] is True
+    assert result["error_code"] == "STORAGE_ERROR", result
+    assert result["retryable"] is retryable
     assert "sensitive/path" not in result["error"]
 
 
@@ -114,7 +152,7 @@ def _note(server, kb_name, entry_id, title="Note", body="body text"):
     server.svc.create_entry(kb_name, entry_id, title, "note", body)
 
 
-@pytest.mark.parametrize("tool", ["kb_get", "kb_update"])
+@pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 def test_id_only_in_another_kb_is_entry_not_found_in_the_named_kb(mcp_server, tool):
     # The id exists, but in `private`; asked of `notes` it is absent there.
     # Neither the other KB's entry nor a KB-level code may answer.
@@ -124,7 +162,7 @@ def test_id_only_in_another_kb_is_entry_not_found_in_the_named_kb(mcp_server, to
         args["title"] = "Overwritten"
     result = _call(mcp_server, tool, args)
     assert result["error_code"] == "ENTRY_NOT_FOUND", result
-    assert result["legacy_error_code"] == ("UPDATE_FAILED" if tool == "kb_update" else "NOT_FOUND")
+    assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
     assert result["retryable"] is False
     assert "Private title" not in json.dumps(result)
     kept = _call(mcp_server, "kb_get", {"kb_name": "private", "entry_id": "elsewhere"})
@@ -182,3 +220,48 @@ def test_kb_registered_after_startup_is_updated_by_kb_update(mcp_server, tmp_pat
     assert got["entry"]["title"] == "Renamed late", got
     on_disk = (tmp_path / "late").rglob("late-note.md")
     assert any("Renamed late" in f.read_text(encoding="utf-8") for f in on_disk)
+
+
+def test_kb_registered_after_startup_is_deleted_by_kb_delete(mcp_server, tmp_path):
+    """The delete lookup is the registry-aware one, so a KB `pyrite kb add`
+    registered while this server runs is writable, not DELETE_FAILED."""
+    _register_late_kb(mcp_server, tmp_path)
+
+    result = _call(mcp_server, "kb_delete", {"kb_name": "late", "entry_id": "late-note"})
+    assert result.get("deleted") is True, result
+
+    gone = _call(mcp_server, "kb_read_body", {"kb_name": "late", "entry_id": "late-note"})
+    assert gone["error_code"] == "ENTRY_NOT_FOUND", gone
+
+
+@pytest.mark.control(
+    reason="KBService's link lookup already reads the registry (#952); this pins it"
+)
+def test_kb_registered_after_startup_is_linked_by_kb_link(mcp_server, tmp_path):
+    _register_late_kb(mcp_server, tmp_path)
+    mcp_server.svc.create_entry("late", "late-target", "Late target", "note", "there")
+
+    result = _call(
+        mcp_server,
+        "kb_link",
+        {"source_id": "late-note", "source_kb": "late", "target_id": "late-target"},
+    )
+    assert "error_code" not in result, result
+    assert result["resolved"] is True, result
+
+
+@pytest.mark.control(
+    reason="KBService.bulk_create_entries' validate_only lookup already reads the "
+    "registry (#952); MCP's kb_bulk_create does not forward validate_only, so the "
+    "service is the surface that offers it"
+)
+def test_kb_registered_after_startup_validates_a_bulk_by_validate_only(mcp_server, tmp_path):
+    _register_late_kb(mcp_server, tmp_path)
+
+    results = mcp_server.svc.bulk_create_entries(
+        "late",
+        [{"entry_type": "note", "title": "Another late note"}],
+        validate_only=True,
+    )
+
+    assert [item.get("valid") for item in results] == [True], results

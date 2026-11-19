@@ -90,34 +90,37 @@ def _entry_for(kb: str) -> str:
 
 
 _disposable_cache: dict[tuple[str, str], str] = {}
-_disposable_grantee_id: int | None = None
+_DISPOSABLE_GRANTEE = "characterization-disposable-grantee"
 
 
 def _disposable_grantee(world: World) -> int:
     """A local user id that exists ONLY to be the target of a permission
     grant/revoke call -- never one of `world.py`'s own principals (see
-    `POST /api/kbs/{name}/permissions`'s spec for why). Created once,
-    idempotently, and cached at module scope for the life of the process."""
-    global _disposable_grantee_id
-    if _disposable_grantee_id is not None:
-        return _disposable_grantee_id
+    `POST /api/kbs/{name}/permissions`'s spec for why). Created in THIS
+    world's database if it is not there yet, and looked up there every time.
+
+    Not cached at module scope: one xdist worker runs more than one module
+    that builds a world (`test_rest_matrix`, then `test_kb_walk`), and an id
+    cached from the first world names a row the second world's database
+    never had -- the grant then fails its foreign key ("FOREIGN KEY
+    constraint failed" on `kb_permission.user_id`, CI's shard 2 only, since
+    the local run put the two modules on different workers)."""
+    rows = world.db.execute_sql(
+        "SELECT id FROM local_user WHERE username = :u", {"u": _DISPOSABLE_GRANTEE}
+    )
+    if rows:
+        return rows[0]["id"]
     from pyrite.services.auth_service import AuthService
 
     auth_service = AuthService(world.db, world.config.settings.auth)
     try:
-        row = auth_service.create_user(
-            "characterization-disposable-grantee", "password123", role="read"
-        )
-        _disposable_grantee_id = row["id"]
+        return auth_service.create_user(_DISPOSABLE_GRANTEE, "password123", role="read")["id"]
     except ValueError:
-        # Already exists (a re-run within the same process, or a
-        # concurrent xdist worker created it first) -- look it up instead.
+        # A concurrent xdist worker on the same database created it first.
         rows = world.db.execute_sql(
-            "SELECT id FROM local_user WHERE username = :u",
-            {"u": "characterization-disposable-grantee"},
+            "SELECT id FROM local_user WHERE username = :u", {"u": _DISPOSABLE_GRANTEE}
         )
-        _disposable_grantee_id = rows[0]["id"]
-    return _disposable_grantee_id
+        return rows[0]["id"]
 
 
 def _writable_target(world: World, kb: str, call_key: str) -> str:
@@ -441,10 +444,9 @@ _register(
 _register(
     "GET",
     "/api/daily/{date_str}",
-    # A call-key-unique date -- NOT a fixed reserved one. This route's
-    # handler (`get_or_create_daily_note`) auto-creates the note as a side
-    # effect for any WRITE-tier caller (its own docstring: "auto-creating it
-    # only for a write-tier caller"), so a fixed date still collided: one
+    # A call-key-unique date -- NOT a fixed reserved one. Until 0.26.1 this
+    # route's handler auto-created the note for a WRITE-tier caller (it now
+    # answers 404 and creates nothing), so a fixed date collided: one
     # principal's write-tier GET silently created it, and a later, different
     # principal's read-tier GET on the SAME date then saw 200-with-a-note in
     # the golden but 404 on an isolated re-run (worker composition changed
@@ -533,6 +535,15 @@ _register(
     "/api/tasks/{task_id}/claim",
     lambda w, kb, ck: {
         "url": _url("/api/tasks/{task_id}/claim", task_id=FAKE_TASK_ID),
+        "params": {"kb": kb},
+        "json": {"assignee": "characterization-bot"},
+    },
+)
+_register(
+    "POST",
+    "/api/tasks/{task_id}/start",
+    lambda w, kb, ck: {
+        "url": _url("/api/tasks/{task_id}/start", task_id=FAKE_TASK_ID),
         "params": {"kb": kb},
         "json": {"assignee": "characterization-bot"},
     },

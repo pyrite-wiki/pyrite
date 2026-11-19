@@ -20,7 +20,7 @@ pytest.importorskip("fastapi", reason="fastapi not installed")
 
 from pyrite.services.body_bounds import DEFAULT_BODY_CHUNK, MAX_BODY_CHUNK
 
-from .test_mcp_server import _make_mcp_server
+from tests._world import mcp_server as _make_mcp_server
 
 #: Longer than the per-body ceiling, so every read of it truncates no matter
 #: what `body_limit` the caller asks for -- ADR-0034 (i) clamps the limit to

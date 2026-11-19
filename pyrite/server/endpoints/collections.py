@@ -8,10 +8,11 @@ from ...exceptions import EntryNotFoundError
 from ...plugins.registry import get_registry
 from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
 from ...services.kb_service import KBService
-from ...utils.metadata import parse_metadata
+from ...utils.metadata import declared_over_bag, parse_metadata
 from ..api import (
     get_access_policy,
     get_kb_service,
+    get_read_kb_service,
     limiter,
     negotiate_response,
     requires_kb_tier,
@@ -28,11 +29,6 @@ from ..schemas import (
 )
 
 router = APIRouter(tags=["Collections"])
-
-
-def _parse_metadata(raw) -> dict:
-    """Parse metadata which may be a JSON string or dict."""
-    return parse_metadata(raw)
 
 
 @router.get("/collections/types")
@@ -72,7 +68,7 @@ def list_collections(
 
     collections = []
     for r in results:
-        meta = _parse_metadata(r.get("metadata"))
+        meta = parse_metadata(r.get("metadata"))
         collections.append(
             CollectionResponse(
                 id=r["id"],
@@ -184,7 +180,7 @@ def get_collection(
 ):
     """Get collection metadata.
 
-    A blank ``kb`` names no KB (private #74); the lookup is bounded by the
+    A blank ``kb`` names no KB; the lookup is bounded by the
     caller's scope either way.
     """
     result = svc.get_entry(collection_id, kb_name=kb, readable_kbs=scope.as_set())
@@ -194,7 +190,12 @@ def get_collection(
             detail={"code": "NOT_FOUND", "message": f"Collection '{collection_id}' not found"},
         )
 
-    meta = _parse_metadata(result.get("metadata"))
+    # A single-entry read spells a collection's declared fields at their own
+    # names and keeps `metadata` for undeclared keys (#1025, option B).
+    meta = declared_over_bag(
+        result,
+        ("description", "source_type", "icon", "view_config", "folder_path", "query"),
+    )
     resp = CollectionResponse(
         id=result["id"],
         title=result.get("title", ""),
@@ -277,7 +278,7 @@ def get_collection_entries(
 def preview_collection_query(
     request: Request,
     body: QueryPreviewRequest = Body(...),
-    svc: KBService = Depends(get_kb_service),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
     """Preview results for a collection query without saving.

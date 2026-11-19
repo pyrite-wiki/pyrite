@@ -72,12 +72,23 @@ def test_unknown_install_uses_git_fallback(monkeypatch, metadata):
     ]
 
 
-def test_admin_index_embed_hint_is_the_source_install_command(monkeypatch):
-    """`pyrite-admin index embed` without the extra names the source install."""
+def test_admin_index_embed_hint_is_the_source_install_command(monkeypatch, tmp_path):
+    """`pyrite-admin index embed` without the extra names the source install.
+
+    The KB is a real one: the command resolves its KB before the dependency
+    check (#952, #924), so a name that is not a KB is `KB_NOT_FOUND`
+    (`test_requested_effect_exit_code.py::TestEmbed`), never this hint."""
     from typer.testing import CliRunner
 
     from pyrite import admin_cli
+    from pyrite.config import KBConfig, PyriteConfig, Settings
 
+    (tmp_path / "demo").mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="demo", path=tmp_path / "demo", kb_type="generic")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    monkeypatch.setattr("pyrite.cli.context.load_config", lambda: config)
     monkeypatch.setattr(embedding_service, "is_available", lambda: False)
     result = CliRunner().invoke(admin_cli.app, ["index", "embed", "demo"])
     text = result.output + getattr(result, "stderr", "")

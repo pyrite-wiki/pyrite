@@ -89,32 +89,6 @@ UPDATE_FLAGS = frozenset({"echo", "stale"})
 #: test fails outright, so a reason cannot quietly stop being true.
 #: Measured on dev at c097e7f6, 2026-10-03.
 KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
-    "one-field-edit-yields-that-field-s-lines": (
-        "principle 3: the whole frontmatter is re-rendered: the header comment, the "
-        "title's comment and the blank line go, `no` becomes `\"no\"`, the body's indent is stripped",
-        r"diff was:\n-# reviewed by hand, do not reorder\n",
-    ),
-    "appending-to-a-list-leaves-the-existing-items-alone": (
-        "principle 3: kb_update sets `links` aside (`ignored: ['links']`) and writes "
-        "nothing; no operation appends to a list",
-        r"diff was:\n\(end of diff\)",
-    ),
-    "a-save-does-not-add-what-a-hook-used-to-add": (
-        "principle 4: cascade's resolve_actor_links writes a `links:` block for the "
-        "actor into the file on an unrelated title edit",
-        r"diff was:\n-title: The hearing\n\+title: The hearing, postponed\n"
-        r"\+links:\n\+- target: jane-doe\n",
-    ),
-    "two-writers-on-different-keys-both-survive": (
-        "decision 10: each writer replaces the whole file from its own read; the last "
-        "one to replace drops the other's change",
-        r"diff was:\n(-summary: one\n\+summary: two\n|-importance: 3\n\+importance: 5\n)\(end of diff\)",
-    ),
-    "sending-a-read-back-changes-nothing": (
-        "principle 3: an echo that changes no field still rewrites the file: CRLF "
-        "becomes LF and the header comment is dropped",
-        r"diff was:\n----\r\n-# header comment\r\n",
-    ),
     "a-stale-whole-document-replace-is-refused": (
         "decision 11: kb_get returns `content_hash` since #753 (decision 9), but "
         "kb_update sets it aside as `ignored` and writes over the hand edit",
@@ -127,23 +101,24 @@ KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
     ),
 }
 
-#: (See ``_require_actor_link_derived`` for why this is still a cascade KB:
-#: no type derives links from `actors` yet.)
+#: (See ``_require_reference_link_derived`` for why this is still a plugin
+#: KB: no type derives links from its reference fields yet.)
 #: The KB type whose save hooks an entry type's example needs. The hook that
-#: adds links to a `timeline_event` on save is the cascade plugin's
-#: `resolve_actor_links`, which runs only in the cascade KB types. ADR-0042
-#: says "journalism derivations", but in a journalism-investigation KB no hook
-#: touches a timeline_event, and the example passes without entering the case
-#: it is about.
-KB_TYPE_FOR_ENTRY_TYPE = {"timeline_event": "cascade-timeline"}
+#: adds links to a `membership` on save is journalism-investigation's
+#: `enrich_connection_links`, which runs only in that plugin's KB types (it
+#: replaced the cascade plugin's `resolve_actor_links` on a `timeline_event`
+#: when #953 deleted cascade: same divergence, measured by an extension that
+#: stays).
+KB_TYPE_FOR_ENTRY_TYPE = {"membership": "journalism-investigation"}
 
-#: Entries an example's file refers to, written beside it. The hook only adds
-#: a link for an actor it can resolve; without `jane-doe` in the KB, the
-#: hook example would pass for lack of an actor, not because the hook wrote
-#: nothing.
+#: Entries an example's file refers to, written beside it. Without
+#: `jane-doe` and `acme` in the KB the hook example's link could not be seen
+#: anywhere, so it would pass for lack of a target, not because the hook
+#: wrote nothing.
 NEIGHBOURS = {
     "a-save-does-not-add-what-a-hook-used-to-add": {
-        "content/jane-doe.md": "---\nid: jane-doe\ntitle: Jane Doe\ntype: actor\n---\n\nShe testifies.\n",
+        "content/jane-doe.md": "---\nid: jane-doe\ntitle: Jane Doe\ntype: person\n---\n\nShe testifies.\n",
+        "content/acme.md": "---\nid: acme\ntitle: Acme\ntype: organization\n---\n\nA company.\n",
     },
 }
 
@@ -262,8 +237,12 @@ def _entry_path(ex: Example) -> tuple[str, str]:
 
 
 def _build_kb(tmp_path: Path, ex: Example) -> tuple[PyriteConfig, Path, str]:
+    """The example's KB: a git repository, as a KB that asserts concurrency
+    must be (ADR-0042 §10a A1: the momentary lock lives in the git dir; a KB
+    outside git is written with compare-before-replace and no lock, D1 (b))."""
     kb_path = tmp_path / "kb"
     kb_path.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True, timeout=30)
     kb_type = KB_TYPE_FOR_ENTRY_TYPE.get(str(_front(ex.file).get("type")), "generic")
     (kb_path / "kb.yaml").write_text(f"name: {KB}\nkb_type: {kb_type}\n", encoding="utf-8")
     rel, entry_id = _entry_path(ex)
@@ -315,13 +294,8 @@ def _to_kb_update_args(
     """The doc's operation as today's ``kb_update`` arguments.
 
     - ``set`` names fields, sent as fields.
-    - ``append`` has no counterpart today. The item is added to the list as
-      the *file* holds it, and the whole list is sent. A read would hand back
-      Pyrite's normalised reading of the items (``target_id``/``target_kb``,
-      ``since`` dropped), and sending that would rewrite them for a reason
-      that is not this example's. Under ADR-0042 decision 2, a set of a whole
-      list copies unchanged items byte for byte, so this mapping can pass.
-      When kb_update grows an ``append`` operation, send that here instead.
+    - ``append`` is ``kb_update``'s own ``append`` argument (#955, B6 P3b):
+      the item alone, never the list.
     - ``replace`` is a whole-document write (decision 11): its fields, plus
       the body as the file holds it, plus ``content_hash``.
     """
@@ -333,9 +307,7 @@ def _to_kb_update_args(
             args.update(value)
             args["body"] = _file_body(file_text)
         elif key == "append":
-            current = _front(file_text)
-            for name, item in value.items():
-                args[name] = [*(current.get(name) or []), item]
+            args["append"] = dict(value)
         elif key == "content_hash":
             args["content_hash"] = value
         else:
@@ -624,13 +596,21 @@ def _require_entered(ex: Example, config: PyriteConfig, path: Path, entry_id: st
         _require(raw.count(b"\r\n") == raw.count(b"\n"), "the crlf file is not all CRLF")
     if "noid" in ex.file_flags:
         _require("id" not in meta, "the noid file has an id: line")
-    for actor in _actors(meta):
-        got = _call(config, "kb_get", {"kb_name": KB, "entry_id": actor})
-        _require(not _is_error(got), f"actor {actor} is not in the KB, so nothing links to it")
+    for ref in _references(meta):
+        got = _call(config, "kb_get", {"kb_name": KB, "entry_id": ref})
+        _require(not _is_error(got), f"{ref} is not in the KB, so nothing links to it")
 
 
-def _actors(meta: dict[str, Any]) -> list[str]:
-    return [str(ref).strip("[]") for ref in meta.get("actors", [])]
+def _references(meta: dict[str, Any]) -> list[str]:
+    """The entries a file's own fields name by wikilink (`links:` is not one)."""
+    found: list[str] = []
+    for key, value in meta.items():
+        if key == "links":
+            continue
+        for ref in value if isinstance(value, list) else [value]:
+            if isinstance(ref, str) and ref.startswith("[[") and ref.endswith("]]"):
+                found.append(ref.strip("[]"))
+    return found
 
 
 def _link_items(value: Any) -> list[dict[str, Any]]:
@@ -661,12 +641,12 @@ def _is_link_to(value: Any, target: str) -> bool:
 def _derived_link_seen(
     config: PyriteConfig, actor: str, entry_id: str, *, call: Any = None
 ) -> str | None:
-    """How the actor link is visible, or None.
+    """How the link to a referenced entry (`actor`) is visible, or None.
 
-    - ``kb_backlinks`` on the actor lists the entry. That is the index's row.
-      Today the row exists because the cascade hook wrote a `links:` block that
+    - ``kb_backlinks`` on the target lists the entry. That is the index's row.
+      Today the row exists because the plugin hook wrote a `links:` block that
       was then indexed; under ADR-0042 decision 4 the index derives it.
-    - ``kb_get`` on the entry or on the actor returns a link (a mapping with a
+    - ``kb_get`` on the entry or on the target returns a link (a mapping with a
       ``relation``) under a key whose name says it is derived. Which sub-key
       holds it is not fixed yet, so any link under such a key counts, and
       nothing that is not a link does.
@@ -687,37 +667,37 @@ def _derived_link_seen(
     return None
 
 
-def _require_actor_link_derived(
+def _require_reference_link_derived(
     config: PyriteConfig, meta: dict[str, Any], entry_id: str, *, call: Any = None
 ) -> None:
-    """After the save, something other than the file shows the actor link.
+    """After the save, something other than the file shows each referenced link.
 
     What rules this out: an empty diff that proves nothing about hooks because
-    the KB derives no link to the actor at all (a type with no actor
-    handling, an actor the lookup cannot resolve). It must not rule out a
-    write path that is correct: one that writes no hook links into the file
-    and has the index derive them (ADR-0042 decision 4). So the link is read
-    from `kb_backlinks` or as a link under the derived key of a read, never
-    from the file's `links:` block as a read returns it, and no KB type is
-    named here. A derived field value (the normalised `actors`) is not a link
-    and does not count.
+    the KB derives no link to the referenced entry at all (a type with no
+    reference handling, a target the lookup cannot resolve). It must not rule
+    out a write path that is correct: one that writes no hook links into the
+    file and has the index derive them (ADR-0042 decision 4). So the link is
+    read from `kb_backlinks` or as a link under the derived key of a read,
+    never from the file's `links:` block as a read returns it, and no KB type
+    is named here. A derived field value (the normalised `person`) is not a
+    link and does not count.
 
-    Limit, stated because it is real: no KB type derives links from `actors`
-    at index time yet (the index derives them from body wikilinks and
-    `references:`, not from `actors`; ADR-0045's reference fields are not
-    built). Until one does, the only link a save leaves is the one the
-    cascade hook writes into the file, which the index then reads back, so
-    the hook example still needs the cascade KB type
+    Limit, stated because it is real: no KB type derives links from its
+    reference fields at index time yet (the index derives them from body
+    wikilinks and `references:`; ADR-0045's reference fields are not built).
+    Until one does, the only link a save leaves is the one the
+    journalism-investigation hook writes into the file, which the index then
+    reads back, so the hook example still needs that KB type
     (``KB_TYPE_FOR_ENTRY_TYPE``). When a derived-link type exists, put it
     there; this check needs no change.
     """
-    for actor in _actors(meta):
+    for actor in _references(meta):
         seen = _derived_link_seen(config, actor, entry_id, call=call)
         _require(
             seen,
             f"{actor} shows no link from {entry_id} after the save, neither in "
-            "kb_backlinks nor under a derived key of kb_get, so nothing derived an actor link "
-            "and the example did not enter its case",
+            "kb_backlinks nor under a derived key of kb_get, so nothing derived a link to "
+            "it and the example did not enter its case",
         )
 
 
@@ -765,12 +745,34 @@ def _require_fresh_replace_is_written(
 def _require_replace_landed(
     result: dict[str, Any], path: Path, op: dict[str, Any], what: str, why: str
 ) -> None:
-    on_disk = yaml.safe_load(path.read_text().split("---\n", 2)[1]) or {}
+    on_disk = _front(path.read_text())
     landed = all(on_disk.get(k) == v for k, v in op["replace"].items())
     _require(
         not _is_error(result) and landed,
         f"{what} ({result}; file now {on_disk}), so {why}",
     )
+
+
+def test_replace_landed_compares_with_the_parser_the_write_uses(tmp_path: Path):
+    """A YAML-1.1 value is not a failed write (#741).
+
+    `flag: no` is `'no'` to ruamel (what `_front` and Pyrite read) and `False`
+    to PyYAML's safe loader. Comparing the two reported a correct write as not
+    landed. The helper now uses `_front` for both sides, and still fails when
+    the value really changed. The CRLF regime goes through the same
+    normalisation.
+    """
+    path = tmp_path / "entry.md"
+    op = {"replace": {"flag": "no"}}
+    for newline in ("\n", "\r\n"):
+        path.write_bytes(
+            newline.join(("---", "id: x", "title: T", "flag: no", "---", "", "Body", "")).encode()
+        )
+        _require_replace_landed({"updated": True}, path, op, "control", "why")
+
+    path.write_bytes(b"---\nid: x\ntitle: T\nflag: yes\n---\n\nBody\n")
+    with pytest.raises(CaseNotEnteredError):
+        _require_replace_landed({"updated": True}, path, op, "control", "why")
 
 
 def _require_old_hash_still_refused(
@@ -870,27 +872,28 @@ def _check(
     else:
         args = _to_kb_update_args(op, config, entry_id, path.read_text(), echo=echo)
         before = path.read_bytes().decode("utf-8")
-        for name in op.get("append", {}):
-            # Against PyYAML's parse of the bytes on disk, not the parse that
-            # built the arguments: a mapping that sent Pyrite's reading of the
-            # items (normalised keys, `since` dropped) fails here.
-            on_disk = yaml.safe_load(before.split("---\n", 2)[1]) or {}
+        for name, item in op.get("append", {}).items():
+            # The append carries the item alone: a mapping that sent the whole
+            # list (Pyrite's reading of the items, `since` dropped) would make
+            # the example measure something else.
             _require(
-                args[name][:-1] == on_disk.get(name, []),
-                f"the {name} sent are not the file's own items, so the append is not "
+                args.get("append", {}).get(name) == item and name not in args,
+                f"the append of {name} did not send the item alone, so the append is not "
                 "what was measured",
             )
         with pytest.MonkeyPatch.context() as spy_patch:
             watched = _watch_emitter(spy_patch, spy_watch) if "emitter" in ex.file_flags else None
             if watched is not None:
-                # Control 1: a create has to emit frontmatter (ADR-0042 decision
-                # 13), so the watch must see it.
-                _call(
-                    config, "kb_create", {"kb_name": KB, "entry_type": "note", "title": "Spy probe"}
-                )
+                # Control 1: the watch must see a document Pyrite's own YAML
+                # dumper emits (a create used to be that document, until B6 C2
+                # made a create write through apply() too; `dump_yaml` is what
+                # config and schema files still go through).
+                from pyrite.utils.yaml import dump_yaml
+
+                dump_yaml({"spy": "probe"})
                 _require(
                     watched.docs,
-                    "the emitter watch saw no document during a create; it is not watching "
+                    "the emitter watch saw no document during the probe; it is not watching "
                     "the emitter Pyrite uses, so an empty record would prove nothing",
                 )
                 watched.clear()
@@ -914,8 +917,8 @@ def _check(
             leaked = sorted(watched.keys() & untouched)
             assert not leaked, f"the emitter was handed keys nobody asked to change: {leaked}"
 
-    if _actors(meta):
-        _require_actor_link_derived(config, meta, entry_id)
+    if _references(meta):
+        _require_reference_link_derived(config, meta, entry_id)
     assert path.exists(), (
         f"the file is gone; KB now holds {sorted(map(str, path.parent.parent.rglob('*.md')))}"
     )
@@ -1002,19 +1005,13 @@ def test_diff_rendering_pairs_equal_replacements() -> None:
     assert _render_diff("x\r\n", "x\r\n") == ""
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="principle 3: a one-field edit hands the emitter flag, id, links, tags and type "
-    "(the list is pinned as observed; a narrower leak fails outright)",
-)
 def test_emitter_flag_on_the_one_field_edit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The `emitter` flag is wired. No ADR example carries it yet, so this
-    runs the one-field edit with it: today the whole frontmatter goes to the
-    emitter. When the write path honours principle 3 this XPASSes; then
-    delete the mark, or put `emitter` on the doc's example.
+    runs the one-field edit with it: the YAML emitter is handed no top-level
+    key of the file that the operation did not name (principle 3; the update
+    writes the one value through `apply()`'s own emitter).
     """
     one_field = DOC_EXAMPLES[0]
     ex = Example(
@@ -1024,15 +1021,7 @@ def test_emitter_flag_on_the_one_field_edit(
         update=one_field.update,
         diff=one_field.diff,
     )
-    try:
-        _check(ex, tmp_path, monkeypatch)
-    except AssertionError as e:
-        if (
-            "emitter was handed keys nobody asked to change: ['flag', 'id', 'links', 'tags', 'type']"
-            not in str(e)
-        ):
-            pytest.fail(f"failed, but not by the emitter check:\n{e}")
-        raise
+    _check(ex, tmp_path, monkeypatch)
 
 
 # --------------------------------------------------------------------------
@@ -1079,7 +1068,7 @@ def test_emitter_flag_on_the_one_field_edit(
 #   `safe_dump` (limits in `_watch_emitter`'s docstring, #741). Rejected by
 #   test_emitter_leak_is_seen_through_an_import_bound_dump; accepted by
 #   test_emitter_control_passes_a_splice_that_emits_a_scalar.
-# - hook precondition (`_require_actor_link_derived`): a derived LINK, not a
+# - hook precondition (`_require_reference_link_derived`): a derived LINK, not a
 #   derived value and not the file's own `links:` block. Accepted: the model
 #   (derived link) and the real backlinks path; rejected: the normalised
 #   echo, the unindexed `links:` block, nothing at all.
@@ -1148,17 +1137,17 @@ class ModelWritePath:
         incoming: list[str] = []
         for path in sorted(config.knowledge_bases[0].path.rglob("*.md")):
             meta = _front(path.read_text())
-            actors = [str(r).strip("[]") for r in meta.get("actors", [])]
+            refs = _references(meta)
             if meta.get("id") == entry_id:
-                outgoing = actors
-            if entry_id in actors:
+                outgoing = refs
+            if entry_id in refs:
                 incoming.append(str(meta["id"]))
         if self.derived == "normalised":
             # A read's normalised field value, which is not a link.
-            return {"actors": outgoing}
+            return {"references": outgoing}
         return {
-            "links": [{"target": t, "relation": "actor_reference"} for t in outgoing]
-            + [{"id": i, "relation": "actor_reference"} for i in incoming]
+            "links": [{"target": t, "relation": "references"} for t in outgoing]
+            + [{"id": i, "relation": "references"} for i in incoming]
         }
 
     def _update(self, config: PyriteConfig, args: dict[str, Any]) -> dict[str, Any]:
@@ -1215,9 +1204,9 @@ def test_a_correct_write_path_is_not_hard_failed_by_the_hook_example(
     """A path that writes no hook link, with the link derived, passes the hook example.
 
     What it rules out: the example's precondition reading the link from the
-    file's `links:` block or requiring a cascade-only KB type. The KB is a
+    file's `links:` block or requiring a plugin-only KB type. The KB is a
     generic one, ModelWritePath writes no link, and the link is visible only
-    as a derived link under `kb_get`'s derived key. (The cascade hook is not
+    as a derived link under `kb_get`'s derived key. (The plugin hook is not
     in play here: ModelWritePath replaces the update, so it is neither
     switched off nor run.)
     """
@@ -1237,7 +1226,9 @@ def test_the_hook_precondition_accepts_the_real_backlinks_path(tmp_path: Path) -
     text = path.read_text()
     path.write_text(
         text.replace(
-            "---\n\nText.", "links:\n- target: jane-doe\n  relation: actor_reference\n---\n\nText."
+            "---\n\nText.",
+            "links:\n- target: jane-doe\n  relation: has_member\n"
+            "- target: acme\n  relation: member_of\n---\n\nText.",
         )
     )
     db = PyriteDB(config.settings.index_path)
@@ -1246,7 +1237,7 @@ def test_the_hook_precondition_accepts_the_real_backlinks_path(tmp_path: Path) -
     finally:
         db.close()
     assert _derived_link_seen(config, "jane-doe", entry_id) == "kb_backlinks"
-    _require_actor_link_derived(config, _front(ex.file), entry_id)
+    _require_reference_link_derived(config, _front(ex.file), entry_id)
 
 
 def test_the_hook_precondition_accepts_a_derived_link_alone(tmp_path: Path) -> None:
@@ -1258,30 +1249,30 @@ def test_the_hook_precondition_accepts_a_derived_link_alone(tmp_path: Path) -> N
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
     model = ModelWritePath()
-    _require_actor_link_derived(config, _front(ex.file), entry_id, call=model)
+    _require_reference_link_derived(config, _front(ex.file), entry_id, call=model)
     assert _derived_link_seen(config, "jane-doe", entry_id, call=model) == "kb_get['derived']"
 
 
 def test_the_hook_precondition_rejects_a_normalised_field_under_the_derived_key(
     tmp_path: Path,
 ) -> None:
-    """`derived: {actors: [...]}` is the field echoed back, not a link.
+    """`derived: {references: [...]}` is the field echoed back, not a link.
 
     What it rules out: the example being entered because a read returned the
-    entry's own `actors` under the derived key (ADR-0042 decision 9 puts
-    normalised values there) when nothing linked to the actor.
+    entry's own reference fields under the derived key (ADR-0042 decision 9
+    puts normalised values there) when nothing linked to the target.
     """
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
     echo = ModelWritePath(derived="normalised")
     with pytest.raises(CaseNotEnteredError, match="shows no link"):
-        _require_actor_link_derived(config, _front(ex.file), entry_id, call=echo)
+        _require_reference_link_derived(config, _front(ex.file), entry_id, call=echo)
 
 
 def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_indexed(
     tmp_path: Path,
 ) -> None:
-    """A file whose `links:` names the actor, with no backlink and no derived key, is not enough.
+    """A file whose `links:` names the target, with no backlink and no derived key, is not enough.
 
     What it rules out: reading the file's own `links:` block as proof that a
     link was derived. The KB is not re-indexed after the block is written, so
@@ -1294,7 +1285,7 @@ def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_ind
     path.write_text(
         path.read_text().replace(
             "---\n\nText.",
-            "links:\n- target: jane-doe\n  relation: actor_reference\n---\n\nText.",
+            "links:\n- target: jane-doe\n  relation: has_member\n---\n\nText.",
         )
     )
 
@@ -1308,7 +1299,7 @@ def test_the_hook_precondition_rejects_a_links_block_in_the_file_that_is_not_ind
 
     assert _call(config, "kb_backlinks", {"kb_name": KB, "entry_id": "jane-doe"})["backlinks"] == []
     with pytest.raises(CaseNotEnteredError, match="shows no link"):
-        _require_actor_link_derived(config, _front(ex.file), entry_id, call=reads_the_file)
+        _require_reference_link_derived(config, _front(ex.file), entry_id, call=reads_the_file)
 
 
 def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(tmp_path: Path) -> None:
@@ -1320,7 +1311,7 @@ def test_the_hook_precondition_still_fails_when_nothing_derives_the_link(tmp_pat
     ex = _example("a-save-does-not")
     config, _path, entry_id = _build_kb(tmp_path, ex)
     with pytest.raises(CaseNotEnteredError, match="shows no link"):
-        _require_actor_link_derived(
+        _require_reference_link_derived(
             config, _front(ex.file), entry_id, call=ModelWritePath(derived="none")
         )
 
@@ -1493,13 +1484,96 @@ def test_emitter_control_fails_when_the_update_uses_a_door_the_watch_cannot_see(
         _check(_one_field_with_emitter(), tmp_path, monkeypatch)
 
 
-def test_emitter_watch_pointed_at_pyyaml_alone_does_not_see_the_create(
+@pytest.mark.control(
+    reason="the narrowing of the watch holds on either side; the probe changed from a create to a dump"
+)
+def test_emitter_watch_pointed_at_pyyaml_alone_does_not_see_the_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The narrowing is real: PyYAML alone sees nothing of Pyrite's writes.
+    """The narrowing is real: PyYAML alone sees nothing of Pyrite's dumper.
 
-    What it rules out: a watch on the wrong library passing the create
+    What it rules out: a watch on the wrong library passing the probe
     control by accident.
     """
-    with pytest.raises(CaseNotEnteredError, match="saw no document during a create"):
+    with pytest.raises(CaseNotEnteredError, match="saw no document during the probe"):
         _check(_one_field_with_emitter(), tmp_path, monkeypatch, spy_watch=("pyyaml",))
+
+
+# --------------------------------------------------------------------------
+# What the prose says about the list, and what a create writes (#1031)
+# --------------------------------------------------------------------------
+
+_DIVERGENCE_HEADING = "## Where Pyrite does not keep this promise yet"
+
+
+def _divergence_section(text: str) -> str:
+    assert _DIVERGENCE_HEADING in text, f"the doc lost its {_DIVERGENCE_HEADING!r} section"
+    return text.split(_DIVERGENCE_HEADING, 1)[1].split("\n## ", 1)[0]
+
+
+def test_the_prose_names_exactly_the_known_divergences() -> None:
+    """The section links each failing example by its heading's slug, and no other."""
+    section = _divergence_section(DOC.read_text(encoding="utf-8"))
+    named = set(re.findall(r"\]\(#([a-z0-9-]+)\)", section))
+    assert named == set(KNOWN_DIVERGENCES), (
+        f"the section names {sorted(named)}, KNOWN_DIVERGENCES has {sorted(KNOWN_DIVERGENCES)}"
+    )
+
+
+_CREATE_FENCE = re.compile(
+    r"^```create\n(?P<args>.*?)^```\n+```written\n(?P<written>.*?)^```", re.S | re.M
+)
+
+
+def _create_examples() -> list[tuple[str, dict[str, Any], str]]:
+    text = DOC.read_text(encoding="utf-8")
+    return [
+        (text[: m.start()].count("\n") + 1, json.loads(m["args"]), m["written"])
+        for m in _CREATE_FENCE.finditer(text)
+    ]
+
+
+def test_the_doc_shows_what_a_create_writes() -> None:
+    assert _create_examples(), "docs/how-pyrite-edits-your-files.md has no create/written example"
+
+
+@pytest.mark.parametrize(("line", "args", "written"), _create_examples())
+def test_a_create_writes_the_bytes_the_doc_shows(
+    line: int, args: dict[str, Any], written: str, tmp_path: Path
+) -> None:
+    kb_path = tmp_path / "kb"
+    kb_path.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=kb_path, check=True, capture_output=True, timeout=30)
+    (kb_path / "kb.yaml").write_text(f"name: {KB}\nkb_type: generic\n", encoding="utf-8")
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB, path=kb_path, kb_type="generic")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
+    result = _call(config, "kb_create", {"kb_name": KB, **args})
+    assert not _is_error(result), result
+    got = Path(result["file_path"]).read_text(encoding="utf-8")
+    assert got == written, (
+        f"doc line {line}:\nthe file is:\n{got}(end)\nthe doc says:\n{written}(end)"
+    )
+
+
+def test_no_user_page_says_an_undeclared_field_is_stored_under_metadata() -> None:
+    """ADR-0051: an undeclared field is written at the top level of the file."""
+    pages = [*(REPO / "docs").rglob("*.md"), *(REPO / ".claude" / "skills").rglob("*.md")]
+    bad = [
+        f"{p.relative_to(REPO)}:{n}"
+        for p in pages
+        for n, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1)
+        if re.search(r"stored under\s+`?metadata", line)
+    ]
+    assert not bad, f"a page says a field is stored under metadata: {bad}"
+
+
+def test_kb_update_descriptions_teach_item_operations_and_the_metadata_rule() -> None:
+    """An agent reads these strings and nothing else (#1031)."""
+    from pyrite.server.tool_schemas import WRITE_TOOLS
+
+    props = WRITE_TOOLS["kb_update"]["inputSchema"]["properties"]
+    assert "append" in props["tags"]["description"] and "remove" in props["tags"]["description"]
+    assert "ADR-0051" in props["metadata"]["description"]
+    assert "refused" in props["metadata"]["description"]

@@ -97,12 +97,20 @@ def test_maturity_counts_selected_kbs(report_kbs, kb, total):
         assert re.search(rf"{maturity}\s+\S\s+{count}\s+\S", output)
 
 
-@pytest.mark.parametrize("kb", ["empty", "missing"])
 @pytest.mark.parametrize(
     "command, message", [("inbox", "Inbox empty"), ("maturity", "No zettels found")]
 )
-def test_empty_reports_exit_successfully(report_kbs, kb, command, message):
-    assert message in run_report(command, kb)
+def test_empty_reports_exit_successfully(report_kbs, command, message):
+    assert message in run_report(command, "empty")
+
+
+@pytest.mark.parametrize("command", ["inbox", "maturity", "orphans"])
+def test_a_kb_that_does_not_exist_is_refused(report_kbs, command):
+    """An unknown ``-k`` is ``KB_NOT_FOUND``, exit 1, not an empty report (#924)."""
+    result = CliRunner().invoke(app, ["zettel", command, "-k", "missing"], terminal_width=120)
+    assert result.exit_code == 1, f"{result.output}\n{result.exception}"
+    assert "KB_NOT_FOUND" in result.output
+    assert "KB 'missing' not found" in result.output
 
 
 def test_reports_include_zettels_beyond_first_page(report_kbs):

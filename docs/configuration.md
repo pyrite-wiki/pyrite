@@ -11,7 +11,7 @@ config file at all.
 |---|---|---|
 | `PYRITE_CONFIG_DIR` | `~/.pyrite` | Directory holding `config.yaml`. When unset, a `.pyrite/config.yaml` found in the current directory or any parent is used instead of `~/.pyrite` — a repo-local registry, so a checkout's `kb/` resolves to that checkout. The index and cloned repos default to this directory too (see below). |
 | `PYRITE_DATA_DIR` | `~/.pyrite` | Directory for the index (`index.db`) and cloned repos (`repos/`); overrides `settings.index_path` in `config.yaml`. When set it is also where `config.yaml` is read from, ahead of `PYRITE_CONFIG_DIR`. Set this in containers and point a volume at it. |
-| `PYRITE_STATIC_DIR` | `<checkout>/web/dist` | Built web UI to serve at `/`. Needed when the package is installed into site-packages rather than run from a checkout. |
+| `PYRITE_STATIC_DIR` | `<checkout>/web/dist` | Built web UI to serve at `/`. Needed when the package is installed into site-packages rather than run from a checkout. A relative value is resolved once, at startup, against the working directory of the process that starts the server. |
 | `PYRITE_BRANDING_DIR` | built-in | Folder of white-label branding assets (see `deploy/branding-examples/`) |
 | `PYRITE_LOG_LEVEL` | `WARNING` (`INFO` for `pyrite serve` and `pyrite-server`) | Level of the log lines on stderr: `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. `-v` (INFO) and `-vv` (DEBUG) on the command line, in any position, beat it. |
 
@@ -27,7 +27,9 @@ A command prints its result and nothing else by default; `-v` or `-vv` (or `PYRI
 **A repo-local `.pyrite/config.yaml` (3) is not trusted.** It may have come with
 a cloned or downloaded tree, so Pyrite reads only what stays inside that tree:
 `knowledge_bases` whose paths resolve inside it (keys `name`, `path`,
-`kb_type`, `description`, `read_only`, `shortname`, and `default_role` only
+`kb_type`, `description`, `read_only`, `shortname` (the prefix of a
+cross-KB wikilink, `[[short:id]]`, and nothing else: `-k`, REST `kb` and MCP
+`kb_name` take the full name), and `default_role` only
 when it is `none`), and `settings.index_path` (inside it), `auto_embed`,
 `search_mode` and `summary_length`. (`workspace_path` is never read from any
 `config.yaml`.) KBs registered in that tree's index are held to the same rule:
@@ -117,11 +119,12 @@ a copy of `config.yaml` to restore from.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_HOST` | `127.0.0.1` | Bind address. Containers need `0.0.0.0`. |
-| `PYRITE_PORT` | `8088` | Port |
-| `PYRITE_CORS_ORIGINS` | localhost dev ports | Comma-separated allowed origins |
+| `PYRITE_PORT` | `8088` | Port. When unset, `PORT` is used (platforms such as Railway and Heroku set it). |
+| `PYRITE_CORS_ORIGINS` | localhost dev ports | Comma-separated allowed origins; empty items are ignored. A `*` admits every origin and turns off credentialed (cookie) requests from any origin |
 | `PYRITE_PUBLISHED_ON_LOOPBACK` | unset | Set to exactly `true` by the bundled `docker-compose.yml`, which publishes the port on `127.0.0.1`. Silences the startup warning for a credential-free wildcard bind, only inside a container and only with auth off. True only while the published address is loopback: remove it when you change `ports:` (including in a `docker-compose.override.yml`). Do not set it by hand elsewhere; outside a container it has no effect |
 | `PYRITE_ALLOWED_HOSTS` | unset | Comma-separated extra hostnames a credential-free server answers (see below) |
 | `PYRITE_API_KEY` | unset | Single admin API key (legacy single-key mode). Prefer `api_keys` in `config.yaml` — hashed keys with a role each. |
+| `PYRITE_MAX_REQUEST_BODY_BYTES` | `33554432` (32 MiB) | The most bytes one request body may carry (`settings.max_request_body_bytes`), on every route: an import upload, a JSON body, an `/mcp` message. A larger body is answered `413` with `code: PAYLOAD_TOO_LARGE` as soon as it passes the limit, before the rest is read, and nothing is written. Must be a positive integer; anything else is refused when the config loads. Raise it if you import files larger than 32 MiB, or split the file. |
 
 `config.yaml`:
 
@@ -129,11 +132,75 @@ a copy of `config.yaml` to restore from.
 settings:
   host: 127.0.0.1
   port: 8088
+  max_request_body_bytes: 33554432   # 32 MiB, the default
   api_keys:
     - key_hash: "<sha256 of the key>"
       role: read          # read | write | admin
       label: "Reader"
 ```
+
+### Fixed bounds on untrusted input
+
+These are not settings. Each is a constant chosen above anything a legitimate
+KB reaches; a document or request past one is refused with a message that names
+the bound.
+
+| Input | Bound | Where |
+|---|---|---|
+| YAML aliases in one document | 1,000 aliases, or an expanded size of 1,000,000 nodes (measured from parse events, without building the expansion) | `pyrite/utils/yaml.py` (`MAX_YAML_ALIASES`, `MAX_YAML_EXPANDED_NODES`); refused as `INVALID_FRONTMATTER` (import: `400 PARSE_ERROR`; index sync: the file is listed as malformed) |
+| A page fetched by the web clipper | 5 MiB counted after decoding, memory bounded at every decoding step (one gzip or deflate coding is decoded in 64 KiB steps; a stack of codings, br and zstd are refused), and twice the request timeout in all | `pyrite/services/clipper.py` (`MAX_CLIP_BYTES`); `413 CLIP_TOO_LARGE` |
+| Anonymous WebSocket sockets | 100 in all, 5 per client; a client is its IPv4 address or its IPv6 /64 (below) | `pyrite/server/websocket.py`, `pyrite/server/client_key.py` |
+| A lookup of an id the index lacks | reads at most 200 files, only those the index is behind on | `pyrite/services/kb_service.py` (`MISS_SCAN_MAX_FILES`) |
+| KB health at read tier (REST) | a report is reused while the KB's index is unchanged, for at most 60 seconds | `kb_registry_service.HEALTH_CACHE_SECONDS` |
+| QA validate and status (`GET /api/qa/validate`, `GET /api/qa/status`, MCP `kb_qa_validate`, `kb_qa_status`) | a report per readable set is reused while the index of its KBs is unchanged, for at most 60 seconds | `qa_cache.QA_CACHE_SECONDS` |
+
+#### What the clipper checks, and what it does not
+
+Every request the clipper sends, including each redirect hop, is checked first:
+the host must resolve only to globally routable addresses (`ip.is_global`;
+IPv4-mapped IPv6 is judged as IPv4), and an address the check cannot read is
+refused. The check resolves the name and the connection resolves it again, so
+this is a check of each hop, not a defence against a name that changes its
+answer between the two.
+
+IPv6-only networks that synthesise addresses with DNS64 (the `64:ff9b::/96`
+prefix) resolve every IPv4 host to an address the clipper refuses, because the
+embedded IPv4 address cannot be judged from the prefix alone; the clipper does
+not work from such a network. The same holds for 6to4 (`2002::/16`).
+
+#### Anonymous WebSocket clients behind a reverse proxy
+
+An anonymous client is keyed by the connection's peer address: the IPv4
+address, or the IPv6 /64 (the smallest allocation an end site receives, so
+rotating addresses inside one allocation stays one client). The same key
+limits REST rate. Behind a reverse proxy the peer address is the proxy's, so
+all anonymous visitors share one key (5 sockets, and the REST rate limit)
+unless the server is run to trust the proxy's forwarding headers (uvicorn's
+`--proxy-headers` with `--forwarded-allow-ips`, or `FORWARDED_ALLOW_IPS`, which
+rewrite the peer address from `X-Forwarded-For`). Pyrite reads the peer address
+the server hands it and no header of its own.
+
+### Importing a large file (the request body limit)
+
+`POST /api/entries/import` (the web UI's import) sends the whole file in one
+request, so a file larger than `max_request_body_bytes` (32 MiB by default) is
+refused with `413 PAYLOAD_TOO_LARGE`. A big KB's JSON export can be larger. For
+a bulk import or a migration, either:
+
+- import from the command line instead: `pyrite import <file> -k <kb>` reads
+  the file directly and does not go through the server, so the limit does not
+  apply; or
+- raise the limit for the import and restart the server, then set it back:
+
+  ```yaml
+  settings:
+    max_request_body_bytes: 268435456   # 256 MiB, for the migration
+  ```
+
+  or `PYRITE_MAX_REQUEST_BODY_BYTES=268435456 pyrite serve`. The server holds
+  up to the limit in memory per request, so keep it no larger than the import
+  needs; or
+- split the file into several smaller ones and import each.
 
 ### Allowed hosts and origins (credential-free servers)
 
@@ -165,7 +232,7 @@ the browser less:
   the CLI, `curl` and agents, are not affected, unless a browser's
   `Sec-Fetch-Site` header says the request came from another site.
 
-These rules cover the whole app, including `/mcp`, `/ws` and `/site`. If you serve a
+These rules cover the whole app, including `/mcp` and `/ws`. If you serve a
 credential-free instance under another name, such as a LAN hostname or a reverse
 proxy's public name, add that name to `allowed_hosts`. If the web UI is served
 from another origin, add the origin to `cors_origins`:
@@ -201,6 +268,282 @@ to an auth-disabled instance without API keys, to one with
 `anonymous_tier: write`, and to every signed-in write on an auth-enabled
 instance.
 
+### Where a network caller may register a KB (`kb_roots`)
+
+Registering a knowledge base by path over the network (`POST /api/kbs`, and
+the MCP tool `kb_registry_add` over HTTP; both admin tier) is limited to
+folders under the roots listed in `settings.kb_roots`. **The default is empty:
+no network caller may register a path until you list roots**, so the web UI's
+"create knowledge base" answers 403 until `kb_roots` is set. The local
+operator registers any path: `pyrite kb add`, `pyrite-admin`, and `pyrite mcp`
+over stdio.
+
+```yaml
+settings:
+  kb_roots: [/srv/pyrite/kbs, ~/shared-kbs]   # or PYRITE_KB_ROOTS=/srv/pyrite/kbs:~/shared-kbs
+```
+
+A KB goes in a folder under a root, not the root itself. Each root must be an
+absolute path (`~` is expanded) and is resolved when the configuration loads;
+the requested path is resolved too (symbolic links and `..` followed), so
+neither a link nor `..` leads outside a root. `PYRITE_KB_ROOTS` separates
+roots with the platform's path separator (`:` on Linux and macOS, `;` on
+Windows), as `PATH` does. A path outside every root is refused with
+`KB_PATH_NOT_ALLOWED` (HTTP 403), naming the configured roots, and nothing is
+created. An operator API key used over the network is held to the roots too:
+the rule is about where the request comes from, not its role.
+
+### Git hosts Pyrite may clone from and push to
+
+Every git network operation Pyrite runs contacts only a host in
+`git_allowed_hosts`, over `https://` (or over ssh with an operator ssh key, see
+[Credentials for network git](#credentials-for-network-git)): the clone and
+push of export to repo (`POST /api/kbs/{kb}/export`), the clone of repository
+subscribe and fork (`/api/repos/subscribe`, `/api/repos/fork`, `pyrite repo
+subscribe|fork`, `pyrite-admin repo subscribe|fork`), the pull of every sync
+(`/api/repos/{name}/sync`, `pyrite repo sync`), and the push of a KB's own
+repository over the network (`POST /api/kbs/{kb}/push`, the `kb_push` MCP
+tool). The CLI is bound by it as well as the server, except for `pyrite kb
+push` (below). An unset value means the default on every operation, push
+included. The default is GitHub alone:
+
+```yaml
+settings:
+  git_allowed_hosts: [github.com, git.example.org]   # or PYRITE_GIT_ALLOWED_HOSTS=github.com,git.example.org
+```
+
+An entry is a bare hostname, or `host:port` for a URL that names a port;
+case and surrounding spaces are normalised. The setting is checked when the
+configuration loads: a value that is not a list, or an entry that could never
+match a host (a scheme or path, a wildcard, a space, an empty value), is one
+error naming the setting and the entry. `[]` allows no host, and a refusal
+then says the setting is empty.
+
+Subscribe and fork work with GitHub repositories only (`https://github.com/<owner>/<repo>`,
+nothing after the repository name), so for them the setting can narrow what is
+reachable but not add a host; export to repo reaches any host on the list.
+
+A destination that is a local path, a `file://` or `http://` URL, an
+`ssh://` or `git@host:` URL whose host has no operator ssh key, a host not on
+the list, or a URL with userinfo, a query, a
+fragment or `.`/`..` path segments is refused before git runs, with the code
+`REMOTE_NOT_ALLOWED` and a message naming this setting. The check is on the
+URL git will really contact: a `url.<base>.insteadOf` (or `pushInsteadOf`)
+rule in the git configuration of the account Pyrite runs as that turns an
+allowed URL into anything the setting does not allow is refused with a message
+naming that rule. A sync refuses a subscription whose stored remote is not
+allowed (for example an `ssh` remote subscribed before this setting, or a host
+since removed from it) the same way.
+
+For these operations git runs with only the https transport (or ssh, for a
+host with an operator ssh key), with Git LFS transfers off, without following
+HTTP redirects (`-c http.followRedirects=false`), and, for a network caller,
+with `http.proxy` set to `git_proxy` or reset to none. A remote that answers
+with a redirect (a renamed repository, for instance) is refused with
+`REMOTE_REDIRECTED`; use the repository's current URL.
+
+These are generic settings on git's command line. A URL-specific setting in
+the repository's own `.git/config` (`http.<url>.followRedirects`,
+`http.<url>.proxy`, `remote.<name>.proxy`) ranks above them, and that config
+is still read ([ADR-0052](../kb/adrs/0052-a-network-call-borrows-nothing-of-the-server-account-reach-is-decided-where-a.md), "Limits"). What the rule
+holds is the host and transport of the URL git is given and the credential
+sent with it; a repository whose own config redirects or proxies its own
+remote is followed.
+
+Paths these operations create stay inside the directory Pyrite chose: an
+export writes nothing through a link in the cloned repository (it is refused
+with `UNSAFE_DESTINATION`, and nothing is committed or pushed), and a
+subscribed or forked clone lands at `<workspace>/<owner>/<repo>` only when
+that path resolves inside the workspace root, and an owner or repository name
+beginning with `.` is refused.
+
+**Pushing a KB's own repository** (`POST /api/kbs/{kb}/push`, the `kb_push`
+MCP tool, `KBService` publish; admin only) goes to a remote already configured
+in the KB's repository; a caller can only name one of those configured
+remotes, never a URL or path (anything else is refused as `INVALID_REF`).
+Over the network it is held to `git_allowed_hosts` and the transport rule like
+every other operation, whoever configured the remote: a push to a remote off
+the list is refused with a message naming the setting, before git runs.
+**Only `pyrite kb push` at the operator's own terminal is exempt**: it pushes
+to whatever remote the operator configured, over any transport, with their own
+git setup (ssh agent, credential helpers).
+
+### Credentials for network git
+
+A git command Pyrite runs for a network caller (a REST request, MCP over
+HTTP) never uses a credential of the account the server runs as: not its
+credential helpers, `~/.netrc`, askpass programs, global or system git config,
+ssh agent or `~/.ssh` keys ([ADR-0052](../kb/adrs/0052-a-network-call-borrows-nothing-of-the-server-account-reach-is-decided-where-a.md), N2).
+It authenticates with exactly one of these, in order:
+
+1. the caller's own GitHub token (from `pyrite auth github`'s OAuth flow), for
+   an `https://` remote on GitHub;
+2. a `git_credentials` entry whose scope covers the remote (below): the same
+   host, the same transport (a token for `https://`, an `ssh_key` for ssh),
+   and, among those, the entry naming the KB first, then the host's unscoped
+   one;
+3. none: public repositories still clone and pull.
+
+**Which remotes an entry serves.** An entry serves remotes already
+configured in a registered KB's repository: the push of a KB
+(`POST /api/kbs/{kb}/push`, `kb_push`, publish) and the sync of a subscribed
+clone. A URL a caller names (subscribe, fork, export to a repository) gets
+only the caller's own token, unless the entry opts in with `url_prefixes`:
+
+```yaml
+settings:
+  git_credentials:
+    - host: github.com
+      token_env: PYRITE_GITHUB_PUSH_TOKEN
+      # Also serve exports and subscriptions to repositories under these.
+      url_prefixes: [https://github.com/our-team/]
+```
+
+A prefix is a URL on the entry's own host over its own transport, matched by
+whole path segments: `https://github.com/our-team/` covers
+`https://github.com/our-team/notes.git`, never
+`https://github.com/our-team-x/notes` or `https://github.com/our-team` itself.
+A prefix without the trailing `/` (`https://github.com/our-team/notes`) also
+covers that one repository. A prefix must name a path: `https://github.com/`
+covers nothing and is refused when the configuration loads (omit
+`url_prefixes` for an entry that serves only KB remotes), as is a prefix with
+a `.`/`..` segment or any `%` in its path. A remote whose path holds any `%`
+is never under a prefix: a server could decode it (once, twice, or as
+overlong UTF-8) into a different path than the one compared, so Pyrite does
+not decode it and does not match it. Write repository paths plainly.
+
+```yaml
+settings:
+  git_allowed_hosts: [github.com, git.example.org]
+  git_credentials:
+    # A token, read from an environment variable when used.
+    - host: github.com
+      token_env: PYRITE_GITHUB_PUSH_TOKEN
+    # A token in a file, offered only for the push of KB "notes".
+    - host: git.example.org
+      kb: notes
+      token_file: /etc/pyrite/notes-token
+      username: oauth2          # optional; the default
+    # An ssh key (no passphrase), with the host keys to trust.
+    - host: git.example.org
+      ssh_key: /etc/pyrite/deploy_key
+      known_hosts: /etc/pyrite/known_hosts
+```
+
+- `host` is written as in `git_allowed_hosts` (`host` or `host:port`). An
+  entry never allows a host: the host must also be on `git_allowed_hosts`.
+- Each entry has exactly one of `token_env`, `token_file`, `ssh_key`. Paths
+  are absolute (`~` is expanded). A mistake is one error when the
+  configuration loads, naming the entry.
+- A token reaches git only through Pyrite's inline credential helper, for that
+  host alone: never in argv, a remote URL or a file Pyrite writes.
+- An ssh remote (`ssh://` or `git@host:path`) is used only for a host whose
+  entry is an `ssh_key`. Git then runs `ssh -F /dev/null -i <key> -o
+  IdentityFile=none -o IdentitiesOnly=yes -o IdentityAgent=none -o
+  UserKnownHostsFile=<known_hosts> -o StrictHostKeyChecking=yes -o
+  BatchMode=yes`: no other key, no agent, no ssh config, and an unknown host
+  key is refused. A key file that is missing or unreadable when the command
+  is built refuses the command (`REMOTE_NOT_ALLOWED`, naming `ssh_key`); it
+  never falls back to the account's `~/.ssh` keys.
+- An entry with a `kb` serves only that KB's remotes (and URLs under its
+  `url_prefixes`); it is never offered to another KB.
+- A subscription's own remote counts as configured once it is registered; so
+  does the `upstream` remote a fork adds. Both came from a URL a caller named
+  when the clone was made, so a sync pulls them with an unscoped entry for
+  their host. The gain is slight: a pull reads, and subscribe and fork accept
+  only GitHub repository URLs on `git_allowed_hosts`. Scope the entry with
+  `kb` if it should not serve them.
+
+**The local CLI ignores `git_credentials`.** Its commands use the operator's
+own git setup (credential helpers, ssh agent, netrc) and the token `pyrite auth
+github-login` stored, as before. It clones and pulls over `https://` only.
+
+### A proxy for network git
+
+```yaml
+settings:
+  git_proxy: http://proxy.internal:3128   # or PYRITE_GIT_PROXY
+```
+
+The account's proxy variables (`HTTPS_PROXY` and the like) never apply to a
+network caller's git or to the GitHub API calls made for it (fork, pull
+request, the repository list, identity lookups, GitHub sign-in). Without
+`git_proxy` those requests use no proxy; with it, they go through that one.
+It is an operator grant: it may carry the proxy's own credential
+(`http://user:pass@proxy:3128`). It is checked when the configuration loads
+(an `http://` or `https://` URL naming a host). The local CLI keeps its own
+environment's proxy. An ssh remote is not proxied.
+
+### The identity of commits made for network callers
+
+```yaml
+settings:
+  git_identity:
+    name: Pyrite
+    email: pyrite@example.org
+```
+
+Commits Pyrite makes for a network caller (a user's worktree submit, the
+admin merge, export to repo, `POST /api/kbs/{kb}/commit`) carry this name and
+email, unless the KB's repository sets its own `user.name`/`user.email` in
+`.git/config`: the repository's own identity wins, as it would for the
+operator's own git (Pyrite writes `git_identity` into its own global git
+config, which repository config ranks above). Unset, they carry the
+`user.name` and `user.email` of the account's global git config, as before;
+**that fallback is removed in 0.27.0**, and Pyrite logs a warning once per
+process while it is in use. The operator's own commits at the CLI keep their
+own git setup.
+
+### What a network caller's git process gets
+
+Every git process started for a network caller, for a network operation or a
+local one (status, log, commit, worktree), gets an environment built from an
+allow-list, not the server's environment: `PATH`, `LANG`, `LC_*`, `TZ`,
+`TMPDIR`, and the certificate-authority variables `GIT_SSL_CAINFO`,
+`GIT_SSL_CAPATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR` (which servers to trust; they
+authenticate no one). Pyrite adds its own empty `HOME` and a global git config
+that holds only `git_identity` (or the identity fallback above) and the
+account's `safe.directory` entries (so a KB on a volume owned by another uid
+keeps working). That file is written once per process, when the first network
+git command runs: a later change to the account's global config is not seen
+until Pyrite restarts. System git
+config is not read. Not carried: proxy variables (`HTTPS_PROXY` and the like),
+`GIT_SSL_NO_VERIFY`, client certificates (`GIT_SSL_CERT`, `GIT_SSL_KEY`),
+`GIT_SSH*`, `SSH_AUTH_SOCK`, provider keys. The repository's own config
+(`.git/config`) is still read, except that no credential helper or askpass
+program from any config runs.
+
+Requests Pyrite makes to a URL a caller chose (the web clipper, the source-URL
+checker) likewise ignore the account's proxy variables and netrc, and so do
+its GitHub API calls for a network caller (they use `git_proxy` if set, and
+keep the CA-bundle variables `SSL_CERT_FILE`/`SSL_CERT_DIR`, as network git
+does). Calls
+to the AI provider the operator configured (`ai_provider`, `ai_api_base`) keep
+the account's environment: the operator chose that destination.
+
+### Upgrading to 0.26.3: network git
+
+- **A push over REST or MCP to a remote off `git_allowed_hosts` is refused.**
+  Add the host (and, for a private repository, a `git_credentials` entry), or
+  push from the CLI.
+- **A private repository reached over the network needs a `git_credentials`
+  entry.** The server account's ssh agent, keys, credential helpers and netrc
+  no longer apply to network callers. For an ssh remote, configure an
+  `ssh_key` entry with `known_hosts`; for https, a token entry.
+- **Set `git_identity`** if worktree submits, merges or exports over the
+  network should not rely on the account's global identity (required from
+  0.27.0).
+- **Signed commits:** commits made for network callers are no longer signed
+  through a global `commit.gpgsign`; the global config is not read.
+- **Behind a proxy:** network git, the GitHub API calls made for network
+  callers and caller-chosen fetches no longer use the account's proxy
+  variables. Set `git_proxy` for network git and the GitHub API.
+- **An unscoped `git_credentials` entry no longer serves URLs a caller
+  names** (subscribe, fork, export): add `url_prefixes` to the entry for the
+  repositories it should also serve.
+- **The CLI no longer uses `git_credentials`:** it uses your own git setup.
+- **A KB repository's own `user.*` now wins over `git_identity`.**
+
 ## Authentication (multi-user)
 
 > **Experimental.** Accounts and per-KB permissions are not yet a boundary to rely on between users who should not see each other's data. See [SECURITY.md](../SECURITY.md#multi-user-is-experimental).
@@ -208,7 +551,7 @@ instance.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_AUTH_ENABLED` | `false` | Turn on user accounts and per-KB permissions |
-| `PYRITE_AUTH_ANONYMOUS_TIER` | unset | What an unauthenticated request may do when auth is enabled: `read`, `write`, or `none` for nothing. Any other value, including `admin`, is refused at startup. It is a ceiling: on each KB the visitor gets the lower of this and the KB's `default_role` (a `default_role: none` KB stays hidden, a `default_role: read` KB stays read-only, and `default_role: write` never lifts a `read` visitor to write). Unset falls back to the API-key role. |
+| `PYRITE_AUTH_ANONYMOUS_TIER` | unset | What a request that sends no credential may do when auth is enabled (a key or session cookie that does not verify gets `401` instead, whatever this says): `read`, `write`, or `none` for nothing. Any other value, including `admin`, is refused at startup. It is a ceiling: on each KB the visitor gets the lower of this and the KB's `default_role` (a `default_role: none` KB stays hidden, a `default_role: read` KB stays read-only, and `default_role: write` never lifts a `read` visitor to write). Unset falls back to the API-key role. |
 | `PYRITE_AUTH_ALLOW_REGISTRATION` | `true` | Let people create accounts on the web (still closed until an admin exists; see below) |
 | `PYRITE_AUTH_LOGIN_RATE_LIMIT` | `20/minute;200/hour` | `/auth/login` attempts per client (`settings.auth.login_rate_limit`) |
 | `PYRITE_AUTH_LOGIN_RATE_LIMIT_PER_USERNAME` | `5/minute;30/hour` | Failed `/auth/login` attempts per username (`settings.auth.login_rate_limit_per_username`) |
@@ -225,7 +568,8 @@ pyrite-admin user create alice --role admin     # prompts for the password
 ```
 
 `settings.auth.require_invite_code: true` makes registration need a code an
-admin created; the new user gets the code's role. GitHub sign-up obeys the same
+admin created; the new user gets the code's role. How an admin makes a code is in
+[Invite someone](web-ui.md#invite-someone). GitHub sign-up obeys the same
 switches: with registration off or needing an invite code, a first GitHub
 login creates an account only for a member of the provider's `allowed_orgs` or
 of an org in its `org_tier_map`. `pyrite serve` warns at startup when
@@ -253,13 +597,24 @@ without a `default_role`. Changing a user's role does not change this; an
 admin grants or removes it explicitly, for now only through the role API
 (`"global_access": true|false` in `PUT /auth/users/{id}/role`; `GET
 /auth/users` shows each user's value). Users inserted by the
-`deploy/*/create-user.py` scripts get public-KB access only until an admin
-grants it. Migration v26 marks every user that existed before it with global
+`deploy/*/create-user.py` scripts (since replaced by `pyrite-admin user
+create`) get public-KB access only until an admin grants it. Migration v26 marks every user that existed before it with global
 access; its rollback is a no-op, so rolling back and migrating up again grants
 global access to every user present at that time, self-registered ones
 included. To share a KB with every signed-in user,
-set its `default_role` to `read` (which also puts it on the public site, below),
+set its `default_role` to `read` (which also opens it to anonymous readers, below),
 or grant it per user.
+
+**A credential that does not verify is refused, never anonymous.** With auth
+enabled, a wrong, empty, expired or revoked key or session cookie gets `401`
+on REST, `/mcp` and the live-update socket, whatever `anonymous_tier` says.
+Two consequences, both accepted with #1754 (details in
+[REST API](rest-api.md#authenticate)): a request carrying a Bearer token is
+judged by that token alone, so a token a reverse proxy adds for itself is
+refused even next to a valid `X-API-Key`; and two instances on one host share
+the `pyrite_session` cookie name, so signing in to one can clear the other's
+session cookie and sign the user out there. Give each instance its own host
+name.
 
 Per-KB access: each KB in `config.yaml` may carry `default_role: read` (public
 to any authenticated user), `write`, or `none` (private: explicit grants only).
@@ -267,23 +622,87 @@ Grants are managed over the REST API by an admin
 (`GET`/`POST /api/kbs/{name}/permissions`) or in the web UI's KB settings; there
 is no CLI command for them yet.
 
-**`default_role: read` also publishes the KB to anyone, signed in or not.**
-Such a KB is on the pre-rendered public site (`/site`, rendered with
-`POST /api/site/render`), in `/site/sitemap.xml` and in `/sitemap.xml`,
-whatever the auth settings are. A KB with `default_role` unset, `write` or
-`none` is never rendered to `/site`, and `/site` refuses its pages even if an
-older cache still holds them. To take a KB off the public site, change its
-`default_role` and re-render; purge any CDN in front of `/site`.
+**`default_role: read` also opens the KB to anyone, signed in or not.**
+Such a KB is readable by an anonymous visitor over REST and the web app,
+whatever the auth settings are. An instance has no crawlable surface: the
+built-in `/site` renderer, its sitemap and `/robots.txt` were removed in
+#953. To make a KB crawlable, build a static site from its files with Hugo
+or Astro and deploy that on its own.
 
-### The public site's Content-Security-Policy
+### Where a user's write lands (`landing`)
 
-`/site` pages are served with a strict policy (`script-src 'self'`, no inline
-scripts). If a reverse proxy injects a script into those pages, such as an
-analytics snippet, the browser blocks it until you allow it:
+Each KB in `config.yaml` may carry `landing` (ADR-0044):
+
+```yaml
+knowledge_bases:
+  - name: field-notes
+    path: ~/kbs/field-notes
+    landing: review      # canonical (the default) or review
+```
+
+| `landing` | A signed-in user's write | The operator's write |
+|---|---|---|
+| `canonical` (default) | lands on the KB's own files | lands on the KB's own files |
+| `review` | lands in that user's change set (today a per-user git worktree beside the repository, `.pyrite-worktrees/<user>`), reaching the KB's files only by review | lands on the KB's own files |
+
+- The operator is the CLI, stdio MCP, an operator API key and a signed-in
+  global admin. Everyone else is a user.
+- The rule is the same on every surface: every REST write route and every MCP
+  tool, core and plugin.
+- On a `review` KB a write that cannot reach a change set is refused with
+  `LANDING_REFUSED`, and nothing is written: for example, the KB is not in a
+  git repository, or the writer is the anonymous visitor (`anonymous_tier:
+  write`), who has no change set. It never falls back to the KB's own files.
+- Claims and task status follow the rule, so on a `review` KB a claim is the
+  claimer's own until it merges. Keep a KB where agents coordinate (tasks,
+  claims) `canonical`.
+- Only the operator's config file sets `landing`. `kb.yaml`, the index and an
+  untrusted repo-local config cannot: the last is ignored with a warning, and
+  that KB lands canonical. An ephemeral KB is always canonical. A value other
+  than `canonical` or `review`, an empty one included, stops the load.
+- Before 0.26.0 the four REST entry routes sent a non-admin's write to a
+  per-user worktree on every KB. An operator who relied on that sets
+  `landing: review` on those KBs.
+
+### A read-only KB (`read_only: true`)
+
+A KB marked `read_only` takes no write to its files, from any surface and any
+caller, the local operator included. Refused, with `KB_READ_ONLY`:
+
+- every entry write (create, update, delete, rename, link, import), through
+  REST, MCP and the CLI;
+- every MCP tool above the read tier that names the KB, write and admin,
+  core and plugin. The exceptions write no file of the KB: `kb_index_sync`,
+  and `kb_manage`'s `discover`, `validate` and `show_schema`;
+- schema edits (`kb_manage` `add_type`, `remove_type`, `set_schema`) and
+  `pyrite schema migrate` (a `--dry-run` still reports);
+- `kb_commit`, `kb_push` and their REST and CLI forms;
+- `pyrite ids pin` (a `--dry-run` still plans), `pyrite sw migrate-standards
+  --apply` (each entry of a read-only KB is skipped and said so) and
+  `pyrite readme --write`;
+- the admin merge of a user's change set into the KB
+  (`POST /api/admin/merge-queue/{user}/merge`).
+
+Reading, searching, indexing and exporting a read-only KB are unchanged. A
+link stored in a writable KB may point into a read-only one. To change a
+read-only KB, clear `read_only` first, or use git and an editor directly.
+
+### The web app's Content-Security-Policy
+
+Every response that is not the API's (the web UI's page and files,
+`/branding` files, and their 404s, redirects and refusals) carries this
+policy and `X-Content-Type-Options: nosniff`. `/branding` files add
+`sandbox`; the web UI's page adds the build's own script hash. A file served
+from the web UI's bundle is the one that was checked to lie inside it.
+
+The web app's pages are served with a strict policy (`script-src 'self'` plus
+the build's own bootstrap hash, no other inline scripts). If a reverse proxy
+injects a script into those pages, such as an analytics snippet, the browser
+blocks it until you allow it:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PYRITE_SITE_CSP_EXTRA` | unset | Extra sources in CSP syntax, appended to the built-in `/site` policy. Sources go on the directive with the same name; a directive the policy lacks is added. A malformed directive is ignored and logged. |
+| `PYRITE_SITE_CSP_EXTRA` | unset | Extra sources in CSP syntax, appended to the built-in policy. Sources go on the directive with the same name; a directive the policy lacks is added. A malformed directive is ignored and logged. |
 
 ```yaml
 settings:
@@ -301,8 +720,8 @@ Limits on what the setting can do:
 - `object-src` and `base-uri` cannot be extended. A directive that tries is
   ignored, and a warning is logged.
 - Adding `'unsafe-inline'`, `'unsafe-eval'` or `*` to `script-src` or
-  `default-src` is applied, but logs a warning (on the first `/site` request), because it lets
-  script in KB content run on `/site`.
+  `default-src` is applied, but logs a warning (on the first request), because it lets
+  script in KB content run in the app.
 - A directive with no value, such as `upgrade-insecure-requests`, is added
   as is.
 - A malformed directive is ignored and logged. That includes a bad name and
@@ -320,14 +739,10 @@ Limits on what the setting can do:
 `config.yaml` also lists `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
 downloaded on first use).
 
-**The Postgres backend is experimental in 0.25.x.** The alembic chain it
-upgrades through was forked (`alembic upgrade head` failed with "Multiple
-heads"), and revision 007 ([#718](https://github.com/pyrite-wiki/pyrite/issues/718))
-now adds the entry columns an old database lacks (`lifecycle`, `content_hash`,
-`file_mtime_ns`, `file_size`), so a rev-006 database upgrades cleanly. Table
-changes since 006 outside `entry` still have no revision and rely on
-`create_all`, so an existing Postgres database may still not upgrade between
-releases. Nothing in 0.25.x
+**The Postgres backend is experimental.** It has no migration for
+columns added after alembic revision 006, so an existing Postgres database may
+not upgrade between releases
+([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Nothing
 reads the `search_backend` and `database_url` keys yet: the index is always
 SQLite, and only the test suite builds a Postgres backend. If code does
 construct it, Pyrite says so once per process, on stderr and in the server log
@@ -363,11 +778,21 @@ Continue a truncated body with `kb_read_body` (offset-based); see
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `PYRITE_AI_PROVIDER` | unset | `openai` or `anthropic` |
+| `PYRITE_AI_PROVIDER` | unset (`stub`) | `openai`, `anthropic`, `gemini`, `openrouter`, `ollama`, `local`, `stub` or `none`. `stub` and `none` turn AI off. `openai`, `gemini`, `openrouter`, `ollama` and `local` speak the OpenAI API. |
 | `PYRITE_AI_MODEL` | provider default | Model name |
+| `OPENAI_API_BASE` | unset | Base URL for an OpenAI-compatible provider. Same as `settings.ai_api_base` in `config.yaml`, which wins when set. `gemini` defaults to Google's endpoint and `ollama` to `http://localhost:11434/v1`. |
 
-API keys for providers are the providers' own variables (`OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`); Pyrite is bring-your-own-key.
+API keys are the providers' own variables: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+and `GEMINI_API_KEY`. Pyrite is bring-your-own-key. It uses the first of those
+three that is set, whatever the provider, so set only the one you need. `ollama`
+needs no key.
+
+## Output
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PYRITE_FORMAT` | `json` | Default for `--format`: `json`, `yaml` or `rich`. Only commands whose `--format` help names `PYRITE_FORMAT` read it (for example `create`, `link` and the `task` commands); `pyrite search` and `pyrite kb list` ignore it. An explicit `--format` wins. See [json-contracts.md](json-contracts.md). |
+| `PYRITE_SEARCH_FIELDS` | lean default | Comma-separated fields for `pyrite search` rows. `*` returns every field. `--fields` wins. |
 
 ## Plugins
 
@@ -378,7 +803,7 @@ API keys for providers are the providers' own variables (`OPENAI_API_KEY`,
 ## Seeing the effective configuration
 
 ```bash
-pyrite-admin config show    # merged config with secrets masked
+pyrite-admin config show    # merged config with secrets masked (index path included)
 pyrite kb list              # registered KBs and their paths
-curl localhost:8088/health  # server: index path, embedding readiness
+curl localhost:8088/health  # server liveness; embeddings.ready when PYRITE_PREWARM_EMBEDDINGS is on
 ```

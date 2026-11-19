@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from . import effective_status
-from .backends.base_backend import kb_names_clause
+from .backends.base_backend import kb_names_clause, shape_entry_rows
 from .models import Setting
 
 
@@ -27,6 +27,8 @@ class QueryMixin:
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -45,6 +47,8 @@ class QueryMixin:
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
+            entry_types=entry_types or None,
+            exclude_types=exclude_types or None,
             tags=tags,
             date_from=date_from,
             date_to=date_to,
@@ -61,8 +65,12 @@ class QueryMixin:
     def search_by_tag(
         self, tag: str, kb_name: str | None = None, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Search entries by tag."""
-        return self._backend.search_by_tag(tag=tag, kb_name=kb_name, limit=limit)
+        """Search entries by tag. A tag spelled like a timestamp is matched
+        as the index stores it (``query_tag_text``, #987 and #991), on every
+        backend, so the file's own spelling finds the entry."""
+        from .crud import query_tag_text
+
+        return self._backend.search_by_tag(tag=query_tag_text(tag), kb_name=kb_name, limit=limit)
 
     def search_by_date_range(
         self,
@@ -204,6 +212,8 @@ class QueryMixin:
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get timeline events ordered by date."""
         return self._backend.get_timeline(
@@ -215,6 +225,8 @@ class QueryMixin:
             offset=offset,
             sort_order=sort_order,
             kb_names=kb_names,
+            status=status,
+            exclude_status=exclude_status,
         )
 
     def get_global_counts(self, kb_names: set[str] | list[str] | None = None) -> dict[str, int]:
@@ -384,9 +396,12 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )
 
     def find_overdue(
         self,
@@ -427,9 +442,12 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )
 
     def find_by_status(
         self,
@@ -465,9 +483,12 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )
 
     def find_by_location(
         self,
@@ -496,6 +517,9 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )

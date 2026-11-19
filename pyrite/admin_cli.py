@@ -11,13 +11,15 @@ For read-only operations: pyrite-read
 from pathlib import Path
 
 import typer
-from rich.console import Console
 
+from pyrite.cli.output import cli_console, path_line
+
+from .cli.context import require_kb
 from .config import (
-    CONFIG_FILE,
     KBConfig,
     Repository,
     auto_discover_kbs,
+    current_config_file,
     load_config,
     save_config,
 )
@@ -31,7 +33,20 @@ app = typer.Typer(
     no_args_is_help=True,
     epilog=logging_epilog("pyrite-admin"),
 )
-console = Console()
+console = cli_console()
+
+
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """Every pyrite-admin command is the operator's own process
+    (``services.acting``): bound here for the command, as ``pyrite``'s root
+    binds it, so an in-process invocation is the operator too, not only one
+    that went through ``main``."""
+    from .services.acting import OPERATOR, acting_as, local_process
+
+    ctx.with_resource(acting_as(OPERATOR))
+    ctx.with_resource(local_process(True))
+
 
 # =============================================================================
 # Sub-apps
@@ -75,7 +90,7 @@ def kb_list(
 
     for kb in kbs:
         console.print(f"  [bold cyan]{kb.name}[/bold cyan] ({kb.kb_type})")
-        console.print(f"    Path: {kb.path}")
+        console.print(path_line("    Path: ", kb.path))
         if kb.description:
             console.print(f"    {kb.description}")
 
@@ -113,7 +128,7 @@ def kb_add(
 def kb_remove(name: str = typer.Argument(..., help="KB name")):
     """Remove a KB from the registry."""
     config = load_config()
-
+    require_kb(config, name, output_format="rich")
     if not config.get_kb(name):
         console.print(f"[red]Error:[/red] KB '{name}' not found")
         raise typer.Exit(1)
@@ -149,6 +164,7 @@ def kb_discover(path: Path = typer.Argument(".", help="Path to search")):
 def kb_validate(name: str = typer.Argument(..., help="KB name")):
     """Validate a KB configuration."""
     config = load_config()
+    require_kb(config, name, output_format="rich")
     kb = config.get_kb(name)
 
     if not kb:
@@ -182,6 +198,8 @@ def index_build(
     from .services.kb_service import KBService
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
         kb_svc = KBService(config, db)
 
@@ -203,6 +221,8 @@ def index_sync(
     from .services.kb_service import KBService
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
         kb_svc = KBService(config, db)
 
@@ -230,6 +250,8 @@ def index_stats(kb_name: str | None = typer.Argument(None, help="KB name")):
     from .services.kb_service import KBService
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     with index_db_context(config) as db:
         kb_svc = KBService(config, db)
 
@@ -245,12 +267,17 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
 
     from .cli.context import get_config_and_db
     from .services.embedding_service import (
+        EmbeddingModelUnavailableError,
         EmbeddingService,
         is_available,
         semantic_unavailable_for,
     )
     from .utils.install_hints import extra_install_command
 
+    # The KB first (#952): a name that is not a KB is refused before the
+    # dependency check, so the answer names the thing that is wrong.
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
         # Nothing was embedded: refused, exit 1 (#526). `cli_error` keeps the
         # brackets of `pyrite[semantic]` literal; a markup string would not.
@@ -260,14 +287,7 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
             suggestion=f"Install semantic extras: {extra_install_command('semantic')}",
         )
 
-    config, db = get_config_and_db()
     try:
-        if config.get_kb(kb_name) is None:
-            cli_error(
-                f"KB '{kb_name}' not found",
-                error_code="KB_NOT_FOUND",
-                suggestion="run `pyrite-admin kb list` to see registered KBs",
-            )
         if unavailable := semantic_unavailable_for(db):
             # The same cause and remedy `pyrite index embed` gives.
             _, cause, remedy = unavailable
@@ -278,9 +298,19 @@ def index_embed(kb_name: str = typer.Argument(..., help="KB to generate embeddin
             )
         # This called `embed_kb`, which EmbeddingService has never had; the
         # ImportError arm hid that from every run without the extra.
-        stats = EmbeddingService(db, model_name=config.settings.embedding_model).embed_all(
-            kb_name=kb_name
-        )
+        try:
+            stats = EmbeddingService(db, model_name=config.settings.embedding_model).embed_all(
+                kb_name=kb_name
+            )
+        except EmbeddingModelUnavailableError as e:
+            # The finder in `is_available()` saw the package; its first real
+            # import failed. That is a missing dependency, not a bad entry
+            # (#1101).
+            cli_error(
+                str(e),
+                error_code="DEPENDENCY_MISSING",
+                suggestion=extra_install_command("semantic"),
+            )
     finally:
         db.close()
     console.print(
@@ -303,12 +333,19 @@ def index_health():
         kb_svc = KBService(config, db)
 
         health = kb_svc.check_index_health()
-        is_healthy = not (
-            health["missing_files"] or health["unindexed_files"] or health["stale_entries"]
-        )
+        from .services.index_health import health_verdict
 
-        if is_healthy:
+        # The same verdict `pyrite index health` and QA's index check use
+        # (#1119): this command used to ignore duplicates, content_changed and
+        # error-severity off-list values, so it called an index healthy that
+        # the main command called unhealthy.
+        verdict = health_verdict(health)
+        if verdict["status"] == "healthy":
             console.print("[green]Index is healthy.[/green]")
+        elif verdict["status"] == "warning":
+            console.print(
+                "[yellow]Index has warnings; run `pyrite index health` for details.[/yellow]"
+            )
         else:
             console.print("[yellow]Index has issues:[/yellow]")
             if health["missing_files"]:
@@ -317,6 +354,19 @@ def index_health():
                 console.print(f"  Unindexed files: {len(health['unindexed_files'])}")
             if health["stale_entries"]:
                 console.print(f"  Stale entries: {len(health['stale_entries'])}")
+            if health.get("content_changed"):
+                console.print(f"  Content changed: {len(health['content_changed'])}")
+            if health.get("duplicates"):
+                console.print(f"  Duplicate ids: {len(health['duplicates'])}")
+            if health["unreadable_files"]:
+                console.print(f"  Unreadable files: {len(health['unreadable_files'])}")
+            if health["orphaned_entries"]:
+                console.print(f"  Orphaned index entries: {len(health['orphaned_entries'])}")
+            off_list_errors = [
+                row for row in health.get("off_list_values") or [] if row.get("severity") == "error"
+            ]
+            if off_list_errors:
+                console.print(f"  Off-list values: {len(off_list_errors)}")
             raise typer.Exit(1)  # as `pyrite index health` does (#526)
 
 
@@ -351,8 +401,10 @@ def repo_fork(url: str = typer.Argument(..., help="GitHub repo URL to fork")):
     config = load_config()
     with index_db_context(config) as db:
         svc = RepoService(config, db)
-        result = svc.fork(url)
-        console.print(f"[green]Forked and cloned:[/green] {result['name']}")
+        result = svc.fork_and_subscribe(url)
+    if not result.get("success"):
+        cli_error(result.get("error", "Fork failed"), error_code="FORK_FAILED")
+    console.print(f"[green]Forked and cloned:[/green] {result['repo']}")
 
 
 @repo_app.command("sync")
@@ -404,7 +456,7 @@ def repo_status():
 
     for repo in config.repositories:
         console.print(f"  [bold cyan]{repo.name}[/bold cyan]")
-        console.print(f"    Path: {repo.path}")
+        console.print(path_line("    Path: ", repo.path))
         if repo.remote:
             console.print(f"    Remote: {repo.remote}")
         console.print(f"    Branch: {repo.branch}")
@@ -553,16 +605,17 @@ def auth_logout():
 @config_app.command("show")
 def config_show():
     """Show current configuration."""
-    console.print(f"[bold]Config file:[/bold] {CONFIG_FILE}")
-    console.print(f"[bold]Exists:[/bold] {CONFIG_FILE.exists()}")
+    config_file = current_config_file()
+    console.print(path_line("[bold]Config file:[/bold] ", config_file))
+    console.print(f"[bold]Exists:[/bold] {config_file.exists()}")
 
-    if CONFIG_FILE.exists():
+    if config_file.exists():
         config = load_config()
         console.print(f"\n[bold]Knowledge Bases:[/bold] {len(config.knowledge_bases)}")
         console.print(f"[bold]Repositories:[/bold] {len(config.repositories)}")
         console.print(f"[bold]Subscriptions:[/bold] {len(config.subscriptions)}")
         console.print(f"[bold]AI Provider:[/bold] {config.settings.ai_provider}")
-        console.print(f"[bold]Index Path:[/bold] {config.settings.index_path}")
+        console.print(path_line("[bold]Index Path:[/bold] ", config.settings.index_path))
 
 
 @config_app.command("set")
@@ -593,6 +646,8 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
     import json
 
     config = load_config()
+
+    require_kb(config, kb_name, output_format="rich")
     kb = config.get_kb(kb_name)
 
     if not kb:
@@ -600,7 +655,7 @@ def schema_show(kb_name: str = typer.Argument(..., help="KB name")):
         raise typer.Exit(1)
 
     schema = kb.kb_schema
-    agent_schema = schema.to_agent_schema()
+    agent_schema = schema.to_agent_schema(kb_type=kb.kb_type)
 
     typer.echo(json.dumps(agent_schema, indent=2))
 
@@ -696,8 +751,13 @@ def user_create(
 
 
 def main():
+    from .services.acting import OPERATOR, acting_as, local_process
+
     configure_entry_point_logging(app=app)
-    app()
+    # The operator's own tool (`services.acting.OPERATOR`), bound explicitly,
+    # run as the local process (`services.acting.is_local_process`).
+    with acting_as(OPERATOR), local_process(True):
+        app()
 
 
 if __name__ == "__main__":

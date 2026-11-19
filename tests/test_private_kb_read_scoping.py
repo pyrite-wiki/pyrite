@@ -8,6 +8,7 @@ private; this is the gap. Operator API keys (no logged-in user) are not scoped:
 they are the operator's credential.
 """
 
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -20,14 +21,35 @@ from pyrite.services.auth_service import AuthService
 from pyrite.services.kb_service import KBService
 from pyrite.services.link_discovery_service import LinkDiscoveryService
 from pyrite.storage.database import PyriteDB
-from tests.auth_seed import seed_and_sign_in
+from tests.auth_seed import SESSION_COOKIE
 from pyrite.services.access_policy import UNSCOPED
 
 PUBLIC, PRIVATE = "public-kb", "private-kb"
 
 
+@pytest.fixture(scope="module")
+def auth_seed(tmp_path_factory):
+    """Pay password hashing/login once, then copy the real users and sessions.
+
+    This file tests authorization, not password verification. Each test still
+    gets a separate database, permission table, app and KB files. No auth
+    dependency or permission check is mocked or bypassed.
+    """
+    path = tmp_path_factory.mktemp("private-read-auth") / "seed.db"
+    db = PyriteDB(path)
+    try:
+        auth = AuthService(db, AuthConfig(enabled=True, allow_registration=True))
+        tokens = {}
+        for username, role in (("admin-user", "admin"), ("peer", "read")):
+            auth.create_user(username, "password123", role=role)
+            _, tokens[username] = auth.login(username, "password123")
+    finally:
+        db.close()
+    return path, tokens
+
+
 @pytest.fixture
-def env():
+def env(auth_seed):
     # This file sends far more than a hundred requests a minute to routes
     # limited at "100/minute". The limiter's counters are process-global
     # (see `_reset_rate_limiter` in tests/conftest.py, which resets them
@@ -47,6 +69,12 @@ def env():
                 auth=AuthConfig(enabled=True, allow_registration=True, anonymous_tier="read"),
             ),
         )
+        seed_path, tokens = auth_seed
+        with (
+            sqlite3.connect(seed_path) as source,
+            sqlite3.connect(config.settings.index_path) as target,
+        ):
+            source.backup(target)
         app = create_app(config=config)
         db = PyriteDB(config.settings.index_path)
         app.dependency_overrides[get_config] = lambda: config
@@ -84,17 +112,20 @@ def env():
             # denied the default_role: none KB.
             c = TestClient(app)
             if username:
-                seed_and_sign_in(c, username, "password123", role="read")
+                c.cookies.set(SESSION_COOKIE, tokens[username])
             return c
 
         # admin and peer are seeded via the operator path.
         admin = TestClient(app)
-        seed_and_sign_in(admin, "admin-user", "password123", role="admin")
+        admin.cookies.set(SESSION_COOKIE, tokens["admin-user"])
         peer = client_for("peer")
         anon = client_for(None)
         try:
             yield {"admin": admin, "peer": peer, "anon": anon, "db": db, "config": config}
         finally:
+            admin.close()
+            peer.close()
+            anon.close()
             db.close()
 
 
@@ -663,6 +694,34 @@ class TestAIRoutesOnlySeeReadableKBs:
         assert seen.get("kb_names") is None
 
 
+class TestOrientKbAuthoredTextFollowsTheReadCheck:
+    """REST orient returns the private KB's own `kb.yaml` text under
+    `kb_authored` (#1369) only past `authorize(KB_READ)`, the check the rest
+    of orient uses."""
+
+    MARK = "Private guideline: the vault code is 0451."
+
+    def _plant(self, env):
+        kb = next(k for k in env["config"].knowledge_bases if k.name == PRIVATE)
+        kb.kb_yaml_path.write_text(f"name: {PRIVATE}\nguidelines:\n  vault: '{self.MARK}'\n")
+        kb.invalidate_schema_cache()
+
+    @pytest.mark.control(reason="authorize(KB_READ) on the orient route already refuses")
+    @pytest.mark.parametrize("who", ["peer", "anon"])
+    def test_a_caller_without_read_gets_404_and_no_text(self, env, who):
+        self._plant(env)
+        r = env[who].get(f"/api/kbs/{PRIVATE}/orient")
+        assert r.status_code == 404
+        assert self.MARK not in r.text
+
+    def test_a_caller_who_may_read_gets_it_labelled_as_the_kbs(self, env):
+        self._plant(env)
+        body = env["admin"].get(f"/api/kbs/{PRIVATE}/orient").json()
+        assert body["kb_authored"]["guidelines"] == {"vault": self.MARK}
+        assert "not instructions from Pyrite" in body["kb_authored"]["notice"]
+        assert self.MARK not in str(body["pyrite_guidance"])
+
+
 class TestWhoCanSee:
     def test_admin_sees_everything(self, env):
         assert _kb_names(env["admin"].get("/api/kbs")) == {PUBLIC, PRIVATE}
@@ -778,3 +837,20 @@ def test_admin_timeline_and_tags_still_include_the_private_kb(env):
     assert {e["id"] for e in timeline.json()["events"]} == {"public-event", "secret-event"}
     tags = env["admin"].get("/api/tags")
     assert "confidential/operation-zebra" in {t["name"] for t in tags.json()["tags"]}
+
+
+@pytest.mark.control(
+    reason="control: guards the report cache; without the cache every read is fresh"
+)
+@pytest.mark.parametrize("route", ["/api/qa/validate", "/api/qa/status"])
+def test_a_qa_report_built_for_an_admin_is_not_served_to_an_anonymous_reader(env, route):
+    """QA reports are reused for a minute; a report is keyed by the readable
+    set it was built for, so the admin's full inventory never answers anon."""
+    full = env["admin"].get(route)
+    assert full.status_code == 200, full.text
+    anon = env["anon"].get(route)
+    assert anon.status_code == 200, anon.text
+    assert PRIVATE in full.text or route.endswith("status")
+    assert PRIVATE not in anon.text and "secret" not in anon.text
+    if route.endswith("status"):
+        assert anon.json()["total_entries"] < full.json()["total_entries"]

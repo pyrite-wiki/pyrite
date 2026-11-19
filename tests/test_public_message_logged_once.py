@@ -14,6 +14,9 @@ subprocess with a planted command body that raises (``tests/outcome_walk.py``),
 Two source scans: none reads
 ``.public_message`` but the helper, and every logger passed as ``log=`` is under
 ``pyrite`` (so ``configure_logging`` controls it).
+
+
+Rule and contributor guidance: ../CONTRIBUTING.md#architecture
 """
 
 from __future__ import annotations
@@ -35,6 +38,7 @@ from pyrite.exceptions import (
     ConfigFileUnreadableError,
     ConfigSaveRefusedError,
     KBAlreadyExistsError,
+    KBConfigInvalidError,
     PluginError,
     PyriteError,
     StorageError,
@@ -65,6 +69,12 @@ CLASSES = [
     ConfigFileUnreadableError,
 ]
 
+#: Classes that set ``public_message`` equal to ``str()``: the constructor
+#: takes no text, so nothing is masked and nothing is logged. Set so that no
+#: reader can fall back to a text that quotes what the class is about (a
+#: kb.yaml's bytes, #1547). Reviewed here, and pinned equal below.
+FIXED_TEXT_CLASSES = [KBConfigInvalidError]
+
 
 @pytest.mark.control(reason="pins that CLASSES covers every masking class; true before the change")
 def test_the_class_list_is_every_class_that_sets_a_public_message():
@@ -76,9 +86,21 @@ def test_the_class_list_is_every_class_that_sets_a_public_message():
     setters = {c for c in subclasses(PyriteError) if "public_message" in vars(c)}
     masking = {c for c in setters if c.public_message is not None}
     # every masking class is one of ours or a subclass of one (inherits the text)
-    assert all(issubclass(c, tuple(CLASSES)) for c in masking), masking
+    assert all(issubclass(c, tuple(CLASSES + FIXED_TEXT_CLASSES)) for c in masking), masking
     # a masking class that sets an empty string would show nothing at all
     assert all(c.public_message.strip() for c in masking), masking
+
+
+@pytest.mark.parametrize("cls", FIXED_TEXT_CLASSES, ids=lambda c: c.__name__)
+def test_a_fixed_text_class_shows_one_text_everywhere(cls, caplog):
+    """``str()`` is ``public_message``, so every print site -- ``public_text``
+    or a bare ``str(e)`` -- shows the same sentence, and ``public_text`` has
+    nothing of its own to log."""
+    from pyrite.exceptions import public_text
+
+    exc = cls()
+    assert str(exc) == cls.public_message
+    assert public_text(exc, already_logged=True, local=True) == cls.public_message
 
 
 _DRIVER = """
@@ -438,11 +460,15 @@ def test_an_extension_s_masked_error_obeys_the_configured_level(restore_pyrite_l
 
 
 def test_a_failed_bulk_link_save_logs_its_cause_once(tmp_path, caplog):
+    """A real write failure, not an injected one: since #955 (B6 P4) the
+    links are written by the operation write, whose publish takes a lock in
+    the KB's git directory. A ``.git`` file that points at a directory which
+    is not a repository is a lock-directory error naming that path; the
+    service reports it as a ``StorageError`` (the path stays out of every
+    per-position error) and the cause is logged once."""
     from pyrite.config import KBConfig, PyriteConfig, Settings
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
-    from pyrite.storage.document_manager import DocumentManager
-    from pyrite.storage.index import IndexManager
 
     kb = tmp_path / "kb"
     kb.mkdir()
@@ -452,22 +478,20 @@ def test_a_failed_bulk_link_save_logs_its_cause_once(tmp_path, caplog):
     )
     db = PyriteDB(config.settings.index_path)
 
-    class FailingSave(DocumentManager):
-        """The injection point KBService takes: a save that fails on cue."""
-
-        def save_entry(self, *args, **kwargs):
-            raise StorageError(DETAIL)
-
     try:
-        KBService(config, db).create_entry("kb", "a", "A", "note", "body")
-        svc = KBService(config, db, doc_mgr=FailingSave(db, IndexManager(db, config)))
+        svc = KBService(config, db)
+        svc.create_entry("kb", "a", "A", "note", "body")
+        (kb / ".git").write_text(f"gitdir: {DETAIL}\n", encoding="utf-8")
         links = [{"source": "a", "target": f"t{i}"} for i in range(3)]
         with caplog.at_level(logging.DEBUG):
             results = svc.add_links("kb", links)
     finally:
         db.close()
     assert [r["status"] for r in results] == ["failed"] * 3
-    assert all(r["error"] == StorageError.public_message for r in results)
+    # The reason (an unusable lock directory) is named; the path is not
+    # (#975 review: `HardLinked`/`LockDirError` carry a public message).
+    assert all("lock directory" in r["error"] and DETAIL not in r["error"] for r in results)
+    assert all(r["error"] != StorageError.public_message for r in results)
     assert len(_causes(caplog)) == 1, [(r.name, r.levelname) for r in _causes(caplog)]
 
 

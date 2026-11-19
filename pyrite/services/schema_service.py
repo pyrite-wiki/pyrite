@@ -1,10 +1,28 @@
-"""Schema provisioning service — programmatic management of kb.yaml type schemas."""
+"""Schema provisioning service — programmatic management of kb.yaml type
+schemas, and the schema migration of a KB's entry files."""
 
 from typing import Any
 
 from pyrite.config import KBConfig, PyriteConfig
-from pyrite.exceptions import KBNotFoundError
-from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
+from pyrite.exceptions import KBNotFoundError, ValidationError, outside_text
+from pyrite.utils.yaml import read_kb_yaml
+
+
+def migration_operations(before: dict[str, Any], after: dict[str, Any]) -> list[Any]:
+    """The operations that take the frontmatter values ``before`` to
+    ``after``: a ``Set`` per key added or changed (in ``after``'s order), an
+    ``Unset`` per key dropped. A key whose value is equal is not named, so
+    its bytes stay."""
+    from pyrite.storage.file_operations import Set, Unset
+
+    ops: list[Any] = []
+    for key, value in after.items():
+        if key not in before or before[key] != value:
+            ops.append(Set(key, value))
+    for key in before:
+        if key not in after:
+            ops.append(Unset(key))
+    return ops
 
 
 class SchemaService:
@@ -32,14 +50,28 @@ class SchemaService:
             )
 
     def _load_kb_yaml(self, kb: KBConfig) -> dict[str, Any]:
-        """Load kb.yaml, returning empty dict if missing."""
-        if kb.kb_yaml_path.exists():
-            return load_yaml_file(kb.kb_yaml_path)
-        return {}
+        """Load kb.yaml, returning empty dict if missing. Read only inside the
+        KB: a kb.yaml that is a link out of it, or a hard link, raises
+        ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``), so no schema
+        command shows it or writes it back into the KB. One that cannot be
+        loaded as a mapping raises ``KBConfigInvalidError`` before any write,
+        so ``add``, ``remove`` and ``set`` never rewrite it (#1547)."""
+        return read_kb_yaml(kb.path)
 
     def _save_kb_yaml(self, kb: KBConfig, data: dict[str, Any]) -> None:
-        """Save kb.yaml and refresh in-memory config."""
-        dump_yaml_file(data, kb.kb_yaml_path)
+        """Save kb.yaml and refresh in-memory config. A kb.yaml that is a link
+        to a file outside the KB is refused, not written through
+        (``KBFileOutsideRootError``).
+
+        Every kb.yaml write passes here, so a KB marked read_only refuses
+        them all, from every surface; `migrate_entries` refuses its entry
+        writes itself.
+        """
+        kb.refuse_writes()
+        from pyrite.utils.kb_files import KBFiles
+        from pyrite.utils.yaml import dump_yaml_text
+
+        KBFiles(kb.path).write_bytes(kb.kb_yaml_path, dump_yaml_text(data).encode("utf-8"))
         kb.load_kb_yaml()
 
     def show_schema(self, kb_name: str) -> dict[str, Any]:
@@ -129,3 +161,101 @@ class SchemaService:
 
         type_count = len(data.get("types", {}))
         return {"set": True, "kb_name": kb_name, "type_count": type_count}
+
+    def migrate_entries(
+        self, kb_name: str, *, entry_type: str | None = None, dry_run: bool = False
+    ) -> dict[str, Any]:
+        """Migrate the KB's entry files to their type's schema version.
+
+        Each entry whose ``_schema_version`` is behind its type's gets the
+        registered migration chain applied to its frontmatter values, and
+        the difference (a ``Set`` per key the chain added or changed, an
+        ``Unset`` per key it dropped, ``_schema_version`` set to the type's
+        version) is written onto the file's own bytes with ``apply`` and
+        published with compare-and-replace (#955, B6 P4). Every other byte
+        stays as written. ``dry_run`` counts and writes nothing.
+
+        Returns ``checked`` (files read and judged), ``migrated`` (files
+        behind, written unless ``dry_run``) and ``errors`` (``path`` and
+        ``error`` per file that could not be read, judged, migrated or
+        written; such a file is neither checked nor migrated, and keeps its
+        bytes). The version is stamped only on a result that was written:
+        a migration that raises is an error, never a stamp, so the file is
+        tried again next time (#978 review, item 2). The written files are
+        not re-indexed here; the caller says to run ``pyrite index sync``.
+        """
+        import copy
+
+        from pyrite.migrations import get_migration_registry, load_plugin_migrations
+        from pyrite.storage.entry_writer import publish_entry_text
+        from pyrite.storage.file_operations import FrontmatterSpan, apply
+        from pyrite.storage.repository import KBRepository
+        from pyrite.utils.frontmatter import Frontmatter, describe, split_frontmatter
+        from pyrite.utils.yaml import load_yaml
+
+        kb = self._get_kb(kb_name)
+        if not dry_run:
+            # It rewrites entry files under the KB's root: a read-only KB
+            # takes no write, as `_save_kb_yaml` refuses for kb.yaml.
+            kb.refuse_writes()
+        repo = KBRepository(kb)
+        checked = 0
+        migrated = 0
+        errors: list[dict[str, str]] = []
+        load_plugin_migrations()
+        registry = get_migration_registry()
+
+        for file_path in repo.list_files():
+            try:
+                # Inside the KB (``_read_inside``): a link out of it, or a hard
+                # link, is an OUTSIDE_KB_ROOT error here, and nothing it holds
+                # (a parse error quoting its text) reaches the report.
+                raw = repo._read_inside(file_path)
+                text = raw.decode("utf-8")
+                split = split_frontmatter(text)
+                if not isinstance(split, Frontmatter):
+                    raise ValidationError(f"no frontmatter ({describe(split)})")
+                values = load_yaml(split.text)
+                if not isinstance(values, dict):
+                    raise ValidationError("the frontmatter is not a mapping")
+                type_name = values.get("type", "")
+                if entry_type and type_name != entry_type:
+                    continue
+
+                type_schema = kb.kb_schema.get_type_schema(type_name)
+                target = type_schema.version if type_schema else 0
+                entry_sv = int(values.get("_schema_version", 0))
+                needs_save = target > 0 and entry_sv != target
+
+                if needs_save and not dry_run:
+                    # The registry's chain runs on a deep copy, so a
+                    # migration that changes its input in place cannot
+                    # change `before` too (the shallow copy lost such a
+                    # change: only the version was stamped); one that
+                    # raises reaches the `except` below and nothing is
+                    # written. A type with no registered function gets the
+                    # version alone, as the load-time chain gives it.
+                    before = copy.deepcopy(values)
+                    after = copy.deepcopy(values)
+                    if registry.has_migrations(type_name):
+                        after = registry.apply(type_name, after, entry_sv, target)
+                    after["_schema_version"] = target
+                    ops = migration_operations(before, after)
+                    span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+                    new_text, _report = apply(text, ops, span)
+                    publish_entry_text(file_path, new_text, expect=raw, root=kb.path)
+                # Counted after the write: a file that failed to write was
+                # neither checked nor migrated.
+                checked += 1
+                if needs_save:
+                    migrated += 1
+            except Exception as e:
+                errors.append({"path": str(file_path), "error": outside_text(e)})
+
+        return {
+            "kb_name": kb_name,
+            "dry_run": dry_run,
+            "checked": checked,
+            "migrated": migrated,
+            "errors": errors,
+        }

@@ -4,7 +4,7 @@ Pyrite exposes an MCP (Model Context Protocol) server that Google's Gemini CLI c
 
 ## Prerequisites
 
-- Pyrite installed from source (`pip install -e .` — no PyPI wheel yet)
+- Pyrite installed from source (`pip install -e ".[all]"` — no PyPI wheel yet; a bare `pip install -e .` has no CLI, so `pyrite init` and `pyrite mcp` fail)
 - At least one knowledge base initialized (`pyrite init`)
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli) installed
 
@@ -42,17 +42,20 @@ For read-only access:
 
 ### HTTP/SSE transport (remote Pyrite instance)
 
-`pyrite serve` always mounts the MCP server at `/mcp` (no separate flag needed). If you're running `pyrite serve` on a remote server:
+`pyrite serve` mounts an MCP server over SSE at `GET /mcp/sse` (messages go to `POST /mcp/messages/`). Nothing answers at `/mcp` itself, and every request needs `Authorization: Bearer <key>` or `X-API-Key: <key>` unless the server has no auth. Gemini CLI's `url` setting is its SSE transport:
 
 ```json
 {
   "mcpServers": {
     "pyrite": {
-      "url": "http://localhost:8088/mcp"
+      "url": "http://<host>:8088/mcp/sse",
+      "headers": {"Authorization": "Bearer <key>"}
     }
   }
 }
 ```
+
+The tier you get is the role of that key (see **Tool not available** below).
 
 ### Optional settings
 
@@ -122,4 +125,4 @@ You should see Gemini call `kb_list` and return your knowledge bases.
 
 **Tools not showing up** -- Restart Gemini CLI after editing `settings.json`. The config is read at startup.
 
-**Tool not available** -- Check the tier. `pyrite mcp` (used above) defaults to `write` if `--tier` is omitted; the separate `pyrite-server` binary defaults to `read` instead -- always pass `--tier` explicitly rather than relying on either default. Use `--tier admin` if you need index and git operations.
+**Tool not available** -- Check the tier. Over stdio, `pyrite mcp` and `pyrite-admin mcp` default to `write` if `--tier` is omitted; pass `--tier admin` if you need index and git operations. Over HTTP there is no tier option (`pyrite-server` has none): the tier is the role of the API key or user you connect with, and it is `admin` when the server has no credentials at all.

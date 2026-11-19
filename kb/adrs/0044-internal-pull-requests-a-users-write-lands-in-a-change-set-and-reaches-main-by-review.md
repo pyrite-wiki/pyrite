@@ -47,7 +47,13 @@ links:
 > decided on 2026-10-02 for now: **every authorised write lands on the
 > canonical files and worktree routing is off.** Nothing here is built until
 > the maintainer says so; multi-user stays experimental and local use by one
-> operator comes first. It depends on ADR-0039 (where the per-KB `landing`
+> operator comes first.
+>
+> **Revised 2026-10-20** (still proposed; the maintainer's decisions on
+> markramm/pyrite-security#110): the landing rule of §1 and its one write
+> factory are **built**, ahead of the rest of step 1. Default `canonical`; a
+> signed-in global admin is the operator; claims follow the rule. See
+> "§1 as built" below. It depends on ADR-0039 (where the per-KB `landing`
 > field lives), ADR-0042 (where a single-entry read comes from and which hash it
 > returns) and ADR-0043 (the operator's plane). Code references are `origin/dev`
 > at `ed71b8b0`. The git experiments ran on git 2.39.5; the scripts and their
@@ -182,8 +188,10 @@ set whose author has submitted it.
 | Principal | KB `landing: canonical` (the default) | KB `landing: review` |
 |---|---|---|
 | The operator (CLI, stdio MCP, operator credential) | Canonical | Canonical |
+| A signed-in global admin (a session, not a key; 2026-10-20) | Canonical | Canonical |
 | User with a write grant | Canonical | That user's change set |
 | Anonymous (the policy grants it no write) | Deny | Deny |
+| Anonymous with `anonymous_tier: write` (as built, 2026-10-20) | Canonical | Deny: no user to own a change set |
 | No write permission | Deny | Deny |
 
 - `landing` is a per-KB policy field set by the operator **in the config file**
@@ -206,6 +214,73 @@ set whose author has submitted it.
   copy cannot be created), the write is refused. It never falls back to
   canonical.
 - Every write response says where it landed.
+- **Claims follow the rule** (decided 2026-10-20). A claim on a
+  `landing: canonical` KB is the shared compare-and-swap on main, as now. A
+  claim on a `landing: review` KB lands in the claimer's change set like any
+  other write: other users do not see it until it merges, so two users can
+  each hold a claim on the same task there. An operator who wants claims
+  shared keeps that KB canonical.
+
+#### §1 as built (2026-10-20)
+
+- **The field.** `KBConfig.landing`, `canonical | review`, default
+  `canonical`, read from and written to the operator's `config.yaml` only. An
+  unknown value is a `ConfigError` at load. An index registry row cannot set
+  it: a KB the config file does not list is canonical. An ephemeral KB is
+  always canonical (it has no history to hold a change set); `landing:
+  review` on one is a `ConfigError`.
+- **The rule.** `AccessPolicy.lands_in(principal, kb) -> Landing.CANONICAL |
+  CHANGE_SET | DENY` (`pyrite/services/access_policy.py`). Deny is anything
+  `authorize(principal, KB_WRITE, kb)` refuses; the operator is
+  `is_operator(principal)`: the local process, an operator API key, a
+  signed-in global admin.
+- **The factory.** `services.write_target.write_target(config, db, principal,
+  kb)` returns the `(config, db)` the write is made with, or raises
+  `LandingRefusedError` (`LANDING_REFUSED`) when there is no place to land:
+  Deny, a change set with no git repository, no user to own it. REST asks it
+  once per request in `requires_kb_tier("write")`, which every REST route that
+  writes KB files passes through, and builds `get_kb_service` and
+  `get_task_service` from the result. HTTP and stdio MCP ask in
+  `_dispatch_tool`, the one dispatch every tool, core and plugin, passes
+  through, and bind the target for that one call
+  (`write_target.binding`, a contextvar): the shared per-tier server's
+  services and the process-wide `PluginContext` (`config`, `db`, and the new
+  `kb_service`) read the bound target while it is bound. The CLI is the
+  operator and lands canonical.
+- **Index-only writers.** `investigation_start`, `investigation_ftm_import`
+  and `investigation_bulk_edges` wrote entry rows with no file. Over MCP they
+  now write through the KB service, so their entries are files that land by
+  the rule; the CLI keeps the index-only path (the operator, canonical).
+- **Nothing reaches main through the overlay.** The change-set index handle
+  (`WorktreeDB`) forwards only what it classifies: reads to main (each read
+  checked by a direct-call write scan, a ratchet with known blind spots),
+  `execute_sql` only for a read (a `WITH ... UPDATE` or an assigning `PRAGMA`
+  still passes the guard; a follow-up closes it), rows rebuilt
+  from files and git (`register_kb`, entry versions) to the diff index,
+  instance-level writes refused, an unclassified name an error.
+- **No record is lost at merge (decided 2026-10-20, fail closed).** A
+  database-only record -- a review verdict (`create_review`, `delete_review`),
+  a raw SQL write -- has no file behind it (core paths; the plugin side
+  tables `wiki_submit_review`, `social_vote` and the `social_post` reputation
+  hook still write main through the raw handle, tracked separately), and the merge discards the diff
+  index, so from a change-set target it is refused with `LANDING_REFUSED`,
+  naming what was refused and that it is available to the operator or after
+  the merge. `sw_review`, whose file transition comes before its review
+  record, is refused before it starts; `POST`/`DELETE /api/reviews` on a
+  `landing: review` KB are refused. Carrying such records through a merge is
+  a follow-up. Before
+  this, a change-set update's `register_kb` repointed main's `kb` row at the
+  user's worktree. Plugin side tables written through main's raw connection
+  are a tracked follow-up.
+- **REST fails closed.** A write-method request whose route never asked the
+  rule is refused for anyone but the operator; routes that only read take
+  `get_read_kb_service`.
+- **Stopgap: a change set is still the per-user worktree.** Until the rest of
+  step 1 lands, a change set is backed by ADR-0024's working copy
+  (`WorktreeService`: branch `user/<name>` in `.pyrite-worktrees/` beside the
+  repository, uncommitted until submit, one per user and KB), with its known
+  faults (P3, P9 above). The rule and the factory are the part that stays;
+  the working copy behind `CHANGE_SET` is what step 1 replaces.
 
 ### 2. The change set and its working copy
 
@@ -486,7 +561,7 @@ is `main`.
 
 | Step | What | Needs first |
 |---|---|---|
-| 0 | **Routing off** (decided 2026-10-02): `lands_in` exists and returns canonical; the four REST routes stop routing; the worktree endpoints answer "not enabled". Any existing `user/*` branch is merged or kept as a ref first. | — |
+| 0 | **Routing off** (decided 2026-10-02): `lands_in` exists and returns canonical; the four REST routes stop routing; the worktree endpoints answer "not enabled". Any existing `user/*` branch is merged or kept as a ref first. *Built 2026-10-20 as the rule itself:* the four routes no longer decide; on a `landing: canonical` KB (the default) every surface lands canonical, and `landing: review` routes every surface to the change set. The worktree endpoints are unchanged. | — |
 | 1 | **One seam, a correct working copy** (the architect's option C, in this ADR's terms). `landing` in the config file (ADR-0039); the write-target factory under every surface; a change set as a ref under `refs/pyrite/changes/`; a commit per write; the merge of section 5; close instead of reset. Invariants L1 to L3, W1 to W5, M1 to M3, M5, P2. Behind `landing: review`, off by default. | The entry-point inventory (`tests/_surface_inventory.py`, landed with ADR-0037 theme 0), which L1 is generated from. ADR-0039 (a KB listed in the file has its `landing`). |
 | 2 | **Reads.** Blob-at-tip single reads, tombstones, every read family, the update of a behind change set, author-only events. R1 to R3, M4. | ADR-0042 decisions 9 to 11 (a single-entry read reads the file; its hash; writes return the new hash). ADR-0038 step 3 (sticky location): on `2e5d72e7` a one-field update moved the file into `notes/`, so a change's diff was a delete and an add. |
 | 3 | **Rows from refs, and the doc.** P1; the walkthrough above as the running test; the web changes and merge-queue pages rewritten on the new endpoints. | Steps 1 and 2. |

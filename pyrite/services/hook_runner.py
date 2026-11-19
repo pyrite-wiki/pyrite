@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..models import Entry
+    from ..plugins.context import PluginContext
     from ..plugins.registry import PluginRegistry
 
 logger = logging.getLogger(__name__)
@@ -72,23 +73,23 @@ class HookRunner:
     # Dispatch
     # ------------------------------------------------------------------
 
-    def run_before_save(self, entry: Entry, context: dict[str, Any]) -> Entry:
+    def run_before_save(self, entry: Entry, context: PluginContext | dict[str, Any]) -> Entry:
         return self._run("before_save", entry, context)
 
-    def run_after_save(self, entry: Entry, context: dict[str, Any]) -> Entry:
+    def run_after_save(self, entry: Entry, context: PluginContext | dict[str, Any]) -> Entry:
         return self._run("after_save", entry, context)
 
-    def run_before_delete(self, entry: Entry, context: dict[str, Any]) -> Entry:
+    def run_before_delete(self, entry: Entry, context: PluginContext | dict[str, Any]) -> Entry:
         return self._run("before_delete", entry, context)
 
-    def run_after_delete(self, entry: Entry, context: dict[str, Any]) -> Entry:
+    def run_after_delete(self, entry: Entry, context: PluginContext | dict[str, Any]) -> Entry:
         return self._run("after_delete", entry, context)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _run(self, hook_name: str, entry: Entry, context: dict[str, Any]) -> Entry:
+    def _run(self, hook_name: str, entry: Entry, context: PluginContext | dict[str, Any]) -> Entry:
         """Run all hooks for ``hook_name`` honoring the raise/swallow contract.
 
         This is the ONLY place that implements the before-raises/

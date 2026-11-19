@@ -5,19 +5,21 @@ Commands: build, sync, stats, embed, health
 """
 
 import logging
+from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.table import Table
+from typer.core import TyperCommand
 
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
-from .context import cli_db_context, get_config_and_db
-from .output import validate_output_format
+from .context import cli_db_context, get_config_and_db, require_kb
+from .outcome import Outcome, OutcomeKind
+from .output import OUTPUT_FORMAT_UNASKED, cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
 
 index_app = typer.Typer(help="Search index management")
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str) -> str | None:
@@ -68,6 +70,60 @@ def _embed_counts(stats: dict, from_queue: int, force: bool) -> tuple[int, int, 
     return stats["embedded"] + from_queue, max(0, skipped), max(0, -skipped)
 
 
+def _print_file_links(results: dict, out=None) -> None:
+    """The in-KB symbolic links a reconcile reported (#1262), for `index sync`
+    and `kb reindex`: aliases (another name for an entry file, never indexed
+    themselves) and dangling links (nothing at the path they name). Both are
+    the user's files and are left as they are."""
+    out = out or console
+    for key, heading, style in (
+        ("aliases", "Aliases: {n} (in-KB links to an entry file; not indexed themselves)", ""),
+        (
+            "dangling_links",
+            "Dangling links: {n} (in-KB links to a missing file; left as they are)",
+            "yellow",
+        ),
+    ):
+        rows = results.get(key, [])
+        if not rows:
+            continue
+        line = heading.format(n=len(rows))
+        out.print(f"  [{style}]{line}[/{style}]" if style else f"  {line}")
+        for row in rows[:5]:
+            out.print(
+                f"    • {row['kb']}: {row['path']} -> {row['target']}",
+                markup=False,
+                highlight=False,
+            )
+        if len(rows) > 5:
+            out.print(f"    [dim]… and {len(rows) - 5} more[/dim]")
+
+
+def _could_not_reach(results: dict) -> int:
+    """How many folders and files a reconcile could not reach (#1546): each
+    counts as a failed item for ``exit_unless_whole``, so a sync, build or
+    reindex that could not reach something does not exit 0."""
+    return len(results.get("unreadable_folders") or []) + len(results.get("unreadable_files") or [])
+
+
+def _print_unreadable_folders(results: dict, indent: str = "  ", out=None) -> None:
+    """The folders a reconcile could not list, each KB-relative (#1546): the
+    rows under them were kept. For `index sync`, `index build` and `kb
+    reindex`; the local CLI names them, a network caller gets a count."""
+    out = out or console
+    rows = results.get("unreadable_folders") or []
+    if not rows:
+        return
+    out.print(
+        f"{indent}[red]Unreadable folders: {len(rows)} (could not be listed; "
+        "the rows under them are kept)[/red]"
+    )
+    for row in rows[:10]:
+        out.print(f"{indent}  • {row['kb']}: {row['path']}", markup=False, highlight=False)
+    if len(rows) > 10:
+        out.print(f"{indent}  [dim]… and {len(rows) - 10} more[/dim]")
+
+
 def _duplicate_lines(duplicates: list[dict], limit: int = 10) -> list[str]:
     """One line per id held by several files, the indexed file first.
 
@@ -100,6 +156,7 @@ def index_build(
     from ..storage import IndexManager
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
 
     if background:
         from ..services.index_worker import IndexWorker
@@ -145,6 +202,14 @@ def index_build(
         git_service = GitService()
         console.print("[dim]Building index with git attribution...[/dim]")
 
+    from ..exceptions import public_text
+    from ..utils.kb_files import KB_YAML_REFUSALS
+
+    unreadable: list[str] = []
+    built = 0
+    # What each rebuild could not reach (#1546): named below, and counted
+    # as failed for the exit code.
+    reports: list[dict] = []
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -165,14 +230,43 @@ def index_build(
 
                 return update_progress
 
-            if with_attribution and git_service:
-                count = index_mgr.index_with_attribution(
-                    kb.name, git_service, progress_callback=make_progress_callback(task)
+            report: dict = {}
+            try:
+                if with_attribution and git_service:
+                    count = index_mgr.index_with_attribution(
+                        kb.name,
+                        git_service,
+                        progress_callback=make_progress_callback(task),
+                        report=report,
+                    )
+                else:
+                    count = index_mgr.index_kb(kb.name, make_progress_callback(task), report=report)
+            except KB_YAML_REFUSALS as exc:
+                # Not rebuilt, its rows kept; the others go on (#1542). Also a
+                # kb.yaml that does not load, KB_CONFIG_INVALID (#1547).
+                unreadable.append(kb.name)
+                progress.update(
+                    task, description=f"[red]✗[/red] {kb.name}: {public_text(exc)}", total=1
                 )
-            else:
-                count = index_mgr.index_kb(kb.name, make_progress_callback(task))
+                continue
+            built += 1
+            reports.append(report)
             progress.update(task, description=f"[green]✓[/green] {kb.name}: {count} entries")
 
+    could_not_reach = 0
+    for report in reports:
+        _print_unreadable_folders(report)
+        files = report.get("unreadable_files") or []
+        if files:
+            console.print(
+                f"  [red]Unreadable files: {len(files)} (could not be read; "
+                "their rows are kept)[/red]"
+            )
+            for row in files[:10]:
+                console.print(path_line("    • ", _kb_relative(config, row["path"]), style="dim"))
+        could_not_reach += _could_not_reach(report)
+    if unreadable:
+        console.print(f"\n[red]Not rebuilt (unreadable): {', '.join(unreadable)}[/red]")
     console.print("\n[green]Index build complete.[/green]")
 
     # Auto-embed after build if embeddings are available
@@ -199,9 +293,52 @@ def index_build(
         except Exception:
             logger.debug("Embedding not available, skipping")
 
+    exit_unless_whole(len(unreadable) + could_not_reach, built)
 
-@index_app.command("sync")
+
+def _kb_relative(config, path_text: str) -> Path:
+    """``path_text`` below the KB that holds it, for a line of output."""
+    path = Path(path_text)
+    for kb in config.all_kbs():
+        if path.is_relative_to(kb.path):
+            return path.relative_to(kb.path)
+    return path
+
+
+class _SyncCommand(TyperCommand):
+    """`index sync`, refusing the option combinations it cannot run while
+    click parses: a usage error (``USAGE_ERROR``, exit 2), as before the
+    command moved onto the outcome contract, where a refusal raised from the
+    body is a ``PyriteError`` (ADR-0046: the body has no usage errors)."""
+
+    def parse_args(self, ctx, args):
+        rest = super().parse_args(ctx, args)
+        params = ctx.params
+        if params.get("background") and params.get("verify"):
+            raise typer.BadParameter("--verify cannot be combined with --background", ctx=ctx)
+        if params.get("background") and params.get("confirm"):
+            raise typer.BadParameter("--confirm cannot be combined with --background", ctx=ctx)
+        names = params.get("names")
+        if names and not params.get("confirm"):
+            raise typer.BadParameter(
+                f"unexpected argument {names[0]!r}: entry names are read only with --confirm",
+                ctx=ctx,
+            )
+        if params.get("confirm") and not params.get("kb_name"):
+            raise typer.BadParameter(
+                "--confirm needs the KB the entries are in: pass -k/--kb", ctx=ctx
+            )
+        return rest
+
+
+@index_app.command("sync", cls=_SyncCommand)
 def index_sync(
+    names: list[str] | None = typer.Argument(
+        None,
+        metavar="[NAME]...",
+        help="With --confirm: the ids or KB-relative paths of the entries to confirm.",
+        show_default=False,
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to sync (all if omitted)"),
     no_embed: bool = typer.Option(False, "--no-embed", help="Skip auto-embedding after sync"),
     background: bool = typer.Option(False, "--background", help="Run in background thread"),
@@ -210,63 +347,48 @@ def index_sync(
         "--verify",
         help="Hash all known files whose stat is unchanged and sync changed content (foreground only).",
     ),
-):
-    """Incremental sync, with optional content-hash verification."""
+    confirm: bool = typer.Option(
+        False,
+        "--confirm",
+        help="After the sync, report whether each NAME (an id or a KB-relative path) is indexed "
+        "and searchable, with its schema findings and embedding state; exit 3 unless every one "
+        "is confirmed. With no NAME: every entry this sync added or changed. Needs -k.",
+    ),
+    output_format: str | None = OUTPUT_FORMAT_UNASKED,
+) -> Outcome:
+    """Incremental sync, with optional content-hash verification.
+
+    `--confirm NAME...` then says, for each named id or KB-relative path,
+    whether it is indexed (its row matches its file and a keyword search
+    returns it), not_indexed, not_found, malformed, duplicate or skipped, with
+    its schema findings and embedding state (embedded, queued or
+    unavailable; never waited on). Exit 0 when every one is confirmed, 3 when
+    any is not (a schema error on a named entry counts), 1 when nothing synced.
+    """
     from ..storage import IndexManager
 
-    if background and verify:
-        raise typer.BadParameter("--verify cannot be combined with --background")
-
+    # The combinations of options it refuses are refused while click parses
+    # (`_SyncCommand`), a usage error, exit 2.
     config, db = get_config_and_db()
+    # The KB is resolved once, here (T3-1, #1530); the confirm takes the handle.
+    resolved = require_kb(config, kb_name, db=db)
 
     if background:
         from ..services.index_worker import IndexWorker
 
         worker = IndexWorker(db, config)
         job_id = worker.submit_sync(kb_name)
-        console.print(f"[green]Sync job submitted:[/green] {job_id}")
-        console.print("Use 'pyrite index jobs' to check progress.")
-        return
+        return Outcome.done({"submitted": True, "job_id": job_id}, rich=_render_submitted)
 
     index_mgr = IndexManager(db, config)
 
+    # `-k` named a KB whose files cannot be read (#1542), or whose kb.yaml
+    # does not load (#1547): `KB_YAML_REFUSALS` is raised, nothing synced, its
+    # rows kept, and the root renders the refusal.
     if verify:
         results = index_mgr.sync_incremental(kb_name, verify=True)
     else:
         results = index_mgr.sync_incremental(kb_name)
-
-    console.print("[green]Sync complete:[/green]")
-    console.print(f"  Added: {results['added']}")
-    console.print(f"  Updated: {results['updated']}")
-    console.print(f"  Removed: {results['removed']}")
-    # Surface malformed-frontmatter files as a summary instead of letting
-    # per-file ScannerError tracebacks pollute stderr. Tier A 1080.
-    malformed = results.get("malformed", [])
-    if malformed:
-        console.print(f"  [yellow]Malformed: {len(malformed)} file(s) skipped[/yellow]")
-        for entry in malformed[:5]:
-            console.print(f"    [dim]• {entry['path']}[/dim]")
-        if len(malformed) > 5:
-            console.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
-    skipped = results.get("skipped", [])
-    if skipped:
-        console.print(f"  [yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
-        for entry in skipped[:5]:
-            console.print(
-                f"    {entry['path']}: {entry['reason']}",
-                markup=False,
-                highlight=False,
-            )
-        if len(skipped) > 5:
-            console.print(f"    [dim]... and {len(skipped) - 5} more[/dim]")
-
-    duplicates = results.get("duplicates", [])
-    if duplicates:
-        console.print(
-            f"  [yellow]Duplicate ids: {len(duplicates)} (one file indexed per id)[/yellow]"
-        )
-        for line in _duplicate_lines(duplicates):
-            console.print(f"    • {line}", markup=False, highlight=False)
 
     # Auto-embed new/updated entries if embeddings are available.
     #
@@ -289,9 +411,108 @@ def index_sync(
                 svc = EmbeddingService(db, model_name=config.settings.embedding_model)
                 stats = svc.embed_all(kb_name=kb_name)
                 if stats["embedded"] > 0:
-                    console.print(f"  Embedded: {stats['embedded']}")
+                    results["embedded"] = stats["embedded"]
         except Exception:
             logger.debug("Embedding not available, skipping")
+
+    if confirm:
+        # After the embed, so each row's embedding state is what it now is.
+        from ..services.index_confirm import confirm_entries
+
+        # None for a blank `-k " "`: the confirm refuses it (KB_NOT_FOUND).
+        results["confirm"] = confirm_entries(index_mgr, resolved, names, results)
+
+    # A KB whose files could not be read was not synced and kept its rows
+    # (#1542); a folder it could not list, or a file it could not read, kept
+    # theirs (#1546). Each counts as failed: exit 3, or 1 when nothing synced.
+    unreadable_kbs = results.get("unreadable_kbs", [])
+    synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
+    failed = len(unreadable_kbs) + _could_not_reach(results)
+    outcome = Outcome.from_counts(synced, failed, results, rich=_sync_renderer(config))
+    if outcome.kind is OutcomeKind.DONE and results.get("confirm", {}).get("not_confirmed"):
+        # A named entry that is not confirmed: the sync ran, the ask did not
+        # all happen (docs/json-contracts.md, "Exit codes (CLI)").
+        return Outcome.partial(results, rich=outcome.rich)
+    return outcome
+
+
+def _render_submitted(out, data: dict) -> None:
+    out.print(f"[green]Sync job submitted:[/green] {data['job_id']}")
+    out.print("Use 'pyrite index jobs' to check progress.")
+
+
+def _sync_renderer(config):
+    """The text `index sync` has always printed, then the confirm rows."""
+
+    def render_sync(out, results: dict) -> None:
+        out.print("[green]Sync complete:[/green]")
+        out.print(f"  Added: {results['added']}")
+        out.print(f"  Updated: {results['updated']}")
+        out.print(f"  Removed: {results['removed']}")
+        # Surface malformed-frontmatter files as a summary instead of letting
+        # per-file ScannerError tracebacks pollute stderr. Tier A 1080.
+        malformed = results.get("malformed", [])
+        if malformed:
+            out.print(f"  [yellow]Malformed: {len(malformed)} file(s) skipped[/yellow]")
+            for entry in malformed[:5]:
+                out.print(path_line("    • ", _kb_relative(config, entry["path"]), style="dim"))
+            if len(malformed) > 5:
+                out.print(f"    [dim]… and {len(malformed) - 5} more[/dim]")
+        skipped = results.get("skipped", [])
+        if skipped:
+            out.print(f"  [yellow]Non-regular: {len(skipped)} file(s) skipped[/yellow]")
+            for entry in skipped[:5]:
+                out.print(f"    {entry['path']}: {entry['reason']}", markup=False, highlight=False)
+            if len(skipped) > 5:
+                out.print(f"    [dim]... and {len(skipped) - 5} more[/dim]")
+
+        duplicates = results.get("duplicates", [])
+        if duplicates:
+            out.print(
+                f"  [yellow]Duplicate ids: {len(duplicates)} (one file indexed per id)[/yellow]"
+            )
+            for line in _duplicate_lines(duplicates):
+                out.print(f"    • {line}", markup=False, highlight=False)
+
+        _print_file_links(results, out=out)
+        # Folders it could not list: their rows kept (#1546). A file it could
+        # not read is under Malformed above; both count as failed for the exit.
+        _print_unreadable_folders(results, out=out)
+
+        for item in results.get("unreadable_kbs", []):
+            out.print(f"  [red]Not synced: {item['kb']}: {item['error']}[/red]", highlight=False)
+
+        if results.get("embedded"):
+            out.print(f"  Embedded: {results['embedded']}")
+
+        if "confirm" in results:
+            _render_confirm(out, results["confirm"])
+
+    return render_sync
+
+
+def _render_confirm(out, block: dict) -> None:
+    rows = block["entries"]
+    which = "named" if block["named"] else "added or changed by this sync"
+    out.print(f"Confirm ({which}): {block['confirmed']} of {len(rows)} confirmed", highlight=False)
+    for row in rows:
+        mark = "[green]ok[/green]" if row["confirmed"] else "[red]NOT CONFIRMED[/red]"
+        where = f" ({row['path']})" if row.get("path") and row["path"] != row["name"] else ""
+        out.print(f"  {mark} ", end="")
+        out.print(f"{row['name']}{where}: {row['status']}", markup=False, highlight=False)
+        details = []
+        if row.get("reason"):
+            details.append(row["reason"])
+        if row.get("paths"):
+            details.append("claimed by " + ", ".join(row["paths"]))
+        if row.get("embedding"):
+            details.append(f"embedding {row['embedding']}")
+        if details:
+            out.print("      " + "; ".join(details), markup=False, highlight=False)
+        for finding in row["findings"]:
+            out.print(
+                f"      {finding['severity']}: {finding['message']}", markup=False, highlight=False
+            )
 
 
 @index_app.command("stats")
@@ -345,19 +566,23 @@ def index_embed(
 ):
     """Generate vector embeddings for semantic search."""
     from ..services.embedding_service import (
+        EmbeddingModelUnavailableError,
         EmbeddingService,
         is_available,
         semantic_unavailable,
     )
 
+    # The KB first (#952): a name that is not a KB is refused before the
+    # dependency check, so the answer names the thing that is wrong.
+    config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     if not is_available():
+        missing = semantic_unavailable(False)  # never None while the package is absent
         cli_error(
             "sentence-transformers is not installed.",
             error_code="DEPENDENCY_MISSING",
-            suggestion=semantic_unavailable(False)[2],
+            suggestion=missing[2] if missing else None,
         )
-
-    config, db = get_config_and_db()
 
     if unavailable := semantic_unavailable(db.vec_available, getattr(db, "vec_load_error", None)):
         # The same cause and remedy `search` gives (one function), not an
@@ -384,7 +609,15 @@ def index_embed(
     # Before embed_all, not after: a queued row marks an entry whose body
     # changed, and only the drain re-embeds it. embed_all(force=False) skips
     # anything that already has a vector, stale or not.
-    from ..services.embedding_worker import settle_embed_queue_by_kb
+    from ..services.embedding_worker import EmbeddingWorker, settle_embed_queue_by_kb
+
+    queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
+    if queue_worker.has_pending() and (model_problem := queue_worker.model_unavailable()):
+        typer.echo(model_problem)
+        # Nothing was embedded and the queued entries stay owed: the batch rule
+        # (docs/json-contracts.md, "Exit codes (CLI)": offline with nothing
+        # embedded is 1, never 0).
+        exit_unless_whole(queue_worker.get_status()["pending"], 0)
 
     by_kb = settle_embed_queue_by_kb(db, model_name=config.settings.embedding_model)
     from_queue = sum(by_kb.values()) if kb_name is None else by_kb.get(kb_name, 0)
@@ -394,22 +627,33 @@ def index_embed(
 
     svc = EmbeddingService(db, model_name=config.settings.embedding_model)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("{task.completed}/{task.total}"),
-        console=console,
-    ) as progress:
-        task = progress.add_task("Embedding entries...", total=None)
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total}"),
+            console=console,
+        ) as progress:
+            task = progress.add_task("Embedding entries...", total=None)
 
-        def update_progress(current: int, total: int):
-            progress.update(task, completed=current, total=total)
+            def update_progress(current: int, total: int):
+                progress.update(task, completed=current, total=total)
 
-        stats = svc.embed_all(
-            kb_name=kb_name,
-            force=force,
-            progress_callback=update_progress,
+            stats = svc.embed_all(
+                kb_name=kb_name,
+                force=force,
+                progress_callback=update_progress,
+            )
+    except EmbeddingModelUnavailableError as e:
+        # The finder in `is_available()` saw the package; its first real import
+        # failed. That is a missing dependency, not an entry error (#1101).
+        from ..utils.install_hints import extra_install_command
+
+        cli_error(
+            str(e),
+            error_code="DEPENDENCY_MISSING",
+            suggestion=extra_install_command("semantic"),
         )
 
     embedded, skipped, overshoot = _embed_counts(stats, from_queue, force)
@@ -470,7 +714,7 @@ def index_health(
     """
     from ..storage import IndexManager
 
-    with cli_db_context() as (config, db):
+    with cli_db_context(kbs=(kb_name,), output_format=output_format) as (config, db):
         if kb_name is not None and config.get_kb(kb_name) is None:
             # Reporting a clean bill for a KB that does not exist would be the same
             # bug as exiting 0 while unhealthy: a non-answer that reads as success.
@@ -488,37 +732,22 @@ def index_health(
     missing_required = health.get("missing_required_fields", [])
     subdirectory_mismatches = health.get("subdirectory_mismatches", [])
     malformed_frontmatter = health.get("malformed_frontmatter", [])
+    unreadable_files = health.get("unreadable_files", [])
+    orphaned_entries = health.get("orphaned_entries", [])
     invalid_statuses = health.get("invalid_statuses", [])
     off_list_values = health.get("off_list_values", [])
-    # Off-list enum values roll up by row severity (#555): `error` (a kb.yaml
-    # enum in a KB with `validation.enforce_enums` on -- writes refuse it) is
-    # unhealthy; `warning` (switch off, or a plugin enum) is a warning; `info`
-    # (an `allow_other` field) does not move the status.
-    off_list_severities = {row.get("severity") for row in off_list_values}
     duplicates = health.get("duplicates", [])
-    is_unhealthy = (
-        health["missing_files"]
-        or health["unindexed_files"]
-        or health["stale_entries"]
-        or health.get("content_changed")
-        # Two files claiming one id: only the first path is indexed, so the
-        # other is invisible to search. Unhealthy, named loudly (maintainer,
-        # 2026-10-03, ADR-0038 decided question 3).
-        or duplicates
-        or "error" in off_list_severities
-    )
-    has_warning = (
-        bool(broken_links)
-        or bool(undeclared_types)
-        or bool(health.get("type_name_drift_total"))
-        or bool(health.get("schema_errors"))
-        or bool(missing_required)
-        or bool(subdirectory_mismatches)
-        or bool(malformed_frontmatter)
-        or bool(invalid_statuses)
-        or "warning" in off_list_severities
-    )
-    status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
+    removed_extensions = health.get("removed_extensions", [])
+    unmodellable_frontmatter = health.get("unmodellable_frontmatter", [])
+    double_spellings = health.get("double_spellings", [])
+    # One verdict for every surface that reads this report (#1119); `status`
+    # also rolls off-list enum values up by row severity (#555).
+    from ..services.index_health import health_verdict
+
+    verdict = health_verdict(health)
+    is_unhealthy = verdict["is_unhealthy"]
+    has_warning = verdict["has_warning"]
+    status = verdict["status"]
 
     formatted = _format_output(
         {
@@ -528,17 +757,28 @@ def index_health(
             "stale_entries": len(health["stale_entries"]),
             "content_changed": len(health.get("content_changed", [])),
             "broken_links": broken_links,
+            "links_stale_kb": health.get("links_stale_kb", 0),
             "undeclared_types": undeclared_types,
             "missing_required_fields": missing_required,
             "subdirectory_mismatches": subdirectory_mismatches,
             "malformed_frontmatter": malformed_frontmatter,
+            "unreadable_files": unreadable_files,
+            "unreadable_kbs": health.get("unreadable_kbs", []),
+            "unreadable_folders": health.get("unreadable_folders", []),
+            "orphaned_entries": orphaned_entries,
             "invalid_statuses": invalid_statuses,
             "off_list_values": off_list_values,
             "duplicates": duplicates,
+            "aliases": health.get("aliases", []),
+            "dangling_links": health.get("dangling_links", []),
+            "unlisted_entry_files": health.get("unlisted_entry_files", []),
+            "removed_extensions": removed_extensions,
             "type_name_drift": health.get("type_name_drift", []),
             "type_name_drift_total": health.get("type_name_drift_total", 0),
             "type_name_drift_has_more": health.get("type_name_drift_has_more", False),
             "schema_errors": health.get("schema_errors", []),
+            "unmodellable_frontmatter": unmodellable_frontmatter,
+            "double_spellings": double_spellings,
             "checks": health,
         },
         output_format,
@@ -558,6 +798,9 @@ def index_health(
         invalid_statuses=invalid_statuses,
         off_list_values=off_list_values,
         duplicates=duplicates,
+        removed_extensions=removed_extensions,
+        unmodellable_frontmatter=unmodellable_frontmatter,
+        double_spellings=double_spellings,
         health=health,
     )
     if is_unhealthy and fail:
@@ -577,6 +820,9 @@ def _report_health(
     invalid_statuses,
     off_list_values,
     duplicates=(),
+    removed_extensions=(),
+    unmodellable_frontmatter=(),
+    double_spellings=(),
     health,
 ):
     """Print the health report. Returns nothing; the caller sets the exit code."""
@@ -586,6 +832,11 @@ def _report_health(
 
     console.print("\n[bold]Index Health Check[/bold]\n")
 
+    # Information, not a finding: in-KB links to an entry file (#1262).
+    aliases = health.get("aliases", [])
+    if aliases:
+        console.print(f"{len(aliases)} alias(es): in-KB links to an entry file, not indexed")
+
     if not is_unhealthy and not has_warning:
         console.print("[green]✓ Index is healthy[/green]")
         return
@@ -593,16 +844,56 @@ def _report_health(
     if not is_unhealthy and has_warning:
         console.print("[green]✓ Index is healthy[/green]")
 
+    dangling = health.get("dangling_links") or []
+    if dangling:
+        console.print(
+            f"[yellow]⚠ {len(dangling)} in-KB file link(s) point at a missing file"
+            " (left as they are):[/yellow]"
+        )
+        for row in dangling[:10]:
+            console.print(
+                f"  • {row['kb']}: {row['path']} -> {row['target']}", markup=False, highlight=False
+            )
+
+    unlisted = health.get("unlisted_entry_files") or []
+    if unlisted:
+        console.print(
+            f"[yellow]⚠ {len(unlisted)} entry file(s) where the index walk does not list"
+            " them (not indexed; rename each to a listed name, keep its `id:` line,"
+            " then `pyrite index sync`):[/yellow]"
+        )
+        for row in unlisted[:10]:
+            console.print(
+                f"  • {row['kb']}: {row['path']} ({row['reason']})", markup=False, highlight=False
+            )
+
     if broken_links:
         console.print(
             f"[yellow]⚠ {broken_links} broken link(s) found.[/yellow]"
             " Run 'pyrite links check' for details."
         )
 
+    stale_rows = health.get("links_stale_kb") or 0
+    if stale_rows:
+        console.print(
+            f"[yellow]⚠ {stale_rows} link row(s) point at a different KB than their"
+            " file's prefix now names (a shortname changed since the file was indexed,"
+            " or a row from before the full name was stored).[/yellow]"
+            " Run 'pyrite index build' to rewrite them from the files."
+        )
+
+    if removed_extensions:
+        console.print(
+            f"[yellow]⚠ {len(removed_extensions)} KB(s) still using a removed extension's "
+            "types:[/yellow]"
+        )
+        for row in removed_extensions:
+            console.print(f"  • {row['message']}")
     for err in health.get("schema_errors", []):
         console.print(
             f"kb.yaml failed to load for {err['kb']}: {err['error']}",
-            style="yellow",
+            # KB_CONFIG_INVALID: the KB is unusable until the file is fixed (#1547).
+            style="red" if err.get("error_code") == "KB_CONFIG_INVALID" else "yellow",
             markup=False,
             highlight=False,
         )
@@ -646,8 +937,12 @@ def _report_health(
         )
         for row in subdirectory_mismatches[:10]:
             console.print(
-                f"  • {row['kb']}/{row['id']} (type={row['type']}):"
-                f" expected '{row['declared_subdirectory']}/', found '{row['actual_path']}/'"
+                path_line(
+                    f"  • {row['kb']}/{row['id']} (type={row['type']}): expected '",
+                    row["declared_subdirectory"],
+                    "/', found '",
+                )
+                + path_line("", row["actual_path"], "/'")
             )
         if len(subdirectory_mismatches) > 10:
             console.print(f"  ... and {len(subdirectory_mismatches) - 10} more")
@@ -658,9 +953,38 @@ def _report_health(
             " frontmatter (skipped — fix the YAML to index them):[/yellow]"
         )
         for row in malformed_frontmatter[:10]:
-            console.print(f"  • {row['kb']}: {row['path']} — {row['error']}")
+            console.print(path_line(f"  • {row['kb']}: ", row["path"], f" — {row['error']}"))
         if len(malformed_frontmatter) > 10:
             console.print(f"  ... and {len(malformed_frontmatter) - 10} more")
+
+    if double_spellings:
+        # Andon #994: `metadata.k` is a second spelling of `k`; a file that
+        # spells a field twice is read at one spelling and refused for update.
+        console.print(
+            f"[yellow]⚠ {len(double_spellings)} field(s) spelled twice in one file "
+            "(the top-level spelling is read; no update reaches the field until one "
+            "spelling is removed):[/yellow]"
+        )
+        for row in double_spellings[:10]:
+            console.print(
+                f"  • {row['kb']}/{row['id']}: {row['field']} as {', '.join(row['spellings'])}"
+            )
+        if len(double_spellings) > 10:
+            console.print(f"  ... and {len(double_spellings) - 10} more")
+
+    if unmodellable_frontmatter:
+        # #760 (b): no write reaches these files; said here, with the line,
+        # so they are never invisible.
+        console.print(
+            f"[yellow]⚠ {len(unmodellable_frontmatter)} file(s) whose frontmatter Pyrite "
+            "cannot model (no update reaches them; fix the key by hand):[/yellow]"
+        )
+        for row in unmodellable_frontmatter[:10]:
+            console.print(
+                path_line(f"  • {row['kb']}: ", row["path"], f":{row['line']} — {row['reason']}")
+            )
+        if len(unmodellable_frontmatter) > 10:
+            console.print(f"  ... and {len(unmodellable_frontmatter) - 10} more")
 
     if invalid_statuses:
         console.print(
@@ -697,6 +1021,41 @@ def _report_health(
         )
         for line in _duplicate_lines(list(duplicates)):
             console.print(f"  • {line}", markup=False, highlight=False)
+
+    unreadable_kbs = health.get("unreadable_kbs", [])
+    if unreadable_kbs:
+        console.print(f"[red]Unreadable knowledge bases ({len(unreadable_kbs)}):[/red]")
+        for item in unreadable_kbs:
+            console.print(f"  {item['kb']}: {item['error']}")
+    unreadable_folders = health.get("unreadable_folders", [])
+    if unreadable_folders:
+        console.print(
+            f"[red]Unreadable folders ({len(unreadable_folders)}; the rows under them "
+            "are kept):[/red]"
+        )
+        for item in unreadable_folders[:10]:
+            console.print(f"  {item['kb']}: {item['path']}", markup=False, highlight=False)
+        if len(unreadable_folders) > 10:
+            console.print(f"  ... and {len(unreadable_folders) - 10} more")
+    unreadable_files = health.get("unreadable_files", [])
+    if unreadable_files:
+        console.print(f"[red]Unreadable files ({len(unreadable_files)}):[/red]")
+        for item in unreadable_files[:10]:
+            console.print(f"  {item['kb']}: {item['path']}  {item['error']}", markup=False)
+        if len(unreadable_files) > 10:
+            console.print(f"  ... and {len(unreadable_files) - 10} more")
+
+    orphaned_entries = health.get("orphaned_entries", [])
+    if orphaned_entries:
+        console.print(f"[red]Orphaned index entries ({len(orphaned_entries)}):[/red]")
+        for item in orphaned_entries[:10]:
+            replacement = f" (now {item['replacement_id']})" if item.get("replacement_id") else ""
+            console.print(
+                f"  {item['kb']}/{item['id']}: {item['path']}{replacement}",
+                markup=False,
+            )
+        if len(orphaned_entries) > 10:
+            console.print(f"  ... and {len(orphaned_entries) - 10} more")
 
     if health["missing_files"]:
         console.print(f"[red]Missing files ({len(health['missing_files'])}):[/red]")
@@ -741,6 +1100,7 @@ def index_reconcile(
     from ..services.kb_service import KBService
 
     config, db = get_config_and_db()
+    require_kb(config, kb_name, db=db, output_format="rich")
     kb_config = config.get_kb(kb_name)
     if not kb_config:
         cli_error(
@@ -752,15 +1112,28 @@ def index_reconcile(
     result = KBService(config, db).reconcile_templated_subdirectories(kb_name, apply=apply)
     for entry_id, error in result.errors:
         console.print(f"[yellow]Could not reconcile {entry_id}:[/yellow] {error}")
+    # Checked, and left in place: the user's link would point at nothing (#1262).
+    for entry_id, why in result.kept:
+        console.print(
+            f"[yellow]Kept in place {entry_id}:[/yellow] {why}", markup=True, highlight=False
+        )
 
     if not result.moves:
-        if not result.errors:
+        if not result.errors and not result.kept:
             console.print("[green]All templated subdirectories match.[/green]")
         else:
-            console.print(
-                f"[yellow]No moves planned; {len(result.errors)} entry path(s) could not be checked.[/yellow]"
-            )
-        if result.errors:
+            parts = []
+            if result.kept:
+                parts.append(
+                    f"{len(result.kept)} misplaced file(s) stay where they are because an "
+                    "in-KB link names each"
+                )
+            if result.errors:
+                parts.append(f"{len(result.errors)} entry path(s) could not be checked")
+            console.print(f"[yellow]No moves planned; {'; '.join(parts)}.[/yellow]")
+        if result.errors or result.kept:
+            # Not everything asked for was done: a file stays misplaced
+            # (#1262), or a path could not be checked.
             raise typer.Exit(PARTIAL_EXIT)
         return
 
@@ -783,7 +1156,7 @@ def index_reconcile(
 
     if not apply:
         console.print("\n[yellow]Dry run. Use --apply to execute moves.[/yellow]")
-        if result.errors:
+        if result.errors or result.kept:
             raise typer.Exit(PARTIAL_EXIT)
         return
 
@@ -793,8 +1166,9 @@ def index_reconcile(
 
     console.print(f"\n[green]Moved {result.moved} file(s).[/green]")
     console.print("The index was updated for successfully moved files.")
-    # Moves that failed were reported above; some moved, some did not.
-    exit_unless_whole(len(result.errors), result.moved)
+    # Moves that failed, and files kept in place for a link, were reported
+    # above; some moved, some did not.
+    exit_unless_whole(len(result.errors) + len(result.kept), result.moved)
 
 
 @index_app.command("jobs")

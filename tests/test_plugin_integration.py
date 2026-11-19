@@ -23,6 +23,7 @@ from pyrite_zettelkasten.plugin import ZettelkastenPlugin
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.base import Entry
+from pyrite.storage.repository import new_entry_text
 from pyrite.models.core_types import (
     ENTRY_TYPE_REGISTRY,
     EventEntry,
@@ -698,7 +699,7 @@ class TestRelationshipTypes:
 
     def test_agent_schema_includes_plugin_rels(self, patched_registry):
         schema = KBSchema(name="test")
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         rels = agent.get("relationship_types", {})
         assert "elaborates" in rels
         assert "branches_from" in rels
@@ -766,6 +767,9 @@ class TestKBPresets:
 
 
 class TestEndToEnd:
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_zettel_roundtrip(self, patched_registry):
         """Create a zettel via frontmatter, serialize, and reparse."""
         entry = entry_from_frontmatter(
@@ -780,13 +784,16 @@ class TestEndToEnd:
         )
         assert isinstance(entry, ZettelEntry)
 
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         reparsed = Entry.from_markdown(md)
         # from_markdown returns (meta, body) — we need to reconstruct
         assert "zettel_type: permanent" in md
         assert "maturity: sapling" in md
         assert "An interesting thought" in md
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_writeup_roundtrip(self, patched_registry):
         entry = entry_from_frontmatter(
             {
@@ -798,10 +805,13 @@ class TestEndToEnd:
             "This is my opinion.",
         )
         assert isinstance(entry, WriteupEntry)
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "author_id: alice" in md
         assert "writeup_type: opinion" in md
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_article_roundtrip(self, patched_registry):
         entry = entry_from_frontmatter(
             {
@@ -814,7 +824,7 @@ class TestEndToEnd:
             "A" * 600,
         )
         assert isinstance(entry, ArticleEntry)
-        md = entry.to_markdown()
+        md = new_entry_text(entry)
         assert "quality: GA" in md
         assert "review_status: published" in md
         assert "physics" in md
@@ -1333,6 +1343,29 @@ class TestMethodCapabilitiesMap:
         assert m.get("get_relationship_types") == Capability.DOMAIN
         # CONTEXT
         assert m.get("set_context") == Capability.CONTEXT
+
+    def test_capability_map_matches_protocol_methods(self):
+        """ADR-0002: the map must cover every PyritePlugin Protocol
+        method, and nothing else. A method missing from the map is
+        silently ungated (_plugin_declares returns True for unmapped
+        methods), so a new Protocol method without a map entry, or a
+        map entry deleted by accident, must fail this test."""
+        import inspect
+
+        from pyrite.plugins import registry as registry_mod
+        from pyrite.plugins.protocol import PyritePlugin
+
+        protocol_methods = {
+            name
+            for name, member in inspect.getmembers(PyritePlugin, predicate=inspect.isfunction)
+            if not name.startswith("_")
+        }
+        mapping = registry_mod._METHOD_CAPABILITIES
+        assert set(mapping) == protocol_methods, (
+            "capability map and Protocol disagree: "
+            f"unmapped methods={sorted(protocol_methods - set(mapping))}, "
+            f"stale entries={sorted(set(mapping) - protocol_methods)}"
+        )
 
 
 class TestRegistryDispatchSkip:

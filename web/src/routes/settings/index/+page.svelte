@@ -17,8 +17,6 @@
 	let syncResult = $state<{ added: number; updated: number; removed: number } | null>(null);
 	let healthLoading = $state<string | null>(null);
 	let reindexing = $state<string | null>(null);
-	let rendering = $state(false);
-	let renderResult = $state<{ kbs: number; entries: number; errors: number } | null>(null);
 
 	async function loadAll() {
 		loading = true;
@@ -77,19 +75,6 @@
 		}
 	}
 
-	async function handleRenderSite() {
-		rendering = true;
-		renderResult = null;
-		try {
-			const result = await api.renderSiteCache();
-			renderResult = { kbs: result.kbs, entries: result.entries, errors: result.errors };
-		} catch (err) {
-			error = err instanceof Error ? err.message : 'Site render failed';
-		} finally {
-			rendering = false;
-		}
-	}
-
 	onMount(() => {
 		kbStore.load();
 		loadAll();
@@ -136,33 +121,12 @@
 					Sync Index
 				{/if}
 			</button>
-			<button
-				onclick={handleRenderSite}
-				disabled={rendering}
-				class="flex items-center gap-2 rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-800"
-			>
-				{#if rendering}
-					<svg class="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-						<circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-						<path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-					</svg>
-					Rendering...
-				{:else}
-					Render Site
-				{/if}
-			</button>
 		</div>
 
 		<!-- Sync result feedback -->
 		{#if syncResult}
 			<div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
 				Sync complete: +{syncResult.added} added, ~{syncResult.updated} updated, -{syncResult.removed} removed
-			</div>
-		{/if}
-
-		{#if renderResult}
-			<div class="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-400">
-				Site rendered: {renderResult.kbs} KBs, {renderResult.entries} pages{renderResult.errors > 0 ? `, ${renderResult.errors} errors` : ''}
 			</div>
 		{/if}
 

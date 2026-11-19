@@ -66,38 +66,55 @@ def negotiate_format(accept_header: str) -> str | None:
     Returns 'json' as default. Returns None if Accept specifies something
     we don't support and doesn't include */*.
     """
-    if not accept_header or accept_header == "*/*":
+    if not accept_header:
         return "json"
 
+    import re
+
+    ranges = []
+    for position, part in enumerate(accept_header.split(",")):
+        media, *parameters = (piece.strip() for piece in part.split(";"))
+        quality = 1.0
+        for parameter in parameters:
+            key, separator, value = parameter.partition("=")
+            if separator and key.strip().lower() == "q":
+                value = value.strip()
+                quality = (
+                    float(value)
+                    if re.fullmatch(r"(?:0(?:\.\d{0,3})?|1(?:\.0{0,3})?)", value)
+                    else 0.0
+                )
+        ranges.append((media.lower(), quality, position))
+
+    choices = []
     registry = get_format_registry()
-
-    # Parse accept header (simplified -- handle basic cases)
-    # Accept: text/markdown, application/json;q=0.9, */*;q=0.1
-    parts = [p.strip() for p in accept_header.split(",")]
-
-    # Sort by quality factor
-    weighted = []
-    for part in parts:
-        if ";q=" in part:
-            media, q = part.split(";q=", 1)
-            try:
-                weight = float(q)
-            except ValueError:
-                weight = 1.0
-            weighted.append((media.strip(), weight))
-        else:
-            weighted.append((part.strip(), 1.0))
-
-    weighted.sort(key=lambda x: x[1], reverse=True)
-
-    for media_type, _ in weighted:
-        if media_type == "*/*":
-            return "json"
-        spec = registry.get_by_media_type(media_type)
-        if spec:
-            return spec.name
-
-    return None  # 406 Not Acceptable
+    for name in registry.available_formats():
+        spec = registry.get(name)
+        assert spec is not None
+        media = spec.media_type.lower()
+        matches = []
+        for pattern, quality, position in ranges:
+            specificity = (
+                2
+                if pattern == media
+                else 1
+                if pattern == media.split("/")[0] + "/*"
+                else 0
+                if pattern == "*/*"
+                else -1
+            )
+            if specificity >= 0:
+                matches.append((specificity, quality, -position))
+        if matches:
+            # A specific exclusion overrides a broader wildcard allowance
+            # (RFC9110 section12.5.1), before comparing representations.
+            _, quality, order = max(matches)
+            if quality > 0:
+                choices.append((quality, order, name))
+    if not choices:
+        return None
+    # Keep registry order as the server preference when the client ties.
+    return max(choices, key=lambda choice: choice[:2])[2]
 
 
 def format_response(data: Any, format_name: str, **kwargs) -> tuple[str, str]:

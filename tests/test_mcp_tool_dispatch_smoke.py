@@ -18,11 +18,9 @@ listed in SKIP with a reason.
 
 import pytest
 
-from tests.test_mcp_server import (
-    _STANDARD_KB_DEFS,
-    _make_mcp_server,
-    _populate_events_and_person,
-)
+from tests._world import mcp_server as _make_mcp_server
+from tests.mcp_seed import STANDARD_KB_DEFS as _STANDARD_KB_DEFS
+from tests.mcp_seed import populate_events_and_person as _populate_events_and_person
 
 pytestmark = pytest.mark.core  # the local smoke set; see scripts/test-affected
 

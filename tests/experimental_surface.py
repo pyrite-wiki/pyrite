@@ -54,9 +54,8 @@ class Surface:
 EXPERIMENTAL: tuple[Surface, ...] = (
     # -- Section 5 and 2: extensions ---------------------------------------
     Surface(
-        "Extensions: software-kb, journalism-investigation, social, encyclopedia,"
-        " zettelkasten; cascade (unsupported)",
-        "5, 2 (`sw`, `investigation`, `social`, `wiki`, `zettel`, `cascade`)",
+        "Extensions: software-kb, journalism-investigation, social, encyclopedia, zettelkasten",
+        "5, 2 (`sw`, `investigation`, `social`, `wiki`, `zettel`)",
         (
             "extensions/*/tests/*",
             # Core-tree tests whose subject is an extension's behaviour.
@@ -115,11 +114,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
         ),
     ),
     Surface(
-        "Streamlit (`ui_streamlit.py`, `pyrite/ui`), unsupported",
-        "4",
-        ("tests/test_ui_data.py",),
-    ),
-    Surface(
         "AI endpoints (`/api/ai/*`) and the LLM service behind them",
         "4",
         (
@@ -129,15 +123,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
             "tests/test_llm_usage_service.py",
             "tests/test_llm_usage_endpoints.py",
             "tests/test_llm_rubric_evaluator.py",
-        ),
-    ),
-    Surface(
-        "`/site` static HTML cache and the sitemap",
-        "4",
-        (
-            "tests/test_site_cache.py",
-            "tests/test_sync_wait_rerenders_site_cache.py",
-            "tests/test_sitemap.py::TestRobotsTxt::*",
         ),
     ),
     Surface(
@@ -180,7 +165,6 @@ EXPERIMENTAL: tuple[Surface, ...] = (
     Surface(
         "Docker and one-click deploys (the demo's seed)",
         "5",
-        # test_demo_public_kbs_upgrade.py is all security (see below).
         ("tests/test_demo_seed_public_kbs.py",),
     ),
     # `.claude-plugin/plugin.json`: no test reads it.
@@ -288,10 +272,17 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "extensions/journalism-investigation/tests/test_mcp_tools.py::*no_tools_for_invalid_tier*": AUTHZ,
     # A read-only KB refuses a write, on every path that writes.
     "extensions/journalism-investigation/tests/test_promote_claim.py::*read_only_kb_refused*": AUTHZ,
+    # A read-only KB takes no write from the investigation tools, MCP or CLI.
+    "extensions/journalism-investigation/tests/test_bulk_tools_write_through_the_pipeline.py::*read_only*": AUTHZ,
+    "extensions/journalism-investigation/tests/test_cli_writes_through_the_pipeline.py::TestAReadOnlyKBIsRefusedAndNothingIsWritten::*": AUTHZ,
     "tests/test_kb_bulk_create_description.py::*unavailable_kb_still_rejects_whole_batch*": AUTHZ,
+    # finish requires the caller to hold the task; operators have an explicit override
+    "tests/test_task_finish_walk.py::*hold*": AUTHZ,
+    "tests/test_task_finish_walk.py::*override*": AUTHZ,
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_does_not_have*": AUTHZ,
+    "extensions/software-kb/tests/test_software_kb.py::TestCreateBacklogItemRefusals::*": AUTHZ,
     "extensions/journalism-investigation/tests/test_mcp_tools.py::*read_tier_tools_registered*": AUTHZ,
     # The social extension's author-only edit rule.
     "extensions/social/tests/test_social.py::*blocks_non_author*": AUTHZ,
@@ -308,6 +299,13 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_link_read_scope_rest.py": SCOPE,
     "tests/test_link_read_scope_storage.py": SCOPE,
     "tests/test_link_reads_pass_a_scope.py": SCOPE,
+    # The overlay's `resolved` never names a KB the caller cannot read (#64).
+    "tests/test_overlay_backend.py::TestOverlayResolved::test_other_kbs_holding_the_id_are_named_from_both_halves_and_only_readable_ones": SCOPE,
+    "tests/test_overlay_backend.py::TestOverlayResolved::test_a_target_in_an_unreadable_kb_stays_unresolved_whichever_half_holds_it": SCOPE,
+    # The overlay's list/count honor kb_names on both halves (#1373): entries
+    # outside the caller's readable set must not leak through either half.
+    "tests/test_overlay_backend.py::TestOverlayListEntries::test_kb_names_filters_both_halves": SCOPE,
+    "tests/test_overlay_backend.py::TestOverlayCountEntries::test_kb_names_filters_count": SCOPE,
     "tests/test_mcp_read_scoping.py": SCOPE,
     "tests/test_mcp_sse_kb_policy.py": SCOPE,
     "tests/test_mcp_tool_registry_is_scoped.py": SCOPE,
@@ -315,19 +313,16 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_private_kb_read_scoping.py": SCOPE,
     "tests/test_read_scope_queries.py": SCOPE,
     "tests/test_read_scoping_is_structural.py": SCOPE,
-    "tests/test_site_cache_follows_deletes.py": SCOPE,  # P-S3: only the public set
-    "tests/test_site_public_only.py": SCOPE,
-    "tests/test_sitemap.py::TestSitemapXml::*": SCOPE,  # public KBs only
     "tests/test_stats_read_scoping.py": SCOPE,
     "tests/test_websocket_kb_policy_lifetime.py": SCOPE,
     "tests/test_websocket_scoping.py": SCOPE,
     "tests/test_websocket_delivery.py::*private_entry_reaches_granted_socket_only*": SCOPE,
     "tests/test_websocket_delivery.py::*reaches_unscoped_sockets_only*": SCOPE,
     "tests/test_llm_usage_service.py::*scopes_to_requested_user_only*": SCOPE,
-    "extensions/cascade/tests/test_cascade_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_cross_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_single_kb_readable_set.py": SCOPE,
     "extensions/journalism-investigation/tests/test_dedup.py::*readable*": SCOPE,
+    "extensions/software-kb/tests/test_software_kb.py::TestBacklogDependencies::test_unreadable_blocker_remains_unknown_and_unresolved": SCOPE,
     "extensions/software-kb/tests/test_sw_readable_set.py": SCOPE,
     "extensions/software-kb/tests/test_adr_listing.py::test_mcp_adrs_are_numbered_and_show_standing_relations": SCOPE,
     "extensions/software-kb/tests/test_adr_listing.py::test_mcp_adrs_do_not_reveal_unreadable_link_sources": SCOPE,
@@ -342,7 +337,6 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_collection_export.py::*source_public*": SCOPE,
     "extensions/journalism-investigation/tests/test_export_pack.py::*test_source_redaction*": SCOPE,
     "extensions/journalism-investigation/tests/test_export_pack.py::*redacted_sources*": SCOPE,
-    "tests/test_demo_public_kbs_upgrade.py": SCOPE,
     "tests/test_demo_seed_public_kbs.py::*default_role_wins*": SCOPE,
     # -- containment of paths and names inside their root --
     "tests/test_config_isolation.py": CONTAIN,
@@ -361,8 +355,8 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     "tests/test_notebooklm_renderer.py::*absolute_path*": CONTAIN,
     # Git acts on the repository it was told to, not one a parent process leaked.
     "tests/test_worktree_service.py::TestGitServiceEnvIsolation::*": CONTAIN,
-    "tests/test_site_cache.py::*traversal*": CONTAIN,
     "tests/test_branding_endpoints.py::*traversal*": CONTAIN,
+    "tests/test_branding_endpoints.py::TestBrokenBrandingDoesNotLeakOnPublicRoutes::*": ESCAPE,
     "tests/test_branding_service.py::*traversal*": CONTAIN,
     # -- credential handling --
     "tests/test_auth_endpoints.py": CRED,
@@ -382,14 +376,7 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # -- output escaping and request forgery --
     "tests/test_clipper.py": ESCAPE,  # SSRF defence for the web clipper
     "tests/test_repo_error_disclosure.py": ESCAPE,  # no git stderr or server paths
-    "tests/test_site_xss.py": ESCAPE,
     "tests/test_spa_csp_headers.py": ESCAPE,
-    "tests/test_site_cache.py::*escaped*": ESCAPE,
-    "tests/test_site_cache.py::*javascript_url_blocked*": ESCAPE,
-    "tests/test_site_cache.py::TestXSSPrevention::*": ESCAPE,
-    "tests/test_site_cache.py::*does_not_leak_path*": ESCAPE,
-    "tests/test_site_cache.py::TestBrokenBrandingDoesNotLeakOnPublicRoutes::*": ESCAPE,
-    "tests/test_site_cache.py::TestBrandingFailureCacheDoesNotLeakTracebackFrames::*": ESCAPE,
     "tests/test_web_clipper.py::*strips_scripts*": ESCAPE,
     # An error body carries the public message, never the raw exception.
     "tests/test_rest_api.py::*public_message_replaces_str_exc*": ESCAPE,
@@ -429,8 +416,18 @@ _FIXTURE_LEAK = "journalism data about a leak (a document classification), not a
 _PUBLIC_FIXTURE = "builds a public KB (default_role: read) as fixture; tests rendering, not access"
 _IN_READ_TIER = "asserts a tool IS offered at the read tier (feature), not that one is withheld"
 _JSONLD = "parses the page's JSON-LD block for SEO fields; escaping is TestXSSPrevention"
+# A MagicMock KB config is truthy everywhere, read_only included: the mock
+# says read_only = False so the export runs at all.
+_WRITABLE_MOCK = (
+    "a mock KB config marked read_only = False so the operation runs; no security property"
+)
+
 REVIEWED_EXPERIMENTAL: dict[str, str] = {
+    "tests/test_export_service.py::TestExportKBToDirectory::*": _WRITABLE_MOCK,
+    "tests/test_export_service.py::TestCommitKB::*": _WRITABLE_MOCK,
+    "tests/test_export_service.py::TestPushKB::*": _WRITABLE_MOCK,
     "tests/test_overlay_backend.py::TestOverlayLinks::test_relation_identity": "identity of a link relation, not of a principal; no security property",
+    "tests/test_overlay_backend.py::TestOverlayLinks::test_two_prefixes_of_one_link_survive_the_merge": "identity of a written link prefix in the overlay merge; no security property",
     "extensions/journalism-investigation/tests/test_claim_entry.py::TestClaimEntry::test_round_trip": _FIXTURE_LEAK,
     "extensions/journalism-investigation/tests/test_entity_types.py::TestDocumentSourceEntry::test_round_trip": _FIXTURE_LEAK,
     "extensions/journalism-investigation/tests/test_entity_types.py::TestDocumentSourceEntry::test_classification_values": _FIXTURE_LEAK,
@@ -456,17 +453,12 @@ REVIEWED_EXPERIMENTAL: dict[str, str] = {
     "tests/test_personal_kb.py::TestMigrationV10::test_migration_adds_usage_tier_column": "a migration's table DDL names password_hash; tests the new column",
     "tests/test_repo_endpoints.py::TestFork::test_fork_success": "a stub token is set to reach the success path",
     "tests/test_repo_endpoints.py::TestCreatePR::test_pr_success": "a stub token is set to reach the success path",
-    "tests/test_site_cache.py::TestSiteCacheRenderAll::test_includes_db_only_kb": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestAboutPageLink::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestRenderSiteCacheEndpoint::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestBrandingNestedMappingValidation::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestBrandingScalarFieldValidation::*": _PUBLIC_FIXTURE,
-    "tests/test_site_cache.py::TestEditLinkVisibility::test_edit_link_hidden_for_read_only_kb": "hides an edit link in the page (UI); the write refusal itself is tested in the gate",
-    "tests/test_site_cache.py::TestSEOAndSocialMetadata::*": _JSONLD,
-    "tests/test_site_cache.py::TestSiteCacheBranding::test_jsonld_publisher_is_brand": _JSONLD,
     "tests/test_static_routes_with_a_built_dist.py::test_a_reserved_prefix_and_everything_under_it_is_404_never_the_spa": "routing: a reserved prefix is a 404, with or without a credential; no access decision",
+    "tests/test_demo_seed_public_kbs.py::test_seeded_kbs_are_public": "the demo seed opens its KBs on purpose; which KBs a deploy opens is the operator's choice, read back through the policy, not the policy itself",
     "tests/test_task_cli_create_fields.py::test_conductor_desk_recipe_creates_a_task_in_one_step": "a tag named 'outside'",
     "tests/test_task_service.py::TestListTasks::test_list_preserves_priority": "'readable' in a docstring; priority round-trip",
+    "tests/test_task_start.py::test_start_refuses_a_file_its_type_cannot_load_before_the_compare_and_set": "an unloadable file (ADR-0042 8a), a data-integrity refusal; no access decision. tests/test_unloadable_file_is_never_written.py pins it for task start too",
+    "tests/test_task_priority_type.py::test_a_row_holding_a_string_a_word_or_nothing_reads_as_an_int": "passes readable_kbs=None (unscoped) on direct service calls; the test checks priority typing, no access decision",
 }
 
 

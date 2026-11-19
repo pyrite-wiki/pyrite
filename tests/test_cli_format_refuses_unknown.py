@@ -16,9 +16,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import click
 import pytest
 from typer.testing import CliRunner
+
+from tests.outcome_walk import param_choices
 
 sys.path.insert(0, str(Path(__file__).parent))
 from cli_help import plain  # noqa: E402
@@ -63,8 +64,9 @@ def _required_args(cmd) -> list[str]:
     for p in cmd.params:
         if not p.required or p.name in ("help",):
             continue
-        value = p.type.choices[0] if isinstance(p.type, click.Choice) else "x"
-        if isinstance(p, click.Argument):
+        choices = param_choices(p)
+        value = choices[0] if choices else "x"
+        if p.param_type_name == "argument":
             args.append(value)
         else:
             args += [p.opts[0], value]
@@ -122,3 +124,30 @@ def test_format_bogus_is_refused_before_the_command_acts(command, tmp_path, monk
     assert (CONFIG_FILE.read_bytes() if CONFIG_FILE.exists() else None) == config_before, (
         f"{command} changed the config before refusing"
     )
+
+
+@pytest.mark.parametrize("fmt", ["markdown", "csv"])
+@pytest.mark.parametrize("kb_flag", [[], ["-k", "test-kb"]])
+def test_orient_refuses_unsupported_formats_with_usage_error(fmt: str, kb_flag: list[str]) -> None:
+    """orient refuses markdown and csv before running, without printing a python repr (#1501)."""
+    from pyrite.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["orient", *kb_flag, "--format", fmt])
+
+    assert result.exit_code == 2, result.output
+    assert f"unknown format {fmt!r}; choose one of: json, yaml, rich" in result.output
+    assert "{'" not in result.output
+
+
+def test_orient_help_lists_supported_formats_only() -> None:
+    """orient --help lists json, yaml, rich and neither markdown nor csv (#1501)."""
+    from pyrite.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["orient", "--help"])
+    assert result.exit_code == 0, result.output
+    plain_output = plain(result.output)
+    assert "Output format: json, yaml, rich" in plain_output
+    assert "markdown" not in plain_output
+    assert "csv" not in plain_output

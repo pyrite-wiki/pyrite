@@ -10,34 +10,48 @@ when it ran (``tests/test_cli_outcome.py`` plants each such way out in every
 one of them). Notices go to stderr, which the root leaves open.
 """
 
+from __future__ import annotations
+
 import json
-from typing import Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.console import Console
 from rich.table import Table
+from typer.core import TyperCommand
 
 from ..exceptions import EntryNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
-from ..services.task_service import TaskService
-from ..storage.database import PyriteDB
 from .outcome import Outcome
-from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT
+from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT, cli_console
+
+if TYPE_CHECKING:
+    from ..services.task_service import TaskService
+    from ..storage.database import PyriteDB
 
 task_app = typer.Typer(help="Task management commands")
 
 
-def _get_service() -> tuple[TaskService, PyriteDB]:
+def _get_service(*kbs: object) -> tuple[TaskService, PyriteDB]:
     """Create TaskService and return (service, db) for cleanup.
 
     Goes through the shared loader so KBs registered in the database
     (``kb create``, ``kb add``) are merged into the config first. Reading the
     YAML config directly made those KBs invisible here: ``kb list`` showed
-    them, and ``task create -k <kb>`` answered KB_NOT_FOUND (#245).
+    them, and ``task create -k <kb>`` answered KB_NOT_FOUND (#245). Every KB
+    the command named (``kbs``) is resolved here, before the body runs
+    (#952, #924); None names no KB.
     """
-    from .context import get_config_and_db
+    from ..services.task_service import TaskService
+    from .context import get_config_and_db, require_kb
 
     config, db = get_config_and_db()
+    try:
+        for kb in kbs:
+            require_kb(config, kb, db=db)
+    except BaseException:
+        db.close()
+        raise
     return TaskService(config, db), db
 
 
@@ -50,6 +64,8 @@ _FIELD_OWN_OPTION: dict[str, str] = {
     "priority": "--priority",
     "assignee": "--assignee",
     "tags": "--tags",
+    "due_date": "--due-date",
+    "links": "--link",
 }
 
 #: `--field` keys refused because `TaskService.create_task` forwards
@@ -65,6 +81,16 @@ _FIELD_OWN_OPTION: dict[str, str] = {
 _FIELD_CREATE_ENTRY_COLLISION: frozenset[str] = frozenset(
     {"kb_name", "entry_id", "entry_type", "allow_undeclared"}
 )
+
+#: `--field` keys `task create` owns or builds another way: the id comes from
+#: the title, and a task's sources are made with `update --append` (which
+#: checks the target). Not a managed-field list: what Pyrite or the task
+#: manages is refused by `KBService.create` (#1010).
+_FIELD_CREATE_OWNED_HINT: dict[str, str] = {
+    "id": "`task create` sets the id from the title.",
+    "sources": "add sources after creating, with `pyrite update --append sources=...`.",
+}
+_FIELD_CREATE_OWNED: frozenset[str] = frozenset(_FIELD_CREATE_OWNED_HINT)
 
 #: `--field` keys refused because a freshly created entry can never actually
 #: carry them, the #407 symptom recurring on `create` (round-2 cold read):
@@ -82,76 +108,155 @@ _FIELD_CREATE_ENTRY_COLLISION: frozenset[str] = frozenset(
 _FIELD_CREATE_NEVER_TAKES_EFFECT: frozenset[str] = frozenset({"type", "created_at", "updated_at"})
 
 
-def _parse_task_create_fields(
-    field: list[str] | None, *, config: Any, kb_name: str
-) -> dict[str, Any]:
+def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
     """Parse `--field key=value` pairs for `task create`.
 
     Uses the same value parser as `create -f`/`update -f`
     (`_parse_field_value`), and refuses:
 
+    - a key named twice (#1726);
     - a key that already has its own option;
     - `status` (task lifecycle is `task update --status`, not a free-form
       field);
-    - a `TaskEntry.managed_fields` key -- `create` does not run `update`'s
-      managed-field refusal, so without this an agent could forge the audit
-      trail (`status_change_log`, `evidence`, `agent_context`,
-      `assigned_at`) at creation instead of only failing to set it later;
-    - every service-level `KBService._MANAGED_FIELDS` key (`id`, `kb_name`,
-      `file_path`, `links`, `sources`, `provenance`, `extra_frontmatter`) --
-      `update` already refuses these on every entry type, not just tasks;
-      `create` didn't, so `--field links=[{"target": "ghost"}]` created a
-      task already linked to a target that doesn't exist, bypassing the
-      dangling-target check `add_link` applies everywhere else (round-1
-      cold read);
     - a key colliding with `create_entry`'s own call signature or control
       parameters (`_FIELD_CREATE_ENTRY_COLLISION`);
     - `type`, `created_at` and `updated_at` -- a freshly created entry can
       never actually carry them (`_FIELD_CREATE_NEVER_TAKES_EFFECT`), the
       #407 symptom recurring on `create` (round-2 cold read).
+
+    A field Pyrite or the task manages (the audit trail, `file_path`, ...) is
+    not refused here: `KBService.create` refuses it for every surface
+    (#1010), so the rule has one home.
     """
-    from ..models.task import TaskEntry
-    from ..services.kb_service import _MANAGED_FIELDS
-    from .entry_commands import _field_type_for, _parse_field_value
+    from .entry_commands import _parse_field_value
 
     fields: dict[str, Any] = {}
     for fv in field or []:
         if "=" not in fv:
-            raise ValidationError(f"--field must be key=value, got '{fv}'")
-        k, v = fv.split("=", 1)
-        if k in _FIELD_OWN_OPTION:
+            message = f"--field must be key=value, got '{fv}'"
             raise ValidationError(
-                f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
+                message, errors=[{"field": "--field", "rule": "format", "message": message}]
+            )
+        k, v = fv.split("=", 1)
+        if k in fields:
+            message = (
+                f"--field {k} is given more than once; send several values as one "
+                f'JSON array: --field \'{k}=["a", "b"]\''
+            )
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "repeated", "message": message}]
+            )
+        if k in _FIELD_OWN_OPTION:
+            message = f"--field {k}=... is refused: use {_FIELD_OWN_OPTION[k]} instead."
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
         if k == "status":
+            if v != "open":
+                message = (
+                    "--field status=... is refused: a new task is always created open; "
+                    "use `task claim` or `task update --status` to change it."
+                )
+                raise ValidationError(
+                    message, errors=[{"field": k, "rule": "managed", "message": message}]
+                )
+        if k in _FIELD_CREATE_OWNED:
+            message = f"--field {k}=... is refused: " + _FIELD_CREATE_OWNED_HINT[k]
             raise ValidationError(
-                "--field status=... is refused: a new task is always created open; "
-                "use `task update --status` to change it."
-            )
-        if k in TaskEntry.managed_fields:
-            raise ValidationError(
-                f"--field {k}=... is refused: Pyrite maintains this field as part of "
-                f"the task's audit trail."
-            )
-        if k in _MANAGED_FIELDS:
-            raise ValidationError(
-                f"--field {k}=... is refused: Pyrite maintains this field; `update` refuses it too."
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
             )
         if k in _FIELD_CREATE_ENTRY_COLLISION:
-            raise ValidationError(
+            message = (
                 f"--field {k}=... is refused: this name collides with a parameter "
                 f"`task create` itself needs."
             )
-        if k in _FIELD_CREATE_NEVER_TAKES_EFFECT:
             raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
+            )
+        if k in _FIELD_CREATE_NEVER_TAKES_EFFECT:
+            message = (
                 f"--field {k}=... is refused: a freshly created task cannot carry this "
                 f"value; it would report success and set nothing."
             )
-        fields[k] = _parse_field_value(v, _field_type_for(config, kb_name, "task", k))
+            raise ValidationError(
+                message, errors=[{"field": k, "rule": "managed", "message": message}]
+            )
+        fields[k] = _parse_field_value(v)
     return fields
 
 
-@task_app.command("create")
+_FRONTMATTER_REFUSAL = (
+    "--body-file/--stdin: the text opens with a frontmatter block, and task bodies do not "
+    "read frontmatter. Use `pyrite create -t task --body-file <file>`, which reads it."
+)
+
+
+class _BodySourceCommand(TyperCommand):
+    """A command that takes ``--body``/``--body-file``/``--stdin`` (#1687).
+
+    What can be judged without reading is judged while click parses, so it is a
+    usage error (``USAGE_ERROR``, exit 2) before any KB is opened or anything is
+    written (ADR-0046: the command body has no usage errors): two body sources.
+    A ``--body-file`` that is missing or a directory is found by reading, so it is
+    a refusal from the command body (``require_input_file``, exit 1).
+
+    ``create`` and ``update`` reuse this check (#1780). Whether a source counts
+    as given is the subclass's to say (``_body_given``, ``_stdin_given``),
+    because the parameter names and defaults differ between the commands."""
+
+    def parse_args(self, ctx, args):
+        rest = super().parse_args(ctx, args)
+        p = ctx.params
+        body_file = p.get("body_file")
+        dash = body_file is not None and str(body_file) == "-"
+        given = [
+            flag
+            for flag, on in (
+                ("--body", self._body_given(p)),
+                ("--body-file", body_file is not None and not dash),
+                ("--stdin", self._stdin_given(p) or dash),
+            )
+            if on
+        ]
+        if len(given) > 1:
+            raise typer.BadParameter(f"give one body source, not {' and '.join(given)}", ctx=ctx)
+        return rest
+
+    def _body_given(self, p):
+        return p.get("body") is not None
+
+    def _stdin_given(self, p):
+        return bool(p.get("stdin_flag"))
+
+
+def _task_body(body: str | None, body_file: Path | None, stdin_flag: bool) -> str | None:
+    """The one body a task command was given, or None when it got none (#1687).
+
+    Reuses the readers ``pyrite create`` uses (``read_input_file``, ``_read_stdin``;
+    ``-`` as the path reads stdin), so undecodable bytes are refused as ``create``
+    refuses them. Text read from a file or stdin that opens with frontmatter is
+    refused (it would write a second frontmatter-looking block); ``--body`` stays
+    literal text, as ``task create --body`` always was.
+    """
+    from ..exceptions import ValidationError
+    from ..utils.frontmatter import Frontmatter, split_frontmatter
+    from .context import read_input_file
+    from .entry_commands import _read_stdin
+
+    if body is not None:
+        return body
+    if stdin_flag or (body_file is not None and str(body_file) == "-"):
+        text = _read_stdin()
+    elif body_file is not None:
+        text = read_input_file(body_file, "Body file")
+    else:
+        return None
+    if isinstance(split_frontmatter(text), Frontmatter):
+        raise ValidationError(_FRONTMATTER_REFUSAL)
+    return text
+
+
+@task_app.command("create", cls=_BodySourceCommand)
 def task_create(
     title_arg: str | None = typer.Argument(
         None, metavar="TITLE", help="Task title (or use --title)"
@@ -159,12 +264,23 @@ def task_create(
     title_opt: str | None = typer.Option(None, "--title", "-t", help="Task title"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     parent: str | None = typer.Option(None, "--parent", "-p", help="Parent task entry ID"),
-    priority: int = typer.Option(5, "--priority", help="Priority 1-10"),
+    priority: int = typer.Option(5, "--priority", min=1, max=10, help="Priority 1-10"),
     assignee: str | None = typer.Option(
         None, "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
     body: str | None = typer.Option(None, "--body", "-b", help="Task description"),
+    body_file: Path | None = typer.Option(
+        None, "--body-file", help="Read the body from a file (- for stdin)"
+    ),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Read the body from stdin"),
     tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
+    due_date: str | None = typer.Option(None, "--due-date", "-d", help="Due date (YYYY-MM-DD)"),
+    link: list[str] | None = typer.Option(
+        None,
+        "--link",
+        "-l",
+        help="Link to target entry (format: target-id or target-id:relation)",
+    ),
     field: list[str] | None = typer.Option(
         None, "--field", help="Extra field as key=value (repeatable)"
     ),
@@ -190,21 +306,35 @@ def task_create(
             "A task title is required: `pyrite task create <title> ...` or `--title <title>`."
         )
 
-    svc, db = _get_service()
+    from .entry_commands import _parse_link_option
+
+    resolved_body = _task_body(body, body_file, stdin_flag)
+    link_specs = [_parse_link_option(spec) for spec in link or []]
+    links_payload = [{"target": t, "relation": r} for t, r in link_specs] if link else None
+
+    svc, db = _get_service(kb_name)
     try:
-        fields = _parse_task_create_fields(field, config=svc.config, kb_name=kb_name)
+        fields = _parse_task_create_fields(field)
         result = svc.create_task(
             kb_name=kb_name,
             title=title,
-            body=body or "",
+            body=resolved_body or "",
             parent=parent or "",
             priority=priority,
             assignee=assignee or "",
             tags=[t.strip() for t in tags.split(",")] if tags else None,
             fields=fields or None,
+            due_date=due_date or "",
+            links=links_payload,
         )
     finally:
         db.close()
+
+    for failed in result.get("failed_links", []):
+        if "finish_up" not in failed:
+            failed["finish_up"] = (
+                f"pyrite link {result['entry_id']} {failed['target']} -r {failed['relation']} -k {kb_name}"
+            )
 
     def rich(console, result):
         console.print(f"[green]Task created:[/green] {result['title']}")
@@ -214,10 +344,29 @@ def task_create(
             console.print(f"  Parent: {parent}")
         if assignee:
             console.print(f"  Assignee: {assignee}")
+        if result.get("due_date"):
+            console.print(f"  Due: {result['due_date']}")
+        for done_link in result.get("linked", []):
+            console.print(f"  [dim]Linked to {done_link['target']} ({done_link['relation']})[/dim]")
+        for failed in result.get("failed_links", []):
+            console.print(f"  [yellow]Link failed:[/yellow] {failed['error']}")
+        if result.get("failed_links"):
+            total_links = len(link or [])
+            console.print(
+                f"[yellow]Task '{result['entry_id']}' was created; "
+                f"{len(result['failed_links'])} of {total_links} link(s) failed.[/yellow]"
+            )
+            for failed in result["failed_links"]:
+                console.print(
+                    f"  add it once '{failed['target']}' exists: {failed['finish_up']}",
+                    markup=False,
+                    highlight=False,
+                )
         for warning in result.get("warnings", []):
             console.print("[yellow]Warning:[/yellow]", json.dumps(warning, default=str))
 
-    return Outcome.done(result, rich=rich)
+    outcome_fn = Outcome.partial if result.get("failed_links") else Outcome.done
+    return outcome_fn(result, rich=rich)
 
 
 def _completion_text(derived: dict) -> str:
@@ -239,21 +388,21 @@ def _status_cell(item: dict) -> str:
 
 def _render_list(console, data: dict) -> None:
     table = Table(title="Tasks")
-    table.add_column("ID", style="cyan", max_width=12)
+    table.add_column("ID", style="cyan", overflow="fold")
     table.add_column("Title")
     table.add_column("Status", style="green")
     table.add_column("Pri", justify="right")
     table.add_column("Assignee", style="yellow")
-    table.add_column("Parent", style="dim", max_width=12)
+    table.add_column("Parent", style="dim", overflow="fold")
 
     for item in data["tasks"]:
         table.add_row(
-            item["id"][:12],
+            item["id"],
             item["title"],
             _status_cell(item),
             str(item["priority"]),
             item["assignee"],
-            item["parent"][:12] if item["parent"] else "",
+            item["parent"] or "",
         )
     console.print(table)
 
@@ -267,20 +416,62 @@ def task_list(
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
     priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
+    dispatchable: bool = typer.Option(
+        False,
+        "--dispatchable",
+        help="Only tasks a worker can take now (for a caller who may claim, each one is a "
+        "task claim accepts): open, unassigned, unparked, unblocked, no children; "
+        "highest priority first. Adds counts and excluded.",
+    ),
+    fields: str | None = typer.Option(
+        None,
+        "--fields",
+        help="Comma-separated fields per task (id and kb_name are always kept); * for all",
+    ),
 ) -> Outcome:
     """List tasks with optional filters."""
-    svc, db = _get_service()
+    from ..services.read_shaping import parse_cli_fields
+
+    fields_list = parse_cli_fields(fields)
+    svc, db = _get_service(kb_name)
     try:
-        items = svc.list_tasks(
+        data = svc.task_listing(
             kb_name=kb_name,
             status=status,
             assignee=assignee,
             parent=parent,
             priority=priority,
+            dispatchable=dispatchable,
+            fields=fields_list,
         )
     finally:
         db.close()
-    return Outcome.done({"count": len(items), "tasks": items}, rich=_render_list)
+    if fields_list:
+        from ..services.task_service import TaskService
+
+        unmatched = [
+            f
+            for f in fields_list
+            if f not in TaskService.TASK_ROW_FIELDS and not any(f in t for t in data["tasks"])
+        ]
+        if unmatched:
+            typer.echo(
+                f"warning: no task carries: {', '.join(unmatched)} "
+                "(field names are case-sensitive; '*' returns every field)",
+                err=True,
+            )
+
+    def rich(console, data: dict) -> None:
+        if fields_list:
+            from ..formats.tabular import projected_rich_table
+
+            console.print(projected_rich_table(data["tasks"], fields_list, "Tasks"))
+        else:
+            _render_list(console, data)
+        if "counts" in data:
+            console.print(", ".join(f"{k}: {v}" for k, v in data["counts"].items()), markup=False)
+
+    return Outcome.done(data, rich=rich)
 
 
 @task_app.command("get")
@@ -303,9 +494,9 @@ def task_status(
 ) -> Outcome:
     """[Deprecated] Alias for `task get`. Use `task get` instead."""
     # Deprecation notice goes to stderr so it never corrupts JSON on stdout.
-    Console(stderr=True).print(
+    cli_console(stderr=True).print(
         "[yellow]Warning:[/yellow] `task status` is deprecated and will be "
-        "removed in a future release; use `task get` instead.",
+        "removed in 0.27; use `task get` instead.",
         style="dim",
     )
     return _task_get_impl(task_id, kb_name)
@@ -332,61 +523,41 @@ def _render_task(console, result: dict) -> None:
     if children:
         console.print(f"\n  [bold]Children ({len(children)}):[/bold]")
         for c in children:
-            console.print(f"    {c['id'][:12]}  {c['status']:12}  {c['title']}")
+            console.print(f"    {c['id']}  {c['status']:12}  {c['title']}")
+    body = result.get("body", "")
+    if body:
+        console.print()
+        console.print(body, markup=False, highlight=False)
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     """Shared implementation for `task get` and the deprecated `task status`."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
-        task = svc.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
-        if not task:
+        task_detail = svc.get_task_detail(task_id, kb_name, readable_kbs=UNSCOPED)
+        if not task_detail:
             missing = EntryNotFoundError(f"Task '{task_id}' not found")
             missing.suggestion = f"run `pyrite task list -k {kb_name or '<kb>'}` to find task IDs"
             raise missing
-
-        meta = task.get("metadata", {})
-        if isinstance(meta, str):
-            try:
-                meta = json.loads(meta)
-            except (json.JSONDecodeError, TypeError):
-                meta = {}
-
-        children_list = svc.list_tasks(kb_name=kb_name, parent=task_id)
-        children = [
-            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
-            for c in children_list
-        ]
-        task_kb = task.get("kb_name", kb_name or "")
-
-        result = {
-            "id": task["id"],
-            "title": task["title"],
-            "status": task.get("status") or meta.get("status", "open"),
-            "assignee": task.get("assignee") or meta.get("assignee", ""),
-            "priority": task.get("priority") or meta.get("priority", 5),
-            "parent": meta.get("parent", ""),
-            "dependencies": meta.get("dependencies", []),
-            "evidence": meta.get("evidence", []),
-            "due_date": meta.get("due_date", ""),
-            "agent_context": meta.get("agent_context", {}),
-            "children": children,
-            "kb_name": task_kb,
-            # Computed from the children, never read from or written to the file.
-            "derived": svc.derived_for(task_kb, task["id"]),
-        }
     finally:
         db.close()
-    return Outcome.done(result, rich=_render_task)
+    return Outcome.done(task_detail, rich=_render_task)
 
 
-@task_app.command("update")
+@task_app.command("update", cls=_BodySourceCommand)
 def task_update(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     status: str | None = typer.Option(None, "--status", "-s", help="New status"),
     assignee: str | None = typer.Option(None, "--assignee", "-a", help="New assignee"),
-    priority: int | None = typer.Option(None, "--priority", help="New priority 1-10"),
+    priority: int | None = typer.Option(
+        None, "--priority", min=1, max=10, help="New priority 1-10"
+    ),
+    body: str | None = typer.Option(None, "--body", "-b", help="New body text"),
+    body_file: Path | None = typer.Option(
+        None, "--body-file", help="Replace the body with a file's text (- for stdin)"
+    ),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Replace the body with stdin"),
     reason: str | None = typer.Option(
         None,
         "--reason",
@@ -412,8 +583,11 @@ def task_update(
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
-    """Update task fields (status, assignee, priority, reason)."""
+    """Update task fields (status, assignee, priority, body, reason)."""
     updates: dict[str, Any] = {}
+    resolved_body = _task_body(body, body_file, stdin_flag)
+    if resolved_body is not None:
+        updates["body"] = resolved_body
     if status is not None:
         updates["status"] = status
     if assignee is not None:
@@ -433,11 +607,11 @@ def task_update(
 
     if not updates:
         raise ValidationError(
-            "No updates specified: pass --status, --assignee, --priority, --reason, "
-            "--comment or --by."
+            "No updates specified: pass --status, --assignee, --priority, --body, "
+            "--body-file, --stdin, --reason, --comment or --by."
         )
 
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.update_task(task_id, kb_name, **updates)
     finally:
@@ -462,7 +636,7 @@ def task_claim(
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Atomically claim an open task."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.claim_task(task_id, kb_name, assignee)
     finally:
@@ -480,6 +654,104 @@ def task_claim(
     if result.get("claimed"):
         return Outcome.done(result, rich=rich)
     return Outcome.nothing(result, rich=rich)
+
+
+@task_app.command("start")
+def task_start(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    assignee: str = typer.Option(
+        ..., "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Claim and start an open task in one atomic write.
+
+    Decided by the same compare-and-set as `task claim`: of two concurrent
+    starts one wins, and the loser exits 1 with `claimed: false`, as a lost
+    claim does. Records open → claimed → in_progress in the task's
+    status_change_log and returns the task and its parent, with their bodies.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.start_task(task_id, kb_name, assignee)
+    finally:
+        db.close()
+
+    def rich(console, result):
+        if result.get("claimed"):
+            console.print(f"[green]Started:[/green] {task_id}")
+            console.print(f"  Assignee: {assignee}")
+            parent = result.get("parent")
+            if parent:
+                console.print(f"  Parent: {parent['id']}  {parent['title']}")
+            body = (result.get("task") or {}).get("body") or ""
+            if body:
+                console.print(f"\n{body}")
+        else:
+            console.print(f"[red]Failed:[/red] {result.get('error', 'Unknown error')}")
+
+    # A lost start is a lost claim (#526, ADR-0046): `nothing`, exit 1.
+    if result.get("claimed"):
+        return Outcome.done(result, rich=rich)
+    return Outcome.nothing(result, rich=rich)
+
+
+@task_app.command("finish")
+def task_finish(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    walk: bool = typer.Option(
+        False,
+        "--walk",
+        help="Pass through every intermediate state of the task workflow to done, recording each edge",
+    ),
+    reason: str | None = typer.Option(
+        None,
+        "--reason",
+        "--status-reason",
+        help="Reason for the change: set as status_reason and on each log item",
+    ),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is finishing it: must be the task's assignee (finish requires the caller to hold the task)",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, finish a task you do not hold; recorded as by: operator, override: true",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Move a held task to done in one write.
+
+    Finish requires the caller to hold the task: --by names the caller, who
+    must be its assignee. Operators have an explicit override,
+    --operator-override. Without --walk only a direct edge is taken
+    (in_progress → done, review → done); the refusal names the path --walk
+    would take. Each edge is judged by the task's workflow and recorded in
+    its status_change_log.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.finish_task(
+            task_id,
+            kb_name,
+            walk=walk,
+            reason=reason or "",
+            by=by or "",
+            operator_override=operator_override,
+        )
+    finally:
+        db.close()
+
+    def rich(console, result):
+        console.print(f"[green]Finished:[/green] {task_id} ({' → '.join(result['path'])})")
+
+    return Outcome.done(result, rich=rich)
 
 
 @task_app.command("reset")
@@ -500,7 +772,7 @@ def task_reset(
     For tasks whose worker crashed or aged out: returns the task to `open` so it
     can be re-dispatched, clears the assignee, and appends a work-log entry.
     """
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.reset_task(task_id, kb_name, reason=reason, operator=operator)
     finally:
@@ -532,7 +804,7 @@ def task_decompose(
 ) -> Outcome:
     """Decompose a parent task into child tasks."""
     children = [{"title": t} for t in child]
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         results = svc.decompose_task(parent_id, kb_name, children)
         output = {
@@ -563,7 +835,7 @@ def task_migrate_relaxed_mode(
     Tier A r1175 — provides a migration path so existing tasks don't
     fail validation the next time their status changes. Idempotent.
     """
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.migrate_relaxed_mode(kb_name, dry_run=dry_run)
     finally:
@@ -586,7 +858,9 @@ def task_checkpoint(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     message: str = typer.Option(..., "--message", "-m", help="Checkpoint message"),
-    confidence: float = typer.Option(0.0, "--confidence", help="Confidence 0.0-1.0"),
+    confidence: float = typer.Option(
+        0.0, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
+    ),
     evidence: list[str] | None = typer.Option(
         None, "--evidence", "-e", help="Evidence entry IDs (repeatable)"
     ),
@@ -594,7 +868,7 @@ def task_checkpoint(
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Log a checkpoint on a task."""
-    svc, db = _get_service()
+    svc, db = _get_service(kb_name)
     try:
         result = svc.checkpoint_task(
             task_id=task_id,

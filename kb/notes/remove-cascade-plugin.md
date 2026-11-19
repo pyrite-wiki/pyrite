@@ -21,7 +21,7 @@ links:
   kb: pyrite
 importance: 5
 kind: chore
-status: proposed
+status: done
 priority: medium
 effort: S
 rank: 700

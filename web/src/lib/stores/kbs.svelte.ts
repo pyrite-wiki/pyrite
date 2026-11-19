@@ -14,6 +14,23 @@ class KBStore {
 		return this.kbs.find((kb) => kb.name === this.activeKB);
 	}
 
+	/**
+	 * The full KB name a `kb:` wikilink prefix means. A shortname is link
+	 * syntax only (`[[pb:id]]`): the API takes the full name everywhere and
+	 * refuses a shortname, so every href the web builds and every request it
+	 * sends resolves the prefix here first. A full name is itself, and wins
+	 * over another KB's shortname; a name this store does not know is
+	 * returned unchanged, for the API to refuse by its own rule.
+	 */
+	resolveName(name: string): string;
+	resolveName(name: string | undefined): string | undefined;
+	resolveName(name: string | undefined): string | undefined {
+		if (!name) return name;
+		if (this.kbs.some((kb) => kb.name === name)) return name;
+		const byShortname = this.kbs.find((kb) => kb.shortname === name);
+		return byShortname ? byShortname.name : name;
+	}
+
 	async load() {
 		this.loading = true;
 		this.error = null;

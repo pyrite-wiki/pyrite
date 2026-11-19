@@ -53,7 +53,7 @@
 		<img src="/pyrite-mark-light.svg" alt="" class="mb-6 h-16 w-16 dark:hidden" />
 		<img src="/pyrite-mark.svg" alt="" class="mb-6 hidden h-16 w-16 dark:block" />
 		<h2 class="mb-2 text-2xl font-bold">Welcome to Pyrite</h2>
-		<p class="mb-6 max-w-md text-sm text-zinc-400">
+		<p class="mb-6 max-w-md text-sm text-zinc-600 dark:text-zinc-400">
 			Your knowledge infrastructure is ready. Start by creating your first entry
 			or importing existing notes.
 		</p>
@@ -61,12 +61,12 @@
 			<a href="/entries/new" class="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
 				Create First Entry
 			</a>
-			<a href="/entries/clip" class="rounded-md border border-zinc-600 px-4 py-2 text-sm font-medium text-zinc-300 hover:border-zinc-400">
+			<a href="/entries/clip" class="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:border-zinc-500 dark:border-zinc-600 dark:text-zinc-300 dark:hover:border-zinc-400">
 				Clip a Web Page
 			</a>
 		</div>
-		<p class="mt-8 text-xs text-zinc-600">
-			Or use the CLI: <code class="rounded bg-zinc-800 px-1.5 py-0.5 font-mono">pyrite create -k my-kb -t note --title "My First Note"</code>
+		<p class="mt-8 text-xs text-zinc-500 dark:text-zinc-600">
+			Or use the CLI: <code class="rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 font-mono">pyrite create -k my-kb -t note --title "My First Note"</code>
 		</p>
 	</div>
 {:else}

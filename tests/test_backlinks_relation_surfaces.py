@@ -52,7 +52,6 @@ def _assert_rows(rows):
 
 def test_rest_entry_backlinks_carry_both_relations(w):
     p = w.principals["admin_key"]
-    w.release_idle_connections()
     r = w.client.get(
         f"/api/entries/{TARGET}",
         params={"kb": READABLE},
@@ -102,20 +101,18 @@ def test_a_row_indexed_before_the_type_was_declared_keeps_relation_and_gains_the
     assert row["inverse_relation"] == "informed_by"
 
 
-@pytest.mark.parametrize("relation", ["transclusion", "references", "related"])
-@pytest.mark.control(
-    reason="pins the documented meaning of null: these relations are written by "
-    "Pyrite itself and are undeclared today; declaring them is a follow-up"
+@pytest.mark.parametrize(
+    ("relation", "inverse"),
+    [
+        ("transclusion", "transcluded_by"),
+        ("references", "referenced_by"),
+        ("related", "related_to"),
+    ],
 )
-def test_inverse_relation_is_null_for_built_in_relations_with_no_declared_inverse(relation):
-    """`null` means "no inverse is declared", not "custom": the indexer writes
-    `transclusion` and `references` (storage/index.py) and `parse_links` writes
-    the legacy `related` (models/base.py), and none is a declared type.
-    If this fails because one was declared, update docs/json-contracts.md.
-    """
+def test_core_written_relations_have_the_maintainer_declared_inverse(relation, inverse):
     from pyrite.schema.provenance import known_inverse_relation
 
-    assert known_inverse_relation(relation) is None
+    assert known_inverse_relation(relation) == inverse
 
 
 def test_kb_backlinks_tool_description_names_the_relation_fields():

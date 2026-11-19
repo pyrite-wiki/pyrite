@@ -1,5 +1,6 @@
 """Round-trip tests for journalism-investigation event entry types."""
 
+import pytest
 from pyrite_journalism_investigation.entry_types import (
     InvestigationEventEntry,
     LegalActionEntry,
@@ -8,6 +9,37 @@ from pyrite_journalism_investigation.entry_types import (
 
 
 class TestInvestigationEventEntry:
+    def test_participants_alias_populates_actors(self):
+        entry = InvestigationEventEntry.from_frontmatter(
+            {"id": "event-alias", "title": "Event", "participants": ["alice"]}, ""
+        )
+        assert entry.actors == ["alice"]
+        assert entry.participants == ["alice"]
+        frontmatter = entry.to_frontmatter()
+        assert frontmatter["actors"] == ["alice"]
+        assert "participants" not in frontmatter
+        reloaded = InvestigationEventEntry.from_frontmatter(frontmatter, "")
+        assert reloaded.actors == reloaded.participants == ["alice"]
+
+    @pytest.mark.control(reason="Preserve canonical precedence and empty-value handling")
+    @pytest.mark.parametrize(
+        ("fields", "expected"),
+        [
+            ({"actors": ["alice"]}, ["alice"]),
+            ({"actors": ["alice"], "participants": ["bob"]}, ["alice"]),
+            ({"actors": [], "participants": ["bob"]}, []),
+            ({"actors": None, "participants": ["bob"]}, []),
+            ({"actors": [], "participants": []}, []),
+            ({"participants": None}, []),
+        ],
+    )
+    def test_actor_alias_precedence(self, fields, expected):
+        entry = InvestigationEventEntry.from_frontmatter({"title": "Event", **fields}, "")
+        assert entry.actors == entry.participants == expected
+        frontmatter = entry.to_frontmatter()
+        assert frontmatter.get("actors", []) == expected
+        assert "participants" not in frontmatter
+
     def test_entry_type(self):
         e = InvestigationEventEntry(id="event-panama-papers-leak", title="Panama Papers Leak")
         assert e.entry_type == "investigation_event"
@@ -240,3 +272,79 @@ class TestLegalActionEntry:
         assert "case_status" not in fm
         assert "outcome" not in fm
         assert "case_number" not in fm
+
+
+class TestInvestigationEventEntryAsABaseClass:
+    """`InvestigationEventEntry` is the load-bearing base an out-of-tree
+    extension derives its own event type from (the deleted cascade
+    extension's `timeline_event` did; the only tests of that contract went
+    with it, #953). A subclass that adds a field and overrides nothing else
+    must still read and write every JI field through the base class.
+    """
+
+    def test_a_subclass_round_trips_the_ji_fields_and_its_own(self):
+        from dataclasses import dataclass, field
+        from typing import Any
+
+        @dataclass
+        class HearingEntry(InvestigationEventEntry):
+            capture_lanes: list[str] = field(default_factory=list)
+
+            @property
+            def entry_type(self) -> str:
+                return "hearing"
+
+            def to_frontmatter(self) -> dict[str, Any]:
+                meta = super().to_frontmatter()
+                meta["type"] = "hearing"
+                if self.capture_lanes:
+                    meta["capture_lanes"] = self.capture_lanes
+                return meta
+
+            @classmethod
+            def from_frontmatter(cls, meta: dict[str, Any], body: str) -> "HearingEntry":
+                entry = super().from_frontmatter(meta, body)
+                entry.capture_lanes = list(meta.get("capture_lanes", []) or [])
+                return entry
+
+        meta = {
+            "id": "hearing-1",
+            "title": "The hearing",
+            "type": "hearing",
+            "date": "2026-01-01",
+            "actors": ["[[jane-doe]]"],
+            "source_refs": ["[[transcript-1]]"],
+            "verification_status": "verified",
+            "location": "Room 4",
+            "importance": 7,
+            "tags": ["hearing"],
+            "capture_lanes": ["regulatory"],
+        }
+        entry = HearingEntry.from_frontmatter(meta, "Body.")
+        assert isinstance(entry, HearingEntry)
+        assert entry.entry_type == "hearing"
+        assert (entry.actors, entry.source_refs, entry.verification_status) == (
+            ["[[jane-doe]]"],
+            ["[[transcript-1]]"],
+            "verified",
+        )
+        assert (entry.date, entry.location, entry.capture_lanes) == (
+            "2026-01-01",
+            "Room 4",
+            ["regulatory"],
+        )
+
+        out = entry.to_frontmatter()
+        assert out["type"] == "hearing"
+        for key in (
+            "actors",
+            "source_refs",
+            "verification_status",
+            "date",
+            "location",
+            "capture_lanes",
+        ):
+            assert out[key] == meta[key], key
+        # And back again through the same class: nothing of the base's is lost.
+        again = HearingEntry.from_frontmatter(out, "Body.")
+        assert again.to_frontmatter() == out

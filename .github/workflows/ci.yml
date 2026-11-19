@@ -57,6 +57,7 @@ jobs:
   # ===========================================================================
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     # dorny/paths-filter reads the PR's changed-files list on pull_request
     # events, which needs pull-requests: read beyond the workflow default.
     # The `queue` step lists this workflow's merge_group runs: actions: read.
@@ -76,7 +77,19 @@ jobs:
       infra: ${{ steps.all.outputs.infra || steps.filter.outputs.infra }}
       queue_passed: ${{ steps.all.outputs.queue_passed || steps.queue.outputs.passed }}
     steps:
-      - uses: actions/checkout@v4
+      # A Dependabot bump is tested where it merges: this repository. A copy
+      # of the repository (a mirror, a private working copy) inherits
+      # .github/dependabot.yml and would otherwise spend a full run, about an
+      # hour of runner time, on every weekly bump it will never merge. Stop
+      # red, not green: every job below needs `changes`, so they skip, and
+      # `gate` fails rather than calling an untested bump verified.
+      - name: Dependabot pull requests are tested only in pyrite-wiki/pyrite
+        if: github.actor == 'dependabot[bot]' && github.repository != 'pyrite-wiki/pyrite'
+        run: |
+          echo "::error::Dependabot bumps are tested in pyrite-wiki/pyrite; this copy does not run CI on them."
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ---------------------------------------------------------------------
       # FAIL CLOSED on a merge group. dorny/paths-filter reads the PR's
@@ -120,8 +133,10 @@ jobs:
       # concluded 11-26 s before the push run started). Running `test` and
       # `frontend` again on the push re-tested code with exactly those tests
       # already passed against it. So on a push to dev, a successful
-      # merge_group run of this workflow for this SHA skips both; `smoke` runs
-      # (the queue does not), and `gate` reads the skips as it always has.
+      # merge_group run of this workflow for this SHA skips `frontend`, and
+      # `test` runs only the interpreters the queue did not (3.11, 3.12; see
+      # the `test` matrix); `smoke` runs (the queue does not), and `gate`
+      # reads the skips as it always has.
       # Anything else -- no queue run, one still running, a failed one, an API
       # error, a direct push -- runs everything as before. main and
       # workflow_dispatch never skip: the step does not run for them.
@@ -144,7 +159,7 @@ jobs:
 
       - id: filter
         if: github.event_name != 'merge_group'
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             backend:
@@ -153,6 +168,7 @@ jobs:
               - 'tests/**'
               - 'conftest.py'
               - 'pyproject.toml'
+              - 'uv.lock'
               - 'kb/kb.yaml'
               - '.pre-commit-config.yaml'
               - '.github/workflows/**'
@@ -173,6 +189,7 @@ jobs:
               - 'tests/conftest.py'
               - 'tests/**/conftest.py'
               - 'pyproject.toml'
+              - 'uv.lock'
               - '.pre-commit-config.yaml'
               - '.github/workflows/ci.yml'
               - 'scripts/*.sh'
@@ -182,31 +199,46 @@ jobs:
               - 'conftest.py'
               - 'tests/experimental_surface.py'
 
+  # uv.lock pins every version CI and contributor installs use
+  # (#1357). This fails when pyproject.toml's ranges no longer agree with it;
+  # the fix is `scripts/lock-deps.sh`. Seconds, so it always runs. It does not
+  # fail because a newer release exists: that is `unlocked.yml`'s job.
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+      - run: scripts/lock-deps.sh --check
+
   # Fast check for KB-only changes: schema validation, seconds.
   kb:
     needs: changes
     if: needs.changes.outputs.kb == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
       - run: |
-          uv pip install --system -e ".[cli]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[cli]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
       - name: Validate KB entries
         run: pyrite schema validate kb/
 
   test:
     needs: changes
-    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # A hung test must not hold a runner for the 6 h default (tests-t1): pytest-timeout
     # bounds each test; this bounds the job.
@@ -239,7 +271,16 @@ jobs:
         # the exact commit that is about to land, so as of #400 it pays for
         # the full matrix: queue runner minutes, not wall time, since the
         # legs run in parallel. Only `pull_request` stays narrow.
-        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
+        #
+        # Narrowed again on 2026-10-21 (maintainer): a GitHub Actions slowdown
+        # starved the queue, a 21-job group could not finish inside the
+        # 2400 s check timeout, and each timeout rebuilt every group behind it.
+        # The queue now runs 3.13 only (the interpreter #388 broke on), and the
+        # push to dev that follows runs 3.11 and 3.12 on the same commit, so
+        # each commit is still tested once on every interpreter. The cost is
+        # the #400 risk: a 3.11/3.12-only failure now reddens dev after the
+        # merge instead of blocking it.
+        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || github.event_name == 'merge_group' && '["3.13"]' || needs.changes.outputs.queue_passed == 'true' && '["3.11", "3.12"]' || '["3.11", "3.12", "3.13"]') }}
         # Shards (tests Q2): the suite doubled (3,939 -> 8,143 test defs, Sep 10
         # -> Oct 14) and `test (3.12)` went 13 -> 18-20 min with it. Each
         # interpreter's run is split into 3 parallel legs by pytest-split,
@@ -272,7 +313,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # fetch-depth: 0 -- the fix-commit-has-tests step below walks
           # base.sha..head over the PR's own commit range; the default shallow
@@ -280,7 +321,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
 
@@ -288,12 +329,13 @@ jobs:
         # pip took 80-130 s per job to resolve and build seven editable
         # installs even with a warm wheel cache; uv does it in seconds, and it
         # is the install path the README documents (`uv tool install`).
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         # `.[dev]` is test TOOLING ONLY (pytest/mypy/ruff/xdist) -- it pulls
@@ -304,17 +346,17 @@ jobs:
         # while pip still exited 0 so the install step reported success.
         # `.[all]` is the whole optional surface (API, MCP, CLI, AI).
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           # Extensions are separate distributions, covered by NO pyrite extra.
           # Without this loop 37 test modules fail at collection with
           # ModuleNotFoundError (pyrite_journalism_investigation,
-          # pyrite_cascade, pyrite_encyclopedia). With [all] plus this loop the
+          # pyrite_encyclopedia). With [all] plus this loop the
           # matrix job collects the full suite, which is why the old
           # `test-optional-deps` job (same install, 3.12 only) was removed as a
           # pure duplicate.
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -345,16 +387,27 @@ jobs:
       # only ran as a local commit-msg hook, so outside contributors' PRs
       # (which never run local hooks) could land a `fix:` commit with zero
       # test lines -- all three outside PRs so far did exactly that. `push`
-      # events have no PR to diff against (base.sha is unset there), so this
-      # only runs on pull_request; fetch-depth: 0 above makes base.sha walkable.
-      # --range walks each commit individually (not the range's cumulative
-      # diff), so an earlier offending commit isn't hidden by a later,
-      # unrelated commit that happens to touch tests/.
+      # events have no PR to diff against, so this only runs on pull_request;
+      # fetch-depth: 0 above makes the range walkable. HEAD is the PR's merge
+      # commit, HEAD^1 the base tip now: base.sha (the tip when the PR last
+      # synced) would put every PR merged since into this range (#1074).
+      # CI judges the PR as a whole: a `fix:` passes if any commit in the range
+      # touches a test path, and the reason is that the merge queue squashes
+      # each pull request into a single commit on dev.
       - name: "Check fix: commits have tests (pull_request only)"
         if: github.event_name == 'pull_request' && matrix.shard == 1
         run: >-
           python scripts/check_fix_commit_has_tests.py --range
-          ${{ github.event.pull_request.base.sha }} ${{ github.sha }}
+          HEAD^1 HEAD
+
+      # A ratchet list (scripts/check_ratchets_only_shrink.py REGISTRY) may only
+      # shrink: a row added in the PR's range fails unless a commit carries a
+      # `Ratchet-raise: <list> <reason>` trailer (#1608). Same range as above.
+      - name: "Check ratchet lists only shrink (pull_request only)"
+        if: github.event_name == 'pull_request' && matrix.shard == 1
+        run: >-
+          python scripts/check_ratchets_only_shrink.py --range
+          HEAD^1 HEAD
 
       # Advisory, never blocking (#278). #173 merged with its entry appended to
       # CHANGELOG.md under the already-released 0.24.3 heading, so the
@@ -437,7 +490,7 @@ jobs:
 
       - name: Keep the junit report and the durations
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-test-${{ matrix.python-version }}-${{ matrix.shard }}
           path: |
@@ -450,7 +503,7 @@ jobs:
       - name: Keep this shard's coverage for diff coverage
         if: ${{ !cancelled() && github.event_name == 'pull_request' && matrix.python-version == '3.12' }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.shard }}
           path: coverage-${{ matrix.shard }}.xml
@@ -464,29 +517,30 @@ jobs:
   # ===========================================================================
   collect:
     needs: changes
-    if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
+    if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       matrix:
-        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || '["3.11", "3.12", "3.13"]') }}
+        python-version: ${{ fromJSON((github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true') && '["3.12"]' || github.event_name == 'merge_group' && '["3.13"]' || needs.changes.outputs.queue_passed == 'true' && '["3.11", "3.12"]' || '["3.11", "3.12", "3.13"]') }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
       - name: Count the selection
@@ -496,7 +550,7 @@ jobs:
             -p no:cacheprovider | tee collect.txt | tail -3
           python scripts/check_shard_union.py count collect.txt > collected-${{ matrix.python-version }}.txt
           cat collected-${{ matrix.python-version }}.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: collected-${{ matrix.python-version }}
           path: collected-${{ matrix.python-version }}.txt
@@ -515,18 +569,19 @@ jobs:
     needs: [changes, test, collect]
     if: ${{ !cancelled() && needs.test.result != 'skipped' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: junit-test-*
           path: reports
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: collected-*
           path: reports
@@ -538,15 +593,15 @@ jobs:
         run: python scripts/check_shard_union.py balance reports >> "$GITHUB_STEP_SUMMARY" || true
       - name: Merge the durations
         if: ${{ !cancelled() }}
-        run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-3.12-*/.test_durations || true
-      - uses: actions/upload-artifact@v4
+        run: python scripts/merge_test_durations.py --old .test_durations.gz --out test_durations.gz reports/junit-test-*/.test_durations || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: test-durations
           path: test_durations.gz
           if-no-files-found: ignore
           retention-days: 30
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.test.result == 'success' }}
         continue-on-error: true
         with:
@@ -574,7 +629,7 @@ jobs:
       - name: Keep the diff coverage for verify-red
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: diff-cover
           path: diff-cover.json
@@ -594,38 +649,62 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2  # HEAD^1 of the PR merge ref is the base commit
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
-      # Red means this change ADDED type errors (#885): mypy's output is
-      # compared per file to the committed `.mypy-baseline.json`. The mypy
-      # exit code is ignored on purpose; the ratchet decides (and exits 2 if
-      # mypy never finished, so a crash cannot read as zero errors).
+      # Red means this change ADDED type errors (#885, #1084): mypy runs on the
+      # change and on its BASE commit, and the ratchet compares them per file.
+      # The base is HEAD^1 of a PR's merge ref, the pre-push SHA of a push to
+      # dev, the queue's base SHA in the merge queue. Comparing with the base
+      # rather than `.mypy-baseline.json` is what keeps the answer true: the
+      # file drifted above dev once (the architecture sprint merged with this
+      # job red because it is advisory) and every PR then read red for errors
+      # it did not add. The file stays the fallback when there is no base
+      # commit (a manual dispatch, a first push) and is lowered with
+      # `--update`. The mypy exit code is ignored on purpose; the ratchet
+      # decides (and exits 2 if either run never finished, so a crash cannot
+      # read as zero errors).
       - name: Type check with mypy (ratchet)
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
         run: |
           mypy pyrite/ --ignore-missing-imports > mypy.out || true
-          python scripts/mypy_ratchet.py mypy.out
+          base="$(bash scripts/mypy_base.sh)"
+          if [ -n "$base" ]; then
+            git worktree add --detach "$RUNNER_TEMP/mypy-base" "$base"
+            (cd "$RUNNER_TEMP/mypy-base" && mypy pyrite/ --ignore-missing-imports > "$GITHUB_WORKSPACE/mypy-base.out" || true)
+            python scripts/mypy_ratchet.py mypy.out --base mypy-base.out
+          else
+            echo "no base commit for a '$EVENT' run: comparing with .mypy-baseline.json"
+            python scripts/mypy_ratchet.py mypy.out
+          fi
 
   # ===========================================================================
   # Coverage: its own job so the matrix stays the fast gate. Not a required
@@ -642,25 +721,26 @@ jobs:
     # bounds each test; this bounds the job.
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
       - name: Run tests with coverage
         run: pytest -n auto --cov=pyrite --cov-report=term-missing --cov-report=xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-xml
           path: coverage.xml
@@ -674,16 +754,17 @@ jobs:
     needs: changes
     if: (needs.changes.outputs.web == 'true' || github.ref == 'refs/heads/main') && needs.changes.outputs.queue_passed != 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
@@ -731,23 +812,25 @@ jobs:
     # acceptance criteria include flipping this back.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
-          cache-dependency-glob: pyproject.toml
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
@@ -756,7 +839,7 @@ jobs:
         # so the venv path must match that expectation.
         run: |
           uv venv .venv
-          uv pip install --python .venv/bin/python -e ".[all]"
+          uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e ".[all]"
 
       - name: Install web dependencies
         working-directory: web
@@ -764,7 +847,7 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}
@@ -785,7 +868,7 @@ jobs:
 
       - name: Upload Playwright report on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-report
           path: web/playwright-report/
@@ -810,28 +893,29 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         # Same surface as `test`: the smoke layer drives the installed console
         # scripts (pyrite, pyrite-server), so the install has to be the one a
         # user gets, extensions included.
         run: |
-          uv pip install --system -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
             if [ -f "$ext/pyproject.toml" ]; then
-              uv pip install --system -e "$ext"
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
             fi
           done
 
@@ -860,7 +944,7 @@ jobs:
 
       - name: Keep the junit report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: junit-smoke
           path: junit-smoke.xml
@@ -885,56 +969,66 @@ jobs:
   # summary; `test-evidence.json` (verdict counts plus the test job's diff
   # coverage) is the measurement for the gating decision.
   #
-  # A SIGNAL, NOT A GATE: absent from `gate`'s needs and not a required check;
-  # it fails only when the check itself could not run. It waits for `test`
-  # (for the diff coverage) but runs whatever `test` concluded.
+  # ADVISORY (#1074): not in `gate`'s needs, and CI does not pass --enforce-fix
+  # (a local flag), so its verdict never blocks a merge. Gating waits for #1104's
+  # claim model. It grades against the merge commit's first parent (HEAD^1: the
+  # base tip now, so PRs merged since this one was opened are not graded as its
+  # own). The job goes red only for a control marker the PR adds at module or
+  # class level, or when the check itself could not run (exit 2); neither blocks.
+  # It waits for `test` (for the diff coverage) but runs whatever `test` concluded.
+  # It runs on pull_request only: it is skipped in the merge queue (merge_group).
   # ===========================================================================
   verify-red:
     needs: [changes, test, shard-report]
     if: ${{ !cancelled() && github.event_name == 'pull_request' && needs.changes.outputs.backend == 'true' }}
     runs-on: ubuntu-latest
-    # Two pytest runs of at most --timeout each, plus setup.
-    timeout-minutes: 20
+    # Three subprocesses: a collect-only run of the base's test files (capped at
+    # 60 s), then two pytest runs of at most --timeout each, plus setup.
+    timeout-minutes: 22
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The merge base with the PR's base must be in history.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       # The tests run in the throwaway tree with it first on PYTHONPATH; the
       # script refuses (#189) if any package there imports from elsewhere.
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
 
       - name: Fetch the diff coverage
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: diff-cover
 
       - name: Run the new tests with and without the change
         env:
           HF_HUB_OFFLINE: "1"
+          # An env var, not interpolated into the script: a title is untrusted.
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: >-
           python scripts/verify_red_ci.py --timeout 420
-          --base "${{ github.event.pull_request.base.sha }}"
+          --base "HEAD^1"
+          --title "$PR_TITLE"
           --pr "${{ github.event.pull_request.number }}"
           --head-sha "${{ github.event.pull_request.head.sha }}"
           --diff-cover-json diff-cover.json
@@ -942,7 +1036,7 @@ jobs:
 
       - name: Keep the evidence
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: test-evidence
           path: test-evidence.json
@@ -991,27 +1085,28 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The base's known-failures file, to check the list only shrank.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           enable-cache: true
           cache-dependency-glob: |
             pyproject.toml
             extensions/*/pyproject.toml
+            uv.lock
 
       - name: Install dependencies
         run: |
-          uv pip install --system -e ".[all,postgres]"
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
           for ext in extensions/*/; do
-            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -e "$ext"; fi
+            if [ -f "$ext/pyproject.toml" ]; then uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"; fi
           done
 
       # Never fails the job itself: the ratchet below reads the report and
@@ -1058,7 +1153,7 @@ jobs:
 
       - name: Keep the result for issue filing
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: experimental-result
           path: |
@@ -1084,15 +1179,16 @@ jobs:
       && needs.experimental.result != 'success'
       && needs.experimental.result != 'skipped' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
       # gh label create / issue create / issue comment.
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # No artifact (the job timed out or crashed) is itself the news.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         continue-on-error: true
         with:
           name: experimental-result
@@ -1109,6 +1205,97 @@ jobs:
           --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
   # ===========================================================================
+  # Postgres backends (#1766): the Postgres backend is an experimental
+  # surface (#657), so the gating `test` matrix deselects its tests
+  # (`-m "not ... experimental"`), and the `experimental` job -- which does
+  # run them against a real Postgres -- tolerates any failure its ratchet
+  # already knows. Nothing in CI therefore goes red when a Postgres schema
+  # or migration change (`ensure_schema`, mark-for-reread) breaks: #1723's
+  # Postgres half was judged by reading only. This job runs `tests/backends/`
+  # -- the Postgres test modules and the backend conformance suite, both
+  # halves -- against a Postgres service container on one interpreter, and
+  # its own red is the verdict. It is deliberately not in `gate`'s needs:
+  # whether it becomes a required check is the maintainer's call, as with
+  # `experimental`.
+  # ===========================================================================
+  postgres:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Same image as the `test` and `experimental` jobs: pgvector/pgvector
+    # ships the server with the pgvector extension pre-installed, which
+    # PostgresBackend.ensure_schema() requires (`CREATE EXTENSION vector`).
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pyrite_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            extensions/*/pyproject.toml
+            uv.lock
+
+      # Same install as the `experimental` job: `.[all,postgres]` is the
+      # whole optional surface plus the Postgres driver.
+      - name: Install dependencies
+        run: |
+          uv pip install --system -c "$(scripts/lock-constraints.sh)" -e ".[all,postgres]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then
+              uv pip install --system -c "$(scripts/lock-constraints.sh)" -e "$ext"
+            fi
+          done
+
+      # Create the pgvector extension once, serially, before pytest starts.
+      # The backends conftest isolates xdist workers by schema, but the
+      # extension is per-database, not per-schema: every worker's first
+      # backend (and `ensure_schema`) runs `CREATE EXTENSION IF NOT EXISTS
+      # vector` against the one shared pyrite_test database, and that
+      # statement is not race-safe -- two workers that both find the
+      # extension missing both insert into pg_extension, and one loses with
+      # a UniqueViolation on pg_extension_name_index. This job's first run
+      # errored three conformance tests exactly that way, in fixture setup,
+      # before any test body ran. With the extension already present, every
+      # later `IF NOT EXISTS` is a no-op existence check and the race is
+      # gone; `-n auto` below stays.
+      - name: Create the pgvector extension
+        env:
+          PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
+        run: |
+          python -c "import os, psycopg2; conn = psycopg2.connect(os.environ['PYRITE_TEST_PG_URL']); conn.autocommit = True; cur = conn.cursor(); cur.execute('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public'); conn.close()"
+
+      # -n auto like every other pytest gate: the backends conftest gives
+      # each xdist worker its own schema on the one database, and the
+      # Postgres test modules do the same, so the directory is xdist-safe
+      # once the extension exists (previous step).
+      # HF_HUB_OFFLINE as in the `experimental` job: no test here needs a
+      # model download to prove the backend.
+      - name: Run the backend tests against Postgres
+        env:
+          PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
+          HF_HUB_OFFLINE: "1"
+        run: pytest tests/backends/ -n auto
+
+  # ===========================================================================
   # The one required check. A skipped matrix job reports as `test`, not
   # `test (3.12)`, so requiring the matrix legs by name hangs every docs-only
   # PR (the classifier skipped the matrix, the required context never
@@ -1117,9 +1304,10 @@ jobs:
   # is what the classifier means by it.
   # ===========================================================================
   gate:
-    needs: [changes, kb, test, shard-report, frontend]
+    needs: [changes, kb, lock, test, shard-report, frontend]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Fail if any gating job failed or was cancelled
         env:

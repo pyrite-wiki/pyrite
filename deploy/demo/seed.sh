@@ -37,9 +37,8 @@ settings:
   index_path: /data/index.db
 HEADER
 
-# Register each KB that has a kb.yaml. The demo is a public site, so each KB
-# gets default_role: read (anonymous read, and listed on /site) unless its
-# kb.yaml says otherwise. /site renders only default_role: read KBs.
+# Register each KB that has a kb.yaml. The demo is public, so each KB gets
+# default_role: read (anonymous read) unless its kb.yaml says otherwise.
 python3 -c "
 import os, sys
 sys.path.insert(0, '/app')

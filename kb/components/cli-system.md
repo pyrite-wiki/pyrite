@@ -15,6 +15,7 @@ Typer-based CLI with a root app and eleven domain-specific sub-apps. Commands sh
 
 - Root `typer.Typer` app with `add_typer()` for each sub-app
 - `context.py` provides `cli_context()`, `cli_registry_context()`, `cli_db_context()`
+- `context.py` is also where a command's KB is resolved (#952, #924): `require_kb(config, name, db=, output_format=)` is the one resolver (`services/kb_resolver.py`) for the local principal; `cli_context(kbs=(kb_name, ...))` and its siblings resolve every KB a command named once the registry is open, before the body runs; a command that loads the config itself calls `require_kb(load_config(), name, ...)`, which consults the registry only for a name config.yaml does not know. An unknown name or a shortname is `KB_NOT_FOUND`, exit 1, with the resolver's suggestion and `did_you_mean`. A command on the outcome contract passes no `output_format` and the root renders the refusal; a legacy command passes its format and the refusal is printed by `cli_error_from`. `tests/test_kb_walk_cli.py` walks every leaf of `pyrite`, `pyrite-read` and `pyrite-admin` with a KB parameter to prove it.
 - Rich tables and console for human-readable output
 - Plugin commands discovered via `PluginRegistry.get_all_cli_commands()`
 

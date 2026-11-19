@@ -103,6 +103,110 @@ class TestCreateTask:
         assert row is not None
         assert row["title"] == "Indexed task"
 
+    def test_create_task_with_due_date(self, task_env):
+        svc = task_env["svc"]
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Due task",
+            due_date="2026-11-20",
+        )
+        assert result["created"] is True
+        assert result["due_date"] == "2026-11-20"
+
+        # Check DB index row
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
+        assert task is not None
+        assert task["due_date"] == "2026-11-20"
+
+        # Check find_overdue detects past due date
+        overdue = svc.find_overdue(as_of="2026-11-25", kb_name="test-tasks")
+        assert any(t["id"] == result["entry_id"] for t in overdue)
+
+    @pytest.mark.parametrize("bad_due", ["2026-02-30", "not-a-date", False, 0])
+    def test_create_task_invalid_due_date_raises_validation_error(self, task_env, bad_due):
+        from pyrite.exceptions import ValidationError
+
+        svc = task_env["svc"]
+        with pytest.raises(ValidationError) as exc_info:
+            svc.create_task(
+                kb_name="test-tasks",
+                title="Bad date task",
+                due_date=bad_due,
+            )
+        assert exc_info.value.error_code == "VALIDATION_FAILED"
+        assert "due_date" in str(exc_info.value).lower()
+
+    def test_create_task_with_links(self, task_env):
+        svc = task_env["svc"]
+        target = svc.create_task(kb_name="test-tasks", title="Target entry")
+        target_id = target["entry_id"]
+
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Linking task",
+            links=[{"target": target_id, "relation": "blocks"}],
+        )
+        assert result["created"] is True
+        assert result["linked"] == [{"target": target_id, "relation": "blocks"}]
+        assert result["failed_links"] == []
+        assert "links" not in result
+
+        # Verify kb_get returns links
+        entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
+        assert entry is not None
+        assert any(l["target_id"] == target_id for l in entry.get("links", []))
+
+        # Verify target entry shows the task in backlinks
+        backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=UNSCOPED)
+        assert any(b["id"] == result["entry_id"] for b in backlinks)
+
+    @pytest.mark.parametrize(
+        ("bad_links", "expected_err"),
+        [
+            ([{"target": ""}], "target"),
+            ([{"target": "t", "note": "extra"}], "note"),
+            ([{"target": "t", "target_kb": "extra"}], "target_kb"),
+            (["target:blocks"], "dictionary"),
+        ],
+    )
+    def test_create_task_invalid_link_spec_raises_validation_error(
+        self, task_env, bad_links, expected_err
+    ):
+        from pyrite.exceptions import ValidationError
+
+        svc = task_env["svc"]
+        with pytest.raises(ValidationError) as exc_info:
+            svc.create_task(
+                kb_name="test-tasks",
+                title="Bad link task",
+                links=bad_links,
+            )
+        assert exc_info.value.error_code == "VALIDATION_FAILED"
+        assert expected_err in str(exc_info.value).lower()
+        # Entry should not have been created
+        tasks = svc.list_tasks(kb_name="test-tasks")
+        assert not any(t["title"] == "Bad link task" for t in tasks)
+
+    def test_create_task_dangling_link_populates_failed_links_and_keeps_task(self, task_env):
+        svc = task_env["svc"]
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Dangling link task",
+            links=[{"target": "missing-target", "relation": "blocks"}],
+        )
+        assert result["created"] is True
+        assert result["linked"] == []
+        assert len(result["failed_links"]) == 1
+        failed = result["failed_links"][0]
+        assert failed["target"] == "missing-target"
+        assert failed["relation"] == "blocks"
+        assert "Entry not found" in failed["error"]
+        assert "links" not in result
+
+        # Task was created and exists
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
+        assert task is not None
+
 
 class TestUpdateTask:
     def test_update_task(self, task_env):
@@ -616,6 +720,9 @@ class TestListTasks:
         titles = [t["title"] for t in assigned]
         assert "Assigned" in titles
 
+    @pytest.mark.control(
+        reason="a property that held before #978; its old form hand-added the field by re-saving the model through the whole-file save, which decision 4 made a create, so it edits the file's text as the worker does"
+    )
     def test_parked_awaiting_survives_claim_and_surfaces_in_listing(self, task_env):
         """Regression for
         issue-pyrite-task-update-strips-non-schema-frontmatter-fields-silently-unparks-monitors.
@@ -639,16 +746,20 @@ class TestListTasks:
         # the way the human-task / monitor convention requires (no CLI
         # flag exists for this field).
         repo = KBRepository(kb_config)
-        entry = repo.load(entry_id)
-        entry.metadata["parked_awaiting"] = "rfp-due-2026-09-11"
-        repo.save(entry)
+        path = repo.load(entry_id).file_path
+        text = path.read_text(encoding="utf-8")
+        assert text.startswith("---\n") and "\n---\n" in text
+        path.write_text(
+            text.replace("\n---\n", "\nparked_awaiting: rfp-due-2026-09-11\n---\n", 1),
+            encoding="utf-8",
+        )
 
         # This is the exact call the ticket reports as lossy.
         svc.claim_task(entry_id, "test-tasks", "agent:regression-test")
 
         # Write path: the field must still be on disk after claim.
         reloaded = repo.load(entry_id)
-        assert reloaded.metadata.get("parked_awaiting") == "rfp-due-2026-09-11", (
+        assert reloaded.parked_awaiting == "rfp-due-2026-09-11", (
             "task claim dropped parked_awaiting from the file's frontmatter"
         )
 

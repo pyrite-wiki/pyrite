@@ -562,6 +562,31 @@ class TestVersionListOffersOnlyReadableVersions:
         finally:
             repo.close()
 
+    def test_since_commit_re_reads_a_kb_in_a_repo_subdirectory(self, tmp_path):
+        """`git diff --name-only` prints repo-root-relative paths, so a KB at
+        `repo/kb` has to strip its own prefix before joining, as
+        `get_file_log` does: joined raw, `repo/kb/kb/b.md` does not exist and
+        nothing is re-read (#898)."""
+        repo = _Repo(tmp_path, kb_dir="kb")
+        try:
+            repo.write("kb/a.md", _note("a1", "A", "text"))
+            c_a = repo.commit("a")
+            repo.write("kb/b.md", _note("b1", "B", "text"))
+            c_b = repo.commit("b")
+            repo.index()
+            _seed_row(repo, "a1", c_b, file_path="b.md")
+            _seed_row(repo, "b1", c_a, file_path="a.md")
+
+            IndexManager(repo.db, repo.config).index_with_attribution(
+                "k", GitService, since_commit=c_a
+            )
+
+            # Only b.md changed since c_a: only b1 is re-read.
+            assert [h for h, _ in repo.versions("b1")] == [c_b]
+            assert c_b in [h for h, _ in repo.versions("a1")]  # not re-read: left alone
+        finally:
+            repo.close()
+
     @pytest.mark.control(
         reason="Guards against an over-eager delete: an empty walk is absence "
         "of evidence (not a git repo / file git does not know), so rows stay."

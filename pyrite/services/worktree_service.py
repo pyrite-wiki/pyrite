@@ -23,6 +23,7 @@ from pyrite.exceptions import (
     ValidationError,
 )
 from pyrite.storage.database import PyriteDB
+from pyrite.utils.git_hardening import git_env
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class WorktreeService:
                 cwd=str(kb_config.path),
                 capture_output=True,
                 text=True,
-                env=GitService.subprocess_env(),
+                env=git_env(),
             )
             if result.returncode == 0:
                 return Path(result.stdout.strip())
@@ -286,11 +287,15 @@ class WorktreeService:
 
         status = GitService.get_status(worktree_path)
         if not status.get("clean", True):
-            GitService.commit(
+            committed, result = GitService.commit(
                 worktree_path,
                 message=f"Submit changes from {wt.username}",
                 paths=None,
+                identity=self.config.settings.git_identity,
             )
+            if not committed:
+                logger.error("Worktree submit commit failed: %s", result.get("error"))
+                raise StorageError("Could not commit worktree changes; submission was not recorded")
 
         # Update status
         now = datetime.now(UTC).isoformat()
@@ -310,6 +315,9 @@ class WorktreeService:
         Returns (success, message). On conflict, returns (False, details).
         After successful merge, rebases the user's branch and clears the diff index.
         """
+        # A read-only KB takes no write, a merged change set included: refused
+        # before git touches the repository.
+        self.config.require_kb(kb_name, db=self.db).refuse_writes()
         row = self._get_worktree_row(kb_name, user_id)
         if not row:
             return False, f"No worktree for user {user_id} in KB '{kb_name}'"
@@ -319,8 +327,19 @@ class WorktreeService:
 
         from pyrite.services.git_service import GitService
 
+        # Uncommitted edits (including a failed submit) and an empty branch
+        # have nothing to land. Git merge calls that a successful no-op;
+        # the user-facing operation must not claim a change was merged.
+        compared, diff = GitService.diff_branches(repo_path, "main", wt.branch)
+        if not compared:
+            return False, "Could not compare committed worktree changes"
+        if not diff.strip():
+            return False, "No committed worktree changes to merge; reject this empty submission"
+
         # Merge user branch into main
-        success, msg = GitService.merge_branch(repo_path, wt.branch, into="main")
+        success, msg = GitService.merge_branch(
+            repo_path, wt.branch, into="main", identity=self.config.settings.git_identity
+        )
         if not success:
             return False, msg
 
@@ -373,14 +392,12 @@ class WorktreeService:
         # Reset branch to main
         import subprocess
 
-        from pyrite.services.git_service import GitService
-
         subprocess.run(
             ["git", "reset", "--hard", "main"],
             cwd=str(worktree_path),
             capture_output=True,
             text=True,
-            env=GitService.subprocess_env(),
+            env=git_env(),
         )
 
         # Clear diff index

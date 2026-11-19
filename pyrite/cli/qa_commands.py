@@ -1,19 +1,41 @@
 """
 QA validation and assessment commands for pyrite CLI.
 
-Commands: validate, status, assess
+Commands: validate, duplicates, status, assess
 """
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from ..services.access_policy import UNSCOPED
-from .context import cli_context
-from .output import output_format_choice, validate_output_format
+from ..exceptions import ValidationError
+from ..services.access_policy import UNSCOPED, named_kb
+from .context import cli_context, require_entry_kb
+from .outcome import Outcome
+from .output import OUTPUT_FORMAT, cli_console, output_format_choice, validate_output_format
+
+
+def _unit_interval(value: str) -> float:
+    """Parse a number from 0 to 1; NaN and the infinities are refused.
+
+    ``min=0, max=1`` is not enough: NaN compares false with both bounds, so Typer
+    0.27 lets it through. A parameter *callback* is forbidden on the Outcome
+    contract, and Typer 0.29 removed the ``click_type`` keyword, so the range is checked
+    in a ``parser=`` function, at parse time, where a refusal is the usage error
+    (exit 2) a bad range already is. The error is ``typer.BadParameter``: Typer
+    vendors click, and only its own class is answered as ``USAGE_ERROR`` (exit 2).
+    """
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise typer.BadParameter(f"{value!r} is not a valid number")
+    if not 0.0 <= number <= 1.0:
+        raise typer.BadParameter(f"{value!r} is not in the range 0 to 1")
+    return number
+
 
 qa_app = typer.Typer(help="Quality assurance validation and assessment")
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str) -> str | None:
@@ -38,12 +60,17 @@ def qa_validate(
 ):
     """Validate KB structural integrity.
 
-    Checks for missing titles, empty bodies, broken links, orphan entries,
-    invalid dates, importance out of range, and schema violations.
+    Checks for missing titles, empty bodies, broken links, orphan entries (an
+    orphan has neither incoming nor outgoing links, while 'has no outgoing links'
+    is a separate rubric warning), invalid dates, importance out of range,
+    and schema violations.
     """
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    if entry and not named_kb(kb_name):
+        kb_name = require_entry_kb(entry, kb_name, output_format=output_format)
+
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
 
         if entry and kb_name:
@@ -67,8 +94,14 @@ def qa_validate(
             ]
 
         formatted = _format_output({"issues": issues, "count": len(issues)}, output_format)
+        # ADR-0046: a check command exits 1 when it found an error, in every
+        # format. The formatted branch used to return before the verdict, so
+        # `--format json` (the default) hid a failing check behind exit 0.
+        error_count = sum(1 for i in issues if i.get("severity") == "error")
         if formatted is not None:
             typer.echo(formatted)
+            if error_count > 0:
+                raise typer.Exit(1)
             return
 
         # Rich output
@@ -112,6 +145,81 @@ def qa_validate(
             raise typer.Exit(1)
 
 
+@qa_app.command("duplicates")
+def qa_duplicates(
+    entry_type: str = typer.Option(..., "--type", "-t", help="Entry type to compare"),
+    status: str | None = typer.Option(
+        None,
+        "--status",
+        help="Comma-separated statuses to keep; default: live entries only",
+    ),
+    threshold: float = typer.Option(
+        0.62,
+        "--threshold",
+        parser=_unit_interval,
+        help="Minimum score; a pair at or above it is a candidate",
+    ),
+    strip_prefix: list[str] | None = typer.Option(
+        None,
+        "--strip-prefix",
+        help="ID prefix to remove before comparing (repeatable, comma-separated accepted)",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+) -> Outcome:
+    """Candidate near-duplicate entries of one type; never merges.
+
+    Scores two signals, the id slug and the title, by word overlap (Jaccard).
+    Finding candidates is not a failure: the command exits 0 when it ran.
+    """
+    from ..services.qa_service import QAService
+
+    if not entry_type.strip():
+        raise ValidationError("--type must name an entry type")
+    statuses = None
+    if status is not None:
+        statuses = {part.strip().lower() for part in status.split(",") if part.strip()}
+        if not statuses:
+            raise ValidationError("--status must name at least one status")
+    prefixes = tuple(
+        part.strip() for value in (strip_prefix or []) for part in value.split(",") if part.strip()
+    )
+
+    with cli_context(kbs=()) as (config, db, _svc):
+        result = QAService(config, db).find_duplicates(
+            entry_type.strip(),
+            readable_kbs=UNSCOPED,
+            statuses=statuses,
+            threshold=threshold,
+            strip_prefixes=prefixes,
+        )
+
+    def render(console: Console, data: dict) -> None:
+        for row in data.get("unreadable_kbs", []):
+            console.print(f"Not compared: {row['kb']}: {row['error']}", markup=False)
+        if data["skipped_tokens"]:
+            console.print(
+                f"Common-token expansion skipped for {data['skipped_tokens']} tokens; "
+                "near-match coverage is incomplete. Exact token-set matches are included."
+            )
+        if not data["pairs"]:
+            console.print(f"No candidate duplicates of type {data['entry_type']!r}.")
+            return
+        for pair in data["pairs"]:
+            first, second = pair["a"], pair["b"]
+            console.print(
+                f"{pair['score']:.2f}  {first['kb_name']}/{first['id']}"
+                f"  ~  {second['kb_name']}/{second['id']}  [{pair['signal']}]",
+                markup=False,
+                highlight=False,
+            )
+
+    if result.get("unreadable_kbs"):
+        # A KB left out (its kb.yaml does not load, or its files cannot be
+        # read): the report is not whole, exit 3 (#1547).
+        return Outcome.partial(result, rich=render)
+    return Outcome.done(result, rich=render)
+
+
 @qa_app.command("assess")
 def qa_assess(
     kb_name: str = typer.Argument(..., help="KB to assess"),
@@ -120,11 +228,16 @@ def qa_assess(
         1,
         "--tier",
         "-t",
+        min=1,
+        max=2,
         help="Assessment tier: 1=structural; 2=structural plus the model-judged rubric "
         "(needs a configured model, else refused with AI_NOT_CONFIGURED)",
     ),
     max_age: int = typer.Option(
-        24, "--max-age", help="Skip entries assessed within N hours (0 = reassess all)"
+        24,
+        "--max-age",
+        min=0,
+        help="Skip entries assessed within N hours (0 = reassess all)",
     ),
     create_tasks: bool = typer.Option(
         False, "--create-tasks", help="Create tasks for failed assessments"
@@ -151,7 +264,7 @@ def qa_assess(
     from ..services.qa_service import QAService
     from ..utils.errors import cli_error_from
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         # The model is wired as `ci` and MCP wire it; tier 2 is refused when
         # it is not configured (QAService.require_tier).
         qa = QAService(config, db, llm_service=LLMService(config.settings) if tier >= 2 else None)
@@ -273,7 +386,7 @@ def qa_status(
     """Show QA status dashboard with issue counts and coverage."""
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
         status = qa.get_status(kb_name=kb_name, readable_kbs=UNSCOPED)
 
@@ -382,7 +495,7 @@ def _show_kb_coverage(kb_name: str, output_format: str) -> None:
     from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
     from .context import cli_context
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         kb_config = config.get_kb(kb_name)
         if not kb_config:
             console.print(f"[red]KB '{kb_name}' not found[/red]")
@@ -478,7 +591,11 @@ def _print_rubric_line(text: str, kind: str, item: str | dict) -> None:
 def qa_gaps(
     kb_name: str = typer.Option(..., "--kb", "-k", help="KB to analyze"),
     threshold: int = typer.Option(
-        3, "--threshold", "-t", help="Minimum entries per type to not flag as sparse"
+        3,
+        "--threshold",
+        "-t",
+        min=0,
+        help="Minimum entries per type to not flag as sparse",
     ),
     output_format: str = typer.Option(
         "rich",
@@ -490,14 +607,15 @@ def qa_gaps(
     """Report structural coverage gaps in a KB.
 
     Identifies missing entry types, sparse types, unused tags from kb.yaml,
-    entries with no outbound/inbound links, and distribution stats.
-    No LLM dependency — pure structural analysis.
+    entries with no outbound links (which is why this count can be larger than
+    'qa validate's orphan count, which requires neither incoming nor outgoing links),
+    and distribution stats. No LLM dependency — pure structural analysis.
     """
     import json as json_mod
 
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
         result = qa.analyze_gaps(kb_name, threshold=threshold)
 
@@ -610,9 +728,10 @@ def qa_fix(
 ):
     """Auto-fix safe structural issues found by validation.
 
-    Fixes: date normalisation, missing field defaults, broken wikilinks
-    (by edit distance), and tag casing. Unsafe or ambiguous issues are
-    reported for manual resolution.
+    Fixes: date normalisation, broken wikilinks (by edit distance), and tag
+    casing. Unsafe or ambiguous issues are reported for manual resolution, and
+    a schema violation is always one of them: a required field is the author's
+    to fill, not a value `qa fix` may invent.
 
     Use --dry-run to preview changes before applying them.
     """
@@ -620,7 +739,7 @@ def qa_fix(
 
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
         qa = QAService(config, db)
         result = qa.fix_kb(
             kb_name, dry_run=dry_run, fix_rules=fix_rule or None, readable_kbs=UNSCOPED
@@ -712,7 +831,7 @@ def qa_fix(
 def qa_stale(
     kb_name: str = typer.Argument(..., help="KB to check for stale entries"),
     max_age: int = typer.Option(
-        90, "--max-age", "-a", help="Days since last update to consider stale"
+        90, "--max-age", "-a", min=0, help="Days since last update to consider stale"
     ),
     output_format: str = typer.Option(
         "rich",
@@ -728,7 +847,7 @@ def qa_stale(
     """
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, _svc):
         svc = QAService(config, db)
         results = svc.find_stale(kb_name, max_age_days=max_age)
 
@@ -740,8 +859,8 @@ def qa_stale(
     }
 
     formatted = _format_output(data, output_format)
-    if formatted:
-        console.print(formatted)
+    if formatted is not None:
+        typer.echo(formatted)
         return
 
     if not results:
@@ -766,7 +885,9 @@ def qa_stale(
 @qa_app.command("compact")
 def qa_compact(
     kb_name: str = typer.Argument(..., help="KB to check for archival candidates"),
-    min_age: int = typer.Option(90, "--min-age", "-a", help="Minimum days old to be a candidate"),
+    min_age: int = typer.Option(
+        90, "--min-age", "-a", min=0, help="Minimum days old to be a candidate"
+    ),
     output_format: str = typer.Option(
         "rich",
         "--format",
@@ -783,7 +904,7 @@ def qa_compact(
     """
     from ..services.qa_service import QAService
 
-    with cli_context() as (config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, _svc):
         svc = QAService(config, db)
         results = svc.find_archival_candidates(kb_name, min_age_days=min_age)
 
@@ -795,8 +916,8 @@ def qa_compact(
     }
 
     formatted = _format_output(data, output_format)
-    if formatted:
-        console.print(formatted)
+    if formatted is not None:
+        typer.echo(formatted)
         return
 
     if not results:
@@ -831,7 +952,9 @@ def qa_compact(
 @qa_app.command("check-urls")
 def qa_check_urls(
     kb_name: str = typer.Argument(..., help="KB to check source URLs"),
-    sample: int = typer.Option(0, "--sample", "-s", help="Check a random sample of N URLs (0=all)"),
+    sample: int = typer.Option(
+        0, "--sample", "-s", min=0, help="Check a random sample of N URLs (0=all)"
+    ),
     cache_file: str = typer.Option("", "--cache", help="Path to URL check cache file"),
     output_format: str = typer.Option(
         "rich",
@@ -847,7 +970,9 @@ def qa_check_urls(
     """
     from pathlib import Path
 
+    from ..exceptions import PyriteError
     from ..services.url_checker import URLChecker
+    from ..utils.errors import cli_error_from
 
     cache_path = Path(cache_file) if cache_file else None
     if output_format != "json":
@@ -855,9 +980,12 @@ def qa_check_urls(
     # cli_context() closes the database on exit, so collect_urls (the only
     # step that reads it) must run inside the block. The HTTP checks below
     # use no database and run after it.
-    with cli_context() as (_config, db, _svc):
-        checker = URLChecker(db, cache_path=cache_path)
-        url_entries = checker.collect_urls(kb_name)
+    try:
+        with cli_context(kbs=(kb_name,), output_format=output_format) as (_config, db, _svc):
+            checker = URLChecker(db, cache_path=cache_path)
+            url_entries = checker.collect_urls(kb_name)
+    except PyriteError as exc:
+        cli_error_from(exc, output_format)
 
     if not url_entries and output_format != "json":
         console.print("[green]No source URLs found.[/green]")
@@ -929,15 +1057,15 @@ def qa_coverage(
     and per-type breakdown. Read-only — never mutates the KB.
 
     Examples:
-        pyrite qa coverage cascade-research
-        pyrite qa coverage cascade-research --type actor
+        pyrite qa coverage my-research
+        pyrite qa coverage my-research --type person
         pyrite qa coverage pyrite --format json
     """
     import json as _json
 
     from ..services.qa_analytics_service import QAAnalyticsService
 
-    with cli_context() as (config, db, _svc):
+    with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, _svc):
         if config.get_kb(kb_name) is None:
             if output_format == "json":
                 typer.echo(

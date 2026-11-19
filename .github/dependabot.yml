@@ -1,0 +1,35 @@
+# Keeps the SHA pins in .github/workflows/ (tests/test_workflow_actions_pinned.py)
+# and the dependency manifests current: at most one grouped PR per ecosystem a week.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
+  # Bumps uv.lock only, the one lock CI and contributor installs use (#1357);
+  # pyproject.toml's ranges are the published contract and change by hand.
+  # `scripts/lock-deps.sh --check` and the `lock` CI job verify the pair.
+  - package-ecosystem: uv
+    directory: /
+    target-branch: dev
+    versioning-strategy: lockfile-only
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      python:
+        patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /web
+    target-branch: dev
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 1
+    groups:
+      npm:
+        patterns: ["*"]

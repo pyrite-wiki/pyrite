@@ -40,6 +40,7 @@ from pyrite_software_kb.workflows import (
     requires_reason,
 )
 
+from pyrite.config import KBConfig
 from pyrite.plugins.registry import PluginRegistry
 from pyrite.services.access_policy import UNSCOPED
 
@@ -217,6 +218,9 @@ class TestADREntry:
         entry = ADREntry.from_frontmatter(meta, "")
         assert entry.id == "use-event-sourcing"
 
+    @pytest.mark.control(
+        reason="a rewritten test of a property that already held; its old form used the model's emitter (Entry.save/to_markdown), gone since #955 P4"
+    )
     def test_roundtrip_markdown(self):
         entry = ADREntry(
             id="adr-001",
@@ -226,7 +230,9 @@ class TestADREntry:
             status="accepted",
             tags=["database"],
         )
-        md = entry.to_markdown()
+        from pyrite.storage.repository import new_entry_text
+
+        md = new_entry_text(entry)
         assert "adr_number: 1" in md
         assert "status: accepted" in md
         assert "Database choice." in md
@@ -807,11 +813,17 @@ class TestValidators:
         warnings = [e for e in errors if e.get("rule") == "path_not_found"]
         assert warnings == []
 
+    @pytest.mark.control(
+        reason="the local operator's path check is unchanged; the test now binds the local process"
+    )
     def test_component_path_not_found_warning(self, tmp_path):
+        from pyrite.services.acting import local_process
+
         context = {"kb_path": str(tmp_path)}
-        errors = validate_software_kb(
-            "component", {"kind": "module", "path": "nonexistent/module/"}, context
-        )
+        with local_process():  # the check is the local operator's (ADR-0052 N4)
+            errors = validate_software_kb(
+                "component", {"kind": "module", "path": "nonexistent/module/"}, context
+            )
         warnings = [e for e in errors if e.get("rule") == "path_not_found"]
         assert len(warnings) == 1
         assert warnings[0]["severity"] == "warning"
@@ -1371,11 +1383,14 @@ class TestMilestoneValidator:
 
 
 class TestBoardConfig:
+    """`load_board_config` takes a resolved KB; the shapes it refuses are
+    tests/test_board_config_refuses.py (#1538)."""
+
     def test_fallback_to_defaults(self):
         from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG, load_board_config
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            config = load_board_config(Path(tmpdir))
+            config = load_board_config(KBConfig(name="t", path=Path(tmpdir), kb_type="software"))
             assert config["lanes"] == DEFAULT_BOARD_CONFIG["lanes"]
             assert config["wip_policy"] == "warn"
 
@@ -1390,12 +1405,12 @@ class TestBoardConfig:
                 "    statuses: [proposed]\n"
                 "  - name: Done\n"
                 "    statuses: [done]\n"
-                "wip_policy: block\n"
+                "wip_policy: enforce\n"
             )
-            config = load_board_config(Path(tmpdir))
+            config = load_board_config(KBConfig(name="t", path=Path(tmpdir), kb_type="software"))
             assert len(config["lanes"]) == 2
             assert config["lanes"][0]["name"] == "Todo"
-            assert config["wip_policy"] == "block"
+            assert config["wip_policy"] == "enforce"
 
     def test_lane_structure(self):
         from pyrite_software_kb.board import DEFAULT_BOARD_CONFIG
@@ -1468,10 +1483,9 @@ class TestMilestonePluginRegistration:
     def test_preset_has_milestones_dir(self):
         assert "milestones" in SOFTWARE_KB_PRESET["directories"]
 
-    def test_preset_has_default_board(self):
-        assert "default_board" in SOFTWARE_KB_PRESET
-        assert "lanes" in SOFTWARE_KB_PRESET["default_board"]
-        assert "wip_policy" in SOFTWARE_KB_PRESET["default_board"]
+    def test_preset_holds_no_board(self):
+        """The built-in board is board.DEFAULT_BOARD_CONFIG alone (#1538)."""
+        assert "default_board" not in SOFTWARE_KB_PRESET
 
 
 # =========================================================================
@@ -1525,16 +1539,64 @@ def _make_test_db(tmpdir, entries=None, links=None):
     return db
 
 
+def _cli_config(tmpdir):
+    """A config naming the test KB: the CLI resolves ``--kb`` before the body (#952)."""
+    from pyrite.config import KBConfig, PyriteConfig, Settings
+
+    return PyriteConfig(
+        knowledge_bases=[KBConfig(name="test", path=Path(tmpdir), kb_type="software")],
+        settings=Settings(index_path=Path(tmpdir) / "test.db"),
+    )
+
+
 def _make_plugin_with_db(db):
-    """Create a plugin with injected DB context."""
+    """Create a plugin with injected DB context.
+
+    The context carries the config too, as the server's does: a handler
+    resolves the KB it is given against ``ctx.config`` (#952), so the
+    config names every KB the test db registered, at the path it registered.
+    """
+    from pyrite.config import KBConfig, PyriteConfig, Settings
 
     class _Ctx:
         def __init__(self, db):
             self.db = db
+            rows = db._raw_conn.execute("SELECT name, path, kb_type FROM kb").fetchall()
+            self.config = PyriteConfig(
+                knowledge_bases=[
+                    KBConfig(name=name, path=Path(path), kb_type=kb_type)
+                    for name, path, kb_type in rows
+                ],
+                settings=Settings(index_path=Path(rows[0][1]) / "test.db"),
+            )
 
     plugin = SoftwareKBPlugin()
     plugin.set_context(_Ctx(db))
     return plugin
+
+
+class TestCreateBacklogItemRefusals:
+    """A refused create carries the refusal's `error_code`, as every other
+    MCP refusal does, so a caller can tell a read-only KB from an unknown
+    one without parsing the message (#965 round 2)."""
+
+    @pytest.mark.parametrize(
+        ("kb_name", "code", "read_only"),
+        [("test", "KB_READ_ONLY", True), ("no-such-kb", "KB_NOT_FOUND", False)],
+    )
+    def test_a_refusal_names_its_code(self, kb_name, code, read_only):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(tmpdir, entries=[{"id": "seed", "title": "Seed"}])
+            try:
+                plugin = _make_plugin_with_db(db)
+                plugin._get_config().get_kb("test").read_only = read_only
+                out = plugin._mcp_create_backlog_item(
+                    {"kb_name": kb_name, "title": "A refused item", "kind": "bug"}
+                )
+                assert out["created"] is False
+                assert out["error_code"] == code, out
+            finally:
+                db.close()
 
 
 # =========================================================================
@@ -1753,9 +1815,9 @@ class TestPullNext:
             finally:
                 db.close()
 
+    @pytest.mark.control(reason="behaviour kept by #1538; rewritten to read the KB's own board")
     def test_pull_next_wip_limit_enforce(self):
         """When WIP limit is reached and policy is enforce, return no recommendation."""
-        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as tmpdir:
             # Write a board config with enforce policy and wip_limit=1
@@ -1786,13 +1848,8 @@ class TestPullNext:
             )
             try:
                 plugin = _make_plugin_with_db(db)
-                from pyrite_software_kb.board import load_board_config as real_load
-
-                with patch(
-                    "pyrite_software_kb.board.load_board_config",
-                    side_effect=lambda p: real_load(Path(tmpdir)),
-                ):
-                    result = plugin._mcp_pull_next({"kb_name": "test"})
+                # The KB "test" is registered at tmpdir, so its board.yaml is read.
+                result = plugin._mcp_pull_next({"kb_name": "test"})
                 assert result["recommendation"] is None
                 assert "WIP limit" in result["reason"]
             finally:
@@ -2104,16 +2161,14 @@ class TestNewAdrGoesThroughPipeline:
             "new-adr must not create ./adrs in the current directory"
         )
 
-    def test_existing_adr_number_is_refused_with_entry_exists(self, env):
-        """An existing ADR's id (adr-0001) is refused; the file is untouched."""
+    def test_unindexed_existing_adr_advances_number_and_keeps_original(self, env):
+        """A file still reserves its number when its index row is missing."""
         first = self._run(env, ["new-adr", "Original Title", "--kb", "sw-kb"])
         assert first.exit_code == 0, first.output
         expected_file = env["kb_path"] / "adrs" / "0001-original-title.md"
         original = expected_file.read_bytes()
 
-        # A second ADR that resolves to the SAME id (adr-0001) is refused.
-        # The numbering query only sees indexed ADRs, so this simulates a
-        # race/duplicate rather than the auto-increment's normal path.
+        # Removing an index row does not remove its file or free its number.
         from pyrite.storage.database import PyriteDB
 
         db = PyriteDB(env["db_path"])
@@ -2126,9 +2181,27 @@ class TestNewAdrGoesThroughPipeline:
             db.close()
 
         result = self._run(env, ["new-adr", "Original Title", "--kb", "sw-kb"])
+        assert result.exit_code == 0, result.output
+        assert "ADR-0002" in result.output
+        second_file = env["kb_path"] / "adrs" / "0002-original-title.md"
+        assert "id: adr-0002" in second_file.read_text(encoding="utf-8")
+        assert expected_file.read_bytes() == original
+
+    def test_a_real_numbering_collision_is_still_refused(self, env):
+        """An existing ADR id without a numbering field still owns that id."""
+        first = self._run(env, ["new-adr", "Original Title", "--kb", "sw-kb"])
+        assert first.exit_code == 0, first.output
+        path = env["kb_path"] / "adrs" / "0001-original-title.md"
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            "\n".join(line for line in text.split("\n") if not line.startswith("adr_number:")),
+            encoding="utf-8",
+        )
+        original = path.read_bytes()
+        result = self._run(env, ["new-adr", "Collides", "--kb", "sw-kb"])
         assert result.exit_code != 0, result.output
         assert "ENTRY_EXISTS" in result.output, result.output
-        assert expected_file.read_bytes() == original
+        assert path.read_bytes() == original
 
     def test_create_failure_prints_str_e_not_the_masked_public_message(self, env):
         """#506 item 3: this is the operator's own terminal, so there is no
@@ -2153,6 +2226,71 @@ class TestNewAdrGoesThroughPipeline:
         assert "check the server log" not in normalized, result.output
 
 
+class TestSwCreateAdrNumbersFromFiles:
+    """#1175: sw_create_adr numbers a new ADR from the files, as the CLI does."""
+
+    def test_unindexed_adr_file_advances_number(self, tmp_path):
+        """An unindexed file on disk with adr_number: 1 makes next ADR number 2."""
+        adrs_dir = tmp_path / "adrs"
+        adrs_dir.mkdir(parents=True)
+        (adrs_dir / "0001-unindexed.md").write_text(
+            "---\nid: adr-0001\ntitle: Unindexed\ntype: adr\nadr_number: 1\n---\n\nBody\n",
+            encoding="utf-8",
+        )
+        db = _make_test_db(tmp_path, entries=[])
+        try:
+            plugin = _make_plugin_with_db(db)
+            result = plugin._mcp_create_adr({"kb_name": "test", "title": "Next Decision"})
+            assert result["created"] is True
+            assert result["adr_number"] == 2
+            assert result["filename"] == "adrs/adr-0002.md"
+            assert (tmp_path / result["filename"]).is_file()
+            assert db.get_entry("adr-0002", "test") is not None
+        finally:
+            db.close()
+
+    def test_single_kb_resolved_without_kb_name(self, tmp_path):
+        """Without kb_name, sw_create_adr resolves the single configured KB."""
+        (tmp_path / "adrs").mkdir(parents=True)
+        db = _make_test_db(tmp_path, entries=[])
+        try:
+            plugin = _make_plugin_with_db(db)
+            result = plugin._mcp_create_adr({"title": "No KB Flag"})
+            assert result["created"] is True
+            assert result["adr_number"] == 1
+            assert result["filename"] == "adrs/adr-0001.md"
+            assert (tmp_path / result["filename"]).is_file()
+            assert db.get_entry("adr-0001", "test") is not None
+        finally:
+            db.close()
+
+    def test_stale_index_row_without_file_does_not_advance_number(self, tmp_path):
+        """Maintainer decision (2026-10-21): index rows don't count, so a stale row
+        whose file is gone does not advance it."""
+        (tmp_path / "adrs").mkdir(parents=True)
+        db = _make_test_db(
+            tmp_path,
+            entries=[
+                {
+                    "id": "adr-0042",
+                    "entry_type": "adr",
+                    "title": "Stale",
+                    "meta": {"adr_number": 42},
+                }
+            ],
+        )
+        try:
+            plugin = _make_plugin_with_db(db)
+            result = plugin._mcp_create_adr({"kb_name": "test", "title": "First File ADR"})
+            assert result["created"] is True
+            assert result["adr_number"] == 1
+            assert result["filename"] == "adrs/adr-0001.md"
+            assert (tmp_path / result["filename"]).is_file()
+            assert db.get_entry("adr-0001", "test") is not None
+        finally:
+            db.close()
+
+
 # =========================================================================
 # TestBacklogDependencies
 # =========================================================================
@@ -2160,6 +2298,189 @@ class TestNewAdrGoesThroughPipeline:
 
 class TestBacklogDependencies:
     """Tests for blocks/blocked_by dependency support in flow tools."""
+
+    @pytest.mark.parametrize(
+        "links",
+        [
+            pytest.param(
+                [
+                    {
+                        "source": "item-y",
+                        "target": "item-x",
+                        "relation": "blocked_by",
+                        "inverse": "blocks",
+                    }
+                ],
+                id="blocked-by-on-y",
+            ),
+            pytest.param(
+                [
+                    {
+                        "source": "item-x",
+                        "target": "item-y",
+                        "relation": "blocks",
+                        "inverse": "blocked_by",
+                    }
+                ],
+                id="blocks-on-x",
+            ),
+            pytest.param(
+                [
+                    {
+                        "source": "item-y",
+                        "target": "item-x",
+                        "relation": "blocked_by",
+                        "inverse": "blocks",
+                    },
+                    {
+                        "source": "item-x",
+                        "target": "item-y",
+                        "relation": "blocks",
+                        "inverse": "blocked_by",
+                    },
+                ],
+                id="both-directions",
+            ),
+        ],
+    )
+    def test_dependency_relations_are_consistent_in_both_directions(self, links):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-x",
+                        "title": "Blocker",
+                        "status": "accepted",
+                        "priority": "high",
+                        "meta": {"kind": "feature", "status": "accepted", "priority": "high"},
+                        "entry_type": "backlog_item",
+                    },
+                    {
+                        "id": "item-y",
+                        "title": "Blocked item",
+                        "status": "accepted",
+                        "priority": "critical",
+                        "meta": {"kind": "feature", "status": "accepted", "priority": "critical"},
+                        "entry_type": "backlog_item",
+                    },
+                ],
+                links=links,
+            )
+            try:
+                plugin = _make_plugin_with_db(db)
+                blocked_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-y", "kb_name": "test"}
+                )
+                blocker_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-x", "kb_name": "test"}
+                )
+                blocked_deps = blocked_context["dependencies"]
+                blocker_deps = blocker_context["dependencies"]
+
+                assert [dep["id"] for dep in blocked_deps["blocked_by"]] == ["item-x"]
+                assert blocked_deps["is_blocked"] is True
+                assert [dep["id"] for dep in blocker_deps["blocks"]] == ["item-y"]
+
+                next_result = plugin._mcp_pull_next({"kb_name": "test"})
+                assert next_result["recommendation"]["id"] == "item-x"
+                assert [item["id"] for item in next_result["blocked_items"]] == [
+                    "item-y",
+                ]
+
+                # A blocked item cannot be claimed through the MCP workflow.
+                result = plugin._mcp_claim(
+                    {"item_id": "item-y", "kb_name": "test", "assignee": "agent"}
+                )
+                assert result["claimed"] is False
+                assert "unresolved dependencies" in result["error"]
+            finally:
+                db.close()
+
+    def test_unreadable_blocker_remains_unknown_and_unresolved(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-y",
+                        "title": "Blocked item",
+                        "status": "accepted",
+                        "priority": "high",
+                        "meta": {"kind": "feature", "status": "accepted", "priority": "high"},
+                    },
+                ],
+            )
+            try:
+                db._raw_conn.execute(
+                    "INSERT INTO kb (name, path, kb_type) VALUES (?, ?, ?)",
+                    ("private", str(Path(tmpdir) / "private"), "generic"),
+                )
+                db._raw_conn.execute(
+                    "INSERT INTO entry (id, kb_name, entry_type, title, body, status, priority, assignee, metadata, created_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "item-x",
+                        "private",
+                        "backlog_item",
+                        "Private blocker",
+                        "",
+                        "accepted",
+                        "high",
+                        None,
+                        json.dumps(
+                            {
+                                "kind": "feature",
+                                "status": "accepted",
+                                "priority": "high",
+                            }
+                        ),
+                        "2026-01-01T00:00:00",
+                        "2026-01-01T00:00:00",
+                    ),
+                )
+                db._raw_conn.execute(
+                    "INSERT INTO link (source_id, source_kb, target_id, target_kb, relation, inverse_relation) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    ("item-y", "test", "item-x", "private", "blocked_by", "blocks"),
+                )
+                db._raw_conn.commit()
+
+                plugin = _make_plugin_with_db(db)
+                blocked_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-y", "kb_name": "test"},
+                    readable_kbs={"test"},
+                )
+                blocker_context = plugin._mcp_context_for_item(
+                    {"item_id": "item-x", "kb_name": "private"},
+                    readable_kbs={"private"},
+                )
+                blocked_by = blocked_context["dependencies"]["blocked_by"]
+                assert len(blocked_by) == 1
+                assert blocked_by[0]["id"] == "item-x"
+                assert blocked_by[0]["status"] == "unknown"
+                assert blocked_by[0]["resolved"] is False
+                assert blocked_by[0]["title"] is None
+                assert blocked_context["dependencies"]["is_blocked"] is True
+                assert blocker_context["dependencies"]["blocks"] == []
+
+                next_result = plugin._mcp_pull_next({"kb_name": "test"}, readable_kbs={"test"})
+                assert next_result["recommendation"] is None
+                assert [item["id"] for item in next_result["blocked_items"]] == [
+                    "item-y",
+                ]
+
+                result = plugin._mcp_claim(
+                    {"item_id": "item-y", "kb_name": "test", "assignee": "agent"},
+                    readable_kbs={"test"},
+                )
+                assert result["claimed"] is False
+                assert "unresolved dependencies" in result["error"]
+                assert result["unresolved_dependencies"] == [
+                    {"id": "item-x", "title": None, "status": "unknown"}
+                ]
+            finally:
+                db.close()
 
     def test_relationship_types_include_blocks(self):
         plugin = SoftwareKBPlugin()
@@ -2442,6 +2763,222 @@ class TestBacklogDependencies:
                 assert result["claimed"] is True
             finally:
                 db.close()
+
+
+# =========================================================================
+# TestContextPreviewParity — full context and preview agree
+# =========================================================================
+
+
+class TestContextPreviewParity:
+    """The preview counts the context a caller can actually open (#1280)."""
+
+    @pytest.fixture
+    def world(self, tmp_path):
+        from pyrite.config import KBConfig
+        from tests._world import build_world
+
+        world = build_world(
+            tmp_path,
+            kbs=[KBConfig(name="proj", path=tmp_path / "kb", kb_type="software")],
+            rest=False,
+        )
+        try:
+            yield world
+        finally:
+            world.close()
+
+    @staticmethod
+    def _entry(world, entry_id, entry_type, **fields):
+        import yaml
+
+        front = {"id": entry_id, "type": entry_type, "title": entry_id, **fields}
+        world.add_entry("proj", "---\n" + yaml.safe_dump(front) + "---\nContext body.\n")
+
+    @staticmethod
+    def _read(world, surface, named_kb=True):
+        before = {p: p.read_bytes() for p in world.kb_path("proj").rglob("*.md")}
+        if surface == "cli":
+
+            def call(*args):
+                result = world.cli(*args)
+                assert result.exit_code == 0, result.output
+                return json.loads(result.stdout)
+
+            call("orient", "-k", "proj", "--format", "json")
+            pull = call("sw", "pull-next", *(("-k", "proj") if named_kb else ()))
+            context = call("sw", "context-for-item", "item", "-k", "proj")
+        else:
+            server = world.mcp("read")
+            server._dispatch_tool("kb_orient", {"kb_name": "proj"})
+            pull = server._dispatch_tool("sw_pull_next", {"kb_name": "proj"} if named_kb else {})
+            context = server._dispatch_tool(
+                "sw_context_for_item", {"item_id": "item", "kb_name": "proj"}
+            )
+        assert {p: p.read_bytes() for p in world.kb_path("proj").rglob("*.md")} == before
+        return pull, context
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    @pytest.mark.parametrize("direction", ["outgoing", "incoming"])
+    @pytest.mark.parametrize("named_kb", [True, False], ids=["named", "unnamed"])
+    @pytest.mark.parametrize("relation", ["related_to", "affects", "explains"])
+    @pytest.mark.parametrize(
+        "entry_type,bucket,expected",
+        [
+            ("adr", "adrs", {"adr_count": 1, "component_count": 0, "validation_count": 0}),
+            (
+                "component",
+                "components",
+                {"adr_count": 0, "component_count": 1, "validation_count": 0},
+            ),
+            (
+                "programmatic_validation",
+                "validations",
+                {"adr_count": 0, "component_count": 0, "validation_count": 1},
+            ),
+        ],
+    )
+    def test_counts_both_link_directions(
+        self, world, surface, direction, named_kb, relation, entry_type, bucket, expected
+    ):
+        item_links = (
+            [{"target": "context", "relation": relation}] if direction == "outgoing" else []
+        )
+        context_links = (
+            [{"target": "item", "relation": relation}] if direction == "incoming" else []
+        )
+        self._entry(
+            world, "item", "backlog_item", kind="feature", status="accepted", links=item_links
+        )
+        self._entry(world, "context", entry_type, links=context_links)
+
+        pull, context = self._read(world, surface, named_kb)
+
+        assert pull["recommendation"]["id"] == "item"
+        assert pull["recommendation"]["kb_name"] == "proj"
+        assert [entry["id"] for entry in context[bucket]] == ["context"]
+        assert context[bucket][0]["body_preview"] == "Context body."
+        assert pull["context_preview"] == expected
+        assert pull["context_preview"] == {
+            "adr_count": len(context["adrs"]),
+            "component_count": len(context["components"]),
+            "validation_count": len(context["validations"]),
+        }
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_keeps_two_links_to_the_same_adr(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "adr", "relation": "related_to"}],
+        )
+        self._entry(world, "adr", "adr", links=[{"target": "item", "relation": "related_to"}])
+
+        pull, context = self._read(world, surface)
+
+        assert [entry["id"] for entry in context["adrs"]] == ["adr", "adr"]
+        assert pull["context_preview"] == {
+            "adr_count": 2,
+            "component_count": 0,
+            "validation_count": 0,
+        }
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_dependency_ids_are_excluded_even_with_another_context_link(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[
+                {"target": "finished", "relation": "related_to"},
+                {"target": "finished", "relation": "blocked_by"},
+            ],
+        )
+        self._entry(world, "finished", "backlog_item", kind="feature", status="done")
+        self._entry(world, "adr", "adr", links=[{"target": "item", "relation": "related_to"}])
+
+        pull, context = self._read(world, surface)
+
+        assert pull["recommendation"]["id"] == "item"
+        assert [d["id"] for d in context["dependencies"]["blocked_by"]] == ["finished"]
+        assert context["dependencies"]["blocks"] == []
+        # A second, ordinary link does not turn a dependency into context.
+        assert context["related"] == []
+        assert [entry["id"] for entry in context["adrs"]] == ["adr"]
+        assert pull["context_preview"] == {
+            "adr_count": 1,
+            "component_count": 0,
+            "validation_count": 0,
+        }
+
+    @pytest.mark.control(reason="no recommendation already omits the preview")
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    @pytest.mark.parametrize(
+        "status,reason",
+        [
+            ("proposed", "No accepted items available"),
+            ("accepted", "All accepted items are blocked by dependencies"),
+        ],
+    )
+    def test_no_recommendation_has_no_preview(self, world, surface, status, reason):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status=status,
+            links=[{"target": "unfinished", "relation": "blocked_by"}],
+        )
+        self._entry(world, "unfinished", "backlog_item", kind="feature", status="proposed")
+
+        pull, _ = self._read(world, surface)
+
+        assert pull["recommendation"] is None
+        assert pull["reason"] == reason
+        assert "context_preview" not in pull
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_unnamed_kb_still_checks_blockers(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "unfinished", "relation": "blocked_by"}],
+        )
+        self._entry(world, "unfinished", "backlog_item", kind="feature", status="proposed")
+
+        named, _ = self._read(world, surface)
+        unnamed, _ = self._read(world, surface, named_kb=False)
+
+        assert unnamed == named
+        assert unnamed["recommendation"] is None
+        assert unnamed["blocked_items"][0]["blocked_by"] == ["unfinished"]
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    def test_context_preview_truncates_the_linked_body(self, world, surface):
+        self._entry(
+            world,
+            "item",
+            "backlog_item",
+            kind="feature",
+            status="accepted",
+            links=[{"target": "context", "relation": "related_to"}],
+        )
+        body = "Context detail. " * 30
+        world.add_entry(
+            "proj", "---\nid: context\ntype: component\ntitle: Context\n---\n" + body + "\n"
+        )
+
+        _, context = self._read(world, surface, named_kb=False)
+
+        assert context["components"][0]["body_preview"] == body[:200]
 
 
 # =========================================================================
@@ -3540,9 +4077,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3595,9 +4135,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3640,9 +4183,12 @@ class TestContextForItemCLI:
                 ],
             )
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -3674,9 +4220,12 @@ class TestContextForItemCLI:
         with tempfile.TemporaryDirectory() as tmpdir:
             db = _make_test_db(tmpdir)
             try:
-                with patch(
-                    "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
-                    return_value=(db, False),
+                with (
+                    patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+                    patch(
+                        "pyrite_software_kb.plugin.SoftwareKBPlugin._get_db",
+                        return_value=(db, False),
+                    ),
                 ):
                     result = runner.invoke(
                         sw_app,
@@ -4104,6 +4653,13 @@ class TestBacklogSortAndFilter:
                         "meta": {"kind": "feature", "status": "proposed"},
                     },
                     {
+                        "id": "in-epic-backlink",
+                        "title": "In Epic via child-side link",
+                        "entry_type": "backlog_item",
+                        "status": "proposed",
+                        "meta": {"kind": "feature", "status": "proposed"},
+                    },
+                    {
                         "id": "out-epic",
                         "title": "Outside Epic",
                         "entry_type": "backlog_item",
@@ -4118,6 +4674,12 @@ class TestBacklogSortAndFilter:
                         "relation": "has_subtask",
                         "inverse": "subtask_of",
                     },
+                    {
+                        "source": "in-epic-backlink",
+                        "target": "epic-f",
+                        "relation": "subtask_of",
+                        "inverse": "has_subtask",
+                    },
                 ],
             )
             try:
@@ -4125,7 +4687,9 @@ class TestBacklogSortAndFilter:
                 result = plugin._mcp_backlog({"kb_name": "test", "epic": "epic-f"})
                 ids = [i["id"] for i in result["items"]]
                 assert "in-epic" in ids
+                assert "in-epic-backlink" in ids
                 assert "out-epic" not in ids
+                assert len(ids) == len(set(ids))
             finally:
                 db.close()
 
@@ -4297,6 +4861,13 @@ class TestBacklogSortAndFilter:
                         "meta": {"kind": "feature", "status": "proposed"},
                     },
                     {
+                        "id": "grouped-epic-side",
+                        "title": "Grouped via epic-side link",
+                        "entry_type": "backlog_item",
+                        "status": "proposed",
+                        "meta": {"kind": "feature", "status": "proposed"},
+                    },
+                    {
                         "id": "orphan",
                         "title": "Orphan Item",
                         "entry_type": "backlog_item",
@@ -4311,6 +4882,12 @@ class TestBacklogSortAndFilter:
                         "relation": "subtask_of",
                         "inverse": "has_subtask",
                     },
+                    {
+                        "source": "epic-g",
+                        "target": "grouped-epic-side",
+                        "relation": "has_subtask",
+                        "inverse": "subtask_of",
+                    },
                 ],
             )
             try:
@@ -4321,7 +4898,11 @@ class TestBacklogSortAndFilter:
                 epic_group = [g for g in groups if g["epic_id"] == "epic-g"]
                 unassigned = [g for g in groups if g["epic_id"] is None]
                 assert len(epic_group) == 1
-                assert epic_group[0]["count"] >= 1
+                assert epic_group[0]["count"] == 2
+                assert {item["id"] for item in epic_group[0]["items"]} == {
+                    "grouped",
+                    "grouped-epic-side",
+                }
                 assert len(unassigned) == 1
             finally:
                 db.close()
@@ -4340,7 +4921,11 @@ class TestBacklogCliPaginationFlags:
         mock_plugin = MagicMock()
         mock_plugin._mcp_backlog.return_value = {"count": 0, "items": [], "has_more": False}
 
-        with patch("pyrite_software_kb.plugin.SoftwareKBPlugin", return_value=mock_plugin):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            patch("pyrite_software_kb.cli.load_config", return_value=_cli_config(tmpdir)),
+            patch("pyrite_software_kb.plugin.SoftwareKBPlugin", return_value=mock_plugin),
+        ):
             result = runner.invoke(
                 sw_app,
                 ["backlog", "--limit", "5", "--offset", "10", "--kb", "test"],
@@ -4739,3 +5324,172 @@ class TestSwListCommandsAreBounded:
                 assert {item["id"] for item in result[key]} <= {f"match-{i}" for i in range(5)}
             finally:
                 db.close()
+
+
+NEW_BACKLOG_KINDS = ("refactor", "chore", "process")
+
+
+class TestNewBacklogKindsThroughTheCli:
+    """Create and update accept each kind the maintainer added (2026-10-14)."""
+
+    @pytest.fixture
+    def world(self, tmp_path):
+        import yaml
+
+        from pyrite.config import KBConfig
+        from pyrite.plugins import get_registry
+        from tests._world import build_world
+
+        get_registry().register(SoftwareKBPlugin())
+        kb_path = tmp_path / "sw-kb"
+        kb_path.mkdir()
+        (kb_path / "kb.yaml").write_text(
+            yaml.safe_dump(SOFTWARE_KB_PRESET, sort_keys=False), encoding="utf-8"
+        )
+        world = build_world(
+            tmp_path / "cli-world",
+            kbs=[KBConfig(name="sw-kb", path=kb_path, kb_type="software")],
+            rest=False,
+        )
+        yield world
+        world.close()
+
+    def _run(self, world, args):
+        return world.cli(*args)
+
+    def _kind_on_disk(self, world, entry_id):
+        import yaml
+
+        kb_path = world.kb_path("sw-kb")
+        for candidate in kb_path.rglob(f"{entry_id}.md"):
+            text = candidate.read_text(encoding="utf-8")
+            return yaml.safe_load(text.split("---", 2)[1])["kind"]
+        raise AssertionError(f"{entry_id}.md not written under {kb_path}")
+
+    @pytest.mark.parametrize("kind", NEW_BACKLOG_KINDS)
+    def test_create_writes_the_kind(self, world, kind):
+        result = self._run(
+            world,
+            [
+                "create",
+                "-k",
+                "sw-kb",
+                "-t",
+                "backlog_item",
+                "--title",
+                f"A {kind} item",
+                "-f",
+                f"kind={kind}",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.stdout)
+        assert self._kind_on_disk(world, payload["entry_id"]) == kind
+
+    @pytest.mark.parametrize("kind", NEW_BACKLOG_KINDS)
+    def test_update_writes_the_kind(self, world, kind):
+        created = self._run(
+            world,
+            [
+                "create",
+                "-k",
+                "sw-kb",
+                "-t",
+                "backlog_item",
+                "--title",
+                f"Update to {kind}",
+                "-f",
+                "kind=feature",
+            ],
+        )
+        assert created.exit_code == 0, created.output
+        entry_id = json.loads(created.stdout)["entry_id"]
+
+        result = self._run(world, ["update", entry_id, "-k", "sw-kb", "-f", f"kind={kind}"])
+
+        assert result.exit_code == 0, result.output
+        assert self._kind_on_disk(world, entry_id) == kind
+
+
+class TestBacklogKindToolSchemas:
+    @pytest.mark.parametrize("tool_name", ["sw_backlog", "sw_create_backlog_item"])
+    def test_kind_enum_matches_the_shared_vocabulary(self, tool_name):
+        registry = PluginRegistry()
+        registry.register(SoftwareKBPlugin())
+        schema = registry.get_all_mcp_tools("write")[tool_name]["inputSchema"]
+        assert schema["properties"]["kind"]["enum"] == list(BACKLOG_KINDS)
+
+
+class TestAdrCreationTagsAndId:
+    """Both ADR writers preserve tags and expose the entry's usable ID (#1518)."""
+
+    @pytest.fixture
+    def world(self, tmp_path):
+        from pyrite.config import KBConfig
+        from tests._world import build_world
+
+        world = build_world(
+            tmp_path,
+            kbs=[KBConfig(name="proj", path=tmp_path / "proj", kb_type="software")],
+            rest=False,
+        )
+        try:
+            yield world
+        finally:
+            world.close()
+
+    @staticmethod
+    def _frontmatter(world):
+        import yaml
+
+        paths = list(world.kb_path("proj").rglob("*.md"))
+        assert len(paths) == 1
+        return yaml.safe_load(paths[0].read_text(encoding="utf-8").split("---", 2)[1])
+
+    @pytest.mark.parametrize("surface", ["cli", "mcp"])
+    @pytest.mark.parametrize(
+        "tags",
+        [
+            pytest.param(
+                None,
+                marks=pytest.mark.control(reason="omitting tags keeps the existing empty default"),
+            ),
+            ["architecture", "storage"],
+            ["équipe", "résilience"],
+        ],
+    )
+    def test_tags_are_written_to_the_adr(self, world, surface, tags):
+        if surface == "cli":
+            options = ("--tags", ", ".join(tags)) if tags is not None else ()
+            result = world.cli("sw", "new-adr", "Use SQLite", "-k", "proj", *options)
+            assert result.exit_code == 0, result.output
+        else:
+            server = world.mcp("write")
+            server._dispatch_tool("kb_orient", {"kb_name": "proj"})
+            args = {"kb_name": "proj", "title": "Use SQLite"}
+            if tags is not None:
+                args["tags"] = tags
+            result = server._dispatch_tool("sw_create_adr", args)
+            assert result.get("created") is True, result
+            assert result["id"] == "adr-0001"
+
+        front = self._frontmatter(world)
+        assert front["id"] == "adr-0001"
+        assert front.get("tags", []) == (tags or [])
+        assert world.db.get_entry("adr-0001", "proj")["tags"] == (tags or [])
+
+    def test_cli_prints_the_entry_id(self, world):
+        result = world.cli("sw", "new-adr", "Use SQLite", "-k", "proj")
+        assert result.exit_code == 0, result.output
+        entry_id = self._frontmatter(world)["id"]
+        assert f"Created {entry_id} (ADR-0001):" in result.stdout
+        fetched = world.cli("get", entry_id, "-k", "proj")
+        assert fetched.exit_code == 0, fetched.output
+        assert json.loads(fetched.stdout)["id"] == entry_id
+
+    def test_mcp_schema_declares_optional_string_tags(self):
+        schema = SoftwareKBPlugin().get_mcp_tools("write")["sw_create_adr"]["inputSchema"]
+        assert schema["properties"]["tags"]["type"] == "array"
+        assert schema["properties"]["tags"]["items"] == {"type": "string"}
+        assert "tags" not in schema["required"]

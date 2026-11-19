@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..config import (
@@ -22,11 +21,12 @@ from .context import (
     cli_registry_context,
     get_config_with_registered_kbs,
     open_index_for_validation,
+    require_kb,
 )
-from .output import validate_output_format
+from .output import cli_console, path_line, validate_output_format
 
 kb_app = typer.Typer(help="Knowledge base management")
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str) -> str | None:
@@ -46,11 +46,20 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         KBNotFoundError,
         KBProtectedError,
         ValidationError,
+        public_text,
     )
     from ..utils.errors import cli_error
 
     code = "ERROR"
-    if isinstance(exc, EntryNotFoundError):
+    message = str(exc)
+    from ..utils.kb_files import KB_YAML_REFUSALS
+
+    if isinstance(exc, KB_YAML_REFUSALS):
+        code = exc.error_code  # KB_UNREADABLE, as on every surface (#1542)
+        # KB_CONFIG_INVALID's text names the file and the parser's words; it
+        # shows its fixed public message, as on every surface (#1547).
+        message = public_text(exc)
+    elif isinstance(exc, EntryNotFoundError):
         code = "NOT_FOUND"
     elif isinstance(exc, KBNotFoundError):
         code = "KB_NOT_FOUND"
@@ -58,7 +67,7 @@ def _kb_error(exc: Exception, fmt: str = "rich") -> None:
         code = "PERMISSION_DENIED"
     elif isinstance(exc, ValidationError):
         code = "VALIDATION_FAILED"
-    cli_error(str(exc), fmt, error_code=code)
+    cli_error(message, fmt, error_code=code)
 
 
 @kb_app.command("list")
@@ -76,6 +85,27 @@ def kb_list(
     """List all configured knowledge bases."""
     with cli_registry_context() as (config, db, svc, registry):
         kbs = registry.list_kbs(type_filter=kb_type)
+        # A KB whose kb.yaml could not be checked or read (#1542), or loaded
+        # (#1547), is listed, by name, with why: never dropped, and never the
+        # reason the list fails. Asked now (``check_readable``), for a KB in
+        # config.yaml and one `pyrite kb add` registered alike (a registry
+        # KB never runs ``load_kb_yaml``).
+        from ..exceptions import KBConfigInvalidError, outside_text, public_text
+        from ..utils.kb_files import KB_YAML_REFUSALS
+
+        for kb in kbs:
+            cfg = registry.get_kb_config(kb["name"])
+            if cfg is None:
+                continue
+            try:
+                cfg.check_readable()
+            except KB_YAML_REFUSALS as exc:
+                kb["unreadable"] = public_text(exc)  # the code's fixed text
+                kb["error_code"] = exc.error_code
+                if isinstance(exc, KBConfigInvalidError) and exc.__cause__ is not None:
+                    # The parser's own words: `kb list` is the local CLI, the
+                    # operator's own process (ADR-0052 N3).
+                    kb["error_detail"] = outside_text(exc.__cause__)
 
         if not kbs:
             console.print("[yellow]No knowledge bases configured.[/yellow]")
@@ -97,7 +127,7 @@ def kb_list(
 
         for kb in kbs:
             table.add_row(
-                kb["name"],
+                kb["name"] + (" [red](unreadable)[/red]" if kb.get("unreadable") else ""),
                 kb["type"],
                 kb.get("source", "user"),
                 str(kb.get("entries", 0)),
@@ -134,7 +164,10 @@ def kb_add(
                 name=kb_name, path=str(resolved), kb_type=kb_type, description=description
             )
             console.print(
-                f"[green]Added KB:[/green] {result['name']} ({result['type']}) at {result['path']}"
+                path_line(
+                    f"[green]Added KB:[/green] {result['name']} ({result['type']}) at ",
+                    result["path"],
+                )
             )
         except (PyriteError, ValueError) as e:
             _kb_error(e)
@@ -146,7 +179,7 @@ def kb_remove(
     force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
 ):
     """Remove a knowledge base from the registry."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(name,), output_format="rich") as (config, db, svc, registry):
         kb = registry.get_kb(name)
         if not kb:
             from ..utils.errors import cli_error
@@ -167,7 +200,9 @@ def kb_remove(
         try:
             registry.remove_kb(name)
             console.print(f"[green]Removed:[/green] {name}")
-            console.print(f"[dim]Note: Files at {kb['path']} were not deleted.[/dim]")
+            console.print(
+                path_line("Note: Files at ", kb["path"], " were not deleted.", style="dim")
+            )
         except KBProtectedError as e:
             _kb_error(e)
 
@@ -264,17 +299,18 @@ def kb_validate(
 ):
     """Validate knowledge base configuration and contents.
 
-    Runs structural kb.yaml validation PLUS the three Phase 0 content-drift
-    checks (undeclared entry types, missing required fields, subdirectory
-    mismatches). Results are filtered per-KB when a specific KB name is
-    given.
+    Checks kb.yaml structure and content drift, including malformed
+    frontmatter, undeclared types, missing required fields and subdirectory
+    mismatches. A KB name limits the report to that KB.
 
-    Exit code: 0 clean, 1 if any KB has structural errors, 2 if only
+    Exit code: 0 clean, 1 if any KB has structural errors or the index is
+    corrupt (STORAGE_ERROR: the check cannot be made), 2 if only
     content-drift warnings. Suitable for CI gating — `pyrite kb validate
     && deploy` blocks on structural errors; scripts that want to gate on
     drift too can check for exit code 2.
     """
     config = load_config()
+    require_kb(config, name, output_format=output_format)
 
     def _select_kbs(current_config) -> list[KBConfig]:
         if name:
@@ -303,7 +339,7 @@ def kb_validate(
         return [row for row in health.get(field, []) if row.get("kb") == kb_name]
 
     # Collect results for all KBs
-    kb_results = []
+    kb_results: list[dict[str, Any]] = []
     any_structural_errors = False
     any_drift = False
     for kb in kbs:
@@ -314,7 +350,11 @@ def kb_validate(
         undeclared = _for_kb(kb.name, "undeclared_types")
         missing_req = _for_kb(kb.name, "missing_required_fields")
         sub_mismatch = _for_kb(kb.name, "subdirectory_mismatches")
-        if undeclared or missing_req or sub_mismatch:
+        malformed = [
+            {**row, "path": str(Path(row["path"]).relative_to(kb.path))}
+            for row in _for_kb(kb.name, "malformed_frontmatter")
+        ]
+        if undeclared or missing_req or sub_mismatch or malformed:
             any_drift = True
 
         kb_results.append(
@@ -325,6 +365,7 @@ def kb_validate(
                 "undeclared_types": undeclared,
                 "missing_required_fields": missing_req,
                 "subdirectory_mismatches": sub_mismatch,
+                "malformed_frontmatter": malformed,
             }
         )
 
@@ -362,12 +403,14 @@ def kb_validate(
             # Count entries — find the matching KB config for path
             matching_kb = config.get_kb(kb_res["name"])
             if matching_kb and matching_kb.path.exists():
-                count = sum(
-                    1
-                    for f in matching_kb.path.rglob("*.md")
-                    if not any(p.startswith(".") for p in f.parts)
-                )
+                from ..services.kb_registry_service import KBRegistryService
+
+                count = KBRegistryService.count_entry_files(matching_kb)
                 console.print(f"  [green]✓[/green] {count} markdown files found")
+
+        for row in kb_res["malformed_frontmatter"]:
+            console.print(path_line("  [red]Malformed:[/red] ", row["path"]))
+            console.print(f"    {row['error']}", markup=False, highlight=False)
 
         if kb_res["undeclared_types"]:
             console.print(
@@ -389,9 +432,12 @@ def kb_validate(
             )
             for row in kb_res["subdirectory_mismatches"][:10]:
                 console.print(
-                    f"    • {row['id']} (type={row['type']}):"
-                    f" expected '{row['declared_subdirectory']}/',"
-                    f" found '{row['actual_path']}/'"
+                    path_line(
+                        f"    • {row['id']} (type={row['type']}): expected '",
+                        row["declared_subdirectory"],
+                        "/', found '",
+                    )
+                    + path_line("", row["actual_path"], "/'")
                 )
 
     if any_structural_errors:
@@ -413,7 +459,7 @@ def kb_create(
         None, "--shortname", "-s", help="Short alias for cross-KB links"
     ),
     ephemeral: bool = typer.Option(False, "--ephemeral", help="Create as ephemeral KB"),
-    ttl: int = typer.Option(3600, "--ttl", help="TTL in seconds for ephemeral KBs"),
+    ttl: int = typer.Option(3600, "--ttl", min=0, help="TTL in seconds for ephemeral KBs"),
 ):
     """Create a new knowledge base."""
     with cli_registry_context() as (config, db, svc, registry):
@@ -430,7 +476,9 @@ def kb_create(
                 from ..utils.errors import cli_error
 
                 cli_error(str(e), error_code="VALIDATION_FAILED")
-            console.print(f"[green]Created ephemeral KB:[/green] {name} (TTL: {ttl}s) at {kb.path}")
+            console.print(
+                path_line(f"[green]Created ephemeral KB:[/green] {name} (TTL: {ttl}s) at ", kb.path)
+            )
             return
 
         if not path:
@@ -452,7 +500,7 @@ def kb_create(
                 kb_type=kb_type,
                 description=description,
             )
-            console.print(f"[green]Created KB:[/green] {name} at {resolved_path}")
+            console.print(path_line(f"[green]Created KB:[/green] {name} at ", resolved_path))
         except (PyriteError, ValueError) as e:
             _kb_error(e)
 
@@ -468,18 +516,34 @@ def kb_reindex(
     ),
 ):
     """Reindex a specific knowledge base."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(kb_name,), output_format=output_format) as (
+        config,
+        db,
+        svc,
+        registry,
+    ):
         from ..exceptions import KBNotFoundError
+        from ..utils.kb_files import KB_YAML_REFUSALS
 
         try:
             result = registry.reindex_kb(kb_name)
         except KBNotFoundError as e:
             _kb_error(e, output_format)
+        except KB_YAML_REFUSALS as e:
+            # KBUnreadableError: KB_UNREADABLE (#1542) or KB_CONFIG_INVALID
+            # (#1547); the reconcile refused before planning, rows kept.
+            _kb_error(e, output_format)
+
+        from ..utils.errors import exit_unless_whole
+        from .index_commands import _could_not_reach, _print_unreadable_folders
 
         data = {"name": kb_name, **result}
         formatted = _format_output(data, output_format)
         if formatted is not None:
             typer.echo(formatted)
+            # Folders or files it could not reach: rows kept, named in the
+            # output, and the exit says the reindex was not whole (#1546).
+            exit_unless_whole(_could_not_reach(result), 1)
             return
 
         console.print(f"[green]Reindexed:[/green] {kb_name}")
@@ -504,6 +568,11 @@ def kb_reindex(
             console.print(f"  [yellow]Duplicate ids: {len(duplicates)}[/yellow]")
             for line in _duplicate_lines(duplicates):
                 console.print(f"    • {line}", markup=False, highlight=False)
+        from .index_commands import _print_file_links
+
+        _print_file_links(result)
+        _print_unreadable_folders(result)
+        exit_unless_whole(_could_not_reach(result), 1)
 
 
 @kb_app.command("health")
@@ -517,7 +586,12 @@ def kb_health(
     ),
 ):
     """Check health of a knowledge base."""
-    with cli_registry_context() as (config, db, svc, registry):
+    with cli_registry_context(kbs=(kb_name,), output_format=output_format) as (
+        config,
+        db,
+        svc,
+        registry,
+    ):
         from ..exceptions import KBNotFoundError
 
         try:
@@ -533,7 +607,9 @@ def kb_health(
         status = "[green]Healthy[/green]" if result["healthy"] else "[red]Unhealthy[/red]"
         console.print(f"\n[bold]{kb_name}[/bold]: {status}")
         console.print(
-            f"  Path: {result['path']} ({'exists' if result['path_exists'] else 'MISSING'})"
+            path_line(
+                "  Path: ", result["path"], f" ({'exists' if result['path_exists'] else 'MISSING'})"
+            )
         )
         console.print(f"  Files: {result['file_count']}, Indexed entries: {result['entry_count']}")
         console.print(f"  Last indexed: {result['last_indexed'] or 'never'}")
@@ -545,6 +621,12 @@ def kb_health(
         if result.get("type_name_drift_total"):
             console.print(
                 f"  [yellow]Type name drift: {result['type_name_drift_total']} group(s); use --format json for spellings[/yellow]"
+            )
+        if result.get("unlisted_entry_files"):
+            count = result["unlisted_entry_files"]
+            noun = "entry file" if count == 1 else "entry files"
+            console.print(
+                f"  [yellow]{count} {noun} the index does not list; `pyrite index health` names them[/yellow]"
             )
 
 
@@ -560,18 +642,20 @@ def kb_commit(
     """Commit changes in a KB's git repository."""
     from ..utils.errors import cli_error
 
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         from ..services.export_service import ExportService
 
         export_svc = ExportService(config, db)
         try:
-            result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
+            result = export_svc.commit_kb(
+                kb_name, message=message, paths=paths, sign_off=sign_off, run_hooks=True
+            )
             if result["success"]:
                 console.print(f"[green]Committed:[/green] {result['commit_hash'][:8]}")
                 console.print(f"  {result['files_changed']} file(s) changed")
                 if result.get("files"):
                     for f in result["files"]:
-                        console.print(f"  [dim]{f}[/dim]")
+                        console.print(path_line("  ", f, style="dim"))
             elif result.get("error") == "No changes to commit":
                 # Nothing to do is the asked-for end state, not a failure.
                 console.print("[yellow]No commit:[/yellow] No changes to commit")
@@ -595,7 +679,7 @@ def kb_push(
     branch: str | None = typer.Option(None, "--branch", "-b", help="Branch to push"),
 ):
     """Push KB commits to a remote repository."""
-    with cli_context() as (config, db, svc):
+    with cli_context(kbs=(kb_name,), output_format="rich") as (config, db, svc):
         from ..services.export_service import ExportService
 
         export_svc = ExportService(config, db)
@@ -652,6 +736,7 @@ def schema_show(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     try:
         svc = SchemaService(config)
         result = svc.show_schema(kb_name)
@@ -712,6 +797,7 @@ def schema_add_type(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     type_def: dict[str, Any] = {}
     if description:
         type_def["description"] = description
@@ -757,6 +843,7 @@ def schema_remove_type(
     from ..services.schema_service import SchemaService
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
     try:
         svc = SchemaService(config)
         result = svc.remove_type(kb_name, type_name)
@@ -797,6 +884,7 @@ def schema_set(
     input_file_or_exit(schema_file, "Schema file", output_format)
 
     config = get_config_with_registered_kbs(load_config(), name=kb_name)
+    require_kb(config, kb_name, output_format=output_format)
 
     schema = load_yaml(schema_file)
 

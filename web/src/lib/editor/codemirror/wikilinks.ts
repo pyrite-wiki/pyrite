@@ -25,6 +25,7 @@ import {
 	markTransclusionActive,
 	CIRCULAR_REF_MESSAGE
 } from '$lib/editor/transclusion-utils';
+import { kbStore } from '$lib/stores/kbs.svelte';
 import { entryHref } from '$lib/utils/entry-href';
 
 // =============================================================================
@@ -387,7 +388,7 @@ class TransclusionWidget extends WidgetType {
 
 		const cleanup = markTransclusionActive(this.target);
 		try {
-			const res = await api.resolveEntry(this.target, this.kb);
+			const res = await api.resolveEntry(this.target, kbStore.resolveName(this.kb));
 			if (res.resolved && res.entry) {
 				// Collection transclusion: render compact entry list
 				if (res.entry.entry_type === 'collection') {

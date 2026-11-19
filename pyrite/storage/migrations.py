@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..exceptions import outside_text
+
 logger = logging.getLogger(__name__)
 
 # Current schema version
-CURRENT_VERSION = 27
+CURRENT_VERSION = 30
 
 
 @dataclass
@@ -522,6 +524,41 @@ MIGRATIONS: list[Migration] = [
         -- SQLite < 3.35 does not support DROP COLUMN; columns remain but are unused.
         """,
     ),
+    Migration(
+        version=28,
+        description="Add link.target_prefix: a link's kb: prefix as written, beside the resolved KB (#980)",
+        # ALTER handled conditionally in _apply_v28() since the column may
+        # already exist from ORM create_all. Rows indexed before this carry
+        # NULL until the file is reindexed (`pyrite index build`).
+        up="",
+        down="""
+        -- SQLite < 3.35 does not support DROP COLUMN; column remains but is unused.
+        """,
+    ),
+    Migration(
+        version=29,
+        description="Add entry.aliases: a read spells a field where the file does (#1001, decision 5)",
+        # ALTER handled conditionally in _apply_v29() since the column may
+        # already exist from ORM create_all. Rows indexed before this hold
+        # their aliases only in the metadata JSON until the next reindex; the
+        # wikilink alias pass reads both.
+        up="",
+        down="""
+        -- SQLite < 3.35 does not support DROP COLUMN; the column remains but is unused.
+        """,
+    ),
+    Migration(
+        version=30,
+        description="Add link.target_path and link.target_resolved: Markdown links to entry files are link rows (#1723)",
+        # ALTER handled conditionally in _apply_v30() since the column may
+        # already exist from ORM create_all. The recorded file stat is nulled
+        # so the next sync re-reads every file once and writes its Markdown
+        # link rows, reporting nothing changed (the v27 route, decision D3).
+        up="",
+        down="""
+        -- SQLite < 3.35 does not support DROP COLUMN; the column remains but is unused.
+        """,
+    ),
 ]
 
 
@@ -617,7 +654,10 @@ class MigrationManager:
             logger.info("Applied migration v%d: %s", migration.version, migration.description)
         except Exception as e:
             self.conn.rollback()
-            raise MigrationError(f"Failed to apply migration v{migration.version}: {e}") from e
+            raise MigrationError(
+                f"Failed to apply migration v{migration.version}: {outside_text(e)}",
+                version=migration.version,
+            ) from e
 
     def _apply_v7(self) -> None:
         """Conditionally add OAuth columns to local_user (may already exist from ORM)."""
@@ -769,6 +809,18 @@ class MigrationManager:
         self.conn.execute("UPDATE local_user SET global_access = 1")
         self.conn.commit()
 
+    def _apply_v28(self) -> None:
+        """Conditionally add the written ``kb:`` prefix to link rows (#980)."""
+        table_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='link'"
+        ).fetchone()
+        if not table_exists:
+            return
+        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(link)").fetchall()}
+        if "target_prefix" not in existing:
+            self.conn.execute("ALTER TABLE link ADD COLUMN target_prefix TEXT")
+        self.conn.commit()
+
     def _apply_v27(self) -> None:
         """Conditionally add the recorded file stat to entry (one reconcile)."""
         table_exists = self.conn.execute(
@@ -897,6 +949,54 @@ class MigrationManager:
             self.conn.execute("ALTER TABLE entry ADD COLUMN content_hash TEXT")
         self.conn.commit()
 
+    def _apply_v29(self) -> None:
+        """Conditionally add the aliases column to entry (#1001, decision 5)."""
+        table_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entry'"
+        ).fetchone()
+        if not table_exists:
+            return
+        existing = {row[1] for row in self.conn.execute("PRAGMA table_info(entry)").fetchall()}
+        if "aliases" not in existing:
+            self.conn.execute("ALTER TABLE entry ADD COLUMN aliases TEXT")
+        self.conn.commit()
+
+    def _apply_v30(self) -> None:
+        """Add ``link.target_path`` and mark every entry for one re-read (#1723).
+
+        A file whose stat matches its row is never read again
+        (``index._file_changed``), so without this a plain ``index sync``
+        after the upgrade would never write the Markdown link rows of an
+        unchanged file. A NULL stat is re-read once and its hash, unchanged,
+        reports nothing (the v27 precedent). Done whether or not the column
+        was already there: ``create_all`` or the schema repair may have added
+        it before this ran, and the rows still lack the links.
+        """
+        link_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='link'"
+        ).fetchone()
+        if link_exists:
+            existing = {row[1] for row in self.conn.execute("PRAGMA table_info(link)").fetchall()}
+            if "target_path" not in existing:
+                self.conn.execute("ALTER TABLE link ADD COLUMN target_path TEXT")
+            if "target_resolved" not in existing:
+                self.conn.execute("ALTER TABLE link ADD COLUMN target_resolved INTEGER")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)"
+            )
+        entry_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entry'"
+        ).fetchone()
+        if entry_exists:
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(entry)").fetchall()}
+            # The resolver looks the entry at a file up on every write.
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)"
+            )
+            if {"file_mtime_ns", "file_size"} <= columns:
+                self.conn.execute("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL")
+        self.conn.commit()
+
     def rollback(self, target_version: int = 0) -> list[Migration]:
         """
         Rollback migrations down to target_version.
@@ -933,7 +1033,9 @@ class MigrationManager:
             logger.info("Rolled back migration v%d: %s", migration.version, migration.description)
         except Exception as e:
             self.conn.rollback()
-            raise MigrationError(f"Failed to rollback migration v{migration.version}: {e}") from e
+            raise MigrationError(
+                f"Failed to rollback migration v{migration.version}: {outside_text(e)}"
+            ) from e
 
     def status(self) -> dict:
         """Get migration status summary."""
@@ -950,9 +1052,12 @@ class MigrationManager:
 
 
 class MigrationError(Exception):
-    """Raised when a migration fails."""
+    """Raised when a migration fails. ``version`` is the one that failed, and
+    ``__cause__`` the SQLite error, which ``storage_error_from`` classifies."""
 
-    pass
+    def __init__(self, message: str, version: int | None = None):
+        super().__init__(message)
+        self.version = version
 
 
 def ensure_migrated(db_path: Path) -> None:

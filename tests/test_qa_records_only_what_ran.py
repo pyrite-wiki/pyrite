@@ -282,7 +282,10 @@ def test_a_tier_that_does_not_exist_is_refused(with_model, surface, takes_entry,
             surface, with_model, kb=JUDGED, tier=tier, entry="alpha" if takes_entry else None
         )
     assert refused, body
-    assert code == "INVALID_TIER", body
+    if surface == "ci" or surface.startswith("cli-assess"):
+        assert code == "USAGE_ERROR", body
+    else:
+        assert code == "INVALID_TIER", body
     assert body.get("result") != "pass"
     for eid in TITLES:
         assert _records(with_model, JUDGED, eid) == []
@@ -369,7 +372,15 @@ def test_one_failure_in_the_middle_does_not_stop_the_rest(with_model, surface):
     with _model(fake):
         _refused, _code, body = run_surface(surface, with_model, kb=JUDGED, tier=2, entry=None)
     assert [f["entry_id"] for f in body["failed"]] == ["beta"]
-    assert "provider unreachable" in body["failed"][0]["reason"]
+    reason = body["failed"][0]["reason"]
+    assert "the model call failed" in reason
+    if surface.startswith("mcp"):
+        # A network caller (MCP over HTTP; `_dispatch_tool` with no local
+        # binding) never sees the provider's own text (ADR-0052 N3).
+        assert "provider unreachable" not in reason
+        assert "the server log has the details" in reason
+    else:
+        assert "provider unreachable" in reason  # the CLI's operator does
     assert sorted(r["target_entry"] for r in body["results"]) == ["alpha", "gamma"]
     assert _records(with_model, JUDGED, "beta") == []
     for eid in ("alpha", "gamma"):
@@ -494,31 +505,17 @@ def test_assess_returns_the_task_it_could_not_create(no_model):
 # =========================================================================
 
 #: Each fix kind `fix_kb` dispatches, as the scenario that produces it: the
-#: entry file to write, and the issue validation reports for it when the
-#: validator cannot produce one (the missing-field fix: see `FIX_KINDS`).
+#: entry id, and the file to write for it. Every issue comes from validation;
+#: no scenario hands `fix_kb` one that no validator yields (#958). A
+#: required-field issue is manual -- see `tests/test_qa_fix_required_field.py`.
 FIX_SCENARIOS = {
     "invalid_date": (
         "fixd",
         "---\nid: fixd\ntitle: Dated harbour event\ntype: event\ndate: '2006'\n"
         "importance: 5\ntags: [ok]\n---\nBody.\n",
-        None,
     ),
-    "broken_link": (
-        "fixl",
-        _note("fixl", "Linking harbour note", links=["alphx"], tags=["ok"]),
-        None,
-    ),
-    "tag_case": ("fixt", _note("fixt", "Tagged harbour note", links=[], tags=["MixedCase"]), None),
-    "schema_violation": (
-        "fixm",
-        _note("fixm", "Missing harbour note", links=[], tags=["ok"]),
-        {
-            "rule": "schema_violation",
-            "field": "importance",
-            "severity": "error",
-            "message": "missing field importance",
-        },
-    ),
+    "broken_link": ("fixl", _note("fixl", "Linking harbour note", links=["alphx"], tags=["ok"])),
+    "tag_case": ("fixt", _note("fixt", "Tagged harbour note", links=[], tags=["MixedCase"])),
 }
 
 
@@ -528,7 +525,7 @@ def test_every_fix_kind_has_a_scenario():
 
 def _fix_world(tmp_path: Path, kind: str) -> tuple[PyriteConfig, Path]:
     config = _build(tmp_path, model=False)
-    eid, text, _issue = FIX_SCENARIOS[kind]
+    eid, text = FIX_SCENARIOS[kind]
     root = config.get_kb(JUDGED).path
     for sub, name, body in (
         (kind, eid, text),
@@ -547,21 +544,17 @@ def _fix_world(tmp_path: Path, kind: str) -> tuple[PyriteConfig, Path]:
 
 
 def _run_fix(config: PyriteConfig, kind: str, *, dry_run: bool = False) -> dict:
-    """`fix_kb` as `qa fix` runs it, plus the issue no validator yields today."""
+    """`fix_kb` as `qa fix` runs it."""
     from pyrite.services.qa_service import QAService
 
     db = PyriteDB(config.settings.index_path)
     try:
         qa = QAService(config, db)
-        eid, _text, extra = FIX_SCENARIOS[kind]
-
-        def validate(kb):
-            result = qa.validate_kb(kb, readable_kbs=None)
-            if extra:
-                result["issues"].append({"entry_id": eid, "kb_name": kb, **extra})
-            return result
-
-        return QAFixService(config, db).fix_kb(JUDGED, dry_run=dry_run, validate_kb_fn=validate)
+        return QAFixService(config, db).fix_kb(
+            JUDGED,
+            dry_run=dry_run,
+            validate_kb_fn=lambda kb: qa.validate_kb(kb, readable_kbs=None),
+        )
     finally:
         db.close()
 
@@ -571,7 +564,7 @@ def _of(items: list[dict], kind: str, eid: str) -> list[dict]:
 
 
 needs_permissions = pytest.mark.skipif(
-    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores directory permissions"
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root ignores file permissions"
 )
 
 
@@ -592,11 +585,14 @@ def test_a_fix_that_landed_is_fixed(tmp_path, kind):
 def test_a_write_that_raised_is_failed_and_the_rest_still_run(tmp_path, kind):
     config, path = _fix_world(tmp_path, kind)
     before = path.read_text()
-    path.parent.chmod(0o555)
+    # The file itself is read-only: the one write path refuses a file the
+    # process may not write (atomic_write_text, as open(path, "w") would),
+    # where a read-only folder only made it write in place (#955 P3a).
+    path.chmod(0o444)
     try:
         report = _run_fix(config, kind)
     finally:
-        path.parent.chmod(0o755)
+        path.chmod(0o644)
     eid = FIX_SCENARIOS[kind][0]
     assert _of(report["fixed"], kind, eid) == [], report
     (failure,) = _of(report["failed"], kind, eid)
@@ -625,11 +621,11 @@ def test_a_fix_for_an_entry_whose_file_is_gone_is_failed(tmp_path, kind):
 @pytest.mark.parametrize("kind", sorted(FIX_SCENARIOS))
 def test_dry_run_fails_nothing(tmp_path, kind):
     config, path = _fix_world(tmp_path, kind)
-    path.parent.chmod(0o555)
+    path.chmod(0o444)
     try:
         report = _run_fix(config, kind, dry_run=True)
     finally:
-        path.parent.chmod(0o755)
+        path.chmod(0o644)
     assert report.get("failed", []) == []
     assert _of(report["fixed"], kind, FIX_SCENARIOS[kind][0])
 
@@ -658,11 +654,11 @@ def test_a_link_fix_with_nothing_to_rewrite_is_not_fixed(tmp_path):
 def test_qa_fix_cli_reports_failed(tmp_path):
     """The `failed` bucket reaches `pyrite qa fix --format json`."""
     config, path = _fix_world(tmp_path, "tag_case")
-    path.parent.chmod(0o555)
+    path.chmod(0o444)
     try:
         code, body = _cli(config, ["qa", "fix", "--kb", JUDGED, "--format", "json"])
     finally:
-        path.parent.chmod(0o755)
+        path.chmod(0o644)
     assert [f["entry_id"] for f in body["failed"]] == ["fixt"], body
     assert body["failed_count"] == 1
 
@@ -742,22 +738,22 @@ def test_every_assess_output_mode_shows_the_task_not_created(no_model, fmt):
     ):
         result = _invoke(no_model, run)
         shown = result.stdout + result.stderr
-        assert "EntryExistsError" in shown, (fmt, run, shown)
+        assert "already exists" in shown, (fmt, run, shown)  # the refusal's own words
 
 
 @needs_permissions
 def test_qa_fix_default_output_reports_failed(tmp_path):
     """The human report: no 'No fixable issues', the failure and its reason, the count."""
     config, path = _fix_world(tmp_path, "tag_case")
-    # Every fix fails: the entry's folder and the bystander's are read-only.
-    folders = [path.parent, path.parent.parent / "bystander"]
-    for folder in folders:
-        folder.chmod(0o555)
+    # Every fix fails: the entry's file and the bystander's are read-only.
+    files = [path, path.parent.parent / "bystander" / "bystand.md"]
+    for file in files:
+        file.chmod(0o444)
     try:
         result = _invoke(config, ["qa", "fix", "--kb", JUDGED])
     finally:
-        for folder in folders:
-            folder.chmod(0o755)
+        for file in files:
+            file.chmod(0o644)
     out = result.stdout
     assert "No fixable issues found" not in out, out
     assert "fixt" in out and "bystand" in out and "update_failed" in out, out
@@ -887,6 +883,7 @@ def _unreadable_issues(issues: list[dict]) -> list[dict]:
 def test_ci_json_fails_a_kb_whose_files_cannot_be_read(broken_plain):
     config, fault = broken_plain
     result = _invoke(config, ["ci", "--severity", "error", "--format", "json"])
+    assert not isinstance(result.exception, OSError), repr(result.exception)
     body = json.loads(result.stdout)
     assert result.exit_code == 1, result.stdout + result.stderr
     assert body["result"] == "fail"
@@ -938,3 +935,110 @@ def test_assess_refuses_a_kb_whose_files_cannot_be_read(broken_plain, surface, t
     assert code == "KB_UNREADABLE", body
     # A missing folder is not recreated to hold a record.
     assert folder.exists() == (fault != "missing")
+
+
+# =========================================================================
+# #960 item 15: `ci` resolves KBs through the one resolver, as `qa validate` does
+# =========================================================================
+
+
+def _only_registered(tmp_path: Path) -> PyriteConfig:
+    """config.yaml lists no KB; `judged` exists only as a `kb add` registry row."""
+    full = _required_world(tmp_path)
+    path = full.get_kb(JUDGED).path
+    db = PyriteDB(full.settings.index_path)
+    db.register_kb(name=JUDGED, kb_type="generic", path=str(path), description="", source="user")
+    db.close()
+    return PyriteConfig(knowledge_bases=[], settings=full.settings)
+
+
+@pytest.mark.parametrize("named", [True, False], ids=["kb-named", "kb-not-named"])
+def test_ci_with_only_a_registered_kb_validates_it(tmp_path, named):
+    config = _only_registered(tmp_path)
+    args = ["ci", "--severity", "error", "--format", "json"] + (["--kb", JUDGED] if named else [])
+    code, body = _cli(config, args)
+    assert (code, body["result"]) == (1, "fail"), body
+    assert JUDGED in [kb["kb_name"] for kb in body["kbs"]], body
+    assert "schema_violation" in {i["rule"] for kb in body["kbs"] for i in kb["issues"]}, body
+
+
+def test_ci_with_only_a_registered_kb_finds_what_qa_validate_finds(tmp_path):
+    config = _only_registered(tmp_path)
+    code, validated = _cli(config, ["qa", "validate", JUDGED, "--format", "json"])
+    assert validated["issues"], validated  # the world really has issues
+    _, body = _cli(config, ["ci", "--severity", "info", "--format", "json"])
+    ci_kb = next(kb for kb in body["kbs"] if kb["kb_name"] == JUDGED)
+    assert len(ci_kb["issues"]) == len(validated["issues"]), (body, validated)
+
+
+@pytest.mark.control(reason="a config.yaml KB was already validated; the fix must keep it so")
+def test_ci_with_a_configured_kb_validates_it(tmp_path):
+    config = _required_world(tmp_path)
+    code, body = _cli(config, ["ci", "--severity", "error", "--format", "json"])
+    assert (code, body["result"]) == (1, "fail"), body
+    assert JUDGED in [kb["kb_name"] for kb in body["kbs"]], body
+
+
+@pytest.mark.parametrize("fmt", ["json", "text"])
+def test_ci_that_read_no_kb_does_not_pass(tmp_path, fmt):
+    """Zero KBs anywhere: nothing was read, so the gate cannot say pass."""
+    config = PyriteConfig(knowledge_bases=[], settings=Settings(index_path=tmp_path / "i.db"))
+    result = _invoke(config, ["ci", "--format", fmt])
+    assert result.exit_code != 0, result.stdout
+    assert '"pass"' not in result.stdout, result.stdout
+    assert "no KBs" in result.stdout + result.stderr, result.stdout + result.stderr
+
+
+# ---- round 1: ci never passes a KB whose files it did not read ----------
+
+
+def _registered_unindexed(tmp_path: Path, *, files: bool) -> PyriteConfig:
+    """`kb add`ed (a registry row) but never indexed: the index has no entries."""
+    folder = tmp_path / "q"
+    folder.mkdir()
+    if files:
+        (folder / "a.md").write_text(_note("a", "Alpha note", links=[], tags=["x"]))
+    settings = Settings(index_path=tmp_path / "index.db")
+    db = PyriteDB(settings.index_path)
+    db.register_kb(name="q", kb_type="generic", path=str(folder), description="", source="user")
+    db.close()
+    return PyriteConfig(knowledge_bases=[], settings=settings)
+
+
+def _rules(body: dict) -> set[str]:
+    return {i["rule"] for kb in body["kbs"] for i in kb["issues"]}
+
+
+def test_ci_fails_a_registered_kb_whose_files_are_not_indexed(tmp_path):
+    config = _registered_unindexed(tmp_path, files=True)
+    code, body = _cli(config, ["ci", "--kb", "q", "--severity", "error", "--format", "json"])
+    assert (code, body["result"]) == (1, "fail"), body
+    assert "index_out_of_date" in _rules(body), body
+    messages = " ".join(i["message"] for kb in body["kbs"] for i in kb["issues"])
+    assert "pyrite index sync -k q" in messages, body
+
+
+def test_ci_fails_a_kb_whose_index_is_stale(tmp_path):
+    config = _build(tmp_path, model=False)
+    path = config.get_kb(PLAIN).path
+    (path / "solo.md").write_text(_note("solo", "Edited title", links=[], tags=["x"]))
+    (path / "late.md").write_text(_note("late", "Late note", links=[], tags=["x"]))
+    code, body = _cli(config, ["ci", "--kb", PLAIN, "--severity", "error", "--format", "json"])
+    assert (code, body["result"]) == (1, "fail"), body
+    assert "index_out_of_date" in _rules(body), body
+
+
+@pytest.mark.control(reason="an empty KB has no files to have missed; it may pass")
+def test_ci_passes_an_empty_registered_kb(tmp_path):
+    config = _registered_unindexed(tmp_path, files=False)
+    code, body = _cli(config, ["ci", "--kb", "q", "--severity", "error", "--format", "json"])
+    assert (code, body["result"]) == (0, "pass"), body
+
+
+def test_ci_text_for_zero_kbs_is_prose_not_a_json_object(tmp_path):
+    config = PyriteConfig(knowledge_bases=[], settings=Settings(index_path=tmp_path / "i.db"))
+    result = _invoke(config, ["ci"])
+    out = result.stdout + result.stderr
+    assert result.exit_code == 1, out
+    assert "{" not in out, out
+    assert "no KBs" in out and "pyrite kb add" in out, out

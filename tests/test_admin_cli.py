@@ -375,15 +375,17 @@ def reconcile_env():
         from pyrite.models.generic import GenericEntry
 
         adr_repo = KBRepository(kb)
+        # A file's name is fixed at creation (#391): this ADR's came from an
+        # earlier title. A save over an existing entry is refused since #978
+        # (decision 4), so the entry is created once, at that kept filename.
         adr = GenericEntry(
             _entry_type="adr",
             id="adr-9",
-            title="Original Title",
+            title="Keep Pattern",
             body="",
             metadata={"adr_number": 9},
         )
-        adr_repo.save(adr)
-        adr.title = "Keep Pattern"
+        adr.file_path = kb_path / "adrs" / "0009-original-title.md"
         adr_repo.save(adr, keep_filename=True, touch_updated_at=False)
 
         # Static subdirectories preserve deliberate placement; reconcile must
@@ -513,8 +515,10 @@ class TestIndexReconcile:
         source = kb_path / "tasks" / "active" / "my-task.md"
         destination = kb_path / "tasks" / "done" / "my-task.md"
 
-        def create_destination_after_precheck(_source, target):
-            Path(target).write_text("created by concurrent writer", encoding="utf-8")
+        def create_destination_after_precheck(*_args, **_kwargs):
+            # The move links by name through folder descriptors; the racer
+            # writes the destination by its path.
+            destination.write_text("created by concurrent writer", encoding="utf-8")
             raise FileExistsError("destination appeared after the existence check")
 
         with (
@@ -524,7 +528,7 @@ class TestIndexReconcile:
                 return_value=(reconcile_env["config"], reconcile_env["db"]),
             ),
             patch(
-                "pyrite.services.kb_service.os.link",
+                "pyrite.utils.kb_files.os.link",
                 side_effect=create_destination_after_precheck,
             ),
         ):
@@ -1016,14 +1020,30 @@ class TestQAAssess:
             result = runner.invoke(app, ["qa", "assess", "test-events"])
             assert result.exit_code in (0, 1)
 
-    def test_qa_assess_specific_entry(self, admin_env):
+    @pytest.mark.parametrize("output_format", ["json", "rich"])
+    def test_qa_assess_specific_entry(self, admin_env, output_format):
+        kb_path = admin_env["events_kb"].path
+        before = {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()}
         with _patch_config(admin_env):
             result = runner.invoke(
                 app,
-                ["qa", "assess", "test-events", "--entry", "nonexistent-id"],
+                [
+                    "qa",
+                    "assess",
+                    "test-events",
+                    "--entry",
+                    "nonexistent-id",
+                    "--format",
+                    output_format,
+                ],
             )
-            # May fail because entry doesn't exist; should not crash
-            assert result.exit_code in (0, 1)
+        assert result.exit_code == 1, result.output
+        assert "Entry 'nonexistent-id' not found" in result.output
+        if output_format == "json":
+            assert _parse_json(result.output)["error_code"] == "ENTRY_NOT_FOUND"
+        else:
+            assert "ERROR [ENTRY_NOT_FOUND]" in result.output
+        assert {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()} == before
 
     def test_qa_assess_json(self, admin_env):
         with _patch_config(admin_env):

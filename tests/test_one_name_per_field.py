@@ -28,6 +28,7 @@ mocks stand between the name and the file.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +39,7 @@ from pyrite.cli import app
 from pyrite.exceptions import ValidationError
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.models.factory import build_entry
+from pyrite.storage.repository import new_entry_text
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
@@ -55,19 +57,26 @@ EXISTING = {
     "relationship": ("relationships/r1.md", "r1", REL_FILE),
 }
 
-# (entry type, published or old name, value as a client sends it, comma form for -f).
+# (entry type, published or old name, value as a client sends it, its form for -f:
+# several items as a JSON array, since the CLI never splits on commas, #1502).
 # Expected: the file keys that must hold, as literals. `forbidden` keys must be absent.
 CREATE_ROWS = [
-    ("event", "actors", ["x", "y"], "x,y", {"actors": ["x", "y"]}),
-    ("event", "participants", ["x", "y"], "x,y", {"actors": ["x", "y"]}),
+    ("event", "actors", ["x", "y"], '["x", "y"]', {"actors": ["x", "y"]}),
+    ("event", "participants", ["x", "y"], '["x", "y"]', {"actors": ["x", "y"]}),
     ("relationship", "source_entity", "x", "x", {"source_entity": "x", "target_entity": ""}),
     ("relationship", "target_entity", "x", "x", {"source_entity": "", "target_entity": "x"}),
     ("relationship", "source", "x", "x", {"source_entity": "x", "target_entity": ""}),
     ("relationship", "target", "x", "x", {"source_entity": "", "target_entity": "x"}),
 ]
 UPDATE_ROWS = [
-    ("event", "actors", ["x", "y"], "x,y", {"actors": ["x", "y"], "date": "2025-01-01"}),
-    ("event", "participants", ["x", "y"], "x,y", {"actors": ["x", "y"], "date": "2025-01-01"}),
+    ("event", "actors", ["x", "y"], '["x", "y"]', {"actors": ["x", "y"], "date": "2025-01-01"}),
+    (
+        "event",
+        "participants",
+        ["x", "y"],
+        '["x", "y"]',
+        {"actors": ["x", "y"], "date": "2025-01-01"},
+    ),
     ("relationship", "source_entity", "x", "x", {"source_entity": "x", "target_entity": "b"}),
     ("relationship", "target_entity", "x", "x", {"source_entity": "a", "target_entity": "x"}),
     ("relationship", "source", "x", "x", {"source_entity": "x", "target_entity": "b"}),
@@ -232,6 +241,9 @@ CREATE_SURFACES = ["build_entry", "service", "cli", "mcp", "rest_metadata", "res
     ("surface", "entry_type", "name", "value", "comma", "expected"),
     _cells(CREATE_ROWS, CREATE_SURFACES, _DEV_WORKED_CREATE),
 )
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 def test_create_lands_the_name_in_its_file_key(
     tmp_path, surface, entry_type, name, value, comma, expected
 ):
@@ -242,7 +254,7 @@ def test_create_lands_the_name_in_its_file_key(
 
     if surface == "build_entry":
         kwargs = {k: v for k, v in spec.items() if k not in ("entry_type", "title")}
-        text = build_entry(entry_type, title="N", **kwargs).to_markdown()
+        text = new_entry_text(build_entry(entry_type, title="N", **kwargs))
         _assert_lands(_frontmatter(text), expected, f"{surface}:{name}")
         return
     if surface == "service":
@@ -282,6 +294,16 @@ def test_create_lands_the_name_in_its_file_key(
         fm.pop("metadata", None)
         fm.pop("participants", None)
     _assert_lands(fm, expected, f"{surface}:{name}")
+
+
+@pytest.mark.parametrize("name", ["actors", "participants"])
+def test_cli_create_keeps_a_comma_value_as_one_item(tmp_path, name):
+    """`-f actors=x,y` is the one item `x,y`, at either spelling: the CLI never
+    splits on commas (#1502); several items go as a JSON array (the rows above)."""
+    config, kb = _env(tmp_path, {})
+    _cli(config, "create", "-k", KB, "-t", "event", "--title", "N", "-f", f"{name}=x,y",
+         "-f", "date=2025-01-02")  # fmt: skip
+    _assert_lands(_written(kb), {"actors": ["x,y"]}, f"cli:{name}")
 
 
 # ---------------------------------------------------------------------------
@@ -425,7 +447,9 @@ def _update_cells():
 
 
 def _comma(v) -> str:
-    return ",".join(v) if isinstance(v, list) else v
+    """``v`` as `-f` spells it: several items as a JSON array (the CLI never
+    splits on commas, #1502)."""
+    return json.dumps(v) if isinstance(v, list) else v
 
 
 def _assert_refused_naming(text: str, alias: str, target: str, where: str) -> None:
@@ -446,7 +470,7 @@ def _conflict_create(tmp_path, surface, pair, equal):
             entry = build_entry(entry_type, title="N", **kwargs, **{alias: value, target: second})
         except ValidationError as e:
             return config, kb, str(e), None
-        return config, kb, None, _frontmatter(entry.to_markdown())
+        return config, kb, None, _frontmatter(new_entry_text(entry))
     if surface in ("service", "service_mixed"):
         if surface == "service":
             spec.update({alias: value, target: second})
@@ -747,14 +771,17 @@ def test_rest_create_forwards_only_what_the_client_sent(tmp_path):
             assert list(kb.rglob("n.md")) == []
 
 
+@pytest.mark.control(
+    reason="the deleted Entry.save/to_markdown is replaced by the create's text (new_entry_text), which the base already has; the property is unchanged (#955 P4)"
+)
 @pytest.mark.parametrize("pair", PAIRS, ids=PAIR_IDS)
 def test_the_same_spelling_twice_with_equal_values_is_accepted(tmp_path, pair):
     entry_type, _alias, target, value, _other, expected = pair
     extra = {"date": "2025-01-02"} if entry_type == "event" else {}
     fm = _frontmatter(
-        build_entry(
-            entry_type, title="N", **extra, **{target: value}, metadata={target: value}
-        ).to_markdown()
+        new_entry_text(
+            build_entry(entry_type, title="N", **extra, **{target: value}, metadata={target: value})
+        )
     )
     _assert_lands(fm, expected, "same-spelling-twice")
 

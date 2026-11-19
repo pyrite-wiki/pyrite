@@ -222,11 +222,29 @@ def _placeholder(name: str, schema: dict, call_key: str) -> Any:
     return "characterization-placeholder"
 
 
+# The person a tool records. Optional in the schema -- a signed-in
+# caller is recorded as themselves -- but required of a caller with no
+# identity, which is every principal this matrix dispatches as. Filled as
+# when it was required, so the call still reaches the scoping it
+# characterizes instead of stopping at "who?".
+_RECORDS_A_PERSON = {
+    "social_vote": "user_id",
+    "social_post": "author_id",
+    "wiki_submit_review": "reviewer_id",
+    "sw_claim": "assignee",
+    "sw_review": "reviewer",
+    "task_claim": "assignee",
+    "task_start": "assignee",
+}
+
+
 def _generic_arguments(
     world: World, tool_name: str, kb: str, schema: dict, call_key: str
 ) -> dict[str, Any]:
     props: dict = schema.get("properties") or {}
-    required: list[str] = schema.get("required") or []
+    required: list[str] = list(schema.get("required") or [])
+    if tool_name in _RECORDS_A_PERSON:
+        required.append(_RECORDS_A_PERSON[tool_name])
     kb_args = _KB_ARG_OVERRIDE.get(tool_name, ("kb_name",) if "kb_name" in props else ())
 
     args: dict[str, Any] = {}
@@ -274,5 +292,15 @@ def build_arguments(
     tool is a write: see `_UNIQUE_PER_CALL`. Read-only tools ignore it."""
     if tool_name in _EXPLICIT:
         return _EXPLICIT[tool_name](world, kb, call_key)
-    schema = world.mcp_server.tools[tool_name]["inputSchema"]
-    return _generic_arguments(world, tool_name, kb, schema, call_key)
+    tool = world.mcp_server.tools[tool_name]
+    args = _generic_arguments(world, tool_name, kb, tool["inputSchema"], call_key)
+    # A `locates_entry` tool with every id argument blank is refused before
+    # any KB check (#1310), so a tool whose id is optional in its schema
+    # (sw_prioritize) gets one here, or the matrix would stop characterizing
+    # its KB scoping.
+    id_args = (tool.get("locates_entry") or {}).get("id_args", [])
+    if id_args and not any(args.get(a) for a in id_args):
+        is_list = tool["inputSchema"]["properties"].get(id_args[0], {}).get("type") == "array"
+        placeholder = f"characterization-placeholder-id-{call_key}"
+        args[id_args[0]] = [placeholder] if is_list else placeholder
+    return args

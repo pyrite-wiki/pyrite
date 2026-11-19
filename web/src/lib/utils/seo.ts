@@ -1,13 +1,13 @@
 /** SEO helpers: build og/twitter/JSON-LD metadata for entry pages.
  *
- * Mirrors the surface `pyrite/services/site_cache.py` emits today,
- * shifted to the live app so the static renderer can be retired. See
+ * The surface the former static renderer (`/site`, removed in #953)
+ * emitted, now built by the live app. See
  * the kb/backlog/pyrite-entry-page-seo-meta.md ticket for scope.
  */
 
 import type { EntryResponse } from '$lib/api/types';
 
-/** schema.org @type mapping by entry_type. Mirrors site_cache._SCHEMA_TYPES. */
+/** schema.org @type mapping by entry_type. */
 const SCHEMA_TYPES: Record<string, string> = {
 	note: 'Article',
 	person: 'Person',

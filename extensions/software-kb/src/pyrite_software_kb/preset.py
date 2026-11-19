@@ -74,6 +74,12 @@ SOFTWARE_KB_PRESET = {
             "optional": ["runbook_kind", "audience"],
             "subdirectory": "runbooks/",
         },
+        "work_log": {
+            "description": "Work session linked to a backlog item",
+            "required": ["title"],
+            "optional": ["item_id", "date", "decisions", "rejected", "open_questions"],
+            "subdirectory": "work-logs/",
+        },
         "milestone": {
             "description": "Project milestone for grouping backlog items",
             "required": ["title"],
@@ -105,19 +111,10 @@ SOFTWARE_KB_PRESET = {
         "components",
         "backlog",
         "runbooks",
+        "work-logs",
         "milestones",
         "tasks",
     ],
-    "default_board": {
-        "lanes": [
-            {"name": "Backlog", "statuses": ["proposed", "planned"]},
-            {"name": "Ready", "statuses": ["accepted"]},
-            {"name": "In Progress", "statuses": ["in_progress"], "wip_limit": 5},
-            {"name": "Review", "statuses": ["review"], "wip_limit": 3},
-            {"name": "Done", "statuses": ["done", "completed"]},
-        ],
-        "wip_policy": "warn",
-    },
 }
 
 # Keep the preset vocabulary tied to the plugin validator constants.

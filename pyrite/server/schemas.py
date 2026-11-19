@@ -4,9 +4,9 @@ Pydantic models for the pyrite REST API.
 Extracted from api.py to reduce file size and improve organization.
 """
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # =============================================================================
 # Knowledge Bases
@@ -39,6 +39,22 @@ class KBListResponse(BaseModel):
     total: int
 
 
+class KBMetadataUpdateRequest(BaseModel):
+    """Body of ``PUT /api/kbs/{name}``.
+
+    Omitted fields stay unchanged; ``description: null`` clears it;
+    ``kb_type`` is a non-blank string or omitted (``null`` is refused by the
+    registry). A key this route does not take is refused, not dropped:
+    ``default_role`` has its own route. The route validates the raw body with
+    this model so a refusal is ``VALIDATION_FAILED``, not FastAPI's list.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = None
+    kb_type: str | None = None
+
+
 class KBHealthResponse(BaseModel):
     """Response for KB health check."""
 
@@ -54,6 +70,14 @@ class KBHealthResponse(BaseModel):
     type_name_drift_total: int = 0
     type_name_drift_has_more: bool = False
     schema_errors: list[dict[str, Any]] = Field(default_factory=list)
+    # How many entry files an earlier version wrote where the index walk does
+    # not list them (#1552): a count, never the paths, over the network; a
+    # warning, `healthy` unchanged. `pyrite index health` names them locally.
+    unlisted_entry_files: int = 0
+    # How many folders the index walk could not list (#1546): a count, never
+    # the paths, over the network; `healthy` is false. `pyrite index health`
+    # names them locally.
+    unreadable_folders: int = 0
 
 
 class KBReindexResponse(BaseModel):
@@ -68,11 +92,39 @@ class KBReindexResponse(BaseModel):
     # Ids held by more than one file: {"kb", "id", "winner", "paths"}, the
     # winner (the lexicographically first KB-relative path) indexed (ADR-0038).
     duplicates: list[dict[str, Any]] = Field(default_factory=list)
+    # In-KB links to another entry file, indexed once at the target (#1262):
+    # {"kb", "path", "target"}, KB-relative.
+    aliases: list[dict[str, str]] = Field(default_factory=list)
+    # In-KB links with nothing at the path they name, left as they are
+    # (#1262): {"kb", "path", "target"}, KB-relative.
+    dangling_links: list[dict[str, str]] = Field(default_factory=list)
+    #: How many folders it could not list (their rows kept, #1546): a count,
+    #: never a path, over the network. The local CLI names them.
+    unreadable_folders: int = 0
+
+    @field_validator("unreadable_folders", mode="before")
+    @classmethod
+    def _folders_as_counted(cls, value: Any) -> Any:
+        """The route builds this from the registry's dict (``**result``):
+        the folder rows are shaped by ``network_shape``, the one place that
+        decides what a network caller gets, whichever way the dict arrives."""
+        if isinstance(value, list):
+            from ..services.index_health import network_shape
+
+            return network_shape({"unreadable_folders": value})["unreadable_folders"]
+        return value
 
 
 # =============================================================================
 # Search
 # =============================================================================
+
+
+#: A column field's value as an index reader returns it: text, or the
+#: number or boolean its declared type reads it as (#1503,
+#: ``docs/json-contracts.md``, "Entry row shape"). ``bool`` before the
+#: numbers, so pydantic's smart union keeps ``True`` a boolean.
+ColumnValue = str | bool | int | float | None
 
 
 class SearchResult(BaseModel):
@@ -83,7 +135,7 @@ class SearchResult(BaseModel):
     entry_type: str
     title: str
     snippet: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
     tags: list[str] = []
     #: Cosine similarity to the query, 3 places, on a row the vector leg
@@ -93,6 +145,10 @@ class SearchResult(BaseModel):
     #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
     #: ``semantic``.
     legs: list[str] | None = None
+    #: What the entry's file holds that this row's reading does not show
+    #: faithfully (a refused ``importance``, #1761). Not the response-level
+    #: ``warnings`` (a leg was skipped). Absent on a row with nothing to say.
+    entry_warnings: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
@@ -119,6 +175,12 @@ class SearchResponse(BaseModel):
     #: search with ``["keyword"]`` here was a keyword search. Not the
     #: per-result ``legs``, which says which legs returned that result.
     legs_run: list[str]
+    #: The entry parts the legs that ran read: ``[]`` when none ran. Tags and
+    #: declared field values are not indexed, so a miss on one is not an absence.
+    searched: list[str]
+    #: With ``searched`` holding ``body_prefix`` (only the vector leg ran): how many
+    #: characters of each body its vectors were built from. Omitted otherwise.
+    body_prefix_chars: int | None = None
     #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
     #: or ``none``.
     keyword_match: str | None = None
@@ -137,31 +199,20 @@ class SearchResponse(BaseModel):
 # =============================================================================
 
 
-class EntryBase(BaseModel):
-    """Base fields for entries."""
-
-    title: str
-    body: str | None = None
-    tags: list[str] = []
-    importance: int | None = Field(None, ge=1, le=10)
-
-
-class EventCreate(EntryBase):
-    """Fields for creating an event."""
-
-    date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
-    participants: list[str] = []
-    status: str = "confirmed"
-
-
-class PersonCreate(EntryBase):
-    """Fields for creating a person entry."""
-
-    role: str | None = None
-
-
 class EntryResponse(BaseModel):
-    """Full entry response."""
+    """Full entry response.
+
+    The fields below are the stable core every entry has. A single-entry
+    read spells each field the type declares at its own name (#1025; a
+    task's ``status_reason`` and ``evidence``, a backlog item's ``rank``,
+    every type's ``provenance``), and those keys have no slot here, so the
+    model passes every other key of the read through unchanged: what the
+    read returns reaches REST as it reaches MCP ``kb_get`` and the CLI's
+    JSON (``docs/json-contracts.md``, the read shape). A fixed list dropped
+    them silently once they left ``metadata``.
+    """
+
+    model_config = ConfigDict(extra="allow")
 
     id: str
     kb_name: str
@@ -169,9 +220,11 @@ class EntryResponse(BaseModel):
     title: str
     body: str | None = None
     summary: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
-    status: str | None = None
+    status: ColumnValue = None
+    # A list is a list: a column a file's type refused is left out of the reply
+    # (ADR-0042 8a, ``get_entry``), never sent as null.
     tags: list[str] = []
     participants: list[str] = []
     sources: list[dict] = []
@@ -390,6 +443,15 @@ class UpdateResponse(BaseModel):
     #: the response by field name sees no shape change.
     ignored: list[str] = []
     unchanged: list[str] = []
+    #: ADR-0042 (#955). `changed` is false when the request changed nothing
+    #: and nothing was written; `locked` is false when the KB is outside git
+    #: and the file was replaced with compare-before-replace and no lock;
+    #: `not_moved` says why a templated-folder field left an unpinned file in
+    #: place. Defaults are the usual case, so an existing caller sees no
+    #: shape change.
+    changed: bool = True
+    locked: bool = True
+    not_moved: str | None = None
 
 
 class DeleteResponse(BaseModel):
@@ -399,26 +461,15 @@ class DeleteResponse(BaseModel):
     id: str
 
 
-class SiteCacheSyncStatus(BaseModel):
-    """Outcome of the site-cache render `wait=true` triggers alongside a sync.
+class EntryDeleteResponse(DeleteResponse):
+    """Entry deletion includes the readable links left dangling."""
 
-    Independent of the sync's own success (#349's cold-read round): a sync
-    that added, updated or removed entries has already committed by the time
-    the render runs, so a render failure is reported here rather than
-    failing the whole request. ``error`` is a generic message for callers;
-    the real exception and its traceback go to the server log only.
-
-    ``rendered`` means the render ran to completion (#408); it says nothing
-    about whether every page came out clean. ``errors`` is always present --
-    it is 0 when the render didn't get far enough to produce per-entry stats
-    (e.g. the service failed to construct) and the count of per-entry
-    failures otherwise -- so a caller reads ``rendered and errors == 0`` as
-    "all pages are fresh."
-    """
-
-    rendered: bool
-    errors: int = 0
-    error: str | None = None
+    inbound_links: list[dict[str, Any]]
+    inbound_link_count: int
+    # Symbolic links inside the KB to the removed file, kept as they are:
+    # [{"path", "target"}], KB-relative (#1262).
+    links_left: list[dict[str, str]] = Field(default_factory=list)
+    warnings: list[str]
 
 
 class SyncResponse(BaseModel):
@@ -429,7 +480,11 @@ class SyncResponse(BaseModel):
     updated: int
     removed: int
     skipped: list[dict[str, str]] = Field(default_factory=list)
-    site_cache: SiteCacheSyncStatus | None = None
+    #: KBs whose files could not be read: not synced, rows kept (#1542).
+    unreadable_kbs: list[dict[str, str]] = Field(default_factory=list)
+    #: How many folders it could not list in the KBs it synced: their rows
+    #: kept (#1546). A count, never a path; the local CLI names them.
+    unreadable_folders: int = 0
 
 
 class ErrorResponse(BaseModel):
@@ -445,15 +500,33 @@ class ErrorResponse(BaseModel):
 # =============================================================================
 
 
+# What `importance` accepts, for the OpenAPI document; the rule itself is
+# `validate_importance`, applied by the write gate to the value as sent.
+_IMPORTANCE_SCHEMA: dict[str, Any] = {"type": "integer", "minimum": 1, "maximum": 10}
+
+
 class CreateEntryRequest(BaseModel):
-    """JSON body for creating an entry."""
+    """JSON body for creating an entry.
+
+    ``extra="forbid"``: the model has no free top-level fields, so a key it
+    does not declare is never silently dropped. The create route also reads
+    the raw body (`refuses_undeclared_keys`) to answer such a key with
+    the service's own refusal -- 400 ``VALIDATION_FAILED`` naming it -- while
+    the ``metadata`` envelope spelling reaches the service and is refused
+    there (#1010, #1090).
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     kb: str
     entry_type: str = "note"
     title: str
     body: str = ""
     date: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] = []
     participants: list[str] = []
     role: str | None = None
@@ -465,20 +538,34 @@ class CreateEntryRequest(BaseModel):
 class UpdateEntryRequest(BaseModel):
     """JSON body for updating an entry."""
 
+    model_config = ConfigDict(extra="forbid")
+
     kb: str
     title: str | None = None
     body: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
 
 
 class PatchEntryRequest(BaseModel):
-    """Request to update a single field on an entry."""
+    """Request to update a single field on an entry.
+
+    ``op`` is ``set`` (the default: ``value`` replaces the field; ``null`` is a
+    value), ``append`` or ``remove`` (``value`` is one item of the list
+    ``field``, or a list of items), or ``unset`` (the key is removed with its
+    own lines; ``value`` is ignored). ADR-0042 decision 1; #955, B6 P3b.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     kb: str
     field: str
-    value: str
+    value: Any = None
+    op: Literal["set", "append", "remove", "unset"] = "set"
 
 
 class EntryListResponse(BaseModel):
