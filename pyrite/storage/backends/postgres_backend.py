@@ -669,7 +669,17 @@ class PostgresBackend(BaseBackend):
         sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_cosine_distance"
         params["vec3"] = vec_str
         params["max_cosine_distance"] = 1.0 - min_similarity
-        sql += " ORDER BY e.embedding <=> CAST(:vec2 AS vector) LIMIT :limit"
+        # Exact KNN, never the HNSW index (#1401). Ordered by distance alone,
+        # the planner may serve this from idx_entry_embedding, which returns at
+        # most hnsw.ef_search (40) candidates before the WHERE runs, so a
+        # selective filter can empty the result without saying so; whether it
+        # does follows table statistics that autoanalyze refreshes on its own
+        # schedule. The (kb_name, id) tiebreaker closes that path: Postgres
+        # uses an ordering-operator index only when it matches the whole ORDER
+        # BY. It also makes equal distances keep the same rows on every run
+        # instead of whichever the plan reached first. The LIMIT then applies
+        # to every row the WHERE admits, as the docstring promises.
+        sql += " ORDER BY e.embedding <=> CAST(:vec2 AS vector), e.kb_name, e.id LIMIT :limit"
         params["vec2"] = vec_str
         params["limit"] = limit
 
