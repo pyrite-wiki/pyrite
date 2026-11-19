@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 # REST server and the MCP server all get it without a per-command change.
 EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
 _EXPERIMENTAL_NOTICE = (
-    "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
-    "database may not upgrade between releases. "
+    "The Postgres backend is experimental: nothing in Pyrite selects it yet, and its "
+    "schema upgrades only when ensure_schema() runs the alembic chain. "
     "Details: https://github.com/pyrite-wiki/pyrite/issues/718 "
     f"(set {EXPERIMENTAL_ACK_ENV}=1 to silence this notice)"
 )
