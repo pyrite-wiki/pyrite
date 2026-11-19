@@ -989,6 +989,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "allow_undeclared": {
             "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
@@ -1948,6 +1949,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "append": {
             "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
@@ -6388,6 +6390,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "allow_undeclared": {
             "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
@@ -7174,6 +7177,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "append": {
             "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",

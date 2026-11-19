@@ -827,6 +827,13 @@ WRITE_TOOLS = {
                 },
             },
             "required": ["kb_name", "entry_type", "title"],
+            # A type's own fields (an event's `actors`, an ADR's `status`) are
+            # top-level arguments: `metadata.k` is only a second spelling of
+            # field `k` (#994, decision A). They depend on entry_type, so this
+            # schema cannot list them, and the dispatcher's unknown-key refusal
+            # skips this tool (#1758). Refusing a key the TYPE does not declare
+            # (`fields`, #1522) is the write pipeline's to decide.
+            "additionalProperties": True,
         },
     },
     "kb_bulk_create": {
@@ -926,6 +933,11 @@ WRITE_TOOLS = {
                 },
             },
             "required": ["entry_id", "kb_name"],
+            # A field the entry type does not declare is stored as a custom
+            # field (see the description), so any top-level key is an
+            # argument: the dispatcher's unknown-key refusal skips this tool
+            # (#1758).
+            "additionalProperties": True,
         },
     },
     "kb_delete": {

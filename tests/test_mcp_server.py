@@ -1080,6 +1080,9 @@ class TestPyriteMCPServer:
         assert result.get("linked") is True
         assert result["resolved"] is True
 
+    @pytest.mark.control(
+        reason="edited for #1758 only to send keys the tool declares; tests its own property"
+    )
     def test_kb_link_replayed_after_target_deleted_is_still_a_noop(self, mcp_admin_server):
         """Re-issuing a link that is already recorded stays a silent no-op, even
         when the target has since been deleted.
@@ -1120,7 +1123,7 @@ class TestPyriteMCPServer:
 
         deleted = server._dispatch_tool(
             "kb_delete",
-            {"entry_id": target["entry_id"], "kb_name": "test-events", "confirm": True},
+            {"entry_id": target["entry_id"], "kb_name": "test-events"},
         )
         assert "error" not in deleted, deleted
 
@@ -1132,6 +1135,9 @@ class TestPyriteMCPServer:
         assert stored is not None
         assert [link.target for link in stored.links].count(target["entry_id"]) == 1
 
+    @pytest.mark.control(
+        reason="edited for #1758 only to send keys the tool declares; tests its own property"
+    )
     def test_kb_link_replayed_after_target_deleted_reports_resolved_false(self, mcp_admin_server):
         """The duplicate path must COMPUTE resolved, not assume it.
 
@@ -1171,7 +1177,7 @@ class TestPyriteMCPServer:
 
         deleted = server._dispatch_tool(
             "kb_delete",
-            {"entry_id": target["entry_id"], "kb_name": "test-events", "confirm": True},
+            {"entry_id": target["entry_id"], "kb_name": "test-events"},
         )
         assert "error" not in deleted, deleted
 
