@@ -24,6 +24,10 @@ can be confirmed by its path), gets one row:
 - ``confirmed``: ``indexed``, and, for a NAMED entry, no schema finding of
   severity error. With no names (every entry the sync added or changed) the
   findings are reported only.
+- ``outcome``: ``done`` only when every row is confirmed AND the sync
+  reached every folder and file of the KB (#1747): a folder or file it
+  could not reach, that no name pointed at, makes the outcome ``partial``
+  here, so the CLI exit code and the network outcome are the one value.
 """
 
 from __future__ import annotations
@@ -34,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import exc as sa_exc
 
-from ..exceptions import KBNotFoundError, PyriteError
+from ..exceptions import KBNotFoundError, PyriteError, ValidationError
 
 if TYPE_CHECKING:
     from ..storage.index import IndexManager
@@ -72,6 +76,25 @@ _NOT_RETURNED = (
 )
 
 
+def refuse_blank_confirm_kb(kb_name: object) -> None:
+    """Refuse a confirm that names a blank KB, before any sync (#1747).
+
+    A blank name names no KB (``named_kb``), so without this the surfaces
+    disagreed: the CLI and MCP ran a sync that synced nothing and refused
+    ``KB_NOT_FOUND`` afterwards, REST refused ``VALIDATION_FAILED`` before
+    its sync. The one code is the one REST already gave, decided here;
+    every surface calls this before it syncs. An absent name is not this
+    function's to refuse: each surface already refuses it in its own
+    shape (a usage error on the CLI, ``VALIDATION_FAILED`` over the
+    network).
+    """
+    if isinstance(kb_name, str) and not kb_name.strip():
+        raise ValidationError(
+            "the KB name for the confirm is blank: name the KB the entries are in",
+            suggestion="Pass the KB's name with -k / kb_name.",
+        )
+
+
 def confirm_entries(
     index_mgr: IndexManager,
     kb: ResolvedKB | None,
@@ -88,16 +111,17 @@ def confirm_entries(
     confirms every entry ``sync_result`` added or updated in that KB. Returns
     ``kb``, ``named`` (whether the caller named the entries), ``entries`` (one
     row per name, in order), the ``confirmed`` and ``not_confirmed`` counts,
-    and ``outcome`` (``done`` when every row is confirmed, else ``partial``)
-    for a caller that sees no exit code.
+    and ``outcome``: ``done`` when every row is confirmed and the sync
+    reached every folder and file of the KB, else ``partial`` (#1747).
 
     Raises ``KBNotFoundError`` when ``kb`` is None (a blank KB name resolves
-    to none: refused ``KB_NOT_FOUND``, as in round 1, until #1747 settles one
-    code for every surface) or when the sync did not reach ``kb``
-    (``sync_result["synced_kbs"]``): MCP and REST resolve a KB through the
-    registry as well as the loaded configuration, the sync reads the
-    configuration, and nothing synced must not read as ``done``. A fault
-    reading the index (the embedding state included) raises ``StorageError``.
+    to none; the surfaces refuse one before any sync, with the one code
+    :func:`refuse_blank_confirm_kb` decides, so this is the backstop) or
+    when the sync did not reach ``kb`` (``sync_result["synced_kbs"]``): MCP
+    and REST resolve a KB through the registry as well as the loaded
+    configuration, the sync reads the configuration, and nothing synced
+    must not read as ``done``. A fault reading the index (the embedding
+    state included) raises ``StorageError``.
     """
     config, db = index_mgr.config, index_mgr.db
     if kb is None:
@@ -133,13 +157,24 @@ def confirm_entries(
     for row in rows:
         entries.append(_confirm_row(row, kb_name, named, db, config, search, embedding))
     confirmed = sum(1 for r in entries if r["confirmed"])
+    # What this KB's sync could not reach (#1747): a folder it could not
+    # list or a file it could not read, named by no confirm name, still
+    # means the ask did not all happen, exactly as the CLI's exit code
+    # already said of the same sync. The rows are the sync's own, kept
+    # per KB; another KB's unreachable rows are not this confirm's.
+    unreached = sum(
+        1
+        for key in ("unreadable_folders", "unreadable_files")
+        for row in sync_result.get(key) or []
+        if row.get("kb") == kb_name
+    )
     return {
         "kb": kb_name,
         "named": named,
         "entries": entries,
         "confirmed": confirmed,
         "not_confirmed": len(entries) - confirmed,
-        "outcome": "done" if confirmed == len(entries) else "partial",
+        "outcome": "done" if confirmed == len(entries) and not unreached else "partial",
     }
 
 
