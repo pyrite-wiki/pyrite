@@ -1816,7 +1816,7 @@ class KBService:
         if importance is not None:
             # The model's own row, the way `_validate_write` raises it: the
             # skeleton must not show an importance a create would refuse.
-            rows = [ row for row in entry.validation_errors() if row.get("field") == "importance"]
+            rows = [row for row in entry.validation_errors() if row.get("field") == "importance"]
             if rows:
                 raise ValidationError(
                     "; ".join(row["message"] for row in rows),
