@@ -1,0 +1,1 @@
+- A KB-level `guidelines:` written as a string in `kb.yaml` no longer breaks the schema export: MCP `kb_schema` answered `INTERNAL` and `orient` returned `"schema": {}`. The string is now one guideline, under `general`; a list or a number is left out with a logged warning that names the key (#1498).

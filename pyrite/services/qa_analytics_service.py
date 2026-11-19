@@ -314,12 +314,15 @@ class QAAnalyticsService:
         if not kb_schema:
             return tags
 
-        # Scan guidelines and goals (dict[str, str])
+        # Scan guidelines and goals
         text_sources: list[str] = []
-        if kb_schema.guidelines:
-            text_sources.extend(v for v in kb_schema.guidelines.values() if isinstance(v, str))
-        if kb_schema.goals:
-            text_sources.extend(v for v in kb_schema.goals.values() if isinstance(v, str))
+        guidelines_map = kb_schema.guidelines_mapping()
+        if guidelines_map:
+            text_sources.extend(v for v in guidelines_map.values() if isinstance(v, str))
+
+        goals_map = kb_schema.goals_mapping()
+        if goals_map:
+            text_sources.extend(v for v in goals_map.values() if isinstance(v, str))
 
         # Also scan type-level guidelines/goals
         if kb_schema.types:
