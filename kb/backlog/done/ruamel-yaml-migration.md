@@ -51,5 +51,5 @@ Implemented in commit `46ea1d6`. Created `pyrite/utils/yaml.py` with round-trip 
 
 ## References
 
-- [ADR-0008](../adrs/0008-structured-data-and-schema.md)
-- [Design Doc](../designs/structured-data-and-schema.md)
+- [ADR-0008](../../adrs/0008-structured-data-and-schema.md)
+- [Design Doc](../../designs/structured-data-and-schema.md)

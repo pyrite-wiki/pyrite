@@ -45,5 +45,5 @@ Make folders into first-class collection objects via `__collection.yaml` and add
 
 ## References
 
-- [ADR-0011: Collections and Views](../adrs/0011-collections-and-views.md)
+- [ADR-0011: Collections and Views](../../adrs/0011-collections-and-views.md)
 - Parent: [Collections and Views](collections-and-views.md) (#51)

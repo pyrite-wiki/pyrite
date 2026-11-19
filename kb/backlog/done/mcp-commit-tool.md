@@ -52,5 +52,5 @@ This completes the "git as approval layer" pattern. With this tool, automated pi
 
 ## References
 
-- [Collaboration Services](../components/collaboration-services.md)
-- [MCP Server](../components/mcp-server.md)
+- [Collaboration Services](../../components/collaboration-services.md)
+- [MCP Server](../../components/mcp-server.md)

@@ -24,7 +24,7 @@ matching row to point at.
 
 ## Impact
 
-Hard-blocker on the multi-user write path ([ADR-0024](../adrs/0024-multi-user-collaboration.md)):
+Hard-blocker on the multi-user write path ([ADR-0024](../../adrs/0024-worktree-collaboration-model.md)):
 every brand-new worktree was unusable until the user got the magic SQL run
 against the diff DB. There was no helpful error, just the raw SQLite
 constraint message bubbling up — the user saw "save failed" with no actionable

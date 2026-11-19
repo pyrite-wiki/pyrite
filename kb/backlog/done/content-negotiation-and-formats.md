@@ -61,5 +61,5 @@ Add Accept header content negotiation to the API, format-aware MCP responses, an
 
 ## References
 
-- [ADR-0010](../adrs/0010-content-negotiation-and-format-support.md)
+- [ADR-0010](../../adrs/0010-content-negotiation-and-format-support.md)
 - [TOON format](https://github.com/toon-format/toon)

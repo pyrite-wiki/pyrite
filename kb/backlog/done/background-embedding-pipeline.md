@@ -48,6 +48,6 @@ Embedding on every save is the primary source of write latency when sentence-tra
 
 ## References
 
-- [Embedding Service](../components/embedding-service.md)
-- [KB Service](../components/kb-service.md) — current synchronous embedding in CRUD pipeline
-- [WebSocket Server](../components/websocket-server.md) — for embed_complete events
+- [Embedding Service](../../components/embedding-service.md)
+- [KB Service](../../components/kb-service.md) — current synchronous embedding in CRUD pipeline
+- [WebSocket Server](../../components/websocket-server.md) — for embed_complete events

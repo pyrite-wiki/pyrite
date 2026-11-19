@@ -118,7 +118,7 @@ Implemented as `PostgresBackend` in `pyrite/storage/backends/postgres_backend.py
 - **pgvector** with HNSW index for cosine similarity semantic search
 - **Hybrid search** combining both with application-level RRF reranking
 - **Performance**: ~3x slower indexing, ~2x slower queries vs SQLite — acceptable for server deployments where SQLite's single-writer lock is the real bottleneck
-- LanceDB evaluated as alternative but rejected (49-66x slower) — see [ADR-0016](../adrs/0016-lancedb-evaluation.md)
+- LanceDB evaluated as alternative but rejected (49-66x slower) — see [ADR-0016](../../adrs/0016-lancedb-evaluation.md)
 
 ### What's Deferred
 

@@ -39,4 +39,4 @@ Hints are non-binding — UI uses sensible defaults when hints are absent.
 
 ## References
 
-- [ADR-0009](../adrs/0009-type-metadata-and-plugin-documentation.md)
+- [ADR-0009](../../adrs/0009-type-metadata-and-plugin-documentation.md)
