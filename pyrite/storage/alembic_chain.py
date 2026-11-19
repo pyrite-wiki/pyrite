@@ -92,7 +92,7 @@ def own_schema(bind: Any) -> str | None:
         return None
     from sqlalchemy import text
 
-    return bind.execute(text("SELECT current_schema()")).scalar_one()
+    return str(bind.execute(text("SELECT current_schema()")).scalar_one())
 
 
 def existing_columns(table: str) -> set[str] | None:

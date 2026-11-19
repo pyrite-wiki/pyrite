@@ -8,7 +8,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import Connection, Engine, make_url
 
 from pyrite.storage.models import Base
 
@@ -65,7 +65,7 @@ def run_migrations_online() -> None:
         _run_on(connection)
 
 
-def _run_on(connection) -> None:
+def _run_on(connection: Connection) -> None:
     from pyrite.storage.alembic_chain import own_schema
 
     context.configure(
@@ -80,7 +80,7 @@ def _run_on(connection) -> None:
         context.run_migrations()
 
 
-def _connectable():
+def _connectable() -> Engine:
     """The engine the URL names, through the driver choice the product makes.
 
     A bare ``postgresql://`` URL must resolve to psycopg2 (the driver the

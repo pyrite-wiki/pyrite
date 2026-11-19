@@ -30,7 +30,7 @@ sqlite_versions = (18, 19, 22, 23)
 _NOW = sa.text("CURRENT_TIMESTAMP")
 
 
-def _create(name: str, *columns_and_constraints) -> None:
+def _create(name: str, *columns_and_constraints: sa.schema.SchemaItem) -> None:
     if existing_columns(name) is None:
         op.create_table(name, *columns_and_constraints)
 
