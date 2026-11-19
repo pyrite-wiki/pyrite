@@ -109,7 +109,9 @@ def test_sw_list_commands_limit_zero_and_paging(
 
         with world.pointed():
             # --limit 0 returns all 3 items
-            res0 = runner.invoke(cli.sw_app, [cmd, "-k", "sw-kb", "--limit", "0", "-f", "json"])
+            res0 = runner.invoke(
+                cli.sw_app, [cmd, "-k", "sw-kb", "--limit", "0", "--format", "json"]
+            )
             assert res0.exit_code == 0, res0.output
             items0 = json.loads(res0.output)
             assert len(items0) == 3
@@ -118,7 +120,7 @@ def test_sw_list_commands_limit_zero_and_paging(
             # --limit 1 --offset 1 returns 1 item, matching the second item of items0
             res1 = runner.invoke(
                 cli.sw_app,
-                [cmd, "-k", "sw-kb", "--limit", "1", "--offset", "1", "-f", "json"],
+                [cmd, "-k", "sw-kb", "--limit", "1", "--offset", "1", "--format", "json"],
             )
             assert res1.exit_code == 0, res1.output
             items1 = json.loads(res1.output)

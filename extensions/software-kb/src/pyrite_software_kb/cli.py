@@ -6,6 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+import click
 import typer
 from rich.table import Table
 
@@ -101,6 +102,24 @@ def _sw_limit_callback(
 SW_LEGACY_LIMIT_SHORT = typer.Option(None, "-l", hidden=True, callback=_record_sw_short_limit)
 
 
+def _sw_effective_format(fmt: str, legacy_format: Any = None) -> str:
+    ctx = click.get_current_context(silent=True)
+    if ctx and _SW_LEGACY_FORMAT_KEY in ctx.meta:
+        return ctx.meta[_SW_LEGACY_FORMAT_KEY]
+    if isinstance(legacy_format, str):
+        return legacy_format
+    return fmt
+
+
+def _sw_effective_limit(limit: int | None, legacy_limit: Any = None) -> int | None:
+    ctx = click.get_current_context(silent=True)
+    if ctx and _SW_LEGACY_LIMIT_KEY in ctx.meta:
+        return ctx.meta[_SW_LEGACY_LIMIT_KEY]
+    if isinstance(legacy_limit, int):
+        return legacy_limit
+    return limit
+
+
 def _query_entries(db: PyriteDB, entry_type: str, kb_name: str | None = None) -> list[dict]:
     """Query entries by type, returning rows with parsed metadata."""
     query = "SELECT * FROM entry WHERE entry_type = ?"
@@ -177,8 +196,7 @@ def sw_adrs(
     Bounded by default like `sw backlog`: 50 ADRs, with --limit/--offset to
     page through the rest and --limit 0 for the full, unbounded list.
     """
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -381,10 +399,8 @@ def sw_backlog(
     Defaults to the 50 highest-sorted items; pass --limit/--offset to page
     through the rest, or --limit 0 for the full, unbounded list.
     """
-    if legacy_limit is not None and limit is None:
-        limit = legacy_limit
-    if legacy_format is not None:
-        fmt = legacy_format
+    limit = _sw_effective_limit(limit, legacy_limit)
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import DEFAULT_LIST_LIMIT, SoftwareKBPlugin
 
@@ -488,8 +504,7 @@ def sw_epics(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List epics with subtask progress."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -542,8 +557,7 @@ def sw_epic_detail(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Show an epic's subtasks grouped by status."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -639,8 +653,7 @@ def sw_standards(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.27.0: use validations/conventions]"""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -711,8 +724,7 @@ def sw_validations(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List programmatic validations (automated checks)."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     config = load_config()
@@ -773,8 +785,7 @@ def sw_conventions(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List development conventions (judgment-based guidance)."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     config = load_config()
@@ -1024,8 +1035,7 @@ def sw_milestones(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List milestones with completion progress."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.services.access_policy import UNSCOPED
     from pyrite.storage.database import PyriteDB
 
@@ -1152,8 +1162,7 @@ def sw_board_cmd(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """View kanban board with backlog items grouped by lane."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.services.access_policy import UNSCOPED
     from pyrite.storage.database import PyriteDB
 
@@ -1240,8 +1249,7 @@ def sw_review_queue(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """View items in review status, sorted by wait time."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     config = load_config()
@@ -1518,8 +1526,7 @@ def sw_pull_next(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Recommend the next work item based on priority and WIP limits."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -1657,8 +1664,7 @@ def sw_components(
     Bounded by default like `sw backlog`: 50 components, with --limit/--offset
     to page and --limit 0 for the full list.
     """
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -1735,8 +1741,7 @@ def sw_check_ready(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Check Definition of Ready for a backlog item without claiming it."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -1783,8 +1788,7 @@ def sw_refine_cmd(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Scan backlog for DoR gaps, sorted by priority."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -1847,8 +1851,7 @@ def sw_context_for_item(
     legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Assemble full context bundle for a backlog item: linked ADRs, components, validations, conventions, reviews, work logs, dependencies."""
-    if legacy_format is not None:
-        fmt = legacy_format
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 

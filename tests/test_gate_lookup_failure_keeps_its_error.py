@@ -308,8 +308,8 @@ def test_a_gate_command_renders_the_causes_error(
 @pytest.mark.parametrize(
     "command_args",
     [
-        ["sw", "check-ready", "item-ready", "-k", KB, "-f", "rich"],
-        ["sw", "refine", "-k", KB, "-f", "rich"],
+        ["sw", "check-ready", "item-ready", "-k", KB, "--format", "rich"],
+        ["sw", "refine", "-k", KB, "--format", "rich"],
     ],
 )
 def test_a_gate_command_rich_output_renders_internal_error(
