@@ -1258,8 +1258,9 @@ is not a task. A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND`
 on MCP.
 
 `task unpark <id> -k <kb>` (MCP `task_unpark {task_id, kb_name}`) removes the
-three keys, never leaving an empty value, in one write; a task with none of
-them is left byte-for-byte as it was, and is still `done`:
+three keys, never leaving an empty value, in one write (keys spelled under
+`metadata:` too: a block that held only park keys goes with them); a task with none of
+them is left byte-for-byte as it was, and the outcome is still `done`:
 
 ```json
 {"task_id": "await-records", "kb_name": "test-kb", "status": "open",
