@@ -173,6 +173,9 @@ class OverlaySearchBackend:
 
     # ── search → merge ──────────────────────────────────────────────
 
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        return self._main.keyword_searched_parts(query)
+
     def search(
         self,
         query: str,

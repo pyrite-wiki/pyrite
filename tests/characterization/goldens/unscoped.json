@@ -188,6 +188,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -215,6 +224,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -242,6 +260,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -269,6 +296,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -292,6 +328,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -323,6 +368,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -354,6 +408,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -534,6 +597,15 @@
         "kb_name": "readable-kb"
       }
     ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
+    ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
@@ -561,6 +633,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
@@ -590,6 +671,15 @@
         "kb_name": "readable-kb"
       }
     ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
+    ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
@@ -618,6 +708,15 @@
         "kb_name": "readable-kb"
       }
     ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
+    ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
@@ -641,6 +740,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for the KBs searched yet, so only the keyword leg ran; run `pyrite index embed` to build them"
@@ -674,6 +782,15 @@
         "kb_name": "readable-kb"
       }
     ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
+    ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"
     ]
@@ -705,6 +822,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ],
     "warnings": [
       "semantic leg skipped: no embeddings exist for this index yet, so only the keyword leg ran; run `pyrite index embed` to build them"

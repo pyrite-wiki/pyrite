@@ -1001,6 +1001,10 @@ class BaseBackend(ABC):
     # =====================================================================
 
     @abstractmethod
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads (#1757)."""
+
+    @abstractmethod
     def search(
         self,
         query: str,

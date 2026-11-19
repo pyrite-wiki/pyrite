@@ -228,6 +228,7 @@ pyrite search "Second" -k notes
 ```json
 {"query": "Second", "count": 1, "results": [],
  "match": "strong", "match_basis": "keyword: every term matched", "legs_run": ["keyword"],
+ "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
  "keyword_match": "all_terms"}
 ```
 

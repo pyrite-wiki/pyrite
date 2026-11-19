@@ -50,7 +50,7 @@ READ_TOOLS = {
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "kb_search": {
-        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
+        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "searched", the entry parts the legs that ran read ([] when none ran; a semantic-only search lists "body_prefix" with "body_prefix_chars": only the start of a body is embedded; tags and field values are not indexed, so a miss on one is not an absence; the contract is item 11 in the docstring of SearchService.search); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
         + HOW_TO_READ_MATCH
         + ' "none" is only said when the search ran as asked: if the semantic leg did not run the verdict is weak at worst. The results are returned whatever the verdict, and the verdict is the same on every page. The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
         "inputSchema": {
@@ -827,6 +827,13 @@ WRITE_TOOLS = {
                 },
             },
             "required": ["kb_name", "entry_type", "title"],
+            # A type's own fields (an event's `actors`, an ADR's `status`) are
+            # top-level arguments: `metadata.k` is only a second spelling of
+            # field `k` (#994, decision A). They depend on entry_type, so this
+            # schema cannot list them, and the dispatcher's unknown-key refusal
+            # skips this tool (#1758). Refusing a key the TYPE does not declare
+            # (`fields`, #1522) is the write pipeline's to decide.
+            "additionalProperties": True,
         },
     },
     "kb_bulk_create": {
@@ -926,6 +933,11 @@ WRITE_TOOLS = {
                 },
             },
             "required": ["entry_id", "kb_name"],
+            # A field the entry type does not declare is stored as a custom
+            # field (see the description), so any top-level key is an
+            # argument: the dispatcher's unknown-key refusal skips this tool
+            # (#1758).
+            "additionalProperties": True,
         },
     },
     "kb_delete": {

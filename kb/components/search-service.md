@@ -38,6 +38,8 @@ class SearchService:
 
     def search_response(self, query: str, **same_arguments) -> dict
         # {"results": [...], "match": ..., "match_basis": ..., "legs_run": [...],
+        #  "searched": [...] (entry parts the legs that ran read; [] if none ran),
+        #  "body_prefix_chars": n (only when searched has body_prefix),
         #  "keyword_match": ... (keyword leg ran), "warnings": [...] (any)}
 
 def match_verdict(mode, *, keyword_match, similarities, model=None,
@@ -112,6 +114,12 @@ there until it is added with its evidence.
 A hybrid search whose vector leg did not run is a keyword search, and relaxes
 to OR as keyword mode does. `legs_run` at the top of the response says which legs
 ran.
+
+`searched` says what those legs read (#1757): `[]` when none ran; with a keyword
+leg, the backend's `keyword_searched_parts(query)` (SQLite: every `entry_fts`
+column, narrowed by an FTS5 column filter in the query; Postgres: title, summary,
+body); with only the vector leg, `title`, `summary`, `body_prefix` and
+`body_prefix_chars`. Field values and tags are not in any index (#1776).
 
 Not accounted for: entries in the embed queue are invisible to the vector leg,
 and nothing compares embedded entries with indexed ones (an entry with no text

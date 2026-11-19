@@ -614,6 +614,7 @@ BACKEND_NOT_ROWS = {
     "get_refs_from": "ref rows",
     "get_refs_to": "ref rows",
     "count_entries_in_folder": "a count",
+    "keyword_searched_parts": "a list of entry part names",
     "get_global_counts": "counts",
 }
 

@@ -6443,6 +6443,15 @@
           "id": "no-default-role-note",
           "kb_name": "no-default-role-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -6462,6 +6471,15 @@
           "id": "private-note",
           "kb_name": "private-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -6481,6 +6499,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200

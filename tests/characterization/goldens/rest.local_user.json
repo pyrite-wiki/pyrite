@@ -3429,6 +3429,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
