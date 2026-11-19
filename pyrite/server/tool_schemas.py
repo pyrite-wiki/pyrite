@@ -1125,7 +1125,8 @@ WRITE_TOOLS = {
             "Park a task: what it waits on (reason), who must act (kind: person keeps it from "
             "agents; external, the default, gives it back on its date) and when to recheck "
             "(retest_after, YYYY-MM-DD). One write; a new park replaces the old one; the status "
-            "does not change. task_list dispatchable leaves it out until the date, then lists it "
+            "does not change. A task another caller holds is refused unless you hold it or pass "
+            "the operator override; a done or cancelled task is not parked. task_list dispatchable leaves it out until the date, then lists it "
             "with recheck: true (or under due_rechecks when it is not open)."
         ),
         "inputSchema": {
@@ -1145,6 +1146,14 @@ WRITE_TOOLS = {
                     "format": "date",
                     "description": "YYYY-MM-DD: from this date an external park is due",
                 },
+                "by": {
+                    "type": "string",
+                    "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+                },
             },
             "required": ["task_id", "kb_name", "reason"],
         },
@@ -1153,13 +1162,22 @@ WRITE_TOOLS = {
         "description": (
             "Unpark a task: remove parked_awaiting, park_kind and retest_after (the keys, never "
             "an empty value) in one write. The status does not change; a task that is not parked "
-            "is left as it is (removed: [])."
+            "is left as it is (removed: []). A task another caller holds is refused unless you "
+            "hold it or pass the operator override."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "task_id": {"type": "string", "description": "Task entry ID"},
                 "kb_name": {"type": "string", "description": "KB name"},
+                "by": {
+                    "type": "string",
+                    "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+                },
             },
             "required": ["task_id", "kb_name"],
         },

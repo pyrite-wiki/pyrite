@@ -1648,6 +1648,10 @@
       },
       "inputSchema": {
         "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
@@ -1659,6 +1663,10 @@
               "external"
             ],
             "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
           },
           "reason": {
             "description": "What the task waits on",
@@ -1758,9 +1766,17 @@
       },
       "inputSchema": {
         "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
           },
           "task_id": {
             "description": "Task entry ID",
@@ -4171,6 +4187,10 @@
       },
       "inputSchema": {
         "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
@@ -4182,6 +4202,10 @@
               "external"
             ],
             "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
           },
           "reason": {
             "description": "What the task waits on",
@@ -4281,9 +4305,17 @@
       },
       "inputSchema": {
         "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
           },
           "task_id": {
             "description": "Task entry ID",

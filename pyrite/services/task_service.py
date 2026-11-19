@@ -1183,8 +1183,17 @@ class TaskService:
         reason: str,
         kind: str | None = None,
         retest_after: str | None = None,
+        *,
+        by: str = "",
+        operator_override: bool = False,
     ) -> dict[str, Any]:
         """Park a task (#1688): why it waits, who must act, when to recheck.
+
+        Park follows the holder rule task finish follows (:func:`_holder_rule`):
+        a task another caller holds is refused (``Forbidden``) unless ``by`` is
+        its holder or the operator passes ``operator_override``; a task no one
+        holds may be parked by anyone. A task whose status is done or cancelled
+        is refused. The write rechecks the holder in the bytes it replaces.
 
         One write (``apply_operations``): ``parked_awaiting`` is set, and
         ``park_kind`` and ``retest_after`` are set when given and removed
@@ -1212,6 +1221,13 @@ class TaskService:
                     f"retest_after {retest_after!r} is not a date: give YYYY-MM-DD."
                 )
         entry = self._load_task_for_park(task_id, kb_name, "park")
+        status = getattr(entry, "status", "") or ""
+        if status in TASK_RESOLVED_STATUSES:
+            raise ValidationError(
+                f"Task '{task_id}' is {status}: a {status} task is not parked. Nothing was written."
+            )
+        holder = getattr(entry, "assignee", "") or ""
+        _holder_rule(task_id, holder, by, operator_override, verb="park", unheld_is_open=True)
         present = _park_keys_present(entry)
         ops: list[Any] = [Set("parked_awaiting", reason)]
         for key, value in (("park_kind", kind), ("retest_after", day)):
@@ -1219,7 +1235,7 @@ class TaskService:
                 ops.append(Set(key, value))
             elif key in present:
                 ops.append(Unset(key))
-        written = self.kb_svc.apply_operations(task_id, kb_name, ops).entry
+        written = self.kb_svc.apply_operations(task_id, kb_name, ops, expect_holder=holder).entry
         result = {
             "task_id": task_id,
             "kb_name": kb_name,
@@ -1231,14 +1247,20 @@ class TaskService:
         result["park_state"] = parked_state(result, _today())
         return result
 
-    def unpark_task(self, task_id: str, kb_name: str) -> dict[str, Any]:
+    def unpark_task(
+        self, task_id: str, kb_name: str, *, by: str = "", operator_override: bool = False
+    ) -> dict[str, Any]:
         """Unpark a task (#1688): remove ``parked_awaiting``, ``park_kind``
         and ``retest_after`` -- the keys, never an empty value -- in one
         write. The status does not change. A task with none of them is left
-        as it is (``removed`` is empty)."""
+        as it is (``removed`` is empty). Unpark follows the holder rule park
+        follows; a done or cancelled task may be unparked (a stale park is
+        cleared)."""
         from ..storage.file_operations import Unset
 
         entry = self._load_task_for_park(task_id, kb_name, "unpark")
+        holder = getattr(entry, "assignee", "") or ""
+        _holder_rule(task_id, holder, by, operator_override, verb="unpark", unheld_is_open=True)
         removed = [key for key in PARK_FIELDS if key in _park_keys_present(entry)]
         status = getattr(entry, "status", "")
         if removed:
@@ -1246,7 +1268,11 @@ class TaskService:
             # that held only park keys goes with them, never left as
             # `metadata: {}` (#1688 round 1).
             written = self.kb_svc.apply_operations(
-                task_id, kb_name, [Unset(key) for key in removed], drop_emptied_metadata=True
+                task_id,
+                kb_name,
+                [Unset(key) for key in removed],
+                drop_emptied_metadata=True,
+                expect_holder=holder,
             ).entry
             status = getattr(written, "status", status)
         return {"task_id": task_id, "kb_name": kb_name, "status": status, "removed": removed}
@@ -1721,30 +1747,53 @@ def _key(row: dict[str, Any]) -> tuple[str, str]:
 def _finisher(task_id: str, holder: str, by: str, operator_override: bool) -> tuple[str, bool]:
     """Who finishes the task and whether by override: finish requires the
     caller to hold the task; operators have an explicit override."""
+    return _holder_rule(task_id, holder, by, operator_override, verb="finish")
+
+
+def _holder_rule(
+    task_id: str,
+    holder: str,
+    by: str,
+    operator_override: bool,
+    *,
+    verb: str,
+    unheld_is_open: bool = False,
+) -> tuple[str, bool]:
+    """The holder rule, one check for every command that follows it (task
+    finish; task park and unpark, #1688): the caller (``by``) must hold the
+    task; the operator has an explicit override (``operator_override``, honoured
+    only when ``acting() is OPERATOR``). Returns who acts and whether by
+    override, or raises ``Forbidden`` before any write.
+
+    ``unheld_is_open``: a task no one holds may be acted on by anyone (park
+    and unpark: the rule is about a task another caller holds). Finish passes
+    false: a task no one holds is not finished."""
     from ..exceptions import Forbidden
     from .acting import OPERATOR, acting
 
     if by and holder and by == holder:
         return by, False
+    if unheld_is_open and not holder and not operator_override:
+        return by, False
     if operator_override:
         if acting() is not OPERATOR:
             raise Forbidden(
-                f"Task '{task_id}': only the operator may finish a task it does not hold "
+                f"Task '{task_id}': only the operator may {verb} a task it does not hold "
                 "(the operator override). Nothing was written."
             )
         return "operator", True
     who = f"'{by}'" if by else "a caller with no identity"
     held = f"held by '{holder}'" if holder else "held by no one"
     refusal = Forbidden(
-        f"Task '{task_id}' is {held}: finish requires the caller to hold the task, "
+        f"Task '{task_id}' is {held}: {verb} requires the caller to hold the task, "
         f"and {who} does not. Nothing was written."
     )
     # `suggestion` is a public attribute every refusal may carry
     # (exceptions.PUBLIC_ATTRIBUTES); Forbidden does not declare it.
     cast(Any, refusal).suggestion = (
-        "Finish it as its holder (`--by <holder>`; MCP: sign in as the holder or pass `by`), "
-        "or, as the operator, pass the explicit override (`--operator-override`; "
-        "MCP `operator_override: true`)."
+        f"{verb.capitalize()} it as its holder (`--by <holder>`; MCP: sign in as the holder "
+        "or pass `by`), or, as the operator, pass the explicit override "
+        "(`--operator-override`; MCP `operator_override: true`)."
     )
     raise refusal
 

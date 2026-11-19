@@ -809,6 +809,16 @@ def task_park(
         "--retest-after",
         help="YYYY-MM-DD: from this date an external park is due for a recheck",
     ),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is acting: a task another caller holds needs its holder here",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, act on a task you do not hold",
+    ),
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
@@ -816,11 +826,21 @@ def task_park(
 
     Writes parked_awaiting, park_kind and retest_after in one write; a new
     park replaces the old one. `task list --dispatchable` leaves a parked
-    task out until its date, then lists it as a recheck.
+    task out until its date, then lists it as a recheck. A task another
+    caller holds is parked only by its holder (--by) or the operator
+    (--operator-override); a done or cancelled task is not parked.
     """
     svc, db = _get_service(kb_name)
     try:
-        result = svc.park_task(task_id, kb_name, reason, kind=kind, retest_after=retest_after)
+        result = svc.park_task(
+            task_id,
+            kb_name,
+            reason,
+            kind=kind,
+            retest_after=retest_after,
+            by=by or "",
+            operator_override=operator_override,
+        )
     finally:
         db.close()
 
@@ -839,17 +859,28 @@ def task_park(
 def task_unpark(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is acting: a task another caller holds needs its holder here",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, act on a task you do not hold",
+    ),
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Unpark a task: remove parked_awaiting, park_kind and retest_after.
 
     The keys are removed, never left empty; the status does not change. A
-    task that is not parked is left as it is.
+    task that is not parked is left as it is. A task another caller holds is
+    unparked only by its holder (--by) or the operator (--operator-override).
     """
     svc, db = _get_service(kb_name)
     try:
-        result = svc.unpark_task(task_id, kb_name)
+        result = svc.unpark_task(task_id, kb_name, by=by or "", operator_override=operator_override)
     finally:
         db.close()
 

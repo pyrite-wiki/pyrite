@@ -822,8 +822,11 @@ def _park_on(world, surface, verb, tid, **extra):
         _, data = _cli(world, verb, tid, *args)
         return data.get("error_code"), data
     if surface == "mcp":
-        args = {"task_id": tid, **({"reason": "r"} if verb == "park" else {}), **extra}
-        out = _mcp(world, f"task_{verb}", **args)
+        principal = extra.pop("principal", None)
+        args = {"task_id": tid, "kb_name": KB, **({"reason": "r"} if verb == "park" else {})}
+        out = world.mcp("write")._dispatch_tool(
+            f"task_{verb}", {**args, **extra}, principal=principal
+        )
         return out.get("error_code"), out
     response = world.client.post(
         f"/api/tasks/{tid}/{verb}", params={"kb": KB}, json={"reason": "r", **extra}
@@ -875,12 +878,27 @@ def test_the_holder_parks_its_own_task(hworld, surface, verb):
 @pytest.mark.parametrize("verb", ["park", "unpark"])
 @pytest.mark.parametrize("surface", ["cli", "mcp"])
 def test_the_operator_override_parks_a_task_it_does_not_hold(hworld, surface, verb):
+    """The CLI process and a local (stdio) MCP session are the operator."""
+    from pyrite.services.access_policy import Principal
+
     tid = "held" if verb == "park" else "held-parked"
-    code, data = _park_on(hworld, surface, verb, tid, operator_override=True)
+    local = {"principal": Principal.local()} if surface == "mcp" else {}
+    code, data = _park_on(hworld, surface, verb, tid, operator_override=True, **local)
     assert code is None, data
     front = _front(hworld.kb_path(KB) / f"{tid}.md")
     assert ("parked_awaiting" in front) is (verb == "park")
     assert front["assignee"] == "agent:a"
+
+
+@pytest.mark.parametrize("verb", ["park", "unpark"])
+def test_mcp_the_override_without_the_operator_is_refused(hworld, verb):
+    """No principal is nobody, never the operator, as for task finish."""
+    tid = "held" if verb == "park" else "held-parked"
+    path = hworld.kb_path(KB) / f"{tid}.md"
+    before = path.read_bytes()
+    code, data = _park_on(hworld, "mcp", verb, tid, operator_override=True)
+    assert code == "FORBIDDEN", data
+    assert path.read_bytes() == before
 
 
 @pytest.mark.control(

@@ -1035,9 +1035,10 @@ SERVICES_ENTRY_SQL = {
     ("pyrite/services/task_service.py", "derived_completion"): (
         "feeds the KB's task rows to derive_completion and returns its per-task statuses, not rows"
     ),
-    ("pyrite/services/task_service.py", "_classify_for_dispatch"): (
-        "reads created_at, file_path and dependencies for tasks list_tasks "
-        "already shaped; returns those dicts paired with dispatch reasons"
+    # The query moved out of _classify_for_dispatch, which reads its result (#1688).
+    ("pyrite/services/task_service.py", "_index_extras"): (
+        "reads status, created_at, file_path and dependencies for tasks list_tasks "
+        "already shaped, keyed by (kb, id) for the dispatch classifier; not rows"
     ),
     ("pyrite/services/task_service.py", "start_task"): (
         "a write: reads the assignee column to start a task; returns the start outcome, not a row"
