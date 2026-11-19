@@ -22,22 +22,24 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
 
 from pyrite.config import KBConfig
-from pyrite.server.api import create_app, get_db
 from pyrite.services.task_service import TaskService
+from tests._world import build_world
 
 KB = "test-tasks"
 
 
 @pytest.fixture
-def task_world(cli_world, tmp_path: Path):
+def task_world(tmp_path: Path):
     kb_path = tmp_path / "priority-kb"
     (kb_path / "tasks").mkdir(parents=True)
-    return cli_world(
-        kbs=[KBConfig(name=KB, path=kb_path, kb_type="task", description="Task priority KB")]
+    world = build_world(
+        tmp_path / "world",
+        kbs=[KBConfig(name=KB, path=kb_path, kb_type="task", description="Task priority KB")],
     )
+    yield world
+    world.close()
 
 
 def _create(world, priority: int = 8) -> dict:
@@ -66,12 +68,6 @@ def _cli_list_row(world, task_id: str) -> dict:
     res = world.cli("task", "list", "-k", KB, "--format", "json")
     assert res.exit_code == 0, res.output
     return next(t for t in json.loads(res.output)["tasks"] if t["id"] == task_id)
-
-
-def _rest_client(world) -> TestClient:
-    app = create_app(config=world.config)
-    app.dependency_overrides[get_db] = lambda: world.db
-    return TestClient(app)
 
 
 def _set_row_priority(world, task_id: str, value) -> None:
@@ -112,7 +108,7 @@ def test_a_created_tasks_priority_is_the_int_8_on_every_surface(task_world):
         mcp._kb_get({"entry_id": task_id, "kb_name": KB})["entry"]["priority"], 8
     )  # MCP kb_get
 
-    client = _rest_client(world)
+    client = world.client
     listing = client.get("/api/tasks", params={"kb": KB})
     assert listing.status_code == 200, listing.text
     row = next(t for t in listing.json()["tasks"] if t["id"] == task_id)
