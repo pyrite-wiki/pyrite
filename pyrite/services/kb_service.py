@@ -1809,14 +1809,14 @@ class KBService:
         build_kwargs = dict(fields)
         if importance is not None:
             build_kwargs["importance"] = importance
-        entry = build_entry(entry_type, entry_id="", title="Your Title Here", body="", **build_kwargs)
+        entry = build_entry(
+            entry_type, entry_id="", title="Your Title Here", body="", **build_kwargs
+        )
         entry._create_fields = attributes
         if importance is not None:
             # The model's own row, the way `_validate_write` raises it: the
             # skeleton must not show an importance a create would refuse.
-            rows = [
-                row for row in entry.validation_errors() if row.get("field") == "importance"
-            ]
+            rows = [ row for row in entry.validation_errors() if row.get("field") == "importance"]
             if rows:
                 raise ValidationError(
                     "; ".join(row["message"] for row in rows),
