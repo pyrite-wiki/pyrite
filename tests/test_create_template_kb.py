@@ -55,6 +55,36 @@ def _add_note_severity_field(kb_path):
     )
 
 
+def _declare_investigation_event_only(kb_path):
+    """A kb.yaml declaring the mapping target but not the named type.
+
+    Mirrors the journalism-investigation preset, which declares
+    investigation_event and document_source but not event or document
+    (#1526): a create of `event` there stores investigation_event.
+    """
+    (kb_path / "kb.yaml").write_text(
+        "name: inv2\n"
+        "types:\n"
+        "  investigation_event:\n"
+        "    description: A dated event in the investigation\n"
+        "    required:\n"
+        "    - title\n"
+        "    optional:\n"
+        "    - date\n"
+        "    - actors\n"
+        "    - source_refs\n"
+        "    - verification_status\n"
+        "    - location\n"
+        "    - importance\n"
+        "    subdirectory: events/\n"
+        "  document_source:\n"
+        "    description: A source document\n"
+        "validation:\n"
+        "  enforce: true\n",
+        encoding="utf-8",
+    )
+
+
 def _template_frontmatter(result):
     """The skeleton's frontmatter as a dict, from a --format json run."""
     assert result.exit_code == 0, result.output
@@ -90,6 +120,17 @@ class TestCreateTemplateWithKb:
             # `date` is caller-supplied, so it differs from the skeleton's
             # empty default the way `title` does.
             ("journalism", "event", [], ["--title", "x", "-d", "2024-01-01"], ("date",)),
+            # A KB that declares the mapping's target but not the named type:
+            # the skeleton stores the mapped type, as the create does
+            # (#1605 round 2; #1526). `date` is caller-supplied, as in the
+            # journalism cell above.
+            (
+                "journalism-target-only",
+                "event",
+                [],
+                ["--title", "x", "-d", "2024-01-01"],
+                ("date",),
+            ),
             # An undeclared type under --allow-undeclared in a KB that
             # enforces validation: both refuse, with the same envelope.
             (
@@ -105,7 +146,7 @@ class TestCreateTemplateWithKb:
         self, cli_world, tmp_path, kb_kind, entry_type, template_flags, create_args, ignore
     ):
         """The skeleton is what a real create writes, or the same refusal."""
-        if kb_kind == "journalism":
+        if kb_kind in ("journalism", "journalism-target-only"):
             world = cli_world(
                 kbs=[
                     KBConfig(
@@ -116,6 +157,8 @@ class TestCreateTemplateWithKb:
                 ]
             )
             kb_name, kb_path = "inv2", tmp_path / "inv2"
+            if kb_kind == "journalism-target-only":
+                _declare_investigation_event_only(kb_path)
         else:
             world = cli_world()
             kb_path = _init_software_kb(world, tmp_path)
