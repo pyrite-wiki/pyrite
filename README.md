@@ -352,6 +352,8 @@ pip install -e ".[all]"      # Core + AI + semantic search + dev tools
 cd web && npm ci && npm run build && cd ..   # the web UI (optional)
 ```
 
+Building the web UI needs Node.js 22.17 or later.
+
 Or straight from a release tag, no clone:
 
 ```bash

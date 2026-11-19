@@ -145,6 +145,10 @@ class SearchResult(BaseModel):
     #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
     #: ``semantic``.
     legs: list[str] | None = None
+    #: What the entry's file holds that this row's reading does not show
+    #: faithfully (a refused ``importance``, #1761). Not the response-level
+    #: ``warnings`` (a leg was skipped). Absent on a row with nothing to say.
+    entry_warnings: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
@@ -171,6 +175,12 @@ class SearchResponse(BaseModel):
     #: search with ``["keyword"]`` here was a keyword search. Not the
     #: per-result ``legs``, which says which legs returned that result.
     legs_run: list[str]
+    #: The entry parts the legs that ran read: ``[]`` when none ran. Tags and
+    #: declared field values are not indexed, so a miss on one is not an absence.
+    searched: list[str]
+    #: With ``searched`` holding ``body_prefix`` (only the vector leg ran): how many
+    #: characters of each body its vectors were built from. Omitted otherwise.
+    body_prefix_chars: int | None = None
     #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
     #: or ``none``.
     keyword_match: str | None = None

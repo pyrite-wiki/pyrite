@@ -423,6 +423,8 @@ class TaskService:
         than one readable KB is refused with ``AmbiguousEntryError`` (#528),
         never answered by whichever row SQLite returns first; the candidates
         are listed in config order, readable KBs only.
+
+        The row returned is shaped by :meth:`task_view` (#1759).
         """
         sql = (
             "SELECT id, title, kb_name, status, assignee, priority, due_date, metadata "
@@ -445,7 +447,7 @@ class TaskService:
             order = [kb.name for kb in self.config.all_kbs()]
             candidates = [n for n in order if n in held] + sorted(held - set(order))
             raise AmbiguousEntryError(task_id, candidates)
-        return rows[0]
+        return self.task_view(rows[0])
 
     def get_task_detail(
         self,
@@ -486,9 +488,8 @@ class TaskService:
             "title": task["title"],
             "status": task.get("status") or meta.get("status", "open"),
             "assignee": task.get("assignee") or meta.get("assignee", ""),
-            "priority": coerce_task_priority(
-                task.get("priority") or meta.get("priority", 5), task["id"]
-            ),
+            # Shaped by `task_view` in `get_task` (#1759): already the int.
+            "priority": task["priority"],
             "parent": meta.get("parent", ""),
             "dependencies": meta.get("dependencies", []),
             "evidence": meta.get("evidence", []),
@@ -519,6 +520,28 @@ class TaskService:
     def derived_for(self, kb_name: str, task_id: str) -> dict[str, Any]:
         """One task's derived value; a task missing from the index derives nothing."""
         return self.derived_completion(kb_name).get(task_id) or no_derived()
+
+    @staticmethod
+    def task_view(row: dict[str, Any]) -> dict[str, Any]:
+        """One raw index row of a task, shaped for its readers (#1759).
+
+        The one shaping of a task row: ``get_task`` returns it,
+        ``get_task_detail`` builds on it and ``list_tasks`` reads its
+        ``priority`` from it, so no caller shapes a row of its own. The
+        row's ``priority`` column is a string, and a row written before
+        the model's reading existed can hold a word (``medium``) or
+        nothing; the shaped row carries the integer
+        :func:`coerce_task_priority` reads (the model's reading, not
+        ``int()``: one row holding `medium` ended a whole listing,
+        #554). Every other key is the row's own, unchanged.
+        """
+        meta = parse_metadata(row.get("metadata"))
+        return {
+            **row,
+            "priority": coerce_task_priority(
+                row.get("priority") or meta.get("priority"), row.get("id", "")
+            ),
+        }
 
     def list_tasks(
         self,
@@ -588,12 +611,8 @@ class TaskService:
                     "title": row["title"],
                     "status": row.get("status") or meta.get("status", "open"),
                     "assignee": row.get("assignee") or meta.get("assignee", ""),
-                    # The model's reading, not int(): an index row written
-                    # before TaskEntry coerced a word still holds `medium`,
-                    # and one such row ended the whole listing (#554).
-                    "priority": coerce_task_priority(
-                        row.get("priority") or meta.get("priority"), row["id"]
-                    ),
+                    # The one shaping of a task row (#1759, #554).
+                    "priority": self.task_view(row)["priority"],
                     "parent": meta.get("parent", ""),
                     "kb_name": row["kb_name"],
                     # Why a task is parked. Drives the human worklist board's

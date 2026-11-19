@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import logging
 import re
 import shlex
@@ -90,6 +91,8 @@ from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
+from .importance_reading import refused_importance_message
+from .read_shaping import ENTRY_WARNINGS_KEY
 from .wikilink_service import WikilinkService
 
 logger = logging.getLogger(__name__)
@@ -1307,6 +1310,9 @@ class KBService:
                 # (left out above): the read names them rather than presenting
                 # a default or answering "not found" (ADR-0042 decision 8a).
                 result["load_problems"] = problems
+            # A refused importance keeps its legacy reading above; say so (#1761).
+            if (said := refused_importance_message(entry._importance_given)) is not None:
+                result[ENTRY_WARNINGS_KEY] = [said]
             return result
         except TypeError as exc:
             # A file with no readable fields: a tagged or complex key, or a
@@ -2493,6 +2499,13 @@ class KBService:
                             origin=kb_origin(kb_config.name),
                         )
             except OperationRefusedError as e:
+                suggestion = self._append_scalar_repair(entry, kb_config, file_values, e.op)
+                if suggestion:
+                    raise ValidationError(
+                        f"Cannot update '{entry_id}': {e.reason}; "
+                        f"set it as a list first: {suggestion}, then retry the append.",
+                        suggestion=suggestion,
+                    ) from e
                 raise ValidationError(f"Cannot update '{entry_id}': {e.reason}") from e
 
             # The field set as loaded, for the exception that keeps an off-list
@@ -2811,6 +2824,34 @@ class KBService:
             else:
                 out.pop("metadata")
         return out, sorted(ignored)
+
+    @staticmethod
+    def _append_scalar_repair(
+        entry: Entry, kb_config: KBConfig, file_values: dict[str, Any], op: Any
+    ) -> str | None:
+        """Name a lossless repair for a refused append to a declared list (#1760).
+
+        Called only after storage refuses: an explicit set followed by append
+        in the same write may already repair the file's scalar.
+        """
+        from ..schema.field_aliases import field_at
+
+        if not isinstance(op, Append):
+            return None
+        field, rest = field_at(type(entry), entry.entry_type, op.path)
+        declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+        current = _value_at(file_values, op.path)
+        if (
+            rest
+            or declared is None
+            or declared.field_type not in ("list", "multi-select", "tags")
+            or not isinstance(current, str)
+        ):
+            return None
+        value = json.dumps([current], ensure_ascii=False)
+        return shlex.join(
+            ["pyrite", "update", entry.id, "-k", kb_config.name, "-f", f"{field}={value}"]
+        )
 
     def _resolve_operation(
         self,

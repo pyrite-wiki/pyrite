@@ -14,6 +14,7 @@ project is worth their time.
 
 - Python 3.11+ (3.13 recommended)
 - Git
+- Node.js 22.17 or later, only to build or test the web UI in `web/` (SvelteKit 3; `web/package.json` `engines`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ### Initial Setup

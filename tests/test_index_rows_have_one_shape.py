@@ -24,7 +24,11 @@ parametrised from it, so a new reader cannot be added without one:
 - the storage backends (``SearchBackend``'s methods), on SQLite and, in the
   ``pg`` job, Postgres;
 - a structural scan of ``pyrite/storage`` for SQL that selects entry rows in
-  a function that does not return through the shaper.
+  a function that does not return through the shaper (a call whose result is
+  dropped does not count: the shaped value must be what the function
+  returns, #1698), and a scan of ``pyrite/services`` that keeps every
+  services function with entry SQL either returning through the shaper or
+  listed with a reason a test keeps from growing.
 
 Expected values are written by hand from the files below, never computed by
 the shaper (``tdd.md``: an oracle that restates the code shares its blind
@@ -616,6 +620,7 @@ BACKEND_NOT_ROWS = {
     "get_refs_from": "ref rows",
     "get_refs_to": "ref rows",
     "count_entries_in_folder": "a count",
+    "keyword_searched_parts": "a list of entry part names",
     "get_global_counts": "counts",
 }
 
@@ -964,73 +969,273 @@ STRUCTURAL_ALLOWLIST = {
     ("pyrite/storage/kb_ops.py", "get_kb_stats"): "`k.*` is the kb table, not entry rows",
 }
 
+#: Functions in `pyrite/services` whose SQL selects shaped columns from
+#: `entry` and that do not return through the storage shaper, each with why
+#: the row-shaper rule does not bind them: the services build their own
+#: dicts (the own-dict readers of the MCP classification above), judge the
+#: rows as stored (QA), or read a column in order to write. None hands a
+#: caller an index row to write back. The test below fails when a services
+#: function with entry SQL is missing here, so this list cannot grow
+#: without a reason, and when an entry here is no longer found, so it
+#: cannot go stale; a listed function that starts returning through the
+#: shaper leaves the list and joins the rule.
+SERVICES_ENTRY_SQL = {
+    ("pyrite/services/kb_service.py", "claim_entry"): (
+        "a write: reads the assignee and status columns to arbitrate a claim; "
+        "returns the claim outcome, not a row"
+    ),
+    ("pyrite/services/qa_analytics_service.py", "coverage_stats"): (
+        "counts and grouped counts (one leg counts links per entry); returns a stats dict, not rows"
+    ),
+    ("pyrite/services/qa_service.py", "validate_entry"): (
+        "QA judges the row as stored and returns findings, not the row; a shaped "
+        "row would hide the stored shape it checks"
+    ),
+    ("pyrite/services/qa_service.py", "_is_recently_assessed"): (
+        "returns a bool from one extracted metadata value; no row"
+    ),
+    ("pyrite/services/qa_service.py", "get_assessments"): (
+        "builds the assessment dicts field by field from the parsed metadata; not the index row"
+    ),
+    ("pyrite/services/qa_service.py", "get_coverage"): (
+        "counts only; returns a coverage summary, not rows"
+    ),
+    ("pyrite/services/qa_service.py", "_check_invalid_dates"): (
+        "reads the stored date text to judge it; a cast would change the value "
+        "it checks. Returns findings"
+    ),
+    ("pyrite/services/qa_service.py", "_check_task_references"): (
+        "reads stored status and metadata to check task references; returns findings"
+    ),
+    ("pyrite/services/qa_service.py", "_check_schema_all"): (
+        "checks the stored row's fields against the schema; returns findings, and "
+        "a cast row would hide the stored values it checks"
+    ),
+    ("pyrite/services/qa_service.py", "_check_named_rubric_all"): (
+        "runs the named rubrics over the rows as stored; returns findings"
+    ),
+    ("pyrite/services/qa_service.py", "_evaluate_llm_rubric"): (
+        "evaluates one row as stored and returns the evaluation, not the row"
+    ),
+    ("pyrite/services/qa_service.py", "_check_llm_rubric_all"): (
+        "runs the LLM rubrics over the rows as stored; returns findings"
+    ),
+    ("pyrite/services/qa_service.py", "_check_rubric_type_metadata"): (
+        "checks the stored metadata bag itself, through json_extract; returns findings"
+    ),
+    ("pyrite/services/task_service.py", "get_task"): (
+        "the task surface's single read, on list_tasks' SQL path: its callers "
+        "project the row themselves (metadata by parse_metadata, priority by "
+        "the task model's coercion); the task tools are own-dict readers here"
+    ),
+    ("pyrite/services/task_service.py", "list_tasks"): (
+        "builds the task dicts field by field (metadata parsed, priority coerced "
+        "by the task model, derived completion attached); not the index row"
+    ),
+    ("pyrite/services/task_service.py", "derived_completion"): (
+        "feeds the KB's task rows to derive_completion and returns its per-task statuses, not rows"
+    ),
+    ("pyrite/services/task_service.py", "_classify_for_dispatch"): (
+        "reads created_at, file_path and dependencies for tasks list_tasks "
+        "already shaped; returns those dicts paired with dispatch reasons"
+    ),
+    ("pyrite/services/task_service.py", "start_task"): (
+        "a write: reads the assignee column to start a task; returns the start outcome, not a row"
+    ),
+    ("pyrite/services/task_service.py", "unblock_dependents"): (
+        "a write: scans blocked tasks' metadata and transitions the ones it "
+        "unblocks; returns their ids and titles"
+    ),
+    ("pyrite/services/task_service.py", "get_subtree"): (
+        "returns the task tree's node dicts: its query extracts parent and "
+        "assignee from the bag in SQL, so there is no index row to shape"
+    ),
+    ("pyrite/services/task_service.py", "_children"): (
+        "get_subtree's query, nested in it: parent and assignee are extracted "
+        "from the bag by the SQL itself; the rows are tree nodes"
+    ),
+    ("pyrite/services/wikilink_service.py", "list_entry_titles"): (
+        "a title projection for wikilink autocomplete: aliases is the SQL's own "
+        "COALESCE of the column and the bag, read as names; not an entry row"
+    ),
+}
+
 
 _SHAPERS = {"shape_entry_row", "shape_entry_rows"}
 _SHAPER_HOME = "pyrite/storage/backends/base_backend.py"
 
 
-def _shapers_in_scope(rel: str, tree: ast.Module) -> set[str]:
-    """The shaper names that mean `base_backend`'s functions in this module:
-    defined there, or imported from it; a module that defines its own
-    function by that name (a decoy) has none."""
+def _shapers_in_scope(rel: str, tree: ast.Module) -> dict[str, str]:
+    """The shaper names that mean `base_backend`'s functions in this module,
+    local name to canonical name: defined there, or imported from it; a
+    module that defines its own function by that name (a decoy) has none."""
     defined = {
-        n.name
+        n.name: n.name
         for n in ast.walk(tree)
         if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name in _SHAPERS
     }
     if rel == _SHAPER_HOME:
         return defined
     imported = {
-        alias.asname or alias.name
+        (alias.asname or alias.name): alias.name
         for n in ast.walk(tree)
         if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("base_backend")
         for alias in n.names
         if alias.name in _SHAPERS
     }
-    return imported - defined
+    return {local: canon for local, canon in imported.items() if local not in defined}
 
 
-def _functions_with_entry_sql() -> Iterator[tuple[str, str, ast.AST, set[str]]]:
-    for path in sorted((REPO / "pyrite" / "storage").rglob("*.py")):
+def _functions_with_entry_sql_in(
+    rel: str, tree: ast.Module
+) -> Iterator[tuple[str, ast.AST, dict[str, str]]]:
+    shapers = _shapers_in_scope(rel, tree)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        for c in ast.walk(node):
+            if not (isinstance(c, ast.Constant) and isinstance(c.value, str)):
+                continue
+            if any(
+                _SHAPED_SELECTION.search(m.group("sel")) and not _AGGREGATE.match(m.group("sel"))
+                for m in _ENTRY_SELECT.finditer(c.value)
+            ):
+                yield node.name, node, shapers
+                break
+
+
+def _functions_with_entry_sql(
+    root: str = "pyrite/storage",
+) -> Iterator[tuple[str, str, ast.AST, dict[str, str]]]:
+    for path in sorted((REPO / root).rglob("*.py")):
         rel = path.relative_to(REPO).as_posix()
         tree = ast.parse(path.read_text())
-        shapers = _shapers_in_scope(rel, tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                continue
-            for c in ast.walk(node):
-                if not (isinstance(c, ast.Constant) and isinstance(c.value, str)):
-                    continue
-                if any(
-                    _SHAPED_SELECTION.search(m.group("sel"))
-                    and not _AGGREGATE.match(m.group("sel"))
-                    for m in _ENTRY_SELECT.finditer(c.value)
+        for name, node, shapers in _functions_with_entry_sql_in(rel, tree):
+            yield rel, name, node, shapers
+
+
+def _root_name(node: ast.AST) -> str | None:
+    """The local a subscript or attribute chain bottoms out in, if any."""
+    while isinstance(node, ast.Subscript | ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _call_shaper(call: ast.AST, shapers: dict[str, str]) -> str | None:
+    """The canonical shaper a call invokes by bare name, else None."""
+    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name):
+        return shapers.get(call.func.id)
+    return None
+
+
+def _expr_shaper_calls(expr: ast.AST, shapers: dict[str, str]) -> set[str]:
+    return {kind for c in ast.walk(expr) if (kind := _call_shaper(c, shapers)) is not None}
+
+
+def _expr_names(expr: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(expr) if isinstance(n, ast.Name)}
+
+
+def _shaped_names(node: ast.AST, shapers: dict[str, str]) -> set[str]:
+    """The locals that hold shaped rows somewhere in a function: assigned a
+    shaper call's result (or another shaped local), appended or extended
+    with one, or shaped in place. `shape_entry_row` mutates its argument
+    and returns it, so its argument's local is shaped from the call on, and
+    a loop variable it shapes in place shapes what it iterates over.
+    `shape_entry_rows` builds a new list, so a bare call to it shapes
+    nothing: its result has to flow somewhere."""
+    shaped: set[str] = set()
+
+    def flows(expr: ast.AST) -> bool:
+        return bool(_expr_shaper_calls(expr, shapers) or (_expr_names(expr) & shaped))
+
+    changed = True
+    while changed:
+        changed = False
+
+        def mark(name: str | None) -> None:
+            nonlocal changed
+            if name is not None and name not in shaped:
+                shaped.add(name)
+                changed = True
+
+        for n in ast.walk(node):
+            if isinstance(n, ast.Assign):
+                if flows(n.value):
+                    for target in n.targets:
+                        mark(_root_name(target))
+            elif isinstance(n, ast.AnnAssign) and n.value is not None:
+                if flows(n.value):
+                    mark(_root_name(n.target))
+            elif isinstance(n, ast.AugAssign):
+                if flows(n.value):
+                    mark(_root_name(n.target))
+            elif isinstance(n, ast.Call):
+                if _call_shaper(n, shapers) == "shape_entry_row" and n.args:
+                    mark(_root_name(n.args[0]))
+                func = n.func
+                if (
+                    isinstance(func, ast.Attribute)
+                    and func.attr in ("append", "extend", "add", "update", "insert")
+                    and any(flows(arg) for arg in n.args)
                 ):
-                    yield rel, node.name, node, shapers
-                    break
+                    mark(_root_name(func.value))
+            elif isinstance(n, ast.For):
+                targets = {t.id for t in ast.walk(n.target) if isinstance(t, ast.Name)}
+                if targets & shaped:
+                    mark(_root_name(n.iter))
+    return shaped
+
+
+def _returns_through_the_shaper(node: ast.AST, shapers: dict[str, str]) -> bool:
+    """The shaped value is what the function returns: some return (or
+    yield) holds a shaper call or a local that holds shaped rows. A call
+    whose result is dropped, or a shaped local that is not what is
+    returned, does not count (#1698)."""
+    if not any(
+        _call_shaper(c, shapers) is not None for c in ast.walk(node) if isinstance(c, ast.Call)
+    ):
+        return False
+    shaped = _shaped_names(node, shapers)
+    return any(
+        n.value is not None
+        and (_expr_shaper_calls(n.value, shapers) or (_expr_names(n.value) & shaped))
+        for n in ast.walk(node)
+        if isinstance(n, ast.Return | ast.Yield | ast.YieldFrom)
+    )
+
+
+def _shaper_problem(node: ast.AST, shapers: dict[str, str]) -> str | None:
+    """Why a function with entry SQL fails the row-shaper rule, or None."""
+    bare = {
+        c.func.id
+        for c in ast.walk(node)
+        if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+    }
+    if not bare & shapers.keys():
+        return "does not call the shaper"
+    if not _returns_through_the_shaper(node, shapers):
+        return "calls the shaper but does not return its result"
+    return None
 
 
 def test_every_storage_reader_of_entry_rows_returns_through_the_shaper():
     """Any function in `pyrite/storage` whose SQL selects `*` or a shaped
     column from `entry` calls `shape_entry_row(s)` (a call in its AST, not the
     name in its text), and that name is `base_backend`'s function (imported
-    from it, not a module's own decoy), or is allowlisted with a reason. What
-    it does not check: that the shaped value is what the function returns."""
+    from it, not a module's own decoy), and the shaped value is what the
+    function returns: a call whose result is dropped, or a shaped local the
+    function does not return, fails (#1698). Or the function is allowlisted
+    with a reason."""
     offenders = []
     found = set()
     for rel, name, node, shapers in _functions_with_entry_sql():
         found.add((rel, name))
         if (rel, name) in STRUCTURAL_ALLOWLIST:
             continue
-        # A bare call to the name imported from (or defined in) base_backend:
-        # an attribute call or a module's own function by that name is not it.
-        bare = {
-            c.func.id
-            for c in ast.walk(node)
-            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
-        }
-        if not bare & shapers:
-            offenders.append(f"{rel}::{name}")
+        problem = _shaper_problem(node, shapers)
+        if problem is not None:
+            offenders.append(f"{rel}::{name} {problem}")
     assert offenders == [], "entry rows built without shape_entry_row(s)"
     assert set(STRUCTURAL_ALLOWLIST) <= found, "stale allowlist entries"
     # The scan sees the readers it must: a pattern that matched nothing would
@@ -1040,6 +1245,93 @@ def test_every_storage_reader_of_entry_rows_returns_through_the_shaper():
         ("pyrite/storage/backends/sqlite_backend.py", "search"),
         ("pyrite/storage/backends/sqlite_backend.py", "search_semantic"),
         ("pyrite/storage/backends/postgres_backend.py", "search"),
+    } <= found
+
+
+#: A planted module for the decoy test below: readers that call the shaper
+#: and return something else, beside readers that return what they shaped.
+_DECOY_SOURCE = """
+from pyrite.storage.backends.base_backend import shape_entry_row, shape_entry_rows
+
+
+def returns_the_shaped_rows(session):
+    rows = session.execute("SELECT * FROM entry WHERE kb_name = :kb_name")
+    return shape_entry_rows(rows, session)
+
+
+def appends_the_shaped_row(session, declared):
+    out = []
+    for row in session.execute("SELECT * FROM entry WHERE kb_name = :kb_name"):
+        out.append(shape_entry_row(row, declared))
+    return out
+
+
+def drops_the_shaped_rows(session):
+    rows = session.execute("SELECT * FROM entry WHERE kb_name = :kb_name")
+    shape_entry_rows(rows, session)
+    return rows
+
+
+def shapes_a_copy_and_returns_the_raw_row(session, declared):
+    row = session.execute("SELECT * FROM entry WHERE kb_name = :kb_name")[0]
+    shaped = shape_entry_row(dict(row), declared)
+    return row
+
+
+def never_calls_the_shaper(session):
+    return session.execute("SELECT * FROM entry WHERE kb_name = :kb_name")
+"""
+
+
+def test_the_shaper_guard_fails_a_reader_that_returns_something_else():
+    """The planted decoys (#1698): the check the storage scan runs fails a
+    reader that calls the shaper and returns the unshaped rows, whether the
+    shaped result is dropped outright or a shaped copy is set aside, and
+    passes the readers that return what they shaped."""
+    tree = ast.parse(_DECOY_SOURCE)
+    problems = {
+        name: _shaper_problem(node, shapers)
+        for name, node, shapers in _functions_with_entry_sql_in("pyrite/storage/decoy.py", tree)
+    }
+    assert problems == {
+        "returns_the_shaped_rows": None,
+        "appends_the_shaped_row": None,
+        "drops_the_shaped_rows": "calls the shaper but does not return its result",
+        "shapes_a_copy_and_returns_the_raw_row": (
+            "calls the shaper but does not return its result"
+        ),
+        "never_calls_the_shaper": "does not call the shaper",
+    }
+
+
+def test_every_services_reader_of_entry_rows_is_listed_with_a_reason():
+    """The services' own entry SQL (#1698): a function in `pyrite/services`
+    whose SQL selects `*` or a shaped column from `entry` either returns
+    through the shaper, like a storage reader, or is listed in
+    SERVICES_ENTRY_SQL with a reason. A new one fails here until it is one
+    or the other, so the list cannot grow silently; a listed function that
+    starts returning through the shaper, or is no longer found, fails too,
+    so the list cannot go stale."""
+    offenders = []
+    found = set()
+    for rel, name, node, shapers in _functions_with_entry_sql("pyrite/services"):
+        found.add((rel, name))
+        problem = _shaper_problem(node, shapers)
+        if problem is None:
+            assert (rel, name) not in SERVICES_ENTRY_SQL, (
+                f"{rel}::{name} returns through the shaper; remove its SERVICES_ENTRY_SQL entry"
+            )
+            continue
+        if (rel, name) not in SERVICES_ENTRY_SQL:
+            offenders.append(f"{rel}::{name} {problem}")
+    assert offenders == [], "services entry SQL neither shaped nor listed with a reason"
+    assert set(SERVICES_ENTRY_SQL) <= found, "stale SERVICES_ENTRY_SQL entries"
+    # The scan sees the readers it must: a pattern that matched nothing would
+    # pass every function.
+    assert {
+        ("pyrite/services/task_service.py", "get_task"),
+        ("pyrite/services/task_service.py", "list_tasks"),
+        ("pyrite/services/qa_service.py", "validate_entry"),
     } <= found
 
 

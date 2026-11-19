@@ -15,6 +15,7 @@ import struct
 from typing import Any, ClassVar
 
 from ..models import Link
+from ..virtual_tables import FTS_COLUMNS, fts_columns_read
 from .base_backend import (
     BaseBackend,
     DeclaredFieldTypes,
@@ -43,6 +44,11 @@ NON_EMPTY_SQL = (
     " AND (TRIM(COALESCE(e.body, ''), char(32, 9, 10, 13)) != ''"
     " OR TRIM(COALESCE(e.summary, ''), char(32, 9, 10, 13)) != '')"
 )
+
+
+#: ``snippet()`` takes a column number: the body's, in the one tuple that declares
+#: the table's columns.
+_BODY_COLUMN = FTS_COLUMNS.index("body")
 
 
 class SQLiteBackend(BaseBackend):
@@ -257,6 +263,15 @@ class SQLiteBackend(BaseBackend):
     # Full-text search (FTS5)
     # =====================================================================
 
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads (#1757).
+
+        An unqualified FTS5 MATCH reads every ``entry_fts`` column; a column
+        filter in ``query`` (``title:hawk``) narrows it to the named columns.
+        Field values and tags are not columns, so they are never named.
+        """
+        return fts_columns_read(query)
+
     def search(
         self,
         query: str,
@@ -283,12 +298,12 @@ class SQLiteBackend(BaseBackend):
                 e.file_path, e.date, e.importance, e.status, e.location,
                 e.lifecycle, e.metadata, e.created_at, e.updated_at, e.indexed_at,
                 e.created_by, e.modified_by,
-                snippet(entry_fts, 4, '<mark>', '</mark>', '...', 32) as snippet,
+                snippet(entry_fts, @BODY_COLUMN@, '<mark>', '</mark>', '...', 32) as snippet,
                 bm25(entry_fts) as rank
             FROM entry_fts
             JOIN entry e ON entry_fts.rowid = e.rowid
             WHERE entry_fts MATCH ?
-        """
+        """.replace("@BODY_COLUMN@", str(_BODY_COLUMN))
         params: list[Any] = [query]
         if lifecycle:
             sql += " AND e.lifecycle = ?"

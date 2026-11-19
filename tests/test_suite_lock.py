@@ -52,6 +52,10 @@ def _script_module(name: str):
 # (tests/test_task_claim_concurrency.py has the history).
 GROUP_DEADLINE = 60.0
 
+# A child bounds its own wait above the group deadline: only that survives
+# pytest being killed, when no teardown runs.
+FAKE_MAX_WAIT = 120.0
+
 # What the fake command does: append "<event> <name> <time>" to a log, and
 # optionally block until a release file exists.
 FAKE = """\
@@ -71,12 +75,16 @@ signal.signal(signal.SIGTERM, on_term)
 note("start")
 release = os.environ.get("FAKE_RELEASE")
 if release:
+    deadline = time.monotonic() + float(os.environ.get("FAKE_MAX_WAIT", "@MAX_WAIT@"))
     while not os.path.exists(release):
+        if time.monotonic() >= deadline:
+            note("timeout")
+            sys.exit(124)
         time.sleep(0.02)
 time.sleep(float(os.environ.get("FAKE_SLEEP", "0")))
 note("end")
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
-"""
+""".replace("@MAX_WAIT@", str(FAKE_MAX_WAIT))
 
 
 def _clean_env(lock: Path, **extra: str) -> dict[str, str]:
@@ -115,8 +123,74 @@ def _events(log: Path) -> list[tuple[str, str, float]]:
     return out
 
 
+_SPAWNED: list[subprocess.Popen] = []
+
+
+def _popen(*args, **kwargs) -> subprocess.Popen:
+    kwargs["start_new_session"] = True
+    proc = subprocess.Popen(*args, **kwargs)
+    _SPAWNED.append(proc)
+    return proc
+
+
+def _group_running(pgid: int) -> list[int]:
+    proc = Path("/proc")
+    if proc.is_dir():
+        running = []
+        try:
+            entries = list(proc.iterdir())
+        except OSError:
+            entries = []
+        for entry in entries:
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            except (OSError, IndexError):
+                continue
+            if len(fields) >= 3 and fields[0] != "Z" and int(fields[2]) == pgid:
+                running.append(int(entry.name))
+        return running
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return []
+    except PermissionError:
+        return [pgid]
+    return [pgid]
+
+
+def _no_orphans():
+    deadline = time.monotonic() + GROUP_DEADLINE
+    for proc in _SPAWNED:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    for proc in _SPAWNED:
+        try:
+            proc.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            pass
+    survivors: list[int] = []
+    while time.monotonic() < deadline:
+        survivors = [pid for proc in _SPAWNED for pid in _group_running(proc.pid)]
+        if not survivors:
+            break
+        time.sleep(0.02)
+    _SPAWNED.clear()
+    assert not survivors, f"process(es) survived teardown: {survivors}"
+
+
+@pytest.fixture(autouse=True)
+def _reap_spawned():
+    _SPAWNED.clear()
+    yield
+    _no_orphans()
+
+
 def _spawn(lock: Path, fake: Path, log: Path, name: str, **env: str) -> subprocess.Popen:
-    return subprocess.Popen(
+    return _popen(
         [
             sys.executable,
             str(LOCK),
@@ -195,12 +269,15 @@ class TestOneAtATime:
         go = tmp_path / "go"
         starter = (
             "import os, sys, time\n"
-            f"while not os.path.exists({str(go)!r}): time.sleep(0.005)\n"
+            f"deadline = time.monotonic() + float(os.environ.get('FAKE_MAX_WAIT', {FAKE_MAX_WAIT!r}))\n"
+            f"while not os.path.exists({str(go)!r}):\n"
+            "    if time.monotonic() >= deadline: sys.exit(124)\n"
+            "    time.sleep(0.005)\n"
             "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
         )
         names = ["a", "b", "c"]
         procs = [
-            subprocess.Popen(
+            _popen(
                 [
                     sys.executable,
                     "-c",
@@ -430,7 +507,7 @@ class TestStoppingTheHolder:
     ):
         release = tmp_path / "never"
         argv, extra = self._entry(how, fake, log, tmp_path)
-        holder = subprocess.Popen(
+        holder = _popen(
             argv,
             env=_clean_env(lock, FAKE_RELEASE=str(release), **extra),
             stdout=subprocess.PIPE,
@@ -472,6 +549,31 @@ class TestBoundedWait:
         assert f"pid {proc.pid}" in out.stderr
         assert not _started(log, "late")
         assert list(Path(str(lock) + ".queue").glob("*.ticket")) == []
+
+    def test_the_fake_command_stops_itself_when_the_release_never_comes(self, fake, log, tmp_path):
+        """Groom acceptance 3: a child nobody releases ends on its own.
+
+        The lock script bounds its own wait, but a test that SIGKILLs it leaves
+        the command running; without a bound in the command itself that is a
+        process for hours after the run (#932). The bound is overridable so the
+        wait here is a fraction of a second instead of two minutes.
+        """
+        release = tmp_path / "never-released"
+        started = time.monotonic()
+        proc = _popen(
+            [sys.executable, str(fake), str(log), "orphan"],
+            env=_clean_env(
+                tmp_path / "unused.lock", FAKE_RELEASE=str(release), FAKE_MAX_WAIT="0.5"
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        proc.wait(timeout=GROUP_DEADLINE)
+        elapsed = time.monotonic() - started
+        assert proc.returncode == 124
+        assert _events(log)[-1][0] == "timeout"
+        assert 0.4 <= elapsed < GROUP_DEADLINE, f"exited after {elapsed:.2f}s, not at its bound"
 
     @pytest.mark.parametrize("value", ["soon", "-1", ""])
     def test_a_bad_timeout_is_refused_not_guessed(self, lock, fake, log, value):

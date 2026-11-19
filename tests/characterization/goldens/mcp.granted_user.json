@@ -2848,6 +2848,15 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_search | granted_user | readable-kb": {
@@ -2865,6 +2874,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_stats | granted_user | missing-kb": {
