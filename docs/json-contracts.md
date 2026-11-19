@@ -2408,11 +2408,13 @@ not parse still loses its row, as before.
   `1` when none did.
 - **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
   /api/kbs/{name}/reindex`, MCP `kb_index_sync` and MCP `kb_registry_reindex`
-  carry `unreadable_folders` and `unreadable_files` as integer counts.
-  Reindex omits unreadable files from its `malformed` list so the count is
-  the only information returned about those files.
+  carry `unreadable_folders` and `unreadable_files` as integer counts. Neither
+  count exposes paths or operating-system error text. Reindex omits unreadable
+  files from its `malformed` list. The shared formatter for these fields is
+  `pyrite.services.index_health.network_shape`.
   REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
-  the `unreadable_folders` count, and network health's `healthy` is `false`.
+  `unreadable_folders` only, omitting `unreadable_files`. Network health's
+  `healthy` is `false`.
 - **Health.** `pyrite index health` names each folder in
   `unreadable_folders` and each file in `unreadable_files`, and is
   `unhealthy`, exit `1`.
