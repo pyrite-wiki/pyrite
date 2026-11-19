@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from ...exceptions import StorageError
 from ..models import Link
+from ..virtual_tables import KEYWORD_SEARCHED_PARTS, postgres_fts_vector_expression
 from .base_backend import BaseBackend, _link_rows, shape_entry_rows
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
@@ -205,13 +206,11 @@ def ensure_schema(engine) -> None:
         )
         # Trigger to auto-update fts_vector on INSERT/UPDATE
         conn.execute(
-            text("""
+            text(f"""
             CREATE OR REPLACE FUNCTION entry_fts_trigger() RETURNS trigger AS $$
             BEGIN
                 NEW.fts_vector :=
-                    setweight(to_tsvector('english', coalesce(NEW.title, '')), 'A') ||
-                    setweight(to_tsvector('english', coalesce(NEW.summary, '')), 'B') ||
-                    setweight(to_tsvector('english', coalesce(NEW.body, '')), 'C');
+                    {postgres_fts_vector_expression()};
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;
@@ -372,6 +371,11 @@ class PostgresBackend(BaseBackend):
     # =====================================================================
     # Full-text search (PostgreSQL tsvector/tsquery)
     # =====================================================================
+
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search reads (#1757): the ``fts_vector``'s
+        parts, whatever ``query`` is (``plainto_tsquery`` has no column filters)."""
+        return list(KEYWORD_SEARCHED_PARTS)
 
     def search(
         self,

@@ -1378,6 +1378,7 @@ Choose a supported mode rather than retrying the same request.
   "match": "weak",
   "match_basis": "keyword: nothing matched; semantic: best similarity 0.41, below 0.50 but 0.19 above the next 9 results",
   "legs_run": ["keyword", "semantic"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
   "keyword_match": "none"
 }
 ```
@@ -1389,7 +1390,7 @@ Choose a supported mode rather than retrying the same request.
 (keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
 (hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
 per-result `legs`. `distance` is not in the default. The page-level keys below
-(`match`, `match_basis`, `legs_run`, `keyword_match`, `warnings`) are in every
+(`match`, `match_basis`, `legs_run`, `searched`, `keyword_match`, `warnings`) are in every
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
 
@@ -1439,7 +1440,7 @@ refused in its slot.
 {
   "count": 2,
   "searches": [
-    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "keyword_match": "strong"},
+    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"], "keyword_match": "strong"},
     {"query": "falcon AND", "count": 0, "results": [], "error": "...", "error_code": "QUERY_SYNTAX", "retryable": false, "suggestion": "..."}
   ]
 }
@@ -1478,6 +1479,8 @@ so they are the same keys, with the same values, in the same words.
 | `match` | top level, always | `strong`, `weak` or `none` |
 | `match_basis` | top level, always | the reason, in words; for a person or a log, not for parsing |
 | `legs_run` | top level, always | the legs that ran: `["keyword"]`, `["semantic"]`, both, or `[]`. A `hybrid` search with `["keyword"]` here was a keyword search. Not the per-result `legs` |
+| `searched` | top level, always | the entry parts the legs that ran read; a miss on anything not listed is not an absence. `[]` when no leg ran (`legs_run` is `[]`). With a keyword leg (`keyword`, `hybrid`): what the backend's keyword index reads for this query, the whole body included: on SQLite every `entry_fts` column, `["id", "kb_name", "entry_type", "title", "body", "summary", "location"]`, narrowed when the query carries an FTS5 column filter (`title:`, `"title":`, `{a b}:`, `- title:`) that reaches MATCH: a filter binds to the one phrase, group or `NEAR(...)` that follows it, filters nest by intersection, and the list is the union, over every term, of the columns that term is read in (`title: hawk OR falcon` reads `falcon` in every column, so lists all; `title: (hawk OR falcon)` gives `["title"]`; `{title body}: ({body summary}: hawk)` gives `["body"]`). A query whose filter structure is not understood lists `[]`, never more than was read. A bare `title: hawk` is quoted by sanitizing and is no filter; on Postgres `["title", "summary", "body"]`. With only the vector leg (`semantic`): `["title", "summary", "body_prefix"]`, because the vectors are built from a cut-down body and a word past the cut is not searched. Declared field values and tags are in no index, so they are never listed: a keyword search does not find a word that appears only in one yet (#1776) |
+| `body_prefix_chars` | top level, only when `searched` holds `body_prefix` | the character cut applied to each body before it is embedded (500 for the default model). It is a character count: the embedding model's token window can cut sooner (a long title and summary push the body past it), so it is an upper bound on what the vectors saw. A limit of 0 embeds no body: `searched` is then `["title", "summary"]` and this key is absent |
 | `keyword_match` | top level, when a keyword leg ran (`keyword` and `hybrid` modes) | `all_terms`, `some_terms` or `none` |
 | `warnings` | top level, only when there are any | a leg that was skipped or dropped. Now in the CLI's JSON too; it was on stderr only |
 | `similarity` | each result the vector leg returned | cosine similarity to the query, 3 decimal places, the same number on SQLite and Postgres |
@@ -1498,6 +1501,7 @@ pyrite search "zzznosuchterm" -k notes --mode keyword
   "match": "none",
   "match_basis": "keyword: nothing matched",
   "legs_run": ["keyword"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
   "keyword_match": "none"
 }
 ```

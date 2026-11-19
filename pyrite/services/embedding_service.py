@@ -438,8 +438,8 @@ class EmbeddingService:
         self._model = None
         # If the caller didn't pin a limit, derive one from the model so a
         # model swap doesn't silently leave bodies clipped at the old
-        # limit (Tier A r2100). max_body_chars=0 is treated as "no
-        # limit" — useful for tests.
+        # limit (Tier A r2100). max_body_chars=0 embeds no body
+        # (`_entry_text` takes `body[:0]`) — useful for tests.
         if max_body_chars is None:
             max_body_chars = max_body_chars_for_model(model_name)
         self.max_body_chars = max_body_chars
