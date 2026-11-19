@@ -106,7 +106,7 @@ def _read_frontmatter(path):
 @pytest.mark.cli
 class TestCreateTemplateWithKb:
     @pytest.mark.parametrize(
-        "kb_kind,entry_type,template_flags,create_args,ignore",
+        ("kb_kind", "entry_type", "template_flags", "create_args", "ignore"),
         [
             # A type the KB declares: the skeleton is what the create wrote.
             ("software", "backlog_item", [], ["--title", "x"], ()),
