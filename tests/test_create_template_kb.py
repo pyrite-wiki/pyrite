@@ -129,7 +129,7 @@ class TestCreateTemplateWithKb:
                     "note", 
                     ["--importance", "42"], 
                     ["--title", "x", "--importance", "42"],
-                    ()
+                    (),
                 ),
             # A plugin type mapping: the skeleton stores the mapped type.
             # `date` is caller-supplied, so it differs from the skeleton's
