@@ -2174,7 +2174,7 @@ class PyriteMCPServer:
 
         include_empty = _boolean_arg(args, "include_empty")
         if include_empty is None:
-            raise InvalidParameterError("include_empty must be true or false")
+            return _refusal(InvalidParameterError("include_empty must be true or false"))
         exclude_linked = _boolean_arg(args, "exclude_linked", True)
         if exclude_linked is None:
             raise InvalidParameterError("exclude_linked must be true or false")
@@ -2208,7 +2208,7 @@ class PyriteMCPServer:
 
         include_empty = _boolean_arg(args, "include_empty")
         if include_empty is None:
-            raise InvalidParameterError("include_empty must be true or false")
+            return _refusal(InvalidParameterError("include_empty must be true or false"))
         exclude_linked = _boolean_arg(args, "exclude_linked", True)
         if exclude_linked is None:
             raise InvalidParameterError("exclude_linked must be true or false")
