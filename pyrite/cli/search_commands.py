@@ -378,6 +378,10 @@ def register_search_command(app: typer.Typer):
                         if f not in IDENTITY_FIELDS and any(f in r for r in results)
                     ]
                 content, _ = format_response(resp_data, output_format, fields=table_fields)
+                if output_format == "csv":
+                    from .output import note_entry_warnings
+
+                    note_entry_warnings(resp_data)
                 typer.echo(content)
                 return
 

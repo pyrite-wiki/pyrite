@@ -411,7 +411,13 @@ def test_qa_validate_reports_a_scalar_and_an_unparseable_reserved_value(tmp_path
         for i in _qa_issues(config)
         if i["rule"] == "reserved_key_collision"
     }
-    assert found == {("a", "provenance"), ("b", "importance")}
+    # `importance` is a base field with its own rule: a refused value is an
+    # `importance_range` finding, never advice to rename the key (#1761).
+    assert found == {("a", "provenance")}
+    issues = _qa_issues(config)
+    assert {(i["entry_id"], i["field"]) for i in issues if i["rule"] == "importance_range"} == {
+        ("b", "importance")
+    }
 
 
 @pytest.mark.control(

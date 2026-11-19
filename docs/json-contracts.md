@@ -1394,6 +1394,18 @@ per-result `legs`. `distance` is not in the default. The page-level keys below
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
 
+**`entry_warnings`** (#1761). A row, and a `get` result, whose file holds a
+value its reading does not show faithfully carries `entry_warnings`, a list of
+sentences. Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
+`11`, `"high"`, `.nan`): readers keep showing the legacy whole number, and the
+sentence names the file's value. An accepted spelling (`5.0`, `"05"`), a missing
+key, and a mapping or list value (which `qa validate` reports as
+`reserved_key_collision`) add nothing. It is not the page-level `warnings` ("a
+leg was skipped"): that key is on the response, this one is on the entry. It is
+absent when there is nothing to say. CSV has no place for it and writes one
+`warning: <id>: <sentence>` line per entry to stderr. A search page of N rows
+opens N entry files to look (a stated limit, not a bound).
+
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
 as before #54 (`body` still needs `--include-body`), a named list
 (`--fields title,date,status`) is those fields after `id` and `kb_name`, and
@@ -1410,7 +1422,7 @@ is not special. `search --files` ignores both and says so on stderr.
 `--include-body` adds `body` to the default row. In CSV the
 columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
-whole row.
+whole row, `entry_warnings` included.
 
 ### `search --batch`: many searches in one process (CLI only)
 
@@ -2214,6 +2226,9 @@ classified):
 The identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
+The one key a projection adds is `entry_warnings`, when the record has it, on
+every surface above: a projection never hides that the reading is not the
+file's.
 
 CSV, Markdown, and Rich retain every requested column, even when all records
 lack that field; absent and null values are empty cells. A single entry
