@@ -1,0 +1,1 @@
+- REST and MCP sync and reindex report how many files they could not read without exposing file paths or operating system errors (#1719, #1700).
