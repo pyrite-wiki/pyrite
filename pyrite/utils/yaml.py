@@ -521,7 +521,43 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
         raise KBConfigInvalidError() from TypeError(
             f"the top level of kb.yaml is a {type(data).__name__}, not a mapping"
         )
+    _validate_kb_yaml_shape(data)
     return data
+
+
+def _validate_kb_yaml_shape(data: Any) -> None:
+    """Validate that kb.yaml mapping has valid schema blocks (#1591)."""
+    from ..exceptions import KBConfigInvalidError
+
+    if "types" in data and data["types"] is None:
+        data["types"] = {}
+
+    types = data.get("types")
+    if types is None:
+        return
+    if not isinstance(types, Mapping):
+        raise KBConfigInvalidError() from TypeError(
+            f"'types' is a {type(types).__name__}, not a mapping"
+        )
+    for type_name, type_def in types.items():
+        if not isinstance(type_def, Mapping):
+            raise KBConfigInvalidError() from TypeError(
+                f"type {type_name!r} is a {type(type_def).__name__}, not a mapping"
+            )
+        if "fields" in type_def and type_def["fields"] is None:
+            type_def["fields"] = {}
+        fields = type_def.get("fields")
+        if fields is not None and not isinstance(fields, Mapping):
+            raise KBConfigInvalidError() from TypeError(
+                f"'fields' of type {type_name!r} is a {type(fields).__name__}, not a mapping"
+            )
+        if "endpoints" in type_def and type_def["endpoints"] is None:
+            type_def["endpoints"] = {}
+        endpoints = type_def.get("endpoints")
+        if endpoints is not None and not isinstance(endpoints, Mapping):
+            raise KBConfigInvalidError() from TypeError(
+                f"'endpoints' of type {type_name!r} is a {type(endpoints).__name__}, not a mapping"
+            )
 
 
 def dump_yaml_text(data: Any) -> str:

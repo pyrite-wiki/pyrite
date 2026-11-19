@@ -54,6 +54,12 @@ SHAPES: dict[str, bytes] = {
     "yaml-1.3": b"%YAML 1.3\n---\nname: bad\n",
     "too-many-aliases": b"a: &a [x, x, x]\n"
     + b"".join(b"k%d: [*a, *a, *a, *a, *a]\n" % i for i in range(250)),
+    "types-scalar-float": b"name: bad\ntypes: 3.5\n",
+    "types-scalar-string": b"name: bad\ntypes: hello\n",
+    "types-list": b"name: bad\ntypes: [memo, 2]\n",
+    "types-scalar-type-def": b"name: bad\ntypes: {memo: 7}\n",
+    "types-fields-scalar": b"name: bad\ntypes: {memo: {fields: hello}}\n",
+    "types-endpoints-list": b"name: bad\ntypes: {memo: {endpoints: [a]}}\n",
 }
 
 #: The two ways a KB is registered: in config.yaml, or by `pyrite kb add`
@@ -672,3 +678,13 @@ def test_a_null_top_level_is_no_schema_and_any_other_non_mapping_is_refused(top,
         with pytest.raises(PyriteError) as caught:
             read_kb_yaml(tmp_path)
         assert caught.value.error_code == expected
+
+
+def test_null_types_block_reads_as_no_types(tmp_path):
+    from pyrite.utils.yaml import read_kb_yaml
+
+    for raw in (b"name: bad\ntypes:\n", b"name: bad\ntypes: null\n", b"name: bad\ntypes: ~\n"):
+        (tmp_path / "kb.yaml").write_bytes(raw)
+        data = read_kb_yaml(tmp_path)
+        assert data.get("types") == {}
+        assert KBConfig(name="bad", path=tmp_path).kb_schema.types == {}
