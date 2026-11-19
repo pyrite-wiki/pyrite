@@ -55,6 +55,20 @@ cookie also clears the cookie, so a browser's next request is anonymous;
 `/mcp` and the socket refuse it without clearing it. An `Authorization`
 header with another scheme (a proxy's `Basic`) is not read.
 
+Two consequences an operator should know (both accepted with #1754):
+
+- **A Bearer token next to `X-API-Key` decides alone.** On REST, `/mcp` and
+  the socket, a request that carries `Authorization: Bearer` is judged by that
+  token; its `X-API-Key` is not consulted. So a request whose Bearer token
+  Pyrite does not know -- for example one a reverse proxy adds for its own
+  use -- gets `401` even when the client's `X-API-Key` is valid. Have the
+  proxy strip its token, or send Pyrite's key as the Bearer token.
+- **Two instances on one host share the session cookie.** Browsers keep
+  cookies per host, not per port, and every Pyrite instance names its cookie
+  `pyrite_session`. Signing in to one instance replaces the other's cookie,
+  and the other instance then refuses it with `401` and (on REST) clears it,
+  so the user is signed out there. Give each instance its own host name.
+
 ## Read the API reference
 
 The running server documents itself:

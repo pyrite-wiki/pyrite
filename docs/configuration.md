@@ -605,6 +605,17 @@ included. To share a KB with every signed-in user,
 set its `default_role` to `read` (which also opens it to anonymous readers, below),
 or grant it per user.
 
+**A credential that does not verify is refused, never anonymous.** With auth
+enabled, a wrong, empty, expired or revoked key or session cookie gets `401`
+on REST, `/mcp` and the live-update socket, whatever `anonymous_tier` says.
+Two consequences, both accepted with #1754 (details in
+[REST API](rest-api.md#authenticate)): a request carrying a Bearer token is
+judged by that token alone, so a token a reverse proxy adds for itself is
+refused even next to a valid `X-API-Key`; and two instances on one host share
+the `pyrite_session` cookie name, so signing in to one can clear the other's
+session cookie and sign the user out there. Give each instance its own host
+name.
+
 Per-KB access: each KB in `config.yaml` may carry `default_role: read` (public
 to any authenticated user), `write`, or `none` (private: explicit grants only).
 Grants are managed over the REST API by an admin

@@ -13,4 +13,4 @@ effort: M
 rank: 0
 ---
 
-A request that presents an API key (header, query or Bearer) or a session cookie that does not verify gets 401 on REST, MCP over HTTP and the live-update socket, whatever anonymous_tier says; only a request with no credential becomes the anonymous visitor. One credential resolver answers verified / none / presented-but-failed for every surface, and REST accepts Authorization: Bearer as an API key. See GitHub issue #1754 (groom and maintainer decision).
+A request that presents an API key (header, query or Bearer) or a session cookie that does not verify gets 401 on REST, MCP over HTTP and the live-update socket, whatever anonymous_tier says; only a request with no credential becomes the anonymous visitor. One credential resolver answers verified / none / presented-but-failed for every surface, and REST accepts Authorization: Bearer carrying an API key or a session token, as MCP and the socket do. See GitHub issue #1754 (groom and maintainer decision).
