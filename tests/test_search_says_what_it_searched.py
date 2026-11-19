@@ -72,6 +72,9 @@ class TestNoLegRanNothingWasSearched:
 
 
 class TestSemanticOnlyReadsABodyPrefix:
+    @pytest.mark.control(
+        reason="pins what embedding already does (cuts the body); the `body_prefix` claim is true only while it holds"
+    )
     def test_the_vector_leg_never_sees_a_word_past_the_prefix(self, db, monkeypatch):
         """The claim `body_prefix` makes, shown on the text the model is given."""
         seen: list[str] = []
