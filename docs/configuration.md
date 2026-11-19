@@ -740,8 +740,9 @@ Limits on what the setting can do:
 downloaded on first use).
 
 **The Postgres backend is experimental.** Its schema upgrades through the
-alembic chain: every startup that builds the backend runs `alembic upgrade
-head` before anything reads, so a Postgres database from an earlier release
+alembic chain: `ensure_schema(engine)` runs `alembic upgrade head` (constructing
+`PostgresBackend` does not; whatever builds the backend calls `ensure_schema`
+first, as the test suite and `benchmarks/run_all.py` do), so a Postgres database from an earlier release
 gains the tables, columns and indexes this one reads, keeping its users, grants
 and stars ([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). There is
 no separate upgrade step to run. A database no release ever stamped upgrades
