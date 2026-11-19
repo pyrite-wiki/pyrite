@@ -279,6 +279,9 @@ NEVER_EXPERIMENTAL: dict[str, str] = {
     # finish requires the caller to hold the task; operators have an explicit override
     "tests/test_task_finish_walk.py::*hold*": AUTHZ,
     "tests/test_task_finish_walk.py::*override*": AUTHZ,
+    # park and unpark follow the holder rule task finish follows (#1688)
+    "tests/test_task_park.py::*hold*": AUTHZ,
+    "tests/test_task_park.py::*override*": AUTHZ,
     # A tier's tool list is what an HTTP MCP credential of that tier may call.
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_no_write_tools*": AUTHZ,
     "extensions/software-kb/tests/test_software_kb.py::*read_tier_does_not_have*": AUTHZ,

@@ -117,6 +117,10 @@ EDGES: dict[str, str] = {
         "one `git ls-remote --get-url` subprocess (the account's insteadOf rewrite); a test "
         "that clones a local bare repo in place of an https host answers it with the URL"
     ),
+    "pyrite.services.task_service._today": (
+        "one clock read (date.today()), nothing else; the park predicate takes today as an "
+        "argument, and a test puts every surface on one day by answering it (#1688)"
+    ),
     "pyrite.services.url_checker.URLChecker._urlopen": (
         "one HEAD request via urlopen; needs the network, status mapping stays in check_url"
     ),

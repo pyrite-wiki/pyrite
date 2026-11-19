@@ -39,6 +39,8 @@ _TASK_KNOWN_KEYS = {
     "status",
     "status_reason",
     "parked_awaiting",
+    "park_kind",
+    "retest_after",
     "assignee",
     "parent",
     "parent_task",
@@ -553,6 +555,14 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
     # read spells only a declared field at the top level, and
     # `TaskService.list_tasks` and the web UI read it there.
     parked_awaiting: str = ""
+    # The rest of a park (#1688): who must act (`person` keeps it from agents;
+    # absent or `external` gives it back on its date) and the date it is
+    # rechecked. Declared fields, kept as written: `retest_after` may be a
+    # YAML date, a quoted date or anything a hand edit left, and is never
+    # rewritten on load. `task_queue.parked_state` is the one reading of the
+    # three; `task park` / `task unpark` write and remove them.
+    park_kind: str = ""
+    retest_after: Any = ""
     parent: str = ""  # overrides Parentable default
     dependencies: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
@@ -588,6 +598,10 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             meta["status_reason"] = self.status_reason
         if self.parked_awaiting:
             meta["parked_awaiting"] = self.parked_awaiting
+        if self.park_kind:
+            meta["park_kind"] = self.park_kind
+        if self.retest_after not in ("", None):
+            meta["retest_after"] = self.retest_after
         if self.assignee:
             meta["assignee"] = self.assignee
         if self.assigned_at:
@@ -651,6 +665,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             status=meta.get("status", "open"),
             status_reason=meta.get("status_reason", "") or "",
             parked_awaiting=meta.get("parked_awaiting", "") or "",
+            park_kind=meta.get("park_kind", "") or "",
+            retest_after=meta.get("retest_after", "") or "",
             assignee=meta.get("assignee", ""),
             assigned_at=meta.get("assigned_at", "") or "",
             parent=parent,

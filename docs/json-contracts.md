@@ -1236,7 +1236,7 @@ the findings still in the document (`missing_targets`, `total_references`,
 
 The three return one body, built by `TaskService.task_listing`:
 `{"count", "tasks"}` (the CLI adds `outcome`), newest task first. A zero-row
-list is `done` (ADR-0046). Two optional arguments, each absent by default, and
+list is `done` (ADR-0046). Three optional arguments, each absent by default, and
 without them the body is unchanged:
 
 - **`--fields a,b`** (MCP `fields: ["a","b"]`, REST `?fields=a,b`) projects
@@ -1253,7 +1253,10 @@ without them the body is unchanged:
    "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
               "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
               "unreadable": 0},
-   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}]}
+   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}],
+   "due_rechecks": [{"id": "await-ruling", "kb_name": "test-kb", "status": "in_progress",
+                     "priority": 7, "assignee": "agent:x", "parked_awaiting": "ruling",
+                     "park_kind": "", "retest_after": "2026-12-10"}]}
   ```
 
   `counts` has every key, even at zero, and sums to the tasks the other
@@ -1270,12 +1273,76 @@ without them the body is unchanged:
   | `orphaned` | its index row's file is gone |
   | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
   | `assigned` | names any assignee |
-  | `parked` | `parked_awaiting` says why it waits; empty, whitespace, `''` and `null` do not park, and the body is never read. For a row every other check would list, the claim's loader reads the file, so a park written after the last `index sync` still excludes it. An index row that already says parked stays parked until the next sync, even when the file no longer does |
+  | `parked` | its park state (`parked_state`, #1688) is `parked` or `person`: `parked_awaiting` gives a reason or `retest_after` is set, and the park is not yet due (a `person` park never is). Empty, whitespace, `''` and `null` reasons do not park, and the body is never read. For a row every other check would list, the claim's loader reads the file, so a park written after the last `index sync` still excludes it, judged by the same rule on the file's `parked_awaiting`, `park_kind` and `retest_after` (a file park whose `retest_after` has come is due, not parked). An index row that already says parked stays parked until the next sync, even when the file no longer does |
   | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
   | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
 
+  A listed task whose park has come due (an external park whose
+  `retest_after` is today or earlier) carries `recheck: true`, `park_kind`
+  and `retest_after`. `due_rechecks` lists every other live task (effective
+  status not `done`, `cancelled` or `failed`) whose park is due -- in
+  progress, claimed, blocked, or open but excluded for another reason --
+  ordered by priority (highest first), then `retest_after`, then KB and id.
+  A `person` park is never in it. Today is read once per call; the
+  predicate itself never reads the clock.
+
   With `--fields`, the CLI names on stderr any field no task carries (as
   `search` does); nothing is refused.
+- **`--parked` / `--unparked`** (MCP `parked: true|false`, REST
+  `?parked=true|false`, #1688) keeps the tasks whose park state is anything
+  but `none` (due rechecks and person parks included), or exactly `none`.
+  Each row gains `park_kind` (as written, `""` when absent), `retest_after`
+  (a date as `YYYY-MM-DD`, other text as written, `""` when absent) and
+  `park_state`: `none`, `parked`, `due` or `person`. A `park_kind` absent or
+  empty counts as `external`; any value but `person`/`external` is read as
+  `person`.
+
+## Task park: `task park`, `task unpark`, `task_park`, `task_unpark`
+
+`task park <id> -k <kb> --reason R [--kind person|external] [--retest-after
+YYYY-MM-DD] [--by WHO] [--operator-override]` (MCP `task_park {task_id,
+kb_name, reason, kind?, retest_after?, by?, operator_override?}`, write tier) sets `parked_awaiting` and sets or removes
+`park_kind` and `retest_after` in one write: a park replaces the previous
+one whole. The status never changes. The result, the same on both surfaces
+(the CLI adds `outcome: done`):
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "parked_awaiting": "foia-response", "park_kind": "", "retest_after": "2099-01-01",
+ "park_state": "parked"}
+```
+
+Refusals write nothing and answer `VALIDATION_FAILED`: a reason that is empty,
+whitespace or quote marks; a kind other than `person` or `external`; a
+`retest_after` that is not exactly `YYYY-MM-DD` and a real date; an entry that
+is not a task; a task whose status is `done` or `cancelled` (the operator
+override does not change that).
+
+Park and unpark follow the holder rule `task finish` follows: a task another
+caller holds is refused with `FORBIDDEN` and nothing is written. The caller is
+`--by` (MCP: `by`, else the signed-in account) and must be the task's
+assignee; the operator (the CLI, stdio MCP, an operator key) may act on a task
+it does not hold with `--operator-override` (MCP `operator_override: true`),
+which is refused for anyone else. A task no one holds may be parked or
+unparked by anyone. REST has no park or unpark route.
+
+A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND` on MCP.
+
+`task unpark <id> -k <kb> [--by WHO] [--operator-override]` (MCP `task_unpark
+{task_id, kb_name, by?, operator_override?}`) removes the
+three keys, never leaving an empty value, in one write (keys spelled under
+`metadata:` too: a block that held only park keys goes with them); a task with none of
+them is left byte-for-byte as it was, and the outcome is still `done`. A `done`
+or `cancelled` task may be unparked, which clears a stale park:
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "removed": ["parked_awaiting", "park_kind", "retest_after"]}
+```
+
+`qa validate` reports (rule `task_park`, severity `warning`, never a rewrite)
+a `park_kind` other than `person`/`external`, a `retest_after` that names no
+date, and a `retest_after` with no `parked_awaiting`.
 
 ## Link discovery: what is left out
 
