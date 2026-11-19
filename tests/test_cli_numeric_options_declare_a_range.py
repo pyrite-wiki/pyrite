@@ -36,6 +36,9 @@ declared attribute stands. Limit: a hand-written type that subclasses a known
 non-numeric one (a ``StringParamType`` whose ``convert`` returns an int) is classified
 by its base class and counted non-numeric.
 
+Typer 0.29 uses the private ``typer._adapters.build_leaf_adapter``; if that
+API moves, the guard errors so the compatibility code can be updated.
+
 Where a parameter can be declared between a root and a leaf, and what the walk
 (``every_command``: roots, every group at every depth, every leaf, hidden ones
 included) does with each; "planted" means a test below goes red without it:
