@@ -2317,6 +2317,12 @@ class PyriteMCPServer:
         kb_name = args.get("kb_name")
         background = args.get("background", False)
         confirm = _confirm_names(args.get("confirm"), kb_name=kb_name, background=background)
+        if confirm is not None:
+            # A blank kb_name names no KB: refused before any sync, with
+            # the one code every surface gives (#1747).
+            from ..services.index_confirm import refuse_blank_confirm_kb
+
+            refuse_blank_confirm_kb(kb_name)
 
         if background:
             worker = self._get_index_worker()
@@ -2335,7 +2341,7 @@ class PyriteMCPServer:
             # handler runs (fail closed; tests/test_mcp_tool_registry_is_scoped.py,
             # OPTIONAL_KB_TOOLS), and declaring a readable set here would turn
             # that refusal off. `_confirm_names` has refused an absent name;
-            # a blank one resolves to None, which the confirm refuses.
+            # a blank one was refused above, before the sync (#1747).
             resolved = self.svc.resolve_kb(kb_name, readable_kbs=None)
             results["confirm"] = confirm_entries(self.index_mgr, resolved, confirm, results)
         # What a network caller gets of the result (#1546, #1552), the confirm
