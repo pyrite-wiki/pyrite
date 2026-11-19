@@ -846,13 +846,35 @@ class BaseBackend(ABC):
 
     def _get_entry_links(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
         links = (
-            self._session.query(Link.target_id, Link.target_kb, Link.relation, Link.note)
+            self._session.query(
+                Link.target_id,
+                Link.target_kb,
+                Link.relation,
+                Link.note,
+                Link.target_path,
+                Link.target_resolved,
+            )
             .filter_by(source_id=entry_id, source_kb=kb_name)
             .all()
         )
-        return [
-            {"target_id": l[0], "target_kb": l[1], "relation": l[2], "note": l[3]} for l in links
-        ]
+        items = []
+        for target_id, target_kb, relation, note, target_path, target_resolved in links:
+            item: dict[str, Any] = {
+                "target_id": target_id,
+                "target_kb": target_kb,
+                "relation": relation,
+                "note": note,
+            }
+            if target_path is not None:
+                # A Markdown link row (#1723): name the path it names and
+                # whether an entry file is there. A broken row's target_id
+                # is its path text, which a hand-set id may equal, so the
+                # flag is the only way to tell it from a link to that entry
+                # (#1765).
+                item["target_path"] = target_path
+                item["broken"] = target_resolved != 1
+            items.append(item)
+        return items
 
     # =====================================================================
     # List / count / types (ORM-based — shared)
@@ -999,6 +1021,10 @@ class BaseBackend(ABC):
     # =====================================================================
     # Full-text search — subclasses must override
     # =====================================================================
+
+    @abstractmethod
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads (#1757)."""
 
     @abstractmethod
     def search(

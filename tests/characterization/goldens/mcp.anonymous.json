@@ -2840,6 +2840,15 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_search | anonymous | private-kb": {
@@ -2865,6 +2874,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_stats | anonymous | missing-kb": {
@@ -3947,6 +3965,32 @@
     "error_code": "FORBIDDEN",
     "retryable": false
   },
+  "task_finish | anonymous | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | anonymous | no-default-role-kb": {
+    "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_finish | anonymous | private-kb": {
+    "did_you_mean": [],
+    "error": "KB 'private-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | anonymous | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
   "task_list | anonymous | missing-kb": {
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
@@ -3970,6 +4014,32 @@
   "task_list | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
+  },
+  "task_start | anonymous | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | anonymous | no-default-role-kb": {
+    "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_start | anonymous | private-kb": {
+    "did_you_mean": [],
+    "error": "KB 'private-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | anonymous | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
   },
   "task_status | anonymous | missing-kb": {
     "did_you_mean": [],

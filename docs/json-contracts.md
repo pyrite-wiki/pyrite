@@ -171,6 +171,67 @@ Source of truth: `pyrite/exceptions.py` (the codes), `pyrite/utils/errors.py`
 (REST's central handler), `pyrite/server/mcp_server.py` (`_refusal`). The CLI
 root's own codes, `USAGE_ERROR` and `ERROR`, are in `pyrite/utils/errors.py`.
 
+## Unknown MCP arguments
+
+An MCP call never succeeds with an argument key the tool does not read
+(#1758, maintainer decision 2026-11-18). A key is unknown when it is not in the
+tool's `inputSchema.properties` (the `tools/list` schema), apart from the keys
+the dispatcher reads itself, listed below. Only top-level keys are checked. A
+nested map such as `kb_create`'s `metadata` or an investigation tool's
+`fields` takes any key, as before.
+
+- **Write tool** (any tool above the read tier, core or plugin): every argument
+  the caller sent either decides the call or is refused. A refusal comes before
+  any lookup or write, with `VALIDATION_FAILED`, `retryable: false`. `error`
+  names every unknown key. `errors` has one row per key, REST's
+  `refuses_undeclared_keys` rows (`{"field": "<key>", "rule": "unknown_field",
+  "message": "..."}`) plus `"did_you_mean": ["<accepted key>"]`. That field
+  appears only when there is a guess: a near miss (`due` -> `due_date`) or,
+  failing that, the tool's one map of the caller's own keys (an investigation
+  tool's `fields`). `suggestion` lists the declared keys. Besides its declared
+  keys, a write tool accepts:
+  - the ADR-0034 markers (`body_truncated`, `body_length`, `body_offset`,
+    `body_chunk_size`), which the truncation guard reads;
+  - `kb_name` on a tool that locates an entry by id or is a plugin write tool,
+    where the dispatcher makes it the handler's KB;
+  - any KB argument name (`kb_name`, `kb`, `source_kb`, `target_kb`,
+    `center_kb`, `kb_names`, `kb_a`, `kb_b`), but only on a tool that declares
+    no KB argument of its own: the `kb_registry_*` tools, whose write check
+    for a scoped caller needs one named. On every other write tool a KB
+    argument it does not declare is refused: it would be access-checked and
+    then dropped, because the write goes to the tool's own KB argument.
+- **Read tool**: the call runs with its arguments as sent, and the result
+  (success or refusal) carries `"ignored_arguments": ["<key>", ...]`, sorted:
+  the keys the schema does not declare. The key is absent when there are none.
+  It is not `kb_update`'s `ignored`, which lists keys no update writes. Every
+  KB argument name is accepted on a read tool, since the resolver and the read
+  check run on each KB a call names. Known gap: `task_status` honours
+  `body_limit`/`body_offset` although its schema omits them, so they are
+  listed there even though they take effect.
+- **Free-form tool**: a tool whose `inputSchema` sets `additionalProperties`
+  (anything but `false`) takes any top-level key. Today those tools are
+  `kb_create`, where a type's own fields are top-level arguments (`metadata.k`
+  is only a second spelling of `k`, #994 decision A), and `kb_update`, where an
+  undeclared field is stored as a custom field, as on the CLI and REST.
+  Refusing a key the entry *type* does not declare (#1522) belongs to the
+  write pipeline, not to this check.
+
+```json
+{
+  "error": "Unknown argument(s) for task_create: due. Nothing was written.",
+  "error_code": "VALIDATION_FAILED",
+  "retryable": false,
+  "suggestion": "Did you mean due_date for due? task_create accepts: assignee, body, ...",
+  "errors": [{"field": "due", "rule": "unknown_field",
+              "message": "'due' is not an argument of task_create",
+              "did_you_mean": ["due_date"]}]
+}
+```
+
+Source of truth: `pyrite/server/mcp_server.py` (`_unknown_arguments`,
+`_declared_arguments`, `_dispatch_tool`); tests in
+`tests/test_mcp_unknown_arguments.py`.
+
 ## Server and account codes
 
 These are the central REST mappings (`pyrite/server/errors.py`); an endpoint
@@ -1317,6 +1378,7 @@ Choose a supported mode rather than retrying the same request.
   "match": "weak",
   "match_basis": "keyword: nothing matched; semantic: best similarity 0.41, below 0.50 but 0.19 above the next 9 results",
   "legs_run": ["keyword", "semantic"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
   "keyword_match": "none"
 }
 ```
@@ -1328,9 +1390,21 @@ Choose a supported mode rather than retrying the same request.
 (keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
 (hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
 per-result `legs`. `distance` is not in the default. The page-level keys below
-(`match`, `match_basis`, `legs_run`, `keyword_match`, `warnings`) are in every
+(`match`, `match_basis`, `legs_run`, `searched`, `keyword_match`, `warnings`) are in every
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
+
+**`entry_warnings`** (#1761). A row, and a `get` result, whose file holds a
+value its reading does not show faithfully carries `entry_warnings`, a list of
+sentences. Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
+`11`, `"high"`, `.nan`): readers keep showing the legacy whole number, and the
+sentence names the file's value. An accepted spelling (`5.0`, `"05"`), a missing
+key, and a mapping or list value (which `qa validate` reports as
+`reserved_key_collision`) add nothing. It is not the page-level `warnings` ("a
+leg was skipped"): that key is on the response, this one is on the entry. It is
+absent when there is nothing to say. CSV has no place for it and writes one
+`warning: <id>: <sentence>` line per entry to stderr. A search page of N rows
+opens N entry files to look (a stated limit, not a bound).
 
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
 as before #54 (`body` still needs `--include-body`), a named list
@@ -1348,7 +1422,7 @@ is not special. `search --files` ignores both and says so on stderr.
 `--include-body` adds `body` to the default row. In CSV the
 columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
-whole row.
+whole row, `entry_warnings` included.
 
 ### `search --batch`: many searches in one process (CLI only)
 
@@ -1378,7 +1452,7 @@ refused in its slot.
 {
   "count": 2,
   "searches": [
-    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "keyword_match": "strong"},
+    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"], "keyword_match": "strong"},
     {"query": "falcon AND", "count": 0, "results": [], "error": "...", "error_code": "QUERY_SYNTAX", "retryable": false, "suggestion": "..."}
   ]
 }
@@ -1417,6 +1491,8 @@ so they are the same keys, with the same values, in the same words.
 | `match` | top level, always | `strong`, `weak` or `none` |
 | `match_basis` | top level, always | the reason, in words; for a person or a log, not for parsing |
 | `legs_run` | top level, always | the legs that ran: `["keyword"]`, `["semantic"]`, both, or `[]`. A `hybrid` search with `["keyword"]` here was a keyword search. Not the per-result `legs` |
+| `searched` | top level, always | the entry parts the legs that ran read; a miss on anything not listed is not an absence. `[]` when no leg ran (`legs_run` is `[]`). With a keyword leg (`keyword`, `hybrid`): what the backend's keyword index reads for this query, the whole body included: on SQLite every `entry_fts` column, `["id", "kb_name", "entry_type", "title", "body", "summary", "location"]`, narrowed when the query carries an FTS5 column filter (`title:`, `"title":`, `{a b}:`, `- title:`) that reaches MATCH: a filter binds to the one phrase, group or `NEAR(...)` that follows it, filters nest by intersection, and the list is the union, over every term, of the columns that term is read in (`title: hawk OR falcon` reads `falcon` in every column, so lists all; `title: (hawk OR falcon)` gives `["title"]`; `{title body}: ({body summary}: hawk)` gives `["body"]`). A query whose filter structure is not understood lists `[]`, never more than was read. A bare `title: hawk` is quoted by sanitizing and is no filter; on Postgres `["title", "summary", "body"]`. With only the vector leg (`semantic`): `["title", "summary", "body_prefix"]`, because the vectors are built from a cut-down body and a word past the cut is not searched. Declared field values and tags are in no index, so they are never listed: a keyword search does not find a word that appears only in one yet (#1776) |
+| `body_prefix_chars` | top level, only when `searched` holds `body_prefix` | the character cut applied to each body before it is embedded (500 for the default model). It is a character count: the embedding model's token window can cut sooner (a long title and summary push the body past it), so it is an upper bound on what the vectors saw. A limit of 0 embeds no body: `searched` is then `["title", "summary"]` and this key is absent |
 | `keyword_match` | top level, when a keyword leg ran (`keyword` and `hybrid` modes) | `all_terms`, `some_terms` or `none` |
 | `warnings` | top level, only when there are any | a leg that was skipped or dropped. Now in the CLI's JSON too; it was on stderr only |
 | `similarity` | each result the vector leg returned | cosine similarity to the query, 3 decimal places, the same number on SQLite and Postgres |
@@ -1437,6 +1513,7 @@ pyrite search "zzznosuchterm" -k notes --mode keyword
   "match": "none",
   "match_basis": "keyword: nothing matched",
   "legs_run": ["keyword"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
   "keyword_match": "none"
 }
 ```
@@ -1538,6 +1615,15 @@ A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
 
+The entry's `links` list holds one item per link row,
+`{"target_id", "target_kb", "relation", "note"}`. An item for a Markdown
+link to an entry file (#1723) also carries `target_path`, the KB-relative
+path the link names, and `broken`: `true` when no entry file is at that
+path, `false` when one is. A broken item's `target_id` is its path text,
+which an unrelated entry's hand-set id may equal, so `broken` is the
+signal to read; an item for a link that names an id carries neither field
+(#1765).
+
 A single task (`pyrite task get`, MCP `task_status`) returns the task
 detail dictionary with `body` included directly from the file. Over the
 MCP chunk default, MCP returns ADR-0034 truncation markers as `kb_get` does.
@@ -1597,8 +1683,8 @@ decision 8a). Pyrite reads such a file partially and writes it not at all.
 exit 1, REST 422, MCP `error_code`), and nothing is written: an update (REST
 `PUT`/`PATCH`, MCP `kb_update`, CLI `update`), an echo of a read (it carries
 `load_problems`, which is set aside, and is refused like any other update), a
-delete, a link from it, a rename of it, a task claim, update, checkpoint or
-reset, and a plugin's write through `ctx.kb_service`. A request that would
+delete, a link from it, a rename of it, a task claim, start, finish, update,
+checkpoint or reset, and a plugin's write through `ctx.kb_service`. A request that would
 change nothing is refused the same way. No validator or hook is run, so none
 judges a value the file does not hold. The message names the file by its path
 relative to the KB, the declared type, the refused fields and the loader's
@@ -1710,6 +1796,76 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 `false`. A target that a change set created and then deleted is unresolved
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
+
+## Task start and finish
+
+`task start` (CLI), `task_start` (MCP) and `POST /api/tasks/{id}/start` (REST)
+return one dict, `TaskService.start_task`'s (#1685). A start that won:
+
+```json
+{
+  "claimed": true,
+  "task_id": "fix-typo",
+  "assignee": "alice",
+  "status": "in_progress",
+  "task": {"id": "fix-typo", "title": "Fix typo", "body": "...", "...": "the single-entry read"},
+  "parent": {"id": "docs", "title": "Docs", "body": "..."}
+}
+```
+
+`parent` is `null` for a task with none. The two bodies share one response
+budget and are bounded as in [Body truncation](#body-truncation). A lost start
+is a lost claim's dict unchanged: `{"claimed": false, "error": "...",
+"current_status": "in_progress"}`, CLI outcome `nothing` and exit 1, MCP and
+REST a result (not an error); an id the index does not hold is answered the
+same way (`claimed: false`, `error`, no `current_status`), as claim answers it.
+A retry of a task the caller holds as `claimed` moves it on only while the
+caller still holds it: a claim someone else took meanwhile is a lost start
+whose `error` names the current holder, and nothing is written.
+Refusals that are errors, not results: an entry that is not a task
+(`VALIDATION_FAILED`), a task held by another account (`FORBIDDEN`, claim's
+holder rule), a file its type cannot load (`ENTRY_UNREADABLE`) and an unknown
+KB (`KB_NOT_FOUND`). The file write records two `status_change_log` items,
+`{date, from, to, by}`: open → claimed and claimed → in_progress, `by` the
+assignee.
+
+`task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
+dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
+"in_progress", "done"], "status_reason", "by", "override"}`, with one
+`status_change_log` item
+per edge of `path` (`comment` is the reason, when one was given).
+
+Finish requires the caller to hold the task; operators have an explicit
+override. The caller is `--by` (MCP: `by`, else the signed-in account) and
+must be the task's assignee; the items record it as `by`. The operator (the
+CLI, stdio MCP, an operator key) may finish a task it does not hold with
+`--operator-override` (MCP `operator_override: true`): the items record `by:
+"operator"` and `override: true`, and the result `"by": "operator",
+"override": true`. The override is never implied by a missing or empty
+caller, and is refused for anyone but the operator.
+
+A refusal writes nothing and is (CLI exit 1):
+
+- `FORBIDDEN`: the caller does not hold the task (another caller, or none),
+  or asked for the operator override without being the operator. The message
+  names the holder rule and who holds the task. The write also rechecks the
+  holder in the file it replaces, so a task that changed hands meanwhile is
+  refused (`VALIDATION_FAILED`, naming the holder).
+
+- `VALIDATION_FAILED`: the task is already `done`; a status with no path to
+  `done`; a task nothing holds (`open`, or a path through it, as from
+  `failed`); a path of more than one edge without `--walk` (`walk: true`; the
+  message names the path); an edge the workflow refuses (the KB's declared
+  `state_machine` where it has one, else the core table); an entry that is
+  not a task; and a stale read: the task's status changed between the read and
+  the write ("the file's status is ...; read the task again and retry").
+  Retry after a stale read; the others need a different request.
+- `ENTRY_NOT_FOUND`: no task with that id in the KB.
+- `ENTRY_UNREADABLE`: a file its type cannot load.
+
+The holder rule guards `task finish` on the CLI and MCP. REST has no finish
+route yet (see #1745); the generic `PATCH /api/entries/{id}` is unchanged and
+is not `task finish`.
 
 ## Entry row shape
 
@@ -1969,7 +2125,7 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
 
   Single-effect commands that fail answer `1`: `kb commit` when the commit was
   rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
-  when the claim is lost (in `--format json` too), `social reputation` when it
+  and `task start` when the claim is lost (in `--format json` too), `social reputation` when it
   cannot compute the reputation, `investigation network` and `evidence-chain`
   when the answer is an error.
 
@@ -2070,6 +2226,9 @@ classified):
 The identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
+The one key a projection adds is `entry_warnings`, when the record has it, on
+every surface above: a projection never hides that the reading is not the
+file's.
 
 CSV, Markdown, and Rich retain every requested column, even when all records
 lack that field; absent and null values are empty cells. A single entry

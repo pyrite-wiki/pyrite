@@ -4908,6 +4908,15 @@
           "id": "private-note",
           "kb_name": "private-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -4927,6 +4936,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -5954,6 +5972,42 @@
     "status": 403
   },
   "POST /api/tasks/{task_id}/claim | granted_user | readable-kb": {
+    "body": {
+      "detail": "Insufficient permissions on KB 'readable-kb': requires 'write' tier"
+    },
+    "status": 403
+  },
+  "POST /api/tasks/{task_id}/start | granted_user | missing-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | granted_user | no-default-role-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'no-default-role-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | granted_user | private-kb": {
+    "body": {
+      "detail": "Insufficient permissions on KB 'private-kb': requires 'write' tier"
+    },
+    "status": 403
+  },
+  "POST /api/tasks/{task_id}/start | granted_user | readable-kb": {
     "body": {
       "detail": "Insufficient permissions on KB 'readable-kb': requires 'write' tier"
     },

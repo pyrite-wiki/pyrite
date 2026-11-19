@@ -42,6 +42,11 @@ def test_howto_commands_run_in_order(page, cli_world, tmp_path, monkeypatch):
         text = (ROOT / "docs/links.md").read_text(encoding="utf-8")
         yaml = re.search(r"```yaml\n(.*?)```", text, re.S).group(1)
         (tmp_path / "links.yaml").write_text(yaml, encoding="utf-8")
+    if page == "tasks.md":
+        text = (ROOT / "docs/tasks.md").read_text(encoding="utf-8")
+        ticket = re.search(r"`ticket.md`:\n\n```markdown\n(.*?)```", text, re.S)
+        if ticket:  # absent when verify-red reverts the page with the code
+            (tmp_path / "ticket.md").write_text(ticket.group(1), encoding="utf-8")
     last = None
     for expected, block in _blocks(page):
         for line in block.strip().splitlines():

@@ -344,6 +344,30 @@ def w_mcp_task_claim(world):
     )
 
 
+def w_cli_task_start(world):
+    return _cli(world, "task", "start", "x", "-k", "sw", "-a", "agent:a")
+
+
+def w_mcp_task_start(world):
+    return _mcp(
+        world.mcp()._dispatch_tool(
+            "task_start", {"task_id": "x", "kb_name": "sw", "assignee": "agent:a"}
+        )
+    )
+
+
+def w_cli_task_finish(world):
+    return _cli(world, "task", "finish", "x", "-k", "sw", "--walk", "--reason", "r")
+
+
+def w_mcp_task_finish(world):
+    return _mcp(
+        world.mcp()._dispatch_tool(
+            "task_finish", {"task_id": "x", "kb_name": "sw", "walk": True, "reason": "r"}
+        )
+    )
+
+
 def w_cli_task_update_audited(world):
     # `--comment` reads the old status first (task_service.update_task).
     return _cli(world, "task", "update", "x", "-k", "sw", "-s", "done", "--comment", "c")
@@ -426,6 +450,10 @@ WRITE_METHODS = {
         w_cli_rename,
         w_cli_task_claim,
         w_mcp_task_claim,
+        w_cli_task_start,
+        w_mcp_task_start,
+        w_cli_task_finish,
+        w_mcp_task_finish,
         w_cli_task_update_audited,
         w_mcp_task_update,
         w_mcp_task_checkpoint,
@@ -482,7 +510,12 @@ def test_no_write_lands_and_no_guard_sees_the_entry(make_world, spies, shape, me
         assert set(after) == set(before)
     else:
         assert after == before, sorted(k for k in after if after.get(k) != before.get(k))
-    seen = [c for c in spies if c[1] == "x"]
+    # A validator handed data with no `id` records "" (the spy records
+    # `data.get("id", "")`); it may have run on the refused entry, so an
+    # id-less call fails the test the same way a call with the entry's id
+    # does. Calls on the companion entries (`ok`, `ok2`) are not the refused
+    # entry and stay out.
+    seen = [c for c in spies if c[1] in ("x", "")]
     assert seen == [], f"a guard was handed the entry its type did not load: {seen}"
 
 
@@ -609,7 +642,9 @@ def test_nothing_moves_in_a_templated_subdirectory(make_world, spies):
         assert rel in result.output.replace("\n", "")
 
     assert _snapshot(root) == before
-    assert [c for c in spies if c[1] == "x"] == []
+    # Same as the matrix: an id-less validator call may have run on the
+    # refused entry, so it fails the test too.
+    assert [c for c in spies if c[1] in ("x", "")] == []
 
 
 # -- the enumeration: every loader and every entry-file writer -----------------
@@ -651,7 +686,11 @@ CALL_SITES: dict[str, tuple[str, object]] = {
     ),
     "pyrite/services/kb_service.py::KBService.claim_entry": (
         WRITER,
-        ["cli_task_claim", "mcp_task_claim"],
+        ["cli_task_claim", "mcp_task_claim", "cli_task_start", "mcp_task_start"],
+    ),
+    "pyrite/services/task_service.py::TaskService.finish_task": (
+        WRITER,
+        ["cli_task_finish", "mcp_task_finish"],
     ),
     "pyrite/services/task_service.py::TaskService.update_task": (
         WRITER,
