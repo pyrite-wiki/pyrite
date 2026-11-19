@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import logging
 import re
 import shlex
@@ -2484,6 +2485,13 @@ class KBService:
                             origin=kb_origin(kb_config.name),
                         )
             except OperationRefusedError as e:
+                suggestion = self._append_scalar_repair(entry, kb_config, file_values, e.op)
+                if suggestion:
+                    raise ValidationError(
+                        f"Cannot update '{entry_id}': {e.reason}; "
+                        f"set it as a list first: {suggestion}, then retry the append.",
+                        suggestion=suggestion,
+                    ) from e
                 raise ValidationError(f"Cannot update '{entry_id}': {e.reason}") from e
 
             # The field set as loaded, for the exception that keeps an off-list
@@ -2802,6 +2810,34 @@ class KBService:
             else:
                 out.pop("metadata")
         return out, sorted(ignored)
+
+    @staticmethod
+    def _append_scalar_repair(
+        entry: Entry, kb_config: KBConfig, file_values: dict[str, Any], op: Any
+    ) -> str | None:
+        """Name a lossless repair for a refused append to a declared list (#1760).
+
+        Called only after storage refuses: an explicit set followed by append
+        in the same write may already repair the file's scalar.
+        """
+        from ..schema.field_aliases import field_at
+
+        if not isinstance(op, Append):
+            return None
+        field, rest = field_at(type(entry), entry.entry_type, op.path)
+        declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+        current = _value_at(file_values, op.path)
+        if (
+            rest
+            or declared is None
+            or declared.field_type not in ("list", "multi-select", "tags")
+            or not isinstance(current, str)
+        ):
+            return None
+        value = json.dumps([current], ensure_ascii=False)
+        return shlex.join(
+            ["pyrite", "update", entry.id, "-k", kb_config.name, "-f", f"{field}={value}"]
+        )
 
     def _resolve_operation(
         self,
