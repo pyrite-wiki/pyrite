@@ -775,7 +775,10 @@ class SearchService:
            and ``body_prefix``, with ``body_prefix_chars`` giving the length the
            body is cut to before it is embedded (a character count: the model's
            token window may cut sooner), so a word past that point is not
-           searched. Declared field values and tags are in no leg's index,
+           searched. When this process has measured the window cutting a body
+           before that length, the response also carries
+           ``body_truncated_by_model: true``, which marks the number as an
+           upper bound (#1785); its absence claims nothing either way. Declared field values and tags are in no leg's index,
            so they are never listed: a keyword search does not find a word that
            appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
@@ -1025,7 +1028,7 @@ class SearchService:
 
         Takes what ``search`` takes. Returns a mapping with ``results`` (the
         rows ``search`` returns), ``match`` and ``match_basis``, ``legs_run`` (the
-        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
+        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``body_prefix_chars`` when only the vector leg ran (with ``body_truncated_by_model`` when the model's token window was measured cutting a body short of that cut), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
         are any (absent otherwise; see ``search``'s docstring, which states
         what each key means).
 
@@ -1076,6 +1079,8 @@ class SearchService:
         response["searched"] = searched
         if body_chars is not None:
             response["body_prefix_chars"] = body_chars
+            if signal.get("body_truncated_by_model"):
+                response["body_truncated_by_model"] = True
         if "keyword_match" in signal:
             response["keyword_match"] = signal["keyword_match"]
         if warnings:
@@ -1207,6 +1212,10 @@ class SearchService:
             # How many characters of a body the vectors were built from (0: none of it,
             # as `_entry_text` takes `body[:0]`).
             signal["body_chars"] = svc.max_body_chars
+            # Whether the model's token window was measured cutting a body
+            # before that many characters, which makes the number an upper
+            # bound (#1785).
+            signal["body_truncated_by_model"] = svc.body_truncated_by_model()
         # Asked of the KBs this search covers, not of the index (#668): whether
         # some other KB has vectors must not change what a scoped caller is
         # told, and a KB with none has not been searched by this leg even when
