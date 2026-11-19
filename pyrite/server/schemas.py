@@ -145,6 +145,10 @@ class SearchResult(BaseModel):
     #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
     #: ``semantic``.
     legs: list[str] | None = None
+    #: What the entry's file holds that this row's reading does not show
+    #: faithfully (a refused ``importance``, #1761). Not the response-level
+    #: ``warnings`` (a leg was skipped). Absent on a row with nothing to say.
+    entry_warnings: list[str] | None = None
 
 
 class SearchResponse(BaseModel):

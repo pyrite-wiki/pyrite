@@ -227,6 +227,11 @@ class QAService:
             )
         }
         self._check_entry_fields(entry, issues)
+        # The same file-value judgment as the KB-wide sweep (#1761): it replaces
+        # the column-based finding `_check_entry_fields` gave for this entry.
+        if range_issue := self._importance_range_issue(row):
+            issues[:] = [i for i in issues if i.get("rule") != "importance_range"]
+            issues.append(range_issue)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         # The checks below read the KB's folder (its files, its kb.yaml).
         if not self._report_unreadable_kb(issues, kb_name):
@@ -1198,33 +1203,35 @@ class QAService:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
 
+        roots: dict[str, Any] = {}
         for row in self.db.execute_sql(sql, params):
-            # The file's value, not the index column: the column holds the
-            # legacy reading of a refused value (7.5 -> 7) and never fires (#1761).
-            if (
-                refused := row_importance_warning(self.db, row["kb_name"], row.get("file_path"))
-            ) is not None:
-                issues.append(
-                    {
-                        "entry_id": row["id"],
-                        "kb_name": row["kb_name"],
-                        "rule": "importance_range",
-                        "severity": "warning",
-                        "field": "importance",
-                        "message": f"Entry '{row['id']}': {refused}",
-                    }
-                )
-            elif not validate_importance(row["importance"]):
-                issues.append(
-                    {
-                        "entry_id": row["id"],
-                        "kb_name": row["kb_name"],
-                        "rule": "importance_range",
-                        "severity": "warning",
-                        "field": "importance",
-                        "message": f"Entry '{row['id']}' has importance {row['importance']} (must be 1-10)",
-                    }
-                )
+            if issue := self._importance_range_issue(row, roots):
+                issues.append(issue)
+
+    def _importance_range_issue(
+        self, row: dict[str, Any], roots: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """The `importance_range` finding for an index row, or None.
+
+        The file's value, not the index column: the column holds the legacy
+        reading of a refused value (7.5 -> 7) and never fires (#1761). The
+        column still judges a row with no readable file.
+        """
+        refused = row_importance_warning(self.db, row["kb_name"], row.get("file_path"), roots)
+        if refused is not None:
+            message = f"Entry '{row['id']}': {refused}"
+        elif not validate_importance(row["importance"]):
+            message = f"Entry '{row['id']}' has importance {row['importance']} (must be 1-10)"
+        else:
+            return None
+        return {
+            "entry_id": row["id"],
+            "kb_name": row["kb_name"],
+            "rule": "importance_range",
+            "severity": "warning",
+            "field": "importance",
+            "message": message,
+        }
 
     def _check_broken_links(
         self,
@@ -1998,8 +2005,11 @@ class QAService:
         for key, value in kept.items():
             if key not in RESERVED_FIELD_NAMES:
                 continue
-            if key == "importance":
-                continue  # a base field with its own rule: `importance_range` (#1761)
+            if key == "importance" and not isinstance(value, (dict, list, tuple, set)):
+                # A scalar importance has its own rule, `importance_range`
+                # (#1761); a mapping or list is a key used for something
+                # else, and keeps the rename advice.
+                continue
             # A key the model leaves out at its default (`lifecycle:
             # active`) is read, not lost: fall back to the attribute.
             read_as = emitted[key] if key in emitted else getattr(entry, key, None)

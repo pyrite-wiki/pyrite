@@ -245,12 +245,16 @@ def note_entry_warnings(data: Any) -> None:
     """CSV has no place for an entry's warnings: say them on stderr (#1761)."""
     import sys
 
-    rows = data.get("results") or data.get("entries") or [data] if isinstance(data, dict) else []
+    from ..services.read_shaping import ENTRY_WARNINGS_KEY
+
+    if not isinstance(data, dict):
+        return
+    rows = (data.get("results") or data.get("entries")) or [data]
     for row in rows:
-        if isinstance(row, dict) and isinstance(row.get("warnings"), list):
-            for warning in row["warnings"]:
-                if isinstance(warning, str) and "importance" in warning:
-                    print(f"warning: {row.get('id', '')}: {warning}", file=sys.stderr)
+        if not isinstance(row, dict):
+            continue
+        for warning in row.get(ENTRY_WARNINGS_KEY) or ():
+            print(f"warning: {row.get('id', '')}: {warning}", file=sys.stderr)
 
 
 def backlinks_table(entry_id: str, links: list[dict]):

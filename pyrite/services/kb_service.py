@@ -92,6 +92,7 @@ from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
 from .importance_reading import refused_importance_message
+from .read_shaping import ENTRY_WARNINGS_KEY
 from .wikilink_service import WikilinkService
 
 logger = logging.getLogger(__name__)
@@ -1311,7 +1312,7 @@ class KBService:
                 result["load_problems"] = problems
             # A refused importance keeps its legacy reading above; say so (#1761).
             if (said := refused_importance_message(entry._importance_given)) is not None:
-                result["warnings"] = [said]
+                result[ENTRY_WARNINGS_KEY] = [said]
             return result
         except TypeError as exc:
             # A file with no readable fields: a tagged or complex key, or a

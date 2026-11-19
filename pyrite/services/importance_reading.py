@@ -16,18 +16,23 @@ from pathlib import Path
 from typing import Any
 
 from ..exceptions import FrontmatterError
+from ..models.base import _ABSENT as ABSENT
 from ..models.base import DEFAULT_IMPORTANCE
 from ..schema.validators import importance_value
 from ..utils.parse import safe_int
 
 logger = logging.getLogger(__name__)
 
-ABSENT = object()
-
 
 def refused_importance_message(given: Any) -> str | None:
-    """The sentence for a file value the importance rule refuses, else ``None``."""
+    """The sentence for a scalar file value the importance rule refuses, else ``None``.
+
+    A missing key (``ABSENT``, the model's own sentinel), a null or blank value,
+    a value the rule accepts, and a mapping or list (reported by
+    ``reserved_key_collision`` with its rename advice) say nothing."""
     if given is None or given is ABSENT or (isinstance(given, str) and not given.strip()):
+        return None
+    if isinstance(given, (dict, list, tuple, set)):
         return None
     if importance_value(given) is not None:
         return None
@@ -61,12 +66,21 @@ def file_importance(root: str | Path | None, path: str | Path | None) -> Any:
     return loaded[0].get("importance", ABSENT)
 
 
-def row_importance_warning(db: Any, kb_name: str | None, path: str | Path | None) -> str | None:
+def row_importance_warning(
+    db: Any, kb_name: str | None, path: str | Path | None, roots: dict[str, Any] | None = None
+) -> str | None:
     """`refused_importance_message` for the file of an index row of ``kb_name``,
-    read through that KB's own root; None when the KB is unknown."""
+    read through that KB's own root; None when the KB is unknown.
+
+    ``roots``: a dict the caller keeps for one pass, so the KB root is looked up
+    once per KB, not once per row. The file read stays one per row (a stated
+    limit: a page of N rows opens N files)."""
     if not kb_name or not path:
         return None
-    rows = db.execute_sql("SELECT path FROM kb WHERE name = :name", {"name": kb_name})
-    if not rows:
+    roots = roots if roots is not None else {}
+    if kb_name not in roots:
+        rows = db.execute_sql("SELECT path FROM kb WHERE name = :name", {"name": kb_name})
+        roots[kb_name] = rows[0]["path"] if rows else None
+    if roots[kb_name] is None:
         return None
-    return refused_importance_message(file_importance(rows[0]["path"], path))
+    return refused_importance_message(file_importance(roots[kb_name], path))

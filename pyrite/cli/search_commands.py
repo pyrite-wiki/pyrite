@@ -490,14 +490,7 @@ def _shape_rows(results, row_fields, asked: bool, include_body: bool):
     """
     if row_fields:
         missing = unmatched_search_fields(results, row_fields) if asked else []
-        # A row's `warnings` (a refused importance, #1761) survives the projection.
-        shaped = []
-        for record in results:
-            row = project_fields(record, row_fields)
-            if record.get("warnings"):
-                row["warnings"] = record["warnings"]
-            shaped.append(row)
-        return shaped, missing
+        return [project_fields(record, row_fields) for record in results], missing
     if not include_body:
         for r in results:
             r.pop("body", None)
