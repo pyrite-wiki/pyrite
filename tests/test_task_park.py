@@ -395,10 +395,11 @@ def test_a_recheck_row_says_why_and_when(world, today, surface):
     }
 
 
-def test_a_person_park_never_returns_to_agents(world, today):
+@pytest.mark.parametrize("surface", list(DISPATCH))
+def test_a_person_park_never_returns_to_agents(world, today, surface):
     for day in (BEFORE, ON, AFTER, dt.date(2099, 1, 1)):
         today(day)
-        out = _cli_list(world, "--dispatchable")
+        out = DISPATCH[surface](world)
         listed = {t["id"] for t in out["tasks"]} | {d["id"] for d in out["due_rechecks"]}
         assert not listed & {"person-date", "unknown-kind", "person-ip"}, day
 
@@ -537,6 +538,41 @@ def test_unpark_a_hand_edited_file_with_only_retest_after(wworld):
     assert data["removed"] == ["retest_after"]
 
 
+NESTED = (
+    "---\nid: nested\ntitle: Task nested\ntype: task\nstatus: open\npriority: 5\n"
+    "metadata:\n  parked_awaiting: ruling\n  park_kind: person\n  retest_after: 2026-12-10\n"
+    "---\n\nWork.\n"
+)
+NESTED_PLUS = (
+    "---\nid: nested-plus\ntitle: Task nested-plus\ntype: task\nstatus: open\npriority: 5\n"
+    "metadata:\n  parked_awaiting: ruling\n  retest_after: 2026-12-10\n  custom: kept\n"
+    "---\n\nWork.\n"
+)
+
+
+def test_unpark_a_nested_park_leaves_no_empty_metadata(wworld):
+    """The keys spelled under `metadata:` are cleared to nothing: no empty
+    `metadata: {}` is left behind (round 1, item 1)."""
+    path = wworld.add_entry(KB, NESTED)
+    code, data = _cli(wworld, "unpark", "nested")
+    assert code == 0, data
+    assert sorted(data["removed"]) == ["park_kind", "parked_awaiting", "retest_after"]
+    text = path.read_text(encoding="utf-8")
+    front = _front(path)
+    assert "metadata" not in front, text
+    for key in ("parked_awaiting", "park_kind", "retest_after"):
+        assert key not in text, text
+
+
+def test_unpark_a_nested_park_keeps_the_other_metadata(wworld):
+    path = wworld.add_entry(KB, NESTED_PLUS)
+    code, data = _cli(wworld, "unpark", "nested-plus")
+    assert code == 0, data
+    front = _front(path)
+    assert front["metadata"] == {"custom": "kept"}
+    assert "parked_awaiting" not in front and "retest_after" not in front
+
+
 def test_unpark_an_unparked_task_changes_nothing(wworld):
     path = wworld.kb_path(KB) / "t.md"
     before = path.read_bytes()
@@ -657,6 +693,18 @@ def test_qa_reports_bad_park_fields_and_writes_nothing(tmp_path):
         "q-ok": _task(
             "q-ok", extra="parked_awaiting: x\npark_kind: person\nretest_after: 2026-12-10\n"
         ),
+        # The same findings for keys spelled under `metadata:`, which the
+        # views read too (round 1, item 2).
+        "q-n-kind": _task(
+            "q-n-kind", extra="metadata:\n  parked_awaiting: x\n  park_kind: someday\n"
+        ),
+        "q-n-date": _task(
+            "q-n-date", extra="metadata:\n  parked_awaiting: x\n  retest_after: next week\n"
+        ),
+        "q-n-noreason": _task("q-n-noreason", extra="metadata:\n  retest_after: 2026-12-10\n"),
+        "q-n-ok": _task(
+            "q-n-ok", extra="metadata:\n  parked_awaiting: x\n  retest_after: 2026-12-10\n"
+        ),
     }
     w = _build(tmp_path, files)
     try:
@@ -671,7 +719,43 @@ def test_qa_reports_bad_park_fields_and_writes_nothing(tmp_path):
             ("q-kind", "park_kind"),
             ("q-date", "retest_after"),
             ("q-noreason", "parked_awaiting"),
+            ("q-n-kind", "park_kind"),
+            ("q-n-date", "retest_after"),
+            ("q-n-noreason", "parked_awaiting"),
         }
         assert {p.name: p.read_bytes() for p in root.glob("*.md")} == before
+    finally:
+        w.close()
+
+
+# -- One source for the three keys (round 1, item 3) --------------------------------
+
+
+def test_the_three_park_keys_are_read_from_one_source(tmp_path, today):
+    """A park is read whole from one place. Here the index holds no park and
+    the file, edited by hand after indexing, holds a person park past its
+    date. The assignee listing reads the file for the reason; it must read
+    the kind and the date from the same file, or the person park is taken
+    for an external one and handed back as a due recheck."""
+    w = _build(tmp_path, {"hand": _task("hand", extra="assignee: mark\n")})
+    try:
+        path = w.kb_path(KB) / "hand.md"
+        path.write_text(
+            _task(
+                "hand",
+                extra="assignee: mark\nparked_awaiting: payment\npark_kind: person\n"
+                "retest_after: 2026-12-01\n",
+            ),
+            encoding="utf-8",
+        )
+        today(ON)
+        out = _cli_list(w, "--dispatchable", "-a", "mark")
+        assert [d["id"] for d in out["due_rechecks"]] == []
+        parked = _cli_list(w, "--parked", "-a", "mark")
+        rows = {t["id"]: t for t in parked["tasks"]}
+        assert rows["hand"]["parked_awaiting"] == "payment"
+        assert rows["hand"]["park_kind"] == "person"
+        assert rows["hand"]["retest_after"] == "2026-12-01"
+        assert rows["hand"]["park_state"] == "person"
     finally:
         w.close()
