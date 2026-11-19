@@ -176,6 +176,7 @@ def test_a_missing_importance_key_says_nothing_on_every_surface(make_world):
         assert result.exit_code == 0 and "1-10" not in result.stderr, args
 
 
+@pytest.mark.control(reason="negative control: dev already gave the rename advice for these")
 @pytest.mark.parametrize("value", ["{level: high}", "[high, low]"])
 def test_a_mapping_or_list_importance_keeps_the_rename_advice(make_world, value):
     """Not a scalar the rule refuses: a key used for something else."""
