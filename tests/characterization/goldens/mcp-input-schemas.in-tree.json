@@ -5,6 +5,7 @@
         "edges": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "dry_run": {
             "description": "Preview without creating (default false)",
@@ -49,6 +50,7 @@
     "investigation_claims": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_status": {
             "description": "Filter by status: unverified, partially_verified, corroborated, disputed, retracted",
@@ -81,6 +83,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assertion": {
             "description": "The specific factual assertion",
@@ -130,6 +133,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Description and context",
@@ -177,6 +181,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Narrative context",
@@ -225,6 +230,7 @@
     "investigation_entities": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entity_type": {
             "description": "Filter by type: person, organization, asset, account",
@@ -256,6 +262,7 @@
         "claim_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_id": {
             "description": "Claim entry ID to trace",
@@ -275,6 +282,7 @@
     "investigation_export_pack": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "format": {
             "description": "Export format: json or markdown (default json)",
@@ -300,6 +308,7 @@
     "investigation_find_duplicates": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_types": {
             "description": "Filter to specific types (default: person, organization, asset, account)",
@@ -331,6 +340,7 @@
     "investigation_ftm_export": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_types": {
             "description": "Entry types to export (e.g. person, organization). Omit for all",
@@ -353,6 +363,7 @@
         "entities": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "dry_run": {
             "description": "Preview without importing (default false)",
@@ -381,6 +392,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Notes about the source",
@@ -433,6 +445,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "direction": {
             "description": "Flow direction: outbound, inbound, or both (default both)",
@@ -470,6 +483,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to get network for",
@@ -499,6 +513,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entity entry ID to trace ownership for",
@@ -525,6 +540,7 @@
         "edge_type": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_id": {
             "description": "ID of the claim entry to promote",
@@ -578,6 +594,7 @@
     "investigation_qa_report": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (auto-detected if omitted)",
@@ -597,6 +614,7 @@
         "query": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "correlate": {
             "description": "Group results by entity identity across KBs (default false)",
@@ -631,6 +649,7 @@
     "investigation_sources": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "classification": {
             "description": "Filter by classification: public, leaked, foia, court_filing, etc.",
@@ -666,6 +685,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "initial_entities": {
             "description": "Initial entities to create",
@@ -712,6 +732,7 @@
     "investigation_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (auto-detected if omitted)",
@@ -725,6 +746,7 @@
     "investigation_timeline": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "actor": {
             "description": "Filter by actor name (substring match)",
@@ -765,6 +787,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to find backlinks for",
@@ -795,6 +818,7 @@
         "entries": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max body chars to return per entry (default 8000, max 20000), within the 40000-char response budget.",
@@ -846,6 +870,7 @@
         "target_kb": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "exclude_linked": {
             "description": "Exclude already-linked pairs (default: true)",
@@ -890,6 +915,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "allow_undeclared": {
             "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
@@ -954,6 +980,7 @@
         "message": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb": {
             "description": "Knowledge base name",
@@ -1060,6 +1087,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to delete",
@@ -1083,6 +1111,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Source entry ID to find neighbors for",
@@ -1130,6 +1159,7 @@
         "assignee": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Assignee identifier (e.g. 'agent:researcher', 'alice')",
@@ -1163,6 +1193,7 @@
         "location": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "Limit to specific KB (optional)",
@@ -1192,6 +1223,7 @@
         "status": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type (optional)",
@@ -1223,6 +1255,7 @@
     "kb_find_overdue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "as_of": {
             "description": "Reference date in YYYY-MM-DD format (default: today)",
@@ -1250,6 +1283,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max body chars to return (default 8000, max 20000). Values above the max are clamped to it.",
@@ -1284,6 +1318,7 @@
     "kb_index_job_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "job_id": {
             "description": "Job ID to check (optional - lists active jobs if not provided)",
@@ -1297,6 +1332,7 @@
     "kb_index_sync": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "background": {
             "default": false,
@@ -1326,6 +1362,7 @@
         "target_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "allow_dangling": {
             "default": false,
@@ -1368,6 +1405,7 @@
     "kb_list": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {},
         "required": [],
         "type": "object"
@@ -1376,6 +1414,7 @@
     "kb_list_entries": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type",
@@ -1432,6 +1471,7 @@
         "action": "discover"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "action": {
             "description": "Management action",
@@ -1471,6 +1511,7 @@
     "kb_orient": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "detail": {
             "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
@@ -1515,6 +1556,7 @@
         "kb": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "branch": {
             "description": "Branch name to push (default: current branch)",
@@ -1540,6 +1582,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "create_tasks": {
             "description": "Create tasks for failed assessments (default false)",
@@ -1573,6 +1616,7 @@
     "kb_qa_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to check (checks all if not provided)",
@@ -1586,6 +1630,7 @@
     "kb_qa_validate": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Validate a single entry (requires kb_name)",
@@ -1618,6 +1663,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max chars to return (default 8000, max 20000). Values above the max are clamped to it.",
@@ -1645,6 +1691,7 @@
     "kb_recent": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type",
@@ -1680,6 +1727,7 @@
         "path": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "description": {
             "description": "Optional description",
@@ -1710,6 +1758,7 @@
         "name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "name": {
             "description": "Name of the KB to check",
@@ -1727,6 +1776,7 @@
         "name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "name": {
             "description": "Name of the KB to reindex",
@@ -1744,6 +1794,7 @@
         "name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "name": {
             "description": "Name of the KB to remove",
@@ -1761,6 +1812,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name to get schema for",
@@ -1778,6 +1830,7 @@
         "query": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "date_from": {
             "description": "Start date (YYYY-MM-DD)",
@@ -1860,6 +1913,7 @@
     "kb_stats": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {},
         "required": [],
         "type": "object"
@@ -1868,6 +1922,7 @@
     "kb_tags": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "Filter to specific KB (optional)",
@@ -1899,6 +1954,7 @@
     "kb_timeline": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "date_from": {
             "description": "Start date (YYYY-MM-DD)",
@@ -2035,6 +2091,7 @@
     "list_edge_types": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to query. If omitted, checks all KBs.",
@@ -2048,6 +2105,7 @@
     "social_newest": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2070,6 +2128,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "author_id": {
             "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
@@ -2119,6 +2178,7 @@
         "user_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "user_id": {
             "description": "User ID",
@@ -2134,6 +2194,7 @@
     "social_top": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2165,6 +2226,7 @@
         "value": 1
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to vote on",
@@ -2197,6 +2259,7 @@
     "sw_adrs": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2228,6 +2291,7 @@
     "sw_backlog": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "epic": {
             "description": "Filter to subtasks of this epic ID",
@@ -2310,6 +2374,7 @@
     "sw_board": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2330,6 +2395,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -2353,6 +2419,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
@@ -2376,6 +2443,7 @@
     "sw_component": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2408,6 +2476,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -2427,6 +2496,7 @@
     "sw_conventions": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -2455,6 +2525,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "consequences": {
             "description": "Consequences section",
@@ -2512,6 +2583,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Item description",
@@ -2587,6 +2659,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "epic_id": {
             "description": "Epic ID",
@@ -2606,6 +2679,7 @@
     "sw_epics": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2634,6 +2708,7 @@
         "summary": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "decisions": {
             "description": "Design choices made and rationale",
@@ -2670,6 +2745,7 @@
     "sw_milestones": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2693,6 +2769,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "after": {
             "description": "Place item after this item ID",
@@ -2725,6 +2802,7 @@
     "sw_pull_next": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2740,6 +2818,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name",
@@ -2768,6 +2847,7 @@
         "reviewer": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "feedback": {
             "description": "Review notes/feedback",
@@ -2804,6 +2884,7 @@
     "sw_review_queue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2817,6 +2898,7 @@
     "sw_standards": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -2854,6 +2936,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -2877,6 +2960,7 @@
         "to_status": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -2905,6 +2989,7 @@
     "sw_validations": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -2933,6 +3018,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2954,6 +3040,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -2977,6 +3064,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "confidence": {
             "description": "Confidence 0.0-1.0",
@@ -3019,6 +3107,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
@@ -3046,6 +3135,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
@@ -3125,6 +3215,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -3148,6 +3239,7 @@
         "parent_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "children": {
             "description": "Child task specs",
@@ -3199,6 +3291,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "by": {
             "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
@@ -3235,6 +3328,7 @@
     "task_list": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
@@ -3284,6 +3378,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
@@ -3310,6 +3405,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -3331,6 +3427,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -3353,6 +3450,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
@@ -3401,6 +3499,7 @@
         "quality": "stub"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Article entry ID",
@@ -3437,6 +3536,7 @@
         "level": "none"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Article entry ID",
@@ -3466,6 +3566,7 @@
     "wiki_quality_stats": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -3479,6 +3580,7 @@
     "wiki_review_queue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -3496,6 +3598,7 @@
     "wiki_stubs": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -3518,6 +3621,7 @@
         "reviewer_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "action": {
             "description": "Review action",
@@ -3558,6 +3662,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "depth": {
             "description": "Link traversal depth (default 1, maximum 3)",
@@ -3583,6 +3688,7 @@
     "zettel_inbox": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to search (optional)",
@@ -3598,6 +3704,7 @@
     "investigation_claims": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_status": {
             "description": "Filter by status: unverified, partially_verified, corroborated, disputed, retracted",
@@ -3627,6 +3734,7 @@
     "investigation_entities": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entity_type": {
             "description": "Filter by type: person, organization, asset, account",
@@ -3658,6 +3766,7 @@
         "claim_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_id": {
             "description": "Claim entry ID to trace",
@@ -3677,6 +3786,7 @@
     "investigation_export_pack": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "format": {
             "description": "Export format: json or markdown (default json)",
@@ -3702,6 +3812,7 @@
     "investigation_find_duplicates": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_types": {
             "description": "Filter to specific types (default: person, organization, asset, account)",
@@ -3733,6 +3844,7 @@
     "investigation_ftm_export": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_types": {
             "description": "Entry types to export (e.g. person, organization). Omit for all",
@@ -3755,6 +3867,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "direction": {
             "description": "Flow direction: outbound, inbound, or both (default both)",
@@ -3792,6 +3905,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to get network for",
@@ -3821,6 +3935,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entity entry ID to trace ownership for",
@@ -3844,6 +3959,7 @@
     "investigation_qa_report": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (auto-detected if omitted)",
@@ -3863,6 +3979,7 @@
         "query": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "correlate": {
             "description": "Group results by entity identity across KBs (default false)",
@@ -3897,6 +4014,7 @@
     "investigation_sources": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "classification": {
             "description": "Filter by classification: public, leaked, foia, court_filing, etc.",
@@ -3930,6 +4048,7 @@
     "investigation_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (auto-detected if omitted)",
@@ -3943,6 +4062,7 @@
     "investigation_timeline": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "actor": {
             "description": "Filter by actor name (substring match)",
@@ -3983,6 +4103,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to find backlinks for",
@@ -4013,6 +4134,7 @@
         "entries": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max body chars to return per entry (default 8000, max 20000), within the 40000-char response budget.",
@@ -4064,6 +4186,7 @@
         "target_kb": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "exclude_linked": {
             "description": "Exclude already-linked pairs (default: true)",
@@ -4108,6 +4231,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Source entry ID to find neighbors for",
@@ -4155,6 +4279,7 @@
         "assignee": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Assignee identifier (e.g. 'agent:researcher', 'alice')",
@@ -4188,6 +4313,7 @@
         "location": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "Limit to specific KB (optional)",
@@ -4217,6 +4343,7 @@
         "status": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type (optional)",
@@ -4248,6 +4375,7 @@
     "kb_find_overdue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "as_of": {
             "description": "Reference date in YYYY-MM-DD format (default: today)",
@@ -4275,6 +4403,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max body chars to return (default 8000, max 20000). Values above the max are clamped to it.",
@@ -4309,6 +4438,7 @@
     "kb_index_job_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "job_id": {
             "description": "Job ID to check (optional - lists active jobs if not provided)",
@@ -4322,6 +4452,7 @@
     "kb_list": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {},
         "required": [],
         "type": "object"
@@ -4330,6 +4461,7 @@
     "kb_list_entries": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type",
@@ -4384,6 +4516,7 @@
     "kb_orient": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "detail": {
             "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
@@ -4426,6 +4559,7 @@
     "kb_qa_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to check (checks all if not provided)",
@@ -4439,6 +4573,7 @@
     "kb_qa_validate": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Validate a single entry (requires kb_name)",
@@ -4471,6 +4606,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max chars to return (default 8000, max 20000). Values above the max are clamped to it.",
@@ -4498,6 +4634,7 @@
     "kb_recent": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type",
@@ -4532,6 +4669,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name to get schema for",
@@ -4549,6 +4687,7 @@
         "query": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "date_from": {
             "description": "Start date (YYYY-MM-DD)",
@@ -4631,6 +4770,7 @@
     "kb_stats": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {},
         "required": [],
         "type": "object"
@@ -4639,6 +4779,7 @@
     "kb_tags": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "Filter to specific KB (optional)",
@@ -4670,6 +4811,7 @@
     "kb_timeline": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "date_from": {
             "description": "Start date (YYYY-MM-DD)",
@@ -4717,6 +4859,7 @@
     "list_edge_types": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to query. If omitted, checks all KBs.",
@@ -4730,6 +4873,7 @@
     "social_newest": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -4749,6 +4893,7 @@
         "user_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "user_id": {
             "description": "User ID",
@@ -4764,6 +4909,7 @@
     "social_top": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -4790,6 +4936,7 @@
     "sw_adrs": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -4821,6 +4968,7 @@
     "sw_backlog": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "epic": {
             "description": "Filter to subtasks of this epic ID",
@@ -4903,6 +5051,7 @@
     "sw_board": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -4923,6 +5072,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -4942,6 +5092,7 @@
     "sw_component": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -4974,6 +5125,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -4993,6 +5145,7 @@
     "sw_conventions": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -5022,6 +5175,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "epic_id": {
             "description": "Epic ID",
@@ -5041,6 +5195,7 @@
     "sw_epics": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5065,6 +5220,7 @@
     "sw_milestones": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5086,6 +5242,7 @@
     "sw_pull_next": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5101,6 +5258,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name",
@@ -5124,6 +5282,7 @@
     "sw_review_queue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5137,6 +5296,7 @@
     "sw_standards": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -5171,6 +5331,7 @@
     "sw_validations": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -5199,6 +5360,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5220,6 +5382,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5241,6 +5404,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5260,6 +5424,7 @@
     "task_list": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
@@ -5308,6 +5473,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5329,6 +5495,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5348,6 +5515,7 @@
     "wiki_quality_stats": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5361,6 +5529,7 @@
     "wiki_review_queue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5378,6 +5547,7 @@
     "wiki_stubs": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -5398,6 +5568,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "depth": {
             "description": "Link traversal depth (default 1, maximum 3)",
@@ -5423,6 +5594,7 @@
     "zettel_inbox": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to search (optional)",
@@ -5440,6 +5612,7 @@
         "edges": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "dry_run": {
             "description": "Preview without creating (default false)",
@@ -5484,6 +5657,7 @@
     "investigation_claims": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_status": {
             "description": "Filter by status: unverified, partially_verified, corroborated, disputed, retracted",
@@ -5516,6 +5690,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assertion": {
             "description": "The specific factual assertion",
@@ -5565,6 +5740,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Description and context",
@@ -5612,6 +5788,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Narrative context",
@@ -5660,6 +5837,7 @@
     "investigation_entities": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entity_type": {
             "description": "Filter by type: person, organization, asset, account",
@@ -5691,6 +5869,7 @@
         "claim_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_id": {
             "description": "Claim entry ID to trace",
@@ -5710,6 +5889,7 @@
     "investigation_export_pack": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "format": {
             "description": "Export format: json or markdown (default json)",
@@ -5735,6 +5915,7 @@
     "investigation_find_duplicates": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_types": {
             "description": "Filter to specific types (default: person, organization, asset, account)",
@@ -5766,6 +5947,7 @@
     "investigation_ftm_export": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_types": {
             "description": "Entry types to export (e.g. person, organization). Omit for all",
@@ -5788,6 +5970,7 @@
         "entities": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "dry_run": {
             "description": "Preview without importing (default false)",
@@ -5816,6 +5999,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Notes about the source",
@@ -5868,6 +6052,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "direction": {
             "description": "Flow direction: outbound, inbound, or both (default both)",
@@ -5905,6 +6090,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to get network for",
@@ -5934,6 +6120,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entity entry ID to trace ownership for",
@@ -5960,6 +6147,7 @@
         "edge_type": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "claim_id": {
             "description": "ID of the claim entry to promote",
@@ -6013,6 +6201,7 @@
     "investigation_qa_report": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (auto-detected if omitted)",
@@ -6032,6 +6221,7 @@
         "query": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "correlate": {
             "description": "Group results by entity identity across KBs (default false)",
@@ -6066,6 +6256,7 @@
     "investigation_sources": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "classification": {
             "description": "Filter by classification: public, leaked, foia, court_filing, etc.",
@@ -6101,6 +6292,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "initial_entities": {
             "description": "Initial entities to create",
@@ -6147,6 +6339,7 @@
     "investigation_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (auto-detected if omitted)",
@@ -6160,6 +6353,7 @@
     "investigation_timeline": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "actor": {
             "description": "Filter by actor name (substring match)",
@@ -6200,6 +6394,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to find backlinks for",
@@ -6230,6 +6425,7 @@
         "entries": []
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max body chars to return per entry (default 8000, max 20000), within the 40000-char response budget.",
@@ -6281,6 +6477,7 @@
         "target_kb": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "exclude_linked": {
             "description": "Exclude already-linked pairs (default: true)",
@@ -6325,6 +6522,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "allow_undeclared": {
             "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
@@ -6461,6 +6659,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to delete",
@@ -6484,6 +6683,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Source entry ID to find neighbors for",
@@ -6531,6 +6731,7 @@
         "assignee": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Assignee identifier (e.g. 'agent:researcher', 'alice')",
@@ -6564,6 +6765,7 @@
         "location": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "Limit to specific KB (optional)",
@@ -6593,6 +6795,7 @@
         "status": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type (optional)",
@@ -6624,6 +6827,7 @@
     "kb_find_overdue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "as_of": {
             "description": "Reference date in YYYY-MM-DD format (default: today)",
@@ -6651,6 +6855,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max body chars to return (default 8000, max 20000). Values above the max are clamped to it.",
@@ -6685,6 +6890,7 @@
     "kb_index_job_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "job_id": {
             "description": "Job ID to check (optional - lists active jobs if not provided)",
@@ -6702,6 +6908,7 @@
         "target_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "allow_dangling": {
             "default": false,
@@ -6744,6 +6951,7 @@
     "kb_list": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {},
         "required": [],
         "type": "object"
@@ -6752,6 +6960,7 @@
     "kb_list_entries": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type",
@@ -6806,6 +7015,7 @@
     "kb_orient": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "detail": {
             "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
@@ -6850,6 +7060,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "create_tasks": {
             "description": "Create tasks for failed assessments (default false)",
@@ -6883,6 +7094,7 @@
     "kb_qa_status": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to check (checks all if not provided)",
@@ -6896,6 +7108,7 @@
     "kb_qa_validate": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Validate a single entry (requires kb_name)",
@@ -6928,6 +7141,7 @@
         "entry_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body_limit": {
             "description": "Max chars to return (default 8000, max 20000). Values above the max are clamped to it.",
@@ -6955,6 +7169,7 @@
     "kb_recent": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_type": {
             "description": "Filter by entry type",
@@ -6989,6 +7204,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name to get schema for",
@@ -7006,6 +7222,7 @@
         "query": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "date_from": {
             "description": "Start date (YYYY-MM-DD)",
@@ -7088,6 +7305,7 @@
     "kb_stats": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {},
         "required": [],
         "type": "object"
@@ -7096,6 +7314,7 @@
     "kb_tags": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "Filter to specific KB (optional)",
@@ -7127,6 +7346,7 @@
     "kb_timeline": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "date_from": {
             "description": "Start date (YYYY-MM-DD)",
@@ -7263,6 +7483,7 @@
     "list_edge_types": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to query. If omitted, checks all KBs.",
@@ -7276,6 +7497,7 @@
     "social_newest": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7298,6 +7520,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "author_id": {
             "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
@@ -7347,6 +7570,7 @@
         "user_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "user_id": {
             "description": "User ID",
@@ -7362,6 +7586,7 @@
     "social_top": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7393,6 +7618,7 @@
         "value": 1
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Entry ID to vote on",
@@ -7425,6 +7651,7 @@
     "sw_adrs": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7456,6 +7683,7 @@
     "sw_backlog": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "epic": {
             "description": "Filter to subtasks of this epic ID",
@@ -7538,6 +7766,7 @@
     "sw_board": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7558,6 +7787,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -7581,6 +7811,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
@@ -7604,6 +7835,7 @@
     "sw_component": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7636,6 +7868,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -7655,6 +7888,7 @@
     "sw_conventions": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -7683,6 +7917,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "consequences": {
             "description": "Consequences section",
@@ -7740,6 +7975,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "body": {
             "description": "Item description",
@@ -7815,6 +8051,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "epic_id": {
             "description": "Epic ID",
@@ -7834,6 +8071,7 @@
     "sw_epics": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7862,6 +8100,7 @@
         "summary": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "decisions": {
             "description": "Design choices made and rationale",
@@ -7898,6 +8137,7 @@
     "sw_milestones": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7921,6 +8161,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "after": {
             "description": "Place item after this item ID",
@@ -7953,6 +8194,7 @@
     "sw_pull_next": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -7968,6 +8210,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name",
@@ -7996,6 +8239,7 @@
         "reviewer": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "feedback": {
             "description": "Review notes/feedback",
@@ -8032,6 +8276,7 @@
     "sw_review_queue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8045,6 +8290,7 @@
     "sw_standards": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -8082,6 +8328,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -8105,6 +8352,7 @@
         "to_status": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "item_id": {
             "description": "Backlog item ID",
@@ -8133,6 +8381,7 @@
     "sw_validations": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "category": {
             "description": "Filter by category",
@@ -8161,6 +8410,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8182,6 +8432,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8205,6 +8456,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "confidence": {
             "description": "Confidence 0.0-1.0",
@@ -8247,6 +8499,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
@@ -8274,6 +8527,7 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
@@ -8353,6 +8607,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8376,6 +8631,7 @@
         "parent_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "children": {
             "description": "Child task specs",
@@ -8427,6 +8683,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "by": {
             "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
@@ -8463,6 +8720,7 @@
     "task_list": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
@@ -8512,6 +8770,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
@@ -8538,6 +8797,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8559,6 +8819,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8581,6 +8842,7 @@
         "task_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "assignee": {
             "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
@@ -8629,6 +8891,7 @@
         "quality": "stub"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "entry_id": {
             "description": "Article entry ID",
@@ -8661,6 +8924,7 @@
     "wiki_quality_stats": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8674,6 +8938,7 @@
     "wiki_review_queue": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8691,6 +8956,7 @@
     "wiki_stubs": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB name (optional)",
@@ -8713,6 +8979,7 @@
         "reviewer_id": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "action": {
             "description": "Review action",
@@ -8753,6 +9020,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "depth": {
             "description": "Link traversal depth (default 1, maximum 3)",
@@ -8778,6 +9046,7 @@
     "zettel_inbox": {
       "arguments": {},
       "inputSchema": {
+        "additionalProperties": false,
         "properties": {
           "kb_name": {
             "description": "KB to search (optional)",
