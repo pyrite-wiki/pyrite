@@ -458,6 +458,7 @@ REVIEWED_EXPERIMENTAL: dict[str, str] = {
     "tests/test_task_cli_create_fields.py::test_conductor_desk_recipe_creates_a_task_in_one_step": "a tag named 'outside'",
     "tests/test_task_service.py::TestListTasks::test_list_preserves_priority": "'readable' in a docstring; priority round-trip",
     "tests/test_task_start.py::test_start_refuses_a_file_its_type_cannot_load_before_the_compare_and_set": "an unloadable file (ADR-0042 8a), a data-integrity refusal; no access decision. tests/test_unloadable_file_is_never_written.py pins it for task start too",
+    "tests/test_task_priority_type.py::test_a_row_holding_a_string_a_word_or_nothing_reads_as_an_int": "passes readable_kbs=None (unscoped) on direct service calls; the test checks priority typing, no access decision",
 }
 
 

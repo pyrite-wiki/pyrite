@@ -49,6 +49,7 @@ from ..utils.kb_files import (
 )
 from ..utils.metadata import parse_metadata
 from .importance_reading import row_importance_warning
+from .qa_records import content_only, is_qa_record, records_only
 
 logger = logging.getLogger(__name__)
 
@@ -259,9 +260,10 @@ class QAService:
         self.require_tier(tier)
         issues: list[dict[str, Any]] = []
 
-        # Count entries
+        # Count content entries: a QA record is not one (#1752)
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name", {"kb_name": kb_name}
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
+            {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
 
@@ -837,7 +839,7 @@ class QAService:
         *,
         readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
-        """Assess all entries in a KB (skipping qa_assessment entries and recently assessed).
+        """Assess all entries in a KB (skipping QA records and recently assessed).
 
         ``readable_kbs`` bounds each entry's link checks, as in `validate_entry`.
 
@@ -865,7 +867,7 @@ class QAService:
             etype = row["entry_type"]
 
             # Skip assessment entries themselves
-            if etype == "qa_assessment":
+            if is_qa_record(etype):
                 skipped += 1
                 continue
 
@@ -935,7 +937,7 @@ class QAService:
         """Check if entry was assessed within max_age_hours."""
         rows = self.db.execute_sql(
             "SELECT json_extract(metadata, '$.assessed_at') as assessed_at "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment' "
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()} "
             "AND json_extract(metadata, '$.target_entry') = :entry_id "
             "ORDER BY json_extract(metadata, '$.assessed_at') DESC LIMIT 1",
             {"kb_name": kb_name, "entry_id": entry_id},
@@ -994,7 +996,7 @@ class QAService:
         """Query assessment entries with optional filters."""
         sql = (
             "SELECT id, title, body, metadata FROM entry "
-            "WHERE kb_name = :kb_name AND entry_type = 'qa_assessment'"
+            f"WHERE kb_name = :kb_name AND {records_only()}"
         )
         params: dict[str, Any] = {"kb_name": kb_name}
 
@@ -1030,10 +1032,10 @@ class QAService:
         """Get entries that have no assessment."""
         rows = self.db.execute_sql(
             "SELECT e.id, e.entry_type, e.title FROM entry e "
-            "WHERE e.kb_name = :kb_name AND e.entry_type != 'qa_assessment' "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM entry a WHERE a.kb_name = :kb_name2 "
-            "  AND a.entry_type = 'qa_assessment' "
+            f"  AND {records_only('a')} "
             "  AND json_extract(a.metadata, '$.target_entry') = e.id"
             ")",
             {"kb_name": kb_name, "kb_name2": kb_name},
@@ -1047,7 +1049,7 @@ class QAService:
         """Get assessment coverage stats for a KB."""
         # Total non-assessment entries
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment'",
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
@@ -1055,7 +1057,7 @@ class QAService:
         # Entries with at least one assessment
         assessed_rows = self.db.execute_sql(
             "SELECT COUNT(DISTINCT json_extract(metadata, '$.target_entry')) as cnt "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment'",
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()}",
             {"kb_name": kb_name},
         )
         assessed = assessed_rows[0]["cnt"] if assessed_rows else 0
@@ -1066,7 +1068,7 @@ class QAService:
         by_status: dict[str, int] = {}
         rows = self.db.execute_sql(
             "SELECT json_extract(metadata, '$.qa_status') as qs, COUNT(*) as cnt "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment' "
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()} "
             "GROUP BY qs",
             {"kb_name": kb_name},
         )
@@ -1091,7 +1093,10 @@ class QAService:
     def _check_missing_titles(
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
-        sql = "SELECT id, kb_name, entry_type FROM entry WHERE (title IS NULL OR title = '')"
+        sql = (
+            "SELECT id, kb_name, entry_type FROM entry "
+            f"WHERE (title IS NULL OR title = '') AND {content_only()}"
+        )
         params: dict[str, Any] = {}
         if kb_name:
             sql += " AND kb_name = :kb_name"
@@ -1113,7 +1118,7 @@ class QAService:
         sql = (
             "SELECT id, kb_name, entry_type, title FROM entry "
             "WHERE (body IS NULL OR body = '') "
-            "AND entry_type NOT IN ('collection', 'relationship')"
+            f"AND entry_type NOT IN ('collection', 'relationship') AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -1160,7 +1165,8 @@ class QAService:
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
         sql = (
-            "SELECT id, kb_name, entry_type, date FROM entry WHERE date IS NOT NULL AND date != ''"
+            "SELECT id, kb_name, entry_type, date FROM entry "
+            f"WHERE date IS NOT NULL AND date != '' AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -1184,8 +1190,8 @@ class QAService:
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
         sql = (
-            "SELECT id, kb_name, entry_type, importance, file_path "
-            "FROM entry WHERE importance IS NOT NULL"
+            "SELECT id, kb_name, entry_type, importance, file_path FROM entry "
+            f"WHERE importance IS NOT NULL AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -1387,6 +1393,8 @@ class QAService:
     ) -> None:
         orphans = self.db.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
         for entry in orphans:
+            if is_qa_record(entry.get("entry_type")):
+                continue
             issues.append(
                 {
                     "entry_id": entry["id"],
@@ -2043,7 +2051,7 @@ class QAService:
 
         rows = self.db.execute_sql(
             "SELECT id, kb_name, entry_type, title, date, importance, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name",
+            f"FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
 
@@ -2151,7 +2159,7 @@ class QAService:
             key = (issue.get("entry_id", ""), issue.get("kb_name", ""))
             by_entry.setdefault(key, []).append(issue)
         rows = self.db.execute_sql(
-            "SELECT * FROM entry WHERE kb_name = :kb_name ORDER BY id",
+            f"SELECT * FROM entry WHERE kb_name = :kb_name AND {content_only()} ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -2425,14 +2433,14 @@ class QAService:
     def _check_llm_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Tier 2 of `validate_kb`: the model-judged rubric over every entry.
 
-        Skips ``qa_assessment`` entries, as `assess_kb` does. A model finding
+        Skips QA records, as `assess_kb` does. A model finding
         is an issue as `assess_entry` records it; an entry the model did not
         answer for is an ``evaluation_failed`` error naming the reason, so
         `ci` can never pass a check that did not run (#795).
         """
         rows = self.db.execute_sql(
             "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment' ORDER BY id",
+            f"FROM entry WHERE kb_name = :kb_name AND {content_only()} ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -2460,7 +2468,7 @@ class QAService:
         no_tag_rows = self.db.execute_sql(
             "SELECT e.id, e.kb_name, e.entry_type, e.title FROM entry e "
             "LEFT JOIN entry_tag et ON e.id = et.entry_id AND e.kb_name = et.kb_name "
-            "WHERE e.kb_name = :kb_name AND et.entry_id IS NULL",
+            f"WHERE e.kb_name = :kb_name AND et.entry_id IS NULL AND {content_only('e')}",
             {"kb_name": kb_name},
         )
         for row in no_tag_rows:
@@ -2479,7 +2487,7 @@ class QAService:
         # 2. Missing outlinks (excluding stubs)
         no_link_rows = self.db.execute_sql(
             "SELECT e.id, e.kb_name, e.entry_type, e.title, e.body FROM entry e "
-            "WHERE e.kb_name = :kb_name "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l WHERE l.source_id = e.id AND l.source_kb = e.kb_name"
             ")",
@@ -2503,7 +2511,7 @@ class QAService:
         # 3. Generic titles
         rows = self.db.execute_sql(
             "SELECT id, kb_name, title FROM entry WHERE kb_name = :kb_name "
-            "AND title IS NOT NULL AND title != ''",
+            f"AND title IS NOT NULL AND title != '' AND {content_only()}",
             {"kb_name": kb_name},
         )
         from .rubric_checkers import GENERIC_TITLES

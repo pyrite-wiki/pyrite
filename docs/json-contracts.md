@@ -1603,6 +1603,15 @@ A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
 
+The entry's `links` list holds one item per link row,
+`{"target_id", "target_kb", "relation", "note"}`. An item for a Markdown
+link to an entry file (#1723) also carries `target_path`, the KB-relative
+path the link names, and `broken`: `true` when no entry file is at that
+path, `false` when one is. A broken item's `target_id` is its path text,
+which an unrelated entry's hand-set id may equal, so `broken` is the
+signal to read; an item for a link that names an id carries neither field
+(#1765).
+
 A single task (`pyrite task get`, MCP `task_status`) returns the task
 detail dictionary with `body` included directly from the file. Over the
 MCP chunk default, MCP returns ADR-0034 truncation markers as `kb_get` does.
