@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..models.base import Entry
+from ..services.qa_records import is_qa_record
 from ..utils.sanitize import unique_path_component
 from ..utils.yaml import dump_yaml
 
@@ -162,6 +163,9 @@ def export_site(
     filtered = []
     skipped = 0
     for entry in entries:
+        # A QA record is not content (#1752): never a page, whoever calls.
+        if is_qa_record(entry.entry_type):
+            continue
         if entry.entry_type in exclude_types:
             skipped += 1
             continue

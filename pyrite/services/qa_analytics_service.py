@@ -14,6 +14,7 @@ from typing import Any
 
 from ..config import PyriteConfig
 from ..storage.database import PyriteDB
+from .qa_records import QA_RECORD_TYPES, content_only
 
 logger = logging.getLogger(__name__)
 
@@ -27,8 +28,8 @@ class QAAnalyticsService:
             "adr",
             "event",
             "timeline",
-            "qa_assessment",
             "relationship",
+            *QA_RECORD_TYPES,
         }
     )
 
@@ -67,7 +68,7 @@ class QAAnalyticsService:
 
         rows = self.db.execute_sql(
             "SELECT id, entry_type, title, updated_at FROM entry "
-            "WHERE kb_name = :kb_name AND lifecycle = 'active' "
+            f"WHERE kb_name = :kb_name AND lifecycle = 'active' AND {content_only()} "
             "AND updated_at < :cutoff "
             "ORDER BY updated_at ASC",
             {"kb_name": kb_name, "cutoff": cutoff},
@@ -120,7 +121,7 @@ class QAAnalyticsService:
         done_rows = self.db.execute_sql(
             "SELECT id, entry_type, title, updated_at FROM entry "
             "WHERE kb_name = :kb_name AND lifecycle = 'active' "
-            "AND entry_type = 'backlog_item' AND status = 'completed' "
+            f"AND {content_only()} AND entry_type = 'backlog_item' AND status = 'completed' "
             "AND updated_at < :cutoff",
             {"kb_name": kb_name, "cutoff": cutoff},
         )
@@ -142,7 +143,7 @@ class QAAnalyticsService:
             "WHERE e.kb_name = :kb_name AND e.lifecycle = 'active' "
             "AND e.updated_at < :cutoff "
             "AND (e.importance IS NULL OR e.importance <= 3) "
-            "AND e.entry_type NOT IN ('backlog_item', 'qa_assessment', 'collection') "
+            f"AND {content_only('e')} AND e.entry_type NOT IN ('backlog_item', 'collection') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l WHERE l.target_id = e.id AND l.target_kb = :kb_name"
             "  AND COALESCE(l.target_resolved, 1) = 1"
@@ -203,7 +204,7 @@ class QAAnalyticsService:
         # -- 2. Actual entry counts by type ----------------------------------
         type_count_rows = self.db.execute_sql(
             "SELECT entry_type, COUNT(*) as cnt FROM entry "
-            "WHERE kb_name = :kb_name GROUP BY entry_type",
+            f"WHERE kb_name = :kb_name AND {content_only()} GROUP BY entry_type",
             {"kb_name": kb_name},
         )
         type_counts: dict[str, int] = {row["entry_type"]: row["cnt"] for row in type_count_rows}
@@ -223,13 +224,13 @@ class QAAnalyticsService:
 
         # -- 3. Tags referenced in kb.yaml guidelines/goals but with 0 entries
         referenced_tags = self._extract_tags_from_schema(kb_schema)
-        actual_tags = dict(self.db.get_all_tags(kb_name=kb_name))
+        actual_tags = dict(self._content_tag_counts(kb_name))
         unused_tags = sorted(t for t in referenced_tags if t not in actual_tags)
 
         # -- 4. No-outlink entries -------------------------------------------
         no_outlink_rows = self.db.execute_sql(
             "SELECT e.id, e.entry_type, e.title FROM entry e "
-            "WHERE e.kb_name = :kb_name "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l "
             "  WHERE l.source_id = e.id AND l.source_kb = e.kb_name"
@@ -243,7 +244,7 @@ class QAAnalyticsService:
         # -- 5. No-inlink entries (unreferenced) -----------------------------
         no_inlink_rows = self.db.execute_sql(
             "SELECT e.id, e.entry_type, e.title FROM entry e "
-            "WHERE e.kb_name = :kb_name "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l "
             "  WHERE l.target_id = e.id AND l.target_kb = e.kb_name AND COALESCE(l.target_resolved, 1) = 1"
@@ -256,7 +257,7 @@ class QAAnalyticsService:
 
         # -- 6. Distribution stats -------------------------------------------
         # Entries per tag (top 20)
-        all_tags = self.db.get_all_tags(kb_name=kb_name)
+        all_tags = self._content_tag_counts(kb_name)
         tag_distribution = [
             {"tag": tag, "count": count}
             for tag, count in sorted(all_tags, key=lambda x: -x[1])[:20]
@@ -265,7 +266,7 @@ class QAAnalyticsService:
         # Entries per importance band
         importance_rows = self.db.execute_sql(
             "SELECT importance, COUNT(*) as cnt FROM entry "
-            "WHERE kb_name = :kb_name AND importance IS NOT NULL "
+            f"WHERE kb_name = :kb_name AND importance IS NOT NULL AND {content_only()} "
             "GROUP BY importance ORDER BY importance",
             {"kb_name": kb_name},
         )
@@ -273,7 +274,8 @@ class QAAnalyticsService:
 
         # Count entries with NULL importance
         null_importance_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND importance IS NULL",
+            "SELECT COUNT(*) as cnt FROM entry "
+            f"WHERE kb_name = :kb_name AND importance IS NULL AND {content_only()}",
             {"kb_name": kb_name},
         )
         null_importance = null_importance_rows[0]["cnt"] if null_importance_rows else 0
@@ -282,7 +284,7 @@ class QAAnalyticsService:
 
         # Total entry count
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name",
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
@@ -302,6 +304,18 @@ class QAAnalyticsService:
                 "importance": importance_distribution,
             },
         }
+
+    def _content_tag_counts(self, kb_name: str) -> list[tuple[str, int]]:
+        """Tag name and entry count over the KB's content; a QA record's tags are not counted."""
+        rows = self.db.execute_sql(
+            "SELECT t.name AS name, COUNT(*) AS cnt FROM tag t "
+            "JOIN entry_tag et ON t.id = et.tag_id "
+            "JOIN entry e ON e.id = et.entry_id AND e.kb_name = et.kb_name "
+            f"WHERE et.kb_name = :kb_name AND {content_only('e')} "
+            "GROUP BY t.name ORDER BY cnt DESC, t.name",
+            {"kb_name": kb_name},
+        )
+        return [(r["name"], int(r["cnt"])) for r in rows]
 
     @staticmethod
     def _extract_tags_from_schema(kb_schema) -> set[str]:
@@ -383,9 +397,9 @@ class QAAnalyticsService:
         # logic across each aggregation query. SQLite parameter binding
         # handles the values; the type filter is optional.
         params: dict[str, Any] = {"kb": kb_name}
-        type_clause = ""
+        type_clause = f" AND {content_only()}"
         if entry_type is not None:
-            type_clause = " AND entry_type = :etype"
+            type_clause += " AND entry_type = :etype"
             params["etype"] = entry_type
 
         # 1. Total entries
@@ -460,7 +474,8 @@ class QAAnalyticsService:
             f"SELECT e.id AS eid, COUNT(l.id) AS n "
             f"FROM entry e LEFT JOIN link l "
             "ON l.source_id = e.id AND l.source_kb = e.kb_name "
-            f"WHERE e.kb_name = :kb{(' AND e.entry_type = :etype' if entry_type else '')} "
+            f"WHERE e.kb_name = :kb AND {content_only('e')}"
+            f"{(' AND e.entry_type = :etype' if entry_type else '')} "
             "GROUP BY e.id",
             params,
         )
@@ -478,7 +493,7 @@ class QAAnalyticsService:
         source_rows = self.db.execute_sql(
             f"SELECT COUNT(DISTINCT e.id) AS n FROM entry e "
             "INNER JOIN source s ON s.entry_id = e.id AND s.kb_name = e.kb_name "
-            f"WHERE e.kb_name = :kb"
+            f"WHERE e.kb_name = :kb AND {content_only('e')}"
             f"{(' AND e.entry_type = :etype' if entry_type else '')}",
             params,
         )

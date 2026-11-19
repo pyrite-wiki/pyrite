@@ -286,6 +286,7 @@ def export_site(
 
     from ..renderers.quartz import export_site as quartz_export
     from ..renderers.quartz import scaffold_quartz_project
+    from ..services.qa_records import is_qa_record
 
     # Parse filter sets
     type_filter = set(exclude_types.split(",")) if exclude_types else set()
@@ -304,7 +305,12 @@ def export_site(
                 console.print(path_line("  Created ", f, style="dim"))
 
         # Load all entries from DB
-        raw_entries = svc.list_entries(kb_name=kb, limit=100000)
+        # A QA record is not content: `qa assess` must not change the site (#1752).
+        raw_entries = [
+            row
+            for row in svc.list_entries(kb_name=kb, limit=100000)
+            if not is_qa_record(row.get("entry_type") or row.get("type"))
+        ]
         if not raw_entries:
             console.print("[yellow]No entries found in KB.[/yellow]")
             raise typer.Exit(0)

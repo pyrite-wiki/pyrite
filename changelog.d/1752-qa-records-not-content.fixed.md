@@ -1,0 +1,1 @@
+`qa assess` no longer changes what `qa validate`, `qa status`, `qa gaps` and `export site` report: the `qa_assessment` records it writes are no longer counted as content, flagged as orphans, or exported as a `qa_assessment` folder in the site.
