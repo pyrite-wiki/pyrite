@@ -188,7 +188,7 @@ nested map such as `kb_create`'s `metadata` or an investigation tool's
   "message": "..."}`) plus `"did_you_mean": ["<accepted key>"]`. That field
   appears only when there is a guess: a near miss (`due` -> `due_date`) or,
   failing that, the tool's one map of the caller's own keys (an investigation
-  tool's `fields`). `suggestion` lists the accepted keys. Besides its declared
+  tool's `fields`). `suggestion` lists the declared keys. Besides its declared
   keys, a write tool accepts:
   - the ADR-0034 markers (`body_truncated`, `body_length`, `body_offset`,
     `body_chunk_size`), which the truncation guard reads;
