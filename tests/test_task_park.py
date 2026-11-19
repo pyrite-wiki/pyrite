@@ -488,9 +488,11 @@ def _cli(world, *args):
 def test_park_writes_the_three_fields_and_keeps_the_status(wworld, tid):
     path = wworld.kb_path(KB) / f"{tid}.md"
     status = _front(path)["status"]
+    # `ip` is held by agent:x: its holder parks it (round 2, the holder rule).
+    by = ["--by", "agent:x"] if tid == "ip" else []
     code, data = _cli(
         wworld, "park", tid, "--reason", "foia-response", "--kind", "external",
-        "--retest-after", "2026-12-10",
+        "--retest-after", "2026-12-10", *by,
     )  # fmt: skip
     assert code == 0, data
     front = _front(path)
@@ -518,8 +520,9 @@ def test_unpark_removes_the_keys_and_leaves_no_empty_values(wworld):
     path = wworld.kb_path(KB) / "ip.md"
     before_bytes = path.read_bytes()
     before = _front(path)
-    _cli(wworld, "park", "ip", "--reason", "r", "--kind", "person", "--retest-after", "2026-12-10")
-    code, data = _cli(wworld, "unpark", "ip")
+    _cli(wworld, "park", "ip", "--reason", "r", "--kind", "person", "--retest-after", "2026-12-10",
+         "--by", "agent:x")  # fmt: skip
+    code, data = _cli(wworld, "unpark", "ip", "--by", "agent:x")
     assert code == 0, data
     assert _park_keys(path) == []
     after = _front(path)
@@ -627,7 +630,9 @@ def _mcp(world, tool, **args):
 
 def test_cli_and_mcp_park_and_unpark_return_one_shape(wworld):
     _, cli_park = _cli(wworld, "park", "t", "--reason", "r", "--retest-after", "2026-12-10")
-    mcp_park = _mcp(wworld, "task_park", task_id="ip", reason="r", retest_after="2026-12-10")
+    mcp_park = _mcp(
+        wworld, "task_park", task_id="ip", reason="r", retest_after="2026-12-10", by="agent:x"
+    )
     assert "error" not in mcp_park, mcp_park
     drop = {"outcome", "task_id", "status", "park_state"}
     assert {k: v for k, v in cli_park.items() if k not in drop} == {
@@ -635,7 +640,7 @@ def test_cli_and_mcp_park_and_unpark_return_one_shape(wworld):
     }
     assert set(cli_park) - {"outcome"} == set(mcp_park)
     _, cli_un = _cli(wworld, "unpark", "t")
-    mcp_un = _mcp(wworld, "task_unpark", task_id="ip")
+    mcp_un = _mcp(wworld, "task_unpark", task_id="ip", by="agent:x")
     assert "error" not in mcp_un, mcp_un
     assert cli_un["removed"] == mcp_un["removed"] == ["parked_awaiting", "retest_after"]
     assert set(cli_un) - {"outcome"} == set(mcp_un)
@@ -663,7 +668,17 @@ def test_mcp_park_tools_are_write_tier():
 def test_parked_then_dispatchable_through_the_commands(wworld, today):
     """The groom's acceptance, end to end through the write commands."""
     _cli(wworld, "park", "t", "--reason", "reply", "--retest-after", "2026-12-10")
-    _cli(wworld, "park", "ip", "--reason", "ruling", "--retest-after", "2026-12-10")
+    _cli(
+        wworld,
+        "park",
+        "ip",
+        "--reason",
+        "ruling",
+        "--retest-after",
+        "2026-12-10",
+        "--by",
+        "agent:x",
+    )
     for day, listed, due in [
         (BEFORE, False, []),
         (ON, True, ["ip"]),
@@ -759,3 +774,144 @@ def test_the_three_park_keys_are_read_from_one_source(tmp_path, today):
         assert rows["hand"]["park_state"] == "person"
     finally:
         w.close()
+
+
+# -- Round 2: who may park, and what may be parked ------------------------------------
+#
+# The maintainer's decision of 2026-11-19 on PR #1777:
+# - park and unpark follow the holder rule task finish follows: a task another
+#   caller holds is refused (FORBIDDEN), its holder parks it, and the operator
+#   has the explicit override. A task no one holds may be parked by anyone
+#   (the plan's question 1 was about a task another account holds).
+# - parking a task whose status is done or cancelled is refused, writing nothing.
+#
+# REST has no park or unpark route (the groom scoped REST to `GET /tasks?parked=`),
+# as task finish has none: the REST cell pins that no route writes a park.
+
+HELD = {
+    "held": _task("held", status="in_progress", extra="assignee: agent:a\n"),
+    "held-parked": _task(
+        "held-parked",
+        status="in_progress",
+        extra="assignee: agent:a\nparked_awaiting: ruling\nretest_after: 2026-12-10\n",
+    ),
+    "free": _task("free"),
+    "done": _task("done", status="done"),
+    "cancelled": _task("cancelled", status="cancelled"),
+    "done-parked": _task("done-parked", status="done", extra="parked_awaiting: reply\n"),
+}
+
+
+@pytest.fixture
+def hworld(tmp_path):
+    w = _build(tmp_path, HELD)
+    with w.pointed():
+        yield w
+    w.close()
+
+
+def _park_on(world, surface, verb, tid, **extra):
+    """(code, payload) of a park or unpark on one surface. ``code`` is the
+    error code, or None on success."""
+    if surface == "cli":
+        args = ["--reason", "r"] if verb == "park" else []
+        if extra.get("by"):
+            args += ["--by", extra["by"]]
+        if extra.get("operator_override"):
+            args += ["--operator-override"]
+        _, data = _cli(world, verb, tid, *args)
+        return data.get("error_code"), data
+    if surface == "mcp":
+        args = {"task_id": tid, **({"reason": "r"} if verb == "park" else {}), **extra}
+        out = _mcp(world, f"task_{verb}", **args)
+        return out.get("error_code"), out
+    response = world.client.post(
+        f"/api/tasks/{tid}/{verb}", params={"kb": KB}, json={"reason": "r", **extra}
+    )
+    return response.status_code, response.text
+
+
+def _no_rest_route(world, verb, tid, path):
+    before = path.read_bytes()
+    code, _ = _park_on(world, "rest", verb, tid)
+    assert code in (404, 405), code
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("verb", ["park", "unpark"])
+@pytest.mark.parametrize("surface", ["cli", "mcp"])  # REST: test_rest_has_no_park_route
+def test_a_task_another_caller_holds_is_not_parked(hworld, surface, verb):
+    tid = "held" if verb == "park" else "held-parked"
+    path = hworld.kb_path(KB) / f"{tid}.md"
+    before = path.read_bytes()
+    code, data = _park_on(hworld, surface, verb, tid, by="agent:b")
+    assert code == "FORBIDDEN", data
+    assert path.read_bytes() == before
+    # No caller at all is not the holder either.
+    code, data = _park_on(hworld, surface, verb, tid)
+    assert code == "FORBIDDEN", data
+    assert path.read_bytes() == before
+
+
+@pytest.mark.control(reason="REST has no park route on dev or here; pins that none writes a park")
+@pytest.mark.parametrize("verb", ["park", "unpark"])
+def test_rest_has_no_park_route(hworld, verb):
+    tid = "held" if verb == "park" else "held-parked"
+    _no_rest_route(hworld, verb, tid, hworld.kb_path(KB) / f"{tid}.md")
+    _no_rest_route(hworld, verb, "done", hworld.kb_path(KB) / "done.md")
+
+
+@pytest.mark.parametrize("verb", ["park", "unpark"])
+@pytest.mark.parametrize("surface", ["cli", "mcp"])
+def test_the_holder_parks_its_own_task(hworld, surface, verb):
+    tid = "held" if verb == "park" else "held-parked"
+    code, data = _park_on(hworld, surface, verb, tid, by="agent:a")
+    assert code is None, data
+    front = _front(hworld.kb_path(KB) / f"{tid}.md")
+    assert ("parked_awaiting" in front) is (verb == "park")
+    assert front["assignee"] == "agent:a" and front["status"] == "in_progress"
+
+
+@pytest.mark.parametrize("verb", ["park", "unpark"])
+@pytest.mark.parametrize("surface", ["cli", "mcp"])
+def test_the_operator_override_parks_a_task_it_does_not_hold(hworld, surface, verb):
+    tid = "held" if verb == "park" else "held-parked"
+    code, data = _park_on(hworld, surface, verb, tid, operator_override=True)
+    assert code is None, data
+    front = _front(hworld.kb_path(KB) / f"{tid}.md")
+    assert ("parked_awaiting" in front) is (verb == "park")
+    assert front["assignee"] == "agent:a"
+
+
+@pytest.mark.control(
+    reason="a task no one holds was parkable by anyone before round 2 and still is"
+)
+@pytest.mark.parametrize("surface", ["cli", "mcp"])
+def test_a_task_no_one_holds_is_parked_by_anyone(hworld, surface):
+    code, data = _park_on(hworld, surface, "park", "free")
+    assert code is None, data
+    assert _front(hworld.kb_path(KB) / "free.md")["parked_awaiting"] == "r"
+
+
+@pytest.mark.parametrize("tid", ["done", "cancelled"])
+@pytest.mark.parametrize("surface", ["cli", "mcp"])
+def test_parking_a_done_or_cancelled_task_is_refused(hworld, surface, tid):
+    path = hworld.kb_path(KB) / f"{tid}.md"
+    before = path.read_bytes()
+    code, data = _park_on(hworld, surface, "park", tid)
+    assert code == "VALIDATION_FAILED", data
+    assert path.read_bytes() == before
+    # The operator override does not make a finished task parkable.
+    code, data = _park_on(hworld, surface, "park", tid, operator_override=True)
+    assert code == "VALIDATION_FAILED", data
+    assert path.read_bytes() == before
+
+
+@pytest.mark.control(
+    reason="unpark of a done task is left as before round 2: it clears a stale park"
+)
+@pytest.mark.parametrize("surface", ["cli", "mcp"])
+def test_a_done_task_can_still_be_unparked(hworld, surface):
+    code, data = _park_on(hworld, surface, "unpark", "done-parked")
+    assert code is None, data
+    assert "parked_awaiting" not in _front(hworld.kb_path(KB) / "done-parked.md")
