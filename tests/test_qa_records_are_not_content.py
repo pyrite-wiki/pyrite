@@ -18,8 +18,6 @@ from pathlib import Path
 
 import pytest
 
-from pyrite.services import qa_records
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 KB = "test-kb"
 
@@ -152,6 +150,9 @@ def test_assess_still_skips_recently_assessed_entries(world):
 
 
 def test_the_predicate_is_one_set():
+    # Imported here so the rest of the file collects, and fails on behaviour, without the fix.
+    from pyrite.services import qa_records
+
     assert qa_records.QA_RECORD_TYPES == frozenset({"qa_assessment"})
     assert qa_records.is_qa_record("qa_assessment")
     assert not qa_records.is_qa_record("note")
