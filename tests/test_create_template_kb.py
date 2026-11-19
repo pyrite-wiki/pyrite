@@ -22,15 +22,15 @@ def _init_software_kb(world, tmp_path):
     """A KB made by `pyrite init -t software`, in the world's config."""
     assert (
         world.cli(
-        "init",
+            "init",
             "--template",
             "software",
             "--path",
             str(tmp_path / "proj"),
-            "--name", 
-            "proj", 
+            "--name",
+            "proj",
             "--no-examples",
-    ).exit_code
+        ).exit_code
         == 0
     )
     return tmp_path / "proj"
@@ -124,13 +124,13 @@ class TestCreateTemplateWithKb:
             # An in-range importance: the skeleton shows the value the create writes.
             ("software", "note", ["--importance", "7"], ["--title", "x", "--importance", "7"], ()),
             # An out-of-range importance: both refuse, with the same envelope.
-                (
-                    "software", 
-                    "note", 
-                    ["--importance", "42"], 
-                    ["--title", "x", "--importance", "42"],
-                    (),
-                ),
+            (
+                "software",
+                "note",
+                ["--importance", "42"],
+                ["--title", "x", "--importance", "42"],
+                (),
+            ),
             # A plugin type mapping: the skeleton stores the mapped type.
             # `date` is caller-supplied, so it differs from the skeleton's
             # empty default the way `title` does.
