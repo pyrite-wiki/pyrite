@@ -440,6 +440,75 @@ def test_every_write_tool_with_its_own_kb_argument_refuses_another(server):
     assert not wrong, "\n  ".join(wrong)
 
 
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        (
+            "kb_link",
+            {"source_id": "a-1781", "target_id": "b-1781", "relation": "related_to"},
+        ),
+        ("kb_commit", {"kb": KB, "message": "probe 1781"}),
+        ("kb_push", {"kb": KB}),
+    ],
+)
+def test_kb_name_is_refused_on_a_write_tool_that_declares_another_kb_argument(server, tool, args):
+    """`kb_name` is a KB argument like any other: a tool whose own KB argument
+    is `source_kb`/`target_kb` (`kb_link`) or `kb` (`kb_commit`, `kb_push`)
+    does not read it, so it is refused, not access-checked and dropped (#1781)."""
+    assert "kb_name" not in server.tools[tool]["inputSchema"]["properties"]
+    before = _files(server)
+    result = _call(server, tool, {**args, "kb_name": KB})
+    _assert_refused_naming(result, "kb_name")
+    assert _files(server) == before
+
+
+def _probe_with_own_kb_argument(server, name, **extra):
+    """A write tool that declares `kb` (so the "declares no KB argument"
+    branch does not accept `kb_name` for it) and not `kb_name`."""
+    seen = _register(
+        server, name, "write", {"kb": {"type": "string"}, "entry_id": {"type": "string"}}, **extra
+    )
+    return seen
+
+
+@pytest.mark.control(reason="dispatcher-consumed key; must stay accepted (#1781)")
+def test_kb_name_is_accepted_on_a_core_write_tool_that_locates_an_entry(server, monkeypatch):
+    """No in-tree core write tool is `locates_entry` without declaring
+    `kb_name`, so the branch is driven by a probe registered under a core
+    name, with its own `kb` argument and no `kb_name`: only the
+    `locates_entry` clause can accept `kb_name` for it."""
+    import pyrite.server.mcp_server as mod
+
+    name = "probe_core_locates_1781"
+    monkeypatch.setattr(mod, "CORE_TOOL_NAMES", frozenset(mod.CORE_TOOL_NAMES) | {name})
+    made = _call(server, "kb_create", {"kb_name": KB, "entry_type": "note", "title": "Loc 1781"})
+    seen = _probe_with_own_kb_argument(server, name, locates_entry={"id_args": ["entry_id"]})
+    try:
+        result = _call(server, name, {"entry_id": made["entry_id"], "kb_name": KB})
+        assert result == {"ok": True}, result
+        assert seen["kb_name"] == KB
+    finally:
+        server.tools.pop(name)
+        server._tool_tiers.pop(name)
+
+
+@pytest.mark.control(reason="dispatcher-consumed key; must stay accepted (#1781)")
+def test_kb_name_is_accepted_on_a_plugin_write_tool_that_declares_a_different_kb_argument(
+    server,
+):
+    """A plugin write tool (not a core name) that declares `kb`: `kb_name` is
+    still the dispatcher's, since it sets the handler's KB (`DEFAULT_KB`)."""
+    name = "probe_plugin_kb_1781"
+    seen = _probe_with_own_kb_argument(server, name)
+    try:
+        result = _call(server, name, {"kb_name": KB})
+        assert result == {"ok": True}, result
+        assert seen["kb_name"] == KB
+    finally:
+        server.tools.pop(name)
+        server._tool_tiers.pop(name)
+
+
 @pytest.mark.control(reason="ADR-0034 marker; must keep its own refusal")
 def test_a_truncation_marker_on_a_write_meets_the_truncation_refusal(server):
     """ADR-0034 markers are read by the dispatcher's truncation guard, not unknown."""
