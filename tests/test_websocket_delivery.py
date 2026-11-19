@@ -151,7 +151,7 @@ class TestSyncRoutesDeliver:
         ],
     )
     def test_noop_update_sends_no_event(self, open_app, fields):
-        """A successful PUT that changes no file sends no update event (#1089)."""
+        """An unchanged or refused PUT sends no update event (#1089, #1184)."""
         with TestClient(open_app) as c:
             entry_id = _create(c, PUBLIC, "Unchanged note")
             got = c.get(f"/api/entries/{entry_id}", params={"kb": PUBLIC})
@@ -160,9 +160,14 @@ class TestSyncRoutesDeliver:
             payload = {"kb": PUBLIC, **{field: entry[field] for field in fields}}
             with c.websocket_connect("/ws") as ws:
                 r = c.put(f"/api/entries/{entry_id}", json=payload)
-                assert r.status_code == 200, r.text
-                assert r.json()["updated"] is True
-                assert r.json()["changed"] is False
+                if fields == ("id",):
+                    assert r.status_code == 400, r.text
+                    assert r.json()["detail"]["code"] == "VALIDATION_FAILED"
+                    assert "id" in r.json()["detail"]["message"]
+                else:
+                    assert r.status_code == 200, r.text
+                    assert r.json()["updated"] is True
+                    assert r.json()["changed"] is False
                 _marker(c)
                 assert receive_json(ws) == MARKER
 

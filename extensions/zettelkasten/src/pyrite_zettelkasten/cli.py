@@ -1,20 +1,23 @@
 """Zettelkasten CLI commands."""
 
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from pyrite.cli.context import require_kb
+from pyrite.cli.output import cli_console, path_line
 from pyrite.config import load_config
-from pyrite.services.access_policy import UNSCOPED
-from pyrite.storage.database import PyriteDB
+
+if TYPE_CHECKING:
+    from pyrite.storage.database import PyriteDB
 
 zettel_app = typer.Typer(help="Zettelkasten knowledge management")
-console = Console()
+console = cli_console()
 logger = logging.getLogger(__name__)
 
 
@@ -41,14 +44,12 @@ def zettel_new(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="Target KB"),
     source: str = typer.Option("", "--source", "-s", help="Source reference"),
 ):
-    """Create a new zettel through the KBService write pipeline (#391).
-
-    Was: build the entry, `repo.save(entry)` directly (no exists check -- an
-    existing id was silently overwritten -- no validators, no before/after-save
-    hooks, and nothing indexed until a separate `pyrite index sync`). Now goes
-    through `KBService.create_entry`, same as `software-kb`'s backlog_item
-    creation.
-    """
+    """Create a new zettel through the KBService write pipeline."""
+    # (#391) Was: build the entry, `repo.save(entry)` directly (no exists check -- an
+    # existing id was silently overwritten -- no validators, no before/after-save
+    # hooks, and nothing indexed until a separate `pyrite index sync`). Now goes
+    # through `KBService.create_entry`, same as `software-kb`'s backlog_item
+    # creation.
     from pyrite.exceptions import PyriteError
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
@@ -109,7 +110,7 @@ def zettel_new(
     finally:
         db.close()
 
-    console.print(f"[green]Created {zettel_type} note:[/green] {file_path}")
+    console.print(path_line(f"[green]Created {zettel_type} note:[/green] ", file_path))
 
 
 @zettel_app.command("inbox")
@@ -117,6 +118,8 @@ def zettel_inbox(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to search"),
 ):
     """List fleeting notes not yet fully processed (not at 'connect' stage)."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
@@ -166,6 +169,9 @@ def zettel_orphans(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to search"),
 ):
     """Find notes with no incoming or outgoing links."""
+    from pyrite.services.access_policy import UNSCOPED
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
@@ -202,6 +208,8 @@ def zettel_maturity(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to search"),
 ):
     """Show maturity distribution of zettels."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)

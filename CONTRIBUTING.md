@@ -14,6 +14,7 @@ project is worth their time.
 
 - Python 3.11+ (3.13 recommended)
 - Git
+- Node.js 22.17 or later, only to build or test the web UI in `web/` (SvelteKit 3; `web/package.json` `engines`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ### Initial Setup
@@ -34,10 +35,10 @@ uv venv
 source .venv/bin/activate  # or `.venv\Scripts\activate` on Windows
 # `.[all]` is the whole optional surface (CLI, server, MCP, AI) plus the test
 # tooling. `.[dev]` alone is tooling only and cannot even collect the suite.
-uv pip install -e ".[all]"
+uv pip install -c "$(scripts/lock-constraints.sh)" -e ".[all]"
 
 # Install all extensions (required for full test suite)
-for ext in extensions/*/; do uv pip install -e "$ext"; done
+for ext in extensions/*/; do uv pip install -c "$(scripts/lock-constraints.sh)" -e "$ext"; done
 
 # Install the git hooks (commit, commit-msg and pre-push in one go)
 pre-commit install
@@ -57,6 +58,39 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+#### The dependency lock
+
+`uv.lock` pins every dependency, transitive ones included, to one version for
+all of Python 3.11, 3.12 and 3.13 (#1357). CI and `scripts/setup-checkout.sh`
+install with `-c "$(scripts/lock-constraints.sh)"`, which exports the lock as
+pip constraints on the spot, so two runs a day apart test the same code. Nothing
+derived is committed (it would go stale when Dependabot bumps `uv.lock`). The
+install verb is still `uv pip install -e`; `uv sync` is not used, so the
+extensions (separate packages with no dependencies of their own) and `--system`
+installs work as before. Without `uv` on your PATH, `setup-checkout.sh` puts a
+private `uv` in the venv with pip and carries on. `pyproject.toml` keeps its
+ranges, they are the contract with people who `pip install pyrite`, and the
+published wheel does not read the lock.
+
+After you add or change a dependency, or bump the project version, in
+`pyproject.toml`, refresh the lock and commit it with the change:
+
+```bash
+scripts/lock-deps.sh            # uv lock: re-resolves only what pyproject.toml forces
+scripts/lock-deps.sh --upgrade  # moves every pin to the newest allowed version
+scripts/lock-deps.sh --check    # what CI's `lock` job runs: fails if the lock is stale
+```
+
+`tests/test_dependency_lock.py` fails offline when a declared dependency is
+missing from the lock or pinned outside its range; the `lock` CI job runs
+`uv lock --check`, and so does `scripts/release.py` on the release commit (a version
+bump leaves the lock stale until you run `scripts/lock-deps.sh`). Dependabot's `uv`
+entry bumps the lock only (`versioning-strategy: lockfile-only`). The lock does not hide upstream breakage from us: the
+weekly `unlocked.yml` workflow installs `.[all]` *without* it and runs the
+suite, so a release inside our ranges that breaks Pyrite shows up there.
+Dependabot's `uv` ecosystem (`.github/dependabot.yml`) opens one grouped weekly PR
+that updates `uv.lock`; the `lock` job and the install jobs run on it like any PR.
 
 See [Setting Up the Development Environment](kb/runbooks/setting-up-dev-environment.md) for troubleshooting.
 Line endings are normalised to LF across platforms via repository `.gitattributes`.
@@ -236,8 +270,14 @@ Tests carry no size marker yet.
 
 **Everything**
 
+Measured gate snapshots are recorded in [#1045](https://github.com/pyrite-wiki/pyrite/issues/1045)
+and the CI `shard-report` job. The #1045 groom records about 19,800 collected
+ids at `3e350972`; its earlier 16,583-id gate recorded 1,240 seconds of
+4-vCPU shard time. Use the shard report to refresh counts and timings as the
+suite changes.
+
 ```bash
-scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4   # backend, ~6,000 tests, ~10 min on a busy laptop
+scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/ -n 4   # backend
 cd web && npm ci && npm run check && npm run test:unit && npm run build   # frontend
 HF_HUB_OFFLINE=1 .venv/bin/pytest tests/e2e -m e2e -n 4 --dist loadfile   # large: real server and MCP processes
 PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh                  # large: docs/getting-started.md as a test
@@ -352,6 +392,14 @@ experimental tests it left out. A new test of an experimental surface needs
 no marker if its path is mapped; a new file for one needs a line in
 `tests/experimental_surface.py`.
 
+**Ratchets.** To remove a row from a list that may only shrink, delete its line:
+there is no count to edit, so two pull requests that remove different rows
+merge. A row is added only by a commit whose final paragraph carries
+`Ratchet-raise: <list> <reason>`; the CI step `scripts/check_ratchets_only_shrink.py
+--range` refuses the pull request otherwise. This applies to `NOT_YET` in
+`tests/test_cli_numeric_options_declare_a_range.py` today; #1608 converts the
+other pinned lists.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
@@ -420,7 +468,7 @@ and stamps it.
 | Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* above) or the commit being pushed is already verified by CI (see *A verified commit is not tested again at the push*). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
 | On the pull request | nothing: CI runs the backend suite on one interpreter (a failure is the first thing in its log; the 25 slowest tests go to the step summary and a junit artifact is kept 30 days; mypy is its own advisory job: it fails only when a file has more type errors than the change's base commit (a PR's merge-ref parent, a push's previous tip; `.mypy-baseline.json` is the fallback when there is none), and after you fix errors you lower the baseline with `mypy pyrite/ --ignore-missing-imports > mypy.out; python scripts/mypy_ratchet.py mypy.out --update`); the backend suite runs as 3 parallel shards per interpreter balanced by `.test_durations.gz`, and `shard-report` proves they ran every test once) (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change, graded against the merge commit's first parent; it is not in `gate` and never blocks a merge, and CI does not pass it `--enforce-fix`; its claim rule handles module-level tables on the test function itself, grades the whole function for an inline `parametrize` list, and selects nothing for class-level, fixture-params, generate-hook and imported tables; a `control` counts only when written on the test or one of its parameters, and one added another way (class or module `pytestmark`, a hook, a fixture, the test body) turns the job red; it runs on pull requests, not in the merge queue, and CI's environment, which has no Postgres, is the one it reports in; gating waits for #1104's model; see `docs/testing.md`) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
 | A frontend change | `cd web && npm run check && npm run test:unit && npm run build` |
-| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
+| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, whether the private fixes repository (the `security` remote; `--private-remote`, or `--no-private-remote` for a project that keeps none) holds a change `dev` lacks, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
 
 **What CI guarantees:** no pull request merges until the full backend suite
 has passed on top of current `dev`. Run the full suite locally to reproduce a
@@ -440,11 +488,15 @@ identical version. An unbounded `pytest>=8.0.0` once resolved 9.1.1 on one
 interpreter and 9.0.2 on another; a change that passed the PR gate under one
 version broke `dev` under the other. `tests/test_dev_process_config.py`
 asserts the pins stay exact, so loosening one is a visible diff, not a silent
-drift on the next `uv pip install`. After changing a pin, refresh your
-worktree's venv and confirm it took:
+drift on the next `uv pip install`. The same is now true of every other
+dependency through `uv.lock` (see [The dependency lock](#the-dependency-lock));
+the runner's exact pins remain because they are also what `pyproject.toml`
+tells a contributor who installs without the lock. After changing a pin,
+run `scripts/lock-deps.sh`, then refresh your worktree's venv and confirm it
+took:
 
 ```bash
-uv pip install --python .venv/bin/python -e ".[all,dev]"
+uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e ".[all,dev]"
 .venv/bin/python -m pytest --version
 ```
 
@@ -461,8 +513,10 @@ uv pip install --python .venv/bin/python -e ".[all,dev]"
 
 - Tests live in `tests/`; extension tests in `extensions/<name>/tests/`
 - Name test files `test_*.py`
-- A `fix:` commit must include a test that fails without the fix (a hook checks
-  that it touches `tests/`)
+- A `fix:` commit must include a test that fails without the fix (the local
+  commit-msg hook checks that a `fix:` commit touches `tests/`). In CI, the pull
+  request as a whole is judged: a branch with a `test:` commit followed by a
+  `fix:` commit passes because pull requests are squashed when merged to `dev`.
 - Use pytest fixtures for common setup (`tmp_kb`, isolated plugin registry);
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
@@ -488,6 +542,17 @@ you before CI does. A source-only change selects none of them. See why with
 Adding a guard: mark each scanning function `@pytest.mark.guard`, add its row
 here, and keep it cheap (these run on every push that touches a test).
 
+### Regenerating goldens
+
+Characterization goldens (`tests/characterization/goldens/`) pin the response contracts for REST, MCP, and error bodies across all principals. Gating tests compare against these files; they are never regenerated in CI.
+
+A migration PR may not change a golden (ADR-0037). When an intentional behavior change updates responses:
+
+```bash
+PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest tests/characterization/
+```
+
+Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration under pytest-xdist because each worker records only the goldens its own tests observed (#712, fixed by #1225). The per-principal file lock does not make parallel regeneration supported. Review `git diff tests/characterization/goldens/` carefully before committing.
 
 ## Branches, hooks and pull requests
 
@@ -497,9 +562,8 @@ here, and keep it cheap (these run on every push that touches a test).
   only and moves by fast-forward to a commit that already passed CI.
 - Branch from `dev`, open the PR against `dev`. Name the branch for what it
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
-  `process/*` (tooling and workflow). Never push to `dev`. Rebase is the default merge
-  method (it keeps your commits and their messages); squash is fine for a
-  branch whose history is noise.
+  `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
+  each pull request into a single commit on `dev` by default.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to

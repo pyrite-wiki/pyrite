@@ -25,10 +25,14 @@ class _RaisingDB:
         raise self.error
 
 
-def _message(query: str, error_text: str) -> str:
+def _message(query: str, error_text: str, *, caller_query: str | None = None) -> str:
+    """The refusal for ``error_text``; the caller's own query is ``query``
+    unless ``caller_query`` says otherwise (an expanded query is not theirs)."""
     service = SearchService(_RaisingDB(sqlite3.OperationalError(error_text)))
     with pytest.raises(QuerySyntaxError) as excinfo:
-        service._db_search(query=query)
+        service._db_search(
+            query=query, caller_query=query if caller_query is None else caller_query
+        )
     return str(excinfo.value)
 
 
@@ -61,11 +65,130 @@ def test_a_column_the_query_does_not_name_is_not_the_callers_fault():
     assert not isinstance(excinfo.value, QuerySyntaxError)
 
 
+@pytest.mark.control(reason="the local operator keeps the driver's text, as before")
 def test_other_operational_errors_keep_the_previous_text():
-    message = _message("detention AND third-party-doctrine", "unterminated string")
+    from pyrite.services.acting import local_process
+
+    with local_process(True):  # the CLI's operator
+        message = _message("detention AND third-party-doctrine", "unterminated string")
 
     assert "unterminated string" in message
     assert "third-party-doctrine" not in message
+
+
+def test_a_network_caller_sees_the_parsers_detail_about_their_own_query():
+    """A syntax error is about the caller's own query: the FTS parser
+    is given only the query, so its words are the caller's to see, over the
+    network too. A fault that is not a syntax error stays the operator's
+    (``test_a_column_the_query_does_not_name_is_not_the_callers_fault`` and
+    the storage cases below)."""
+    from pyrite.services.acting import local_process
+
+    with local_process(False):
+        message = _message('detention AND "third', "unterminated string")
+
+    assert message.startswith("Query could not be parsed: unterminated string.")
+    assert "the server log has the details" not in message
+
+
+@pytest.mark.control(
+    reason="dev withheld every FTS message; red against this branch's first showing rule (60be99f6)"
+)
+def test_a_network_caller_never_sees_driver_text_beyond_their_query():
+    """A message that carries a syntax marker but more than the caller's own
+    query (here a path) is the driver's: withheld from a network caller."""
+    from pyrite.services.acting import local_process
+
+    with local_process(False):
+        message = _message("detention AND third-party-doctrine", "unterminated string at /srv/x")
+
+    assert message.startswith("Query could not be parsed: the server log has the details.")
+    assert "/srv/x" not in message
+
+
+_WITHHELD_CONTROL = pytest.mark.control(
+    reason="dev withheld every FTS message; red against this branch's first showing rule (60be99f6)"
+)
+
+
+@pytest.mark.parametrize(
+    ("caller_query", "error_text", "shown"),
+    [
+        ("AND falcon", 'fts5: syntax error near "AND"', True),
+        ("falcon AND", 'fts5: syntax error near ""', True),
+        ("*falcon", "unknown special query: falcon", True),
+        ("NEAR(a b, x)", 'expected integer, got "x"', True),
+        # The quoted part is not in the caller's query: not theirs to see.
+        pytest.param(
+            *("falcon AND", 'fts5: syntax error near "zebra"', False), marks=_WITHHELD_CONTROL
+        ),
+        pytest.param(
+            *("falcon", "unknown special query: provider-term", False), marks=_WITHHELD_CONTROL
+        ),
+        # Not one of the parser's templates, whatever it contains.
+        pytest.param(
+            *("falcon AND", "fts5: syntax error near falcon in /srv/x", False),
+            marks=_WITHHELD_CONTROL,
+        ),
+    ],
+)
+def test_only_a_parser_template_quoting_the_callers_own_query_is_shown(
+    caller_query, error_text, shown
+):
+    from pyrite.services.acting import local_process
+
+    with local_process(False):
+        message = _message(caller_query, error_text)
+    assert (error_text in message) is shown, message
+    assert ("the server log has the details" in message) is not shown, message
+
+
+def test_a_column_token_is_named_only_from_the_callers_own_query():
+    """The token named as a column reference comes from the query the caller
+    wrote; a token only an expansion added is not named back to them."""
+    from pyrite.services.acting import local_process
+
+    with local_process(False):
+        message = _message(
+            "falcon OR third-party-doctrine", "no such column: party", caller_query="falcon"
+        )
+    assert "third-party" not in message and "party" not in message, message
+    assert "the server log has the details" in message
+
+
+@pytest.mark.control(
+    reason="dev withheld every FTS message; red against this branch's first showing rule (60be99f6)"
+)
+def test_an_expanded_querys_parse_error_does_not_quote_a_provider_term(tmp_path, monkeypatch):
+    """Expansion adds the provider's terms, unquoted, after an OR, so the
+    query is not sanitized: the FTS parser's error can quote a term that is
+    the provider's, not the caller's. It is withheld from a network caller."""
+    from pyrite.config import KBConfig
+    from pyrite.services.acting import local_process
+    from tests._world import build_world
+
+    kb = tmp_path / "kb"
+    (kb / "notes").mkdir(parents=True)
+    (kb / "notes" / "one.md").write_text("---\nid: one\ntitle: Falcon\ntype: note\n---\nb\n")
+    world = build_world(tmp_path / "w", kbs=[KBConfig(name="k", path=kb, kb_type="generic")])
+    try:
+        world.index("k")
+
+        class Provider:
+            def expand(self, _query):
+                return ["NEAR(a b, providersecret)"]
+
+        service = SearchService(world.db)
+        monkeypatch.setattr(service, "_get_expansion_service", lambda: Provider())
+        # The caller wrote "falcon"; the provider added the rest.
+        with local_process(False), pytest.raises(QuerySyntaxError) as network:
+            service.search("falcon", expand=True, caller_wrote_query=True)
+        assert "providersecret" not in str(network.value), str(network.value)
+        with local_process(True), pytest.raises(QuerySyntaxError) as local:
+            service.search("falcon", expand=True, caller_wrote_query=True)
+        assert "providersecret" in str(local.value)  # the operator's to see
+    finally:
+        world.close()
 
 
 def test_error_code_is_unchanged():

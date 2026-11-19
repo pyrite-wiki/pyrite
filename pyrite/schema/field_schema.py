@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -14,6 +15,11 @@ if TYPE_CHECKING:
     from ..models import Entry
 
 _TEMPLATE_RE = re.compile(r"\{(\w+)\}")
+
+#: The field types whose value is a list: a value sent to one is stored as a
+#: list (:meth:`FieldSchema.coerce`) and a value on disk that is not one is a
+#: type finding (`_validate_field_value`), #1502.
+LIST_FIELD_TYPES = ("list", "multi-select", "tags")
 
 
 def expand_subdirectory_template(template: str, entry: Entry) -> str:
@@ -133,9 +139,28 @@ class FieldSchema:
             return copy.deepcopy(self.default)
         if self.field_type in ("text", "select"):
             return ""
-        if self.field_type in ("list", "multi-select", "tags"):
+        if self.field_type in LIST_FIELD_TYPES:
             return []
         return None
+
+    def coerce(self, value: Any) -> Any:
+        """``value`` as this field stores it when a caller sends it (#1502).
+
+        THE coercion of a write's value to its declared type, called by the
+        service on every surface (``KBService._with_declared_fields`` on a
+        create, ``KBService._resolve_operation``'s ``Set`` on an update). A
+        field typed ``list``, ``multi-select`` or ``tags`` that is sent a value
+        which is not a list stores ``[value]``: one item, never split on
+        commas. An empty value (``None``, ``''``) stays empty, and a mapping is
+        left for the type check ("expected list"); every other type and value
+        is returned unchanged. A value already on disk is never passed here:
+        a file is reported, not repaired (principle 2).
+        """
+        if self.field_type not in LIST_FIELD_TYPES:
+            return value
+        if value is None or value == "" or isinstance(value, list | dict):
+            return value
+        return [value]
 
     def allowed_values(self) -> list[Any]:
         """The declared enum for this field: ``options`` (or ``values``), else
@@ -206,6 +231,11 @@ class TypeSchema:
     evaluation_rubric: list[str | dict[str, Any]] = field(
         default_factory=list
     )  # Assertions for QA validation
+    #: Statuses that end live work (#934), as the operator wrote them: ``None`` is
+    #: "not declared", ``[]`` is "declared: none". Kept raw like ``field_aliases``,
+    #: so a malformed value is reported by ``qa validate`` and ignored by
+    #: ``core_types.settled_statuses``, never a crash at load.
+    settled_statuses: Any = None
     edge_type: bool = False  # Whether this type represents an edge/relationship
     endpoints: dict[str, EndpointSpec] = field(default_factory=dict)  # Edge endpoint specs
     state_machine: dict[str, Any] | None = None  # Per-type workflow override (Tier A r1175)
@@ -265,13 +295,12 @@ class TypeSchema:
         """
         if not self.file_pattern:
             return None
-        from ..exceptions import ValidationError
+        from ..exceptions import ValidationError, outside_text
         from ..schema import generate_entry_id
 
         fixed = {
             "id": entry.id,
             "slug": entry.id,
-            "date": getattr(entry, "date", "") or "",
             "title": generate_entry_id(entry.title),
             "type": entry.entry_type,
         }
@@ -279,11 +308,13 @@ class TypeSchema:
         import dataclasses
         from string import Formatter
 
-        data_fields = (
+        dataclass_fields = (
             {f.name for f in dataclasses.fields(entry)}
             if dataclasses.is_dataclass(entry)
             else set()
         )
+        private_fields = {name for name in dataclass_fields if name.startswith("_")}
+        data_fields = dataclass_fields - private_fields
         meta = getattr(entry, "metadata", None) or {}
 
         def _is_missing(value: Any) -> bool:
@@ -298,8 +329,30 @@ class TypeSchema:
         for _literal, field_name, _format_spec, conversion in Formatter().parse(self.file_pattern):
             if field_name is None:
                 continue
-            if field_name in fixed:
-                values[field_name] = fixed[field_name]
+            if field_name in fixed or field_name == "date":
+                if field_name == "date":
+                    # `date` is a dataclass field on typed entries but lives
+                    # in metadata on kb.yaml-declared ones (GenericEntry has
+                    # no date attribute), so resolve it like any other
+                    # placeholder instead of reading one location (#1467 --
+                    # a kb.yaml-only type formatted an empty `{date}` into
+                    # the filename).
+                    value = getattr(entry, "date", None)
+                    if _is_missing(value):
+                        value = meta.get("date")
+                    if _is_missing(value):
+                        return None
+                else:
+                    # The fixed placeholders carry the entry's identity
+                    # verbatim and do NOT go through the missing-value
+                    # fallback: an id of `..` is not an ordinarily-absent
+                    # field, it is a traversal attempt the `..`-component
+                    # check below must see and refuse. Routing it through
+                    # `_is_missing` (it starts with `.`) swallowed it into
+                    # a `None` fallback and broke the pre-existing
+                    # test_a_resolved_filename_of_exactly_dotdot_is_refused.
+                    value = fixed[field_name]
+                values[field_name] = value
                 continue
             if not self._PLACEHOLDER_NAME_RE.match(field_name):
                 raise ValidationError(
@@ -307,6 +360,15 @@ class TypeSchema:
                     f"{{{field_name}}}, which is not a plain field name (no "
                     "attribute/index access, no positional placeholders); "
                     "refusing to resolve it"
+                )
+            if field_name in private_fields:
+                # Private bookkeeping fields (_schema_version, _create_fields,
+                # _entry_type, etc.) are internal entry state, not data fields,
+                # and must not be resolved into file names (#1639).
+                raise ValidationError(
+                    f"file_pattern {self.file_pattern!r} names {{{field_name}}}, "
+                    f"which is a private field of entry {entry.id!r} (type "
+                    f"{entry.entry_type!r}); refusing to resolve it"
                 )
             if field_name in data_fields:
                 value = getattr(entry, field_name, None)
@@ -345,7 +407,7 @@ class TypeSchema:
         except (ValueError, TypeError, IndexError, KeyError) as e:
             raise ValidationError(
                 f"file_pattern {self.file_pattern!r} could not be resolved for entry "
-                f"{entry.id!r}: {e}"
+                f"{entry.id!r}: {outside_text(e)}"
             ) from e
 
         if "\x00" in result:
@@ -511,7 +573,23 @@ def _validate_field_value(
                 }
             )
 
+    elif ft in ("list", "tags"):
+        # A list field holding a scalar or a mapping (#1502): a type error,
+        # governed by `validation.enforce` like `multi-select`'s above. Its
+        # own rule, `field_type`, so a reader keyed on `rule` never takes it
+        # for the enum check's `field_list` (an off-list element).
+        if not isinstance(value, list):
+            errors.append(
+                {
+                    "field": field_name,
+                    "rule": "field_type",
+                    "expected": "list",
+                    # A loaded mapping is a YAML-library class: name it as one.
+                    "got": "dict" if isinstance(value, Mapping) else type(value).__name__,
+                }
+            )
+
     # select / list / multi-select membership: see enum_check.enum_findings.
-    # text, object-ref, tags -- no validation beyond presence (for now)
+    # text, object-ref -- no validation beyond presence (for now)
 
     return errors

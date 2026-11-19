@@ -1,8 +1,8 @@
 """
 Tests for QA auto-fix functionality (pyrite qa fix).
 
-Covers: date normalisation, missing field defaults, broken wikilink fixes
-by edit distance, tag normalisation, dry-run mode, and fix-rule filtering.
+Covers: date normalisation, broken wikilink fixes by edit distance, tag
+normalisation, dry-run mode, and fix-rule filtering.
 """
 
 import json
@@ -176,38 +176,6 @@ class TestEditDistance:
 
     def test_both_empty(self):
         assert QAService._edit_distance("", "") == 0
-
-
-# =========================================================================
-# Missing field defaults
-# =========================================================================
-
-
-class TestMissingFieldDefaults:
-    """Test _fix_missing_field."""
-
-    def test_importance_default(self):
-        issue = {
-            "entry_id": "test",
-            "kb_name": "kb",
-            "rule": "schema_violation",
-            "field": "importance",
-            "message": "missing field importance",
-        }
-        fix = QAService._fix_missing_field(issue)
-        assert fix is not None
-        assert fix["new_value"] == 5
-
-    def test_unknown_field_returns_none(self):
-        issue = {
-            "entry_id": "test",
-            "kb_name": "kb",
-            "rule": "schema_violation",
-            "field": "something_custom",
-            "message": "missing field something_custom",
-        }
-        fix = QAService._fix_missing_field(issue)
-        assert fix is None
 
 
 # =========================================================================

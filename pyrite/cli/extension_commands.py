@@ -11,16 +11,15 @@ import sys
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..utils.errors import PARTIAL_EXIT, cli_error
-from .output import validate_output_format
+from .output import cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
 
 extension_app = typer.Typer(help="Extension management")
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str) -> str | None:
@@ -294,11 +293,11 @@ class Test{pascal}Plugin:
     else:
         console.print(f"[green]Created extension:[/green] {name}")
         console.print(f"  Package: {pkg}")
-        console.print(f"  Path: {out_path}")
+        console.print(path_line("  Path: ", out_path))
         console.print(f"  Files: {len(generated_files)}")
         if type_names:
             console.print(f"  Types: {', '.join(type_names)}")
-        console.print(f"\n  Install with: pyrite extension install {out_path}")
+        console.print(path_line("\n  Install with: pyrite extension install ", out_path))
 
 
 # Runs in a fresh interpreter. Loads only the named distribution's own
@@ -423,7 +422,7 @@ def extension_install(
         typer.echo(formatted)
     else:
         console.print(f"[green]Installed:[/green] {plugin_name}")
-        console.print(f"  Path: {path}")
+        console.print(path_line("  Path: ", path))
         if verify:
             if verified:
                 console.print("  [green]Verified: plugin loaded successfully[/green]")

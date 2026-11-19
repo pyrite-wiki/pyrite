@@ -7,16 +7,16 @@ Commands: list-entries, batch-read, orient, recent, timeline, tags, backlinks
 from __future__ import annotations
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
-from ..exceptions import PyriteError
+from ..exceptions import PyriteError, ValidationError
+from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import cli_context, require_kb
-from .output import validate_output_format
+from .output import cli_console, output_format_choice, validate_output_format
 
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str, **kwargs) -> str | None:
@@ -33,6 +33,30 @@ def _cli_error(message: str, output_format: str = "rich", error_code: str | None
     cli_error(message, output_format, error_code=error_code or "ERROR")
 
 
+# Allowed sort columns for list-entries (#1387). Kept in sync with
+# storage SQLiteBackend._SORT_COLUMNS via tests/test_cli_sort_values.py.
+SORT_COLUMNS = ("created_at", "entry_type", "title", "updated_at")
+
+
+def validate_sort_by(value: str) -> str:
+    """Validate list-entries --sort-by column (#1387)."""
+    val = value.lower() if value else ""
+    if val in SORT_COLUMNS:
+        return val
+    raise typer.BadParameter(
+        f"unknown sort column '{value}'; choose one of: {', '.join(SORT_COLUMNS)}"
+    )
+
+
+def validate_sort_order(value: str) -> str:
+    """Validate sort order direction for list-entries and timeline (#1387)."""
+    allowed = ("asc", "desc")
+    val = value.lower() if value else ""
+    if val in allowed:
+        return val
+    raise typer.BadParameter(f"unknown sort order '{value}'; choose one of: {', '.join(allowed)}")
+
+
 def register_browse_commands(app: typer.Typer) -> None:
     """Register read-only browsing/discovery commands on the main app."""
 
@@ -44,11 +68,17 @@ def register_browse_commands(app: typer.Typer) -> None:
         sort_by: str = typer.Option(
             "updated_at",
             "--sort-by",
+            callback=validate_sort_by,
             help="Sort column: title, updated_at, created_at, entry_type",
         ),
-        sort_order: str = typer.Option("desc", "--sort-order", help="Sort direction: asc, desc"),
-        limit: int = typer.Option(50, "--limit", "-n", help="Max entries (max 200)"),
-        offset: int = typer.Option(0, "--offset", help="Pagination offset"),
+        sort_order: str = typer.Option(
+            "desc",
+            "--sort-order",
+            callback=validate_sort_order,
+            help="Sort direction: asc, desc",
+        ),
+        limit: int = typer.Option(50, "--limit", "-n", min=0, help="Max entries (max 200)"),
+        offset: int = typer.Option(0, "--offset", min=0, help="Pagination offset"),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
             "json",
@@ -207,7 +237,11 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="full (default) or brief. brief omits the write-side schema blocks.",
         ),
         overview_limit: int = typer.Option(
-            50, "--limit", help="KBs per no-name overview page (maximum 100)."
+            50,
+            "--limit",
+            min=1,
+            max=100,
+            help="KBs per no-name overview page (maximum 100).",
         ),
         overview_offset: int = typer.Option(
             0, "--offset", min=0, help="KB offset for a no-name overview page."
@@ -215,8 +249,8 @@ def register_browse_commands(app: typer.Typer) -> None:
         output_format: str = typer.Option(
             "json",
             "--format",
-            callback=validate_output_format,
-            help="Output format: json, rich, markdown, csv, yaml",
+            callback=output_format_choice("json", "yaml", "rich"),
+            help="Output format: json, yaml, rich",
         ),
     ):
         """One-shot KB orientation summary — types, tags, recent changes, and schema.
@@ -317,6 +351,12 @@ def register_browse_commands(app: typer.Typer) -> None:
                     board_parts.append(part)
                 if board_parts:
                     console.print(f"\n[bold]Board:[/bold] {' | '.join(board_parts)}")
+                if sw.get("board_error"):
+                    # A plugin's board that could not be loaded: its refusal text,
+                    # in place of the lanes and the recommendation (#1538).
+                    from rich.markup import escape
+
+                    console.print(f"\n[bold]Board:[/bold] [red]{escape(sw['board_error'])}[/red]")
 
                 # In-progress table
                 ip_items = sw.get("in_progress", [])
@@ -362,9 +402,15 @@ def register_browse_commands(app: typer.Typer) -> None:
     def recent_entries(
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by entry type"),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max entries"),
+        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries"),
         since: str = typer.Option(
-            None, "--since", help="Only entries updated after this ISO datetime"
+            None,
+            "--since",
+            help=(
+                "Entries updated at or after this instant (inclusive): a date "
+                "(2026-10-22, read as midnight UTC) or an ISO datetime with or "
+                "without an offset"
+            ),
         ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
@@ -376,6 +422,17 @@ def register_browse_commands(app: typer.Typer) -> None:
     ):
         """Show recently changed entries."""
         with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
+            from ..utils.errors import cli_error_from
+
+            # A value that cannot be read is refused, as over MCP (#1268): an
+            # empty list for a value nobody parsed reads as "nothing changed".
+            try:
+                since_instant = parse_since(since)
+            except ValidationError as exc:
+                # `e` is this module's loop variable further down; binding the
+                # exception to it is a mypy error once the block ends (#1268).
+                cli_error_from(exc, output_format)
+
             entries = svc.list_entries(
                 kb_name=kb_name,
                 entry_type=entry_type,
@@ -384,8 +441,8 @@ def register_browse_commands(app: typer.Typer) -> None:
                 limit=min(limit, 200),
             )
 
-            if since:
-                entries = [e for e in entries if (e.get("updated_at") or "") >= since]
+            if since_instant is not None:
+                entries = filter_updated_since(entries, since_instant)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
@@ -430,10 +487,16 @@ def register_browse_commands(app: typer.Typer) -> None:
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter to a specific knowledge base"),
         date_from: str = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
         date_to: str = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
-        min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
-        limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+        min_importance: int = typer.Option(
+            1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
+        ),
+        limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results (1-500)"),
         sort: str = typer.Option(
-            "desc", "--sort", "-s", help="Sort order: asc or desc (default: desc)"
+            "desc",
+            "--sort",
+            "-s",
+            callback=validate_sort_order,
+            help="Sort order: asc or desc (default: desc)",
         ),
         output_format: str = typer.Option(
             "json",
@@ -482,7 +545,7 @@ def register_browse_commands(app: typer.Typer) -> None:
     def tags_cmd(
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-        limit: int = typer.Option(100, "--limit", "-n", help="Max tags to show"),
+        limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
         output_format: str = typer.Option(
             "json",
             "--format",

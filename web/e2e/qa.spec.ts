@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-import { SEEDED_DAILY_DATES, SEEDED_ENTRIES } from './fixtures';
+import { SEEDED_DAILY_DATES, SEEDED_ENTRIES, SEEDED_LINKED_ENTRY_IDS } from './fixtures';
 
 // status.total_entries is the seeded KB's non-daily entries plus the seeded
 // daily notes (see fixtures.ts SEEDED_ENTRIES / SEEDED_DAILY_DATES).
@@ -30,16 +30,12 @@ test.describe('QA Dashboard Page', () => {
 		await expect(page.getByLabel('Filter by severity')).toBeVisible();
 	});
 
-	// The "QA with an issue" regime: the groom for this package expected the
-	// seeded world to have zero issues, but it does not. global-setup.ts (out
-	// of scope — package A) creates no links between entries (confirmed
-	// empty by graph.spec.ts's own assertions against /api/graph), and
-	// qa_service.py's `orphan_entry` rule (line 640) fires for exactly every
-	// entry with no links in either direction — deterministically, on every
-	// run, one `orphan_entry` row per seeded entry (info severity). Asserting
-	// "zero issues" would be a false premise, not a real test; asserting the
-	// actual deterministic invariant is the real regime.
-	test('QA against the seeded world reports an orphan_entry issue for every seeded entry', async ({
+	// The "QA with an issue" regime: the seeded world links a few entries
+	// (#162, SEEDED_LINKS in fixtures.ts), and qa_service.py's
+	// `orphan_entry` rule fires for exactly every entry with no links in
+	// either direction — deterministically, on every run, one `orphan_entry`
+	// row per unlinked seeded entry (info severity).
+	test('QA against the seeded world reports an orphan_entry issue for every unlinked seeded entry', async ({
 		page
 	}) => {
 		await page.goto('/qa');
@@ -58,17 +54,18 @@ test.describe('QA Dashboard Page', () => {
 		// Body rows only — getByRole('row') also matches the header <tr>.
 		await expect(page.locator('tbody').getByRole('row')).toHaveCount(issueCount);
 
-		// Every seeded entry has exactly one orphan_entry row — deterministic
-		// given the seed's link-free world (see comment above). Some entries
-		// also carry rubric_violation rows for the same id, so the row must be
-		// narrowed to the one whose Rule cell reads exactly "orphan_entry"
-		// (a strict-mode violation otherwise: entries with rubric issues match
+		// Every unlinked seeded entry has exactly one orphan_entry row, and
+		// every linked one has none — deterministic given the seed's link set
+		// (SEEDED_LINKS in fixtures.ts, #162). Some entries also carry
+		// rubric_violation rows for the same id, so the row must be narrowed
+		// to the one whose Rule cell reads exactly "orphan_entry" (a
+		// strict-mode violation otherwise: entries with rubric issues match
 		// more than one row on id alone).
 		for (const entry of SEEDED_ENTRIES) {
 			const row = page
 				.getByRole('row', { name: new RegExp(`\\b${entry.id}\\b`) })
 				.filter({ has: page.getByRole('cell', { name: 'orphan_entry', exact: true }) });
-			await expect(row).toHaveCount(1);
+			await expect(row).toHaveCount(SEEDED_LINKED_ENTRY_IDS.has(entry.id) ? 0 : 1);
 		}
 	});
 

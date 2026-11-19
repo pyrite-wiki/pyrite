@@ -116,12 +116,20 @@ class SearchBackend(Protocol):
 
     # ── full-text search ─────────────────────────────────────────────
 
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads: what
+        ``search_response`` reports as ``searched`` (#1757). Declared field
+        values and tags are not among them until they are indexed."""
+        ...
+
     def search(
         self,
         query: str,
         kb_name: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -172,6 +180,8 @@ class SearchBackend(Protocol):
         limit: int = 20,
         min_similarity: float = DEFAULT_MIN_SIMILARITY,
         entry_type: str | None = None,
+        entry_types: list[str] | None = None,
+        exclude_types: list[str] | None = None,
         tags: list[str] | None = None,
         date_from: str | None = None,
         date_to: str | None = None,
@@ -272,6 +282,12 @@ class SearchBackend(Protocol):
         """Get entries this entry links TO; a target outside ``readable_kbs`` reads as missing."""
         ...
 
+    def get_kbs_holding(
+        self, ids: list[str], *, readable_kbs: set[str] | None
+    ) -> dict[str, list[str]]:
+        """In which readable KBs does each id exist? ``{id: [kb, ...]}``, one query."""
+        ...
+
     def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
         """Get ALL backlinks targeting entries in a KB, keyed by target entry_id.
 
@@ -355,6 +371,8 @@ class SearchBackend(Protocol):
         offset: int = 0,
         sort_order: str = "asc",
         kb_names: set[str] | list[str] | None = None,
+        status: str | None = None,
+        exclude_status: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get timeline events ordered by date."""
         ...

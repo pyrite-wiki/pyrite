@@ -5,15 +5,14 @@ Extended repo management: subscribe, fork, sync, unsubscribe, status.
 """
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..config import load_config
 from ..utils.errors import cli_error
-from .output import validate_output_format
+from .output import cli_console, path_line, validate_output_format
 
 repo_collab_app = typer.Typer(help="Repository collaboration commands")
-console = Console()
+console = cli_console()
 
 
 def _format_output(data: dict, fmt: str) -> str | None:
@@ -32,6 +31,7 @@ def _get_db_and_services():
     db = open_index_db(config)
     user_service = UserService(db)
     repo_service = RepoService(config, db, user_service=user_service)
+    repo_service.scrub_workspace_remotes()
     return config, db, repo_service, user_service
 
 
@@ -49,7 +49,7 @@ def repo_subscribe(
 
         if result["success"]:
             console.print(f"[green]Subscribed to {result['repo']}[/green]")
-            console.print(f"  Path: {result['path']}")
+            console.print(path_line("  Path: ", result["path"]))
             console.print(f"  KBs discovered: {len(result['kbs'])}")
             for kb in result["kbs"]:
                 console.print(f"    - {kb}")
@@ -76,7 +76,7 @@ def repo_fork(
 
         if result["success"]:
             console.print(f"[green]Forked and cloned {result['repo']}[/green]")
-            console.print(f"  Path: {result['path']}")
+            console.print(path_line("  Path: ", result["path"]))
             console.print(f"  Upstream: {result.get('upstream', 'N/A')}")
             if result.get("kbs"):
                 console.print(f"  KBs: {', '.join(result['kbs'])}")
@@ -184,7 +184,7 @@ def repo_status(
             return
 
         console.print(f"\n[bold cyan]{status['name']}[/bold cyan]")
-        console.print(f"  Path: {status['local_path']}")
+        console.print(path_line("  Path: ", status["local_path"]))
         if status.get("remote_url"):
             console.print(f"  Remote: {status['remote_url']}")
         if status.get("current_branch"):

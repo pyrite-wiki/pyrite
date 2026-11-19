@@ -148,8 +148,8 @@ def test_a_rename_sets_the_id_and_leaves_the_rest_of_the_file_as_written(tmp_pat
     result = KBRepository(config.knowledge_bases[0]).rename("old-one", "new-one")
 
     assert result["renamed"] and result["links_rewritten"] == 3, result
-    assert not (kb_path / "notes" / "old-one.md").exists()
-    after = _text(kb_path / "notes" / "new-one.md")
+    assert not (kb_path / "notes" / "new-one.md").exists()
+    after = _text(kb_path / "notes" / "old-one.md")
     assert "id: new-one\n" in after, after
     assert "- to: foo          # legacy spelling\n  type: related\n  since: 2020\n" in after
     assert_only_changed(before, after, [Set("id", "new-one")])
@@ -169,7 +169,7 @@ def test_a_renames_stamp_keeps_the_files_own_spelling(tmp_path: Path):
 
     KBRepository(config.knowledge_bases[0]).rename("old-one", "new-one")
 
-    after = _text(kb_path / "notes" / "new-one.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     line = next(l for l in after.splitlines() if l.startswith("updated_at:"))
     assert re.fullmatch(r"updated_at: \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", line), line
     assert line != "updated_at: 2020-01-01T00:00:00Z", "the stamp did not move"
@@ -203,7 +203,7 @@ def test_the_cli_rename_goes_the_same_way(tmp_path: Path):
 
     _cli(config, ["rename", "old-one", "new-one", "-k", KB, "--format", "json"])
 
-    after = _text(kb_path / "notes" / "new-one.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     assert_only_changed(before, after, [Set("id", "new-one")])
 
 
@@ -217,7 +217,7 @@ def test_a_rename_of_a_file_without_an_id_key_adds_one(tmp_path: Path):
 
     KBRepository(config.knowledge_bases[0]).rename("old", "new-one")
 
-    after = _text(kb_path / "notes" / "new-one.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     assert "\nid: new-one\n" in after, after
     assert_only_changed(before, after, [Set("id", "new-one")])
 
@@ -363,16 +363,28 @@ STANDARD = (
 @pytest.fixture
 def software_plugin():
     pytest.importorskip("pyrite_software_kb.cli")
-    from pyrite.plugins.registry import PluginRegistry
+    from pyrite.plugins import get_registry
     from pyrite_software_kb.plugin import SoftwareKBPlugin
 
-    PluginRegistry().register(SoftwareKBPlugin())
+    registry = get_registry()
+    plugin = SoftwareKBPlugin()
+    previous = registry._plugins.get(plugin.name)
+    registry.register(plugin)
+    cli_app._plugins_mounted = False
+    try:
+        yield plugin
+    finally:
+        if previous is None:
+            registry._plugins.pop(plugin.name, None)
+        else:
+            registry._plugins[plugin.name] = previous
+        cli_app._plugins_mounted = False
 
 
-def _migrate_standards(config: PyriteConfig) -> str:
+def _migrate_standards(config: PyriteConfig, *, exit_code: int = 0) -> str:
     with patch("pyrite_software_kb.cli.load_config", return_value=config):
         result = CliRunner().invoke(cli_app, ["sw", "migrate-standards", "--apply", "-k", KB])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == exit_code, result.output
     return result.output
 
 
@@ -392,6 +404,50 @@ def test_migrate_standards_sets_the_type_unsets_enforced_and_keeps_the_rest(
     assert "type: programmatic_validation   # legacy type\r\n" in after, after
     assert "enforced" not in after, after
     assert_only_changed(before, after, [Set("type", "programmatic_validation"), Unset("enforced")])
+
+
+@pytest.mark.parametrize("subdir", ["standards", "elsewhere"], ids=["moved", "in-place"])
+def test_migrate_standards_never_writes_a_file_its_type_can_no_longer_load(
+    tmp_path: Path, software_plugin, subdir
+):
+    # ADR-0042 8a: the migration is driven by index rows, and a row can be
+    # older than the file. A file hand-edited into something `standard` cannot
+    # load since the last sync keeps its bytes (neither moved nor rewritten),
+    # and the run says it skipped it.
+    config, kb_path = _kb(tmp_path, {f"{subdir}/s.md": STANDARD}, kb_type="software")
+    path = kb_path / subdir / "s.md"
+    path.write_text(STANDARD.replace("title: S   # keep", "title: [a, b]"), encoding="utf-8")
+    before = path.read_bytes()
+
+    out = _migrate_standards(config, exit_code=1)
+
+    assert path.read_bytes() == before
+    assert sorted(p.relative_to(kb_path).as_posix() for p in kb_path.rglob("*.md")) == [
+        f"{subdir}/s.md"
+    ]
+    assert "title must be a string" in out.replace("\n", " "), out
+
+
+def test_migrate_standards_reports_and_skips_when_move_is_refused(tmp_path: Path, software_plugin):
+    import sqlite3
+
+    # #1625 item 3: sw_migrate_standards catches ValidationError from a refused move,
+    # reports the skip, and exits with 1.
+    config, kb_path = _kb(tmp_path, {"standards/s.md": STANDARD}, kb_type="software")
+    readme_path = kb_path / "standards" / "README.md"
+    (kb_path / "standards" / "s.md").rename(readme_path)
+    before = readme_path.read_bytes()
+
+    with sqlite3.connect(config.settings.index_path) as conn:
+        conn.execute("UPDATE entry SET file_path = ? WHERE id = 's'", (str(readme_path),))
+        conn.commit()
+
+    out = _migrate_standards(config, exit_code=1)
+
+    assert readme_path.read_bytes() == before
+    assert not (kb_path / "validations" / "README.md").exists()
+    assert "Skip" in out
+    assert "the index walk does not list that path" in out
 
 
 # --------------------------------------------------------------------------
@@ -443,8 +499,8 @@ def test_a_rename_is_refused_only_for_the_entry_renamed(
     result = repo.rename("old-one", "new-one")
 
     assert result["renamed"], result
-    assert (kb_path / "notes" / "new-one.md").exists()
-    assert not (kb_path / "notes" / "old-one.md").exists()
+    assert (kb_path / "notes" / "old-one.md").exists()
+    assert not (kb_path / "notes" / "new-one.md").exists()
     after = _text(linker)
     split_before, split_after = split_frontmatter(before), split_frontmatter(after)
     assert isinstance(split_before, Frontmatter) and isinstance(split_after, Frontmatter)
@@ -543,8 +599,8 @@ def test_a_rename_completes_and_lists_every_linker_it_could_not_patch(
     result = repo.rename("old-one", "new-one")
 
     assert result["renamed"], result
-    assert (kb_path / "notes" / "new-one.md").exists()
-    assert not (kb_path / "notes" / "old-one.md").exists()
+    assert (kb_path / "notes" / "old-one.md").exists()
+    assert not (kb_path / "notes" / "new-one.md").exists()
     for p in healthy:
         assert "[[new-one]]" in _text(p) and "[[old-one]]" not in _text(p), p
     skipped = {s["path"]: s["reason"] for s in result["files_skipped"]}
@@ -632,7 +688,7 @@ def test_a_rename_to_an_id_a_yaml_1_1_reader_takes_for_a_boolean_quotes_it(
 
     KBRepository(config.knowledge_bases[0]).rename("old-one", new_id)
 
-    after = _text(kb_path / "notes" / f"{new_id}.md")
+    after = _text(kb_path / "notes" / "old-one.md")
     assert f'id: "{new_id}"\n' in after, after
     fm, _body = load_frontmatter(after)
     assert fm["id"] == new_id and isinstance(fm["id"], str), fm

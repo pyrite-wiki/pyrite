@@ -23,7 +23,22 @@ wt_parent="$(dirname "$repo_root")/pyrite-wt"
 wt_dir="$wt_parent/${branch//\//-}"
 
 cd "$repo_root"
-git fetch -q origin dev
+if [ "$start" = origin/dev ]; then
+  if ! git remote | grep -qx "origin"; then
+    echo >&2 "new-worktree: remote 'origin' is missing."
+    echo >&2 "Add it with: git remote add origin <url> (or: git remote rename <name> origin)"
+    echo >&2 "An explicit local start-point needs no remote: $0 <branch-name> <local-ref>"
+    exit 1
+  fi
+  if ! fetch_error=$(git fetch -q origin dev 2>&1); then
+    printf '%s\n' "$fetch_error" >&2
+    echo >&2 "new-worktree: cannot fetch 'dev' from remote 'origin'."
+    echo >&2 "Check the Git error above for the URL, branch, or authentication problem."
+    echo >&2 "For a fork without dev: git remote add upstream https://github.com/pyrite-wiki/pyrite.git"
+    echo >&2 "Then git fetch upstream dev and pass upstream/dev as the explicit start-point."
+    exit 1
+  fi
+fi
 
 mkdir -p "$wt_parent"
 if git show-ref --verify --quiet "refs/heads/$branch"; then

@@ -28,6 +28,11 @@ from pyrite.server.mcp_server import PyriteMCPServer
 from pyrite.services.export_service import ExportService
 from pyrite.services.git_service import GitService, _git_env
 from pyrite.storage.database import PyriteDB
+from tests import test_network_git_gets_only_the_operator_credential as served
+
+# A local https git host (git http-backend behind Basic auth, its certificate
+# trusted through GIT_SSL_CAINFO), as in the operator-credential tests.
+git_host = served.git_host
 
 KB = "notes"
 
@@ -69,6 +74,29 @@ def repo(tmp_path):
         settings=Settings(index_path=tmp_path / "index.db"),
     )
     return {"tmp": tmp_path, "kb_dir": kb_dir, "bare": bare, "other": other, "config": config}
+
+
+@pytest.fixture
+def served_repo(repo, git_host, monkeypatch):
+    """`repo`, with `origin` a bare repository behind the https git host: a
+    destination the operator allows by config (`git_allowed_hosts`) and grants
+    a token for (`git_credentials`), so a push runs the real host rule and
+    credential, with nothing stubbed."""
+    bare = git_host.root / "o" / "kb.git"
+    _git(git_host.root / "o", "init", "-q", "--bare", "-b", "main", str(bare))
+    _git(bare, "config", "http.receivepack", "true")
+    url = f"https://{git_host.host}/o/kb.git"
+    _git(repo["kb_dir"], "remote", "set-url", "origin", url)
+    monkeypatch.setenv("PYRITE_T1A_TOKEN", served.OPERATOR_TOKEN)
+    config = PyriteConfig(
+        knowledge_bases=repo["config"].knowledge_bases,
+        settings=Settings(
+            index_path=repo["tmp"] / "index.db",
+            git_allowed_hosts=[git_host.host],
+            git_credentials=[{"host": git_host.host, "token_env": "PYRITE_T1A_TOKEN"}],
+        ),
+    )
+    return {**repo, "bare": bare, "config": config}
 
 
 def _pwned(repo) -> Path:
@@ -132,7 +160,11 @@ class TestPushKb:
             db.close()
         assert _heads(repo["bare"]) == ""
 
-    def test_configured_remote_and_valid_branch_push(self, repo):
+    @pytest.mark.control(
+        reason="already passed; round 2 removed its host-rule stub, so it now pushes through a real allowed https host"
+    )
+    def test_configured_remote_and_valid_branch_push(self, served_repo):
+        repo = served_repo
         svc, db = self._svc(repo)
         try:
             result = svc.push_kb(KB, remote="origin", branch="main")
@@ -141,7 +173,11 @@ class TestPushKb:
         assert result["success"] is True, result
         assert "refs/heads/main" in _heads(repo["bare"])
 
-    def test_default_branch_is_the_current_branch(self, repo):
+    @pytest.mark.control(
+        reason="already passed; round 2 removed its host-rule stub, so it now pushes through a real allowed https host"
+    )
+    def test_default_branch_is_the_current_branch(self, served_repo):
+        repo = served_repo
         svc, db = self._svc(repo)
         try:
             result = svc.push_kb(KB)
@@ -184,7 +220,11 @@ class TestRestPush:
         assert r.json()["detail"]["code"] == "INVALID_REF"
         assert _heads(repo["other"]) == ""
 
-    def test_valid_push_succeeds(self, repo):
+    @pytest.mark.control(
+        reason="already passed; round 2 removed its host-rule stub, so it now pushes through a real allowed https host"
+    )
+    def test_valid_push_succeeds(self, served_repo):
+        repo = served_repo
         r = self._client(repo).post(
             f"/api/kbs/{KB}/push", json={"remote": "origin", "branch": "main"}
         )
@@ -225,8 +265,16 @@ class TestMcpPush:
         assert result.get("error_code") == "VALIDATION_ERROR", result
         assert _heads(repo["bare"]) == ""
 
-    def test_valid_push_succeeds(self, repo, server):
-        result = server._dispatch_tool("kb_push", {"kb": KB, "remote": "origin", "branch": "main"})
+    @pytest.mark.control(
+        reason="already passed; round 2 removed its host-rule stub, so it now pushes through a real allowed https host"
+    )
+    def test_valid_push_succeeds(self, served_repo):
+        repo = served_repo
+        s = PyriteMCPServer(repo["config"], tier="admin")
+        try:
+            result = s._dispatch_tool("kb_push", {"kb": KB, "remote": "origin", "branch": "main"})
+        finally:
+            s.close()
         assert result.get("success") is True, result
         assert "refs/heads/main" in _heads(repo["bare"])
 
@@ -410,23 +458,27 @@ class TestNoRefspecMeaning:
         assert r.json()["success"] is False
         assert _heads(repo["bare"]) == ""
 
+    @pytest.mark.control(reason="existing branch refusal; its destination is now an allowed host")
     def test_export_to_repo_refuses_a_forcing_branch(self, repo):
         pushed = _rewrite_history(repo)
         db = PyriteDB(repo["config"].settings.index_path)
         try:
             svc = ExportService(repo["config"], db)
             with pytest.raises(InvalidGitRefError):
-                svc.export_kb_to_repo(KB, str(repo["bare"]), branch="+main")
+                # An allowed destination, so the branch is what is refused;
+                # the refusal comes before any git call.
+                svc.export_kb_to_repo(KB, "https://github.com/o/r", branch="+main")
         finally:
             db.close()
         assert _remote_main(repo) == pushed
 
 
+@pytest.mark.control(reason="existing branch refusal; its destination is now an allowed host")
 def test_rest_export_answers_invalid_ref(repo):
     """POST /api/kbs/{kb}/export maps a rejected branch to 400 INVALID_REF."""
     pushed = _rewrite_history(repo)
     r = TestClient(create_app(config=repo["config"])).post(
-        f"/api/kbs/{KB}/export", json={"repo_url": str(repo["bare"]), "branch": "+main"}
+        f"/api/kbs/{KB}/export", json={"repo_url": "https://github.com/o/r", "branch": "+main"}
     )
     assert r.status_code == 400, r.text
     assert r.json()["detail"]["code"] == "INVALID_REF"

@@ -27,7 +27,7 @@ The invariants it keeps are [[adr-0042]] decision 10 (writes are optimistic: mer
 ## Who calls it
 
 - `KBService._update` publishes an update (`pyrite/services/kb_service.py:1976`); `KBService` creates a file and the templated move through `create_entry_text` (:2370)
-- `KBRepository.save` (a create, `pyrite/storage/repository.py:878`), `rename` (`publish_entry_text` :1084, `move_entry_text` :1098) and the rename's link rewrite (:1180) — see [[kb-repository]]
+- `KBRepository.save` (a create, `pyrite/storage/repository.py:878`), `rename` (`publish_entry_text`, in place) and the rename's link rewrite — see [[kb-repository]]
 - `SchemaService` `schema migrate` (`pyrite/services/schema_service.py:225`) and software-kb's `migrate-standards` (`extensions/software-kb/src/pyrite_software_kb/cli.py:810`, :822)
 - `ids pin` is the one writer outside it, listed in `ENTRY_FILE_WRITERS_NOT_YET_CONVERTED` in `tests/test_entry_file_writers_are_one_function.py`, the ratchet that fails when another module writes an entry file's bytes
 

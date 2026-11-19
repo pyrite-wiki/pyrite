@@ -739,10 +739,10 @@ class TestIndexManager:
         target = sorted(setup["kb_path"].rglob("*.md"))[0]
         original_hash = index_module._hash_file
 
-        def unavailable_hash(path):
+        def unavailable_hash(path, root):
             if path == target:
                 return None
-            return original_hash(path)
+            return original_hash(path, root)
 
         original_load = KBRepository.load_entry_from_file
 
@@ -2522,7 +2522,7 @@ class TestVecExtensionLoadFailure:
 
         assert connection.vec_available is False
         assert connection._raw_conn.extension_loading == [True, False]
-        assert connection.vec_load_error is load_error
+        assert connection.vec_load_error.matches(lambda held: held is load_error)
         assert "OSError" in caplog.text
         assert str(load_error) in caplog.text
 
@@ -2554,6 +2554,76 @@ class TestVecExtensionLoadFailure:
         assert connection.vec_available is True
         assert connection.vec_load_error is None
         assert connection._raw_conn.extension_loading == [True, False]
+
+
+class TestServerDefaultCurrentTimestampIsSql:
+    """Regression: `server_default="CURRENT_TIMESTAMP"` (a plain string) is
+    emitted by SQLAlchemy as the quoted literal `DEFAULT 'CURRENT_TIMESTAMP'`,
+    so a row that omits the column stored the text, not a timestamp (#1304).
+    Every such column now wraps the default in `text()`, which emits the SQL
+    function; readers still tolerate rows written before the fix."""
+
+    @pytest.fixture
+    def indexed_kb(self, tmp_path):
+        root = tmp_path / "kb"
+        root.mkdir()
+        (root / "target.md").write_text(
+            """---
+id: target
+title: Target
+type: note
+---
+""",
+            encoding="utf-8",
+        )
+        (root / "source.md").write_text(
+            """---
+id: source
+title: Source
+type: note
+---
+[[target]]
+""",
+            encoding="utf-8",
+        )
+        config = PyriteConfig(
+            knowledge_bases=[KBConfig(name="kb", path=root)],
+            settings=Settings(index_path=tmp_path / "index.db"),
+        )
+        db = PyriteDB(config.settings.index_path)
+        try:
+            IndexManager(db, config).sync_kb(config.knowledge_bases[0])
+            yield db
+        finally:
+            db.close()
+
+    def test_no_table_compiles_a_quoted_current_timestamp_default(self):
+        from sqlalchemy.dialects import sqlite
+        from sqlalchemy.schema import CreateTable
+
+        import pyrite.storage.models as models
+
+        checked = 0
+        for table in models.Base.metadata.sorted_tables:
+            ddl = str(CreateTable(table).compile(dialect=sqlite.dialect())).upper()
+            assert "DEFAULT 'CURRENT_TIMESTAMP'" not in ddl, (
+                f"table {table.name} still carries the quoted literal default"
+            )
+            if "DEFAULT CURRENT_TIMESTAMP" in ddl:
+                checked += 1
+        assert checked > 0, "expected at least one CURRENT_TIMESTAMP default"
+
+    def test_link_row_written_by_the_indexer_stores_a_timestamp(self, indexed_kb):
+        from datetime import datetime
+
+        rows = indexed_kb.execute_sql("SELECT created_at FROM link WHERE source_id = 'source'")
+        assert len(rows) == 1, rows
+        created_at = rows[0]["created_at"]
+        assert created_at != "CURRENT_TIMESTAMP", (
+            "created_at should be evaluated SQL, not the literal default"
+        )
+        parsed = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+        assert parsed.year >= 2024, created_at
 
 
 if __name__ == "__main__":

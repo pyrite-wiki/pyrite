@@ -9,17 +9,14 @@ For admin operations: pyrite-admin
 """
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from .cli.context import open_index_db, require_kb
-from .cli.output import validate_output_format
+from .cli.output import cli_console, path_line, validate_output_format
 from .cli.search_commands import register_search_command
 from .config import current_config_file, load_config
 from .exceptions import PyriteError, refusal_fields
 from .logging import configure_entry_point_logging, logging_epilog
-from .services.access_policy import UNSCOPED
-from .services.kb_service import KBService
 from .utils.errors import PyriteCLIGroup
 
 # The same root as `pyrite` and `pyrite-admin`: the one point a command's
@@ -31,9 +28,9 @@ app = typer.Typer(
     no_args_is_help=True,
     epilog=logging_epilog("pyrite-read"),
 )
-console = Console()
+console = cli_console()
 # Errors/status print here so machine formats keep stdout clean and parseable.
-err_console = Console(stderr=True)
+err_console = cli_console(stderr=True)
 
 
 def _emit_error(
@@ -74,6 +71,8 @@ def _get_svc(*kbs: object, output_format: str = "rich"):
     one resolver (#952, #924): an unknown name or a shortname is refused
     before anything is read, rendered in ``output_format``; None names no KB.
     """
+    from .services.kb_service import KBService
+
     config = load_config()
     db = open_index_db(config)
     try:
@@ -112,6 +111,8 @@ def get_entry(
     ),
 ):
     """Get a specific entry by ID."""
+    from .services.access_policy import UNSCOPED
+
     svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         result = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
@@ -222,8 +223,10 @@ register_search_command(app)
 def timeline(
     date_from: str = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
     date_to: str = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
-    min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
-    limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+    min_importance: int = typer.Option(
+        1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
+    ),
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results (1-500)"),
     output_format: str = typer.Option(
         "rich",
         "--format",
@@ -281,7 +284,7 @@ def timeline(
 def tags_cmd(
     kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
     prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-    limit: int = typer.Option(100, "--limit", "-n", help="Max tags to show"),
+    limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
     output_format: str = typer.Option(
         "rich",
         "--format",
@@ -339,6 +342,8 @@ def backlinks_cmd(
     ),
 ):
     """Find entries that link to a given entry."""
+    from .services.access_policy import UNSCOPED
+
     svc, db = _get_svc(kb_name, output_format=output_format)
     try:
         from .services.graph_service import GraphService
@@ -379,7 +384,7 @@ def backlinks_cmd(
 def show_config():
     """Show current configuration (read-only)."""
     config_file = current_config_file()
-    console.print(f"[bold]Config file:[/bold] {config_file}")
+    console.print(path_line("[bold]Config file:[/bold] ", config_file))
     console.print(f"[bold]Exists:[/bold] {config_file.exists()}")
 
     if config_file.exists():

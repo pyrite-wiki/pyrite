@@ -4,11 +4,12 @@ import dataclasses
 import logging
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
+from pyrite.cli.output import cli_console
+
 logger = logging.getLogger(__name__)
-console = Console()
+console = cli_console()
 
 protocol_app = typer.Typer(help="Protocol inspection and satisfaction checking")
 

@@ -1,4 +1,4 @@
-"""A blank KB name is never a KB (private #74).
+"""A blank KB name is never a KB.
 
 `_resolve_kb_names` and the MCP chokepoint skip an empty KB name, so nothing
 is refused for it; a handler that then passed `""` on as "the KB" reached a

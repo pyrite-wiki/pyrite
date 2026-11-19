@@ -3,15 +3,14 @@
 from datetime import UTC, datetime
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import require_kb
+from pyrite.cli.context import require_entry_kb, require_kb
+from pyrite.cli.output import cli_console
 from pyrite.config import load_config
-from pyrite.storage.database import PyriteDB
 
 social_app = typer.Typer(help="Social knowledge base commands")
-console = Console()
+console = cli_console()
 
 
 @social_app.command("vote")
@@ -22,6 +21,8 @@ def social_vote(
     user: str = typer.Option("local", "--user", "-u", help="Voter user ID"),
 ):
     """Cast a vote on a writeup."""
+    from pyrite.storage.database import PyriteDB
+
     if direction not in ("up", "down"):
         console.print("[red]Error:[/red] Direction must be 'up' or 'down'")
         raise typer.Exit(1)
@@ -29,6 +30,8 @@ def social_vote(
     value = 1 if direction == "up" else -1
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
+    # The vote row names the entry's KB, never '' (#911).
+    kb_name = require_entry_kb(entry_id, kb_name, entry_type="writeup", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -39,7 +42,7 @@ def social_vote(
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(entry_id, kb_name, user_id)
                DO UPDATE SET value = ?, created_at = ?""",
-            (entry_id, kb_name or "", user, value, now, value, now),
+            (entry_id, kb_name, user, value, now, value, now),
         )
         db._raw_conn.commit()
         console.print(f"[green]Voted {direction} on {entry_id}[/green]")
@@ -55,6 +58,8 @@ def social_reputation(
     user_id: str = typer.Argument("local", help="User ID to check"),
 ):
     """Show a user's reputation."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     db = PyriteDB(config.settings.index_path)
 
@@ -92,9 +97,11 @@ def social_reputation(
 @social_app.command("newest")
 def social_newest(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Number of results"),
 ):
     """List most recent writeups."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
@@ -147,9 +154,11 @@ def social_newest(
 def social_top(
     period: str = typer.Option("all", "--period", "-p", help="Time period: week, month, all"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
+    limit: int = typer.Option(10, "--limit", "-n", min=1, help="Number of results"),
 ):
     """Show highest-voted writeups."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)

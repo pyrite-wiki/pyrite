@@ -100,6 +100,7 @@ class ZettelkastenPlugin:
                     },
                     "required": ["entry_id", "kb_name"],
                 },
+                "locates_entry": {"id_args": ["entry_id"]},
                 "handler": self._mcp_graph,
             }
         return tools

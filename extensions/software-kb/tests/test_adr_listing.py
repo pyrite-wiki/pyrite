@@ -167,7 +167,8 @@ def test_mcp_adrs_are_numbered_and_show_standing_relations(tmp_path):
 def test_cli_adrs_are_numbered_and_show_standing_relations(tmp_path, monkeypatch, capsys):
     db = _make_db(tmp_path, _entries(), _links())
     monkeypatch.setattr(cli, "load_config", lambda: _config(tmp_path))
-    monkeypatch.setattr(cli, "PyriteDB", lambda _path: db)
+    # The command opens its own handle; verify the real persisted index.
+    db.close()
     cli.sw_adrs(status=None, limit=None, offset=0, kb_name=KB, fmt="json")
     result = json.loads(capsys.readouterr().out)
     _assert_order_and_relations(result)
@@ -219,7 +220,8 @@ def test_cli_rich_adrs_show_ids_and_standing_relations(tmp_path, monkeypatch):
     db = _make_db(tmp_path, _entries(), _links())
     output = StringIO()
     monkeypatch.setattr(cli, "load_config", lambda: _config(tmp_path))
-    monkeypatch.setattr(cli, "PyriteDB", lambda _path: db)
+    # The command opens its own handle; verify the real persisted index.
+    db.close()
     monkeypatch.setattr(cli, "console", Console(file=output, width=180))
 
     cli.sw_adrs(status=None, limit=None, offset=0, kb_name=KB, fmt="rich")

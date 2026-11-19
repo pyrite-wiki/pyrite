@@ -1,7 +1,7 @@
 """REST reads learn nothing about a KB the caller cannot read (P-R4, P-R5).
 
-Private #55 (entry without a KB), #56 (entry links), #57 (graph), #58 (QA
-broken links), plus the paths the same grep found: the JSON export, the
+An entry without a KB, entry links, the graph, QA
+broken links, plus the paths the same grep found: the JSON export, the
 daily note, QA orphans and status, and the entry read through a user's
 worktree overlay. #518 (graph edges dropped for a scoped caller) is fixed
 by the same change. Surface: `TestClient` against the real app.

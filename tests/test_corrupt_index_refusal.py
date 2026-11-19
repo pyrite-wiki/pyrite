@@ -295,7 +295,8 @@ class TestSearchCatchAllDoesNotSwallowStorageError:
 
         assert result.exit_code == 1
         assert "STORAGE_ERROR" in result.stdout
-        assert "pyrite index build" in result.stdout
+        # Rich wraps the suggestion at the console width; read it unwrapped.
+        assert "pyrite index build" in " ".join(result.stdout.split())
         assert "Falling back to file search" not in result.stdout
 
     @pytest.mark.parametrize("fmt", ["json", "yaml", "csv", "markdown"])
@@ -410,6 +411,10 @@ ALLOWED_INDEX_OPENERS = {
     ),
     "pyrite/storage/migrations.py::ensure_migrated": (
         "standalone migration helper in storage/migrations.py"
+    ),
+    "pyrite/storage/backends/overlay_backend.py::run_read_only": (
+        "a change set's execute_sql: a read-only second connection to the index "
+        "main already opened through _init_connection"
     ),
 }
 

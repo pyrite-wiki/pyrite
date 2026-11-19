@@ -82,4 +82,6 @@ def test_renames_link_rewrite(tmp_path: Path):
     repo = _kb(tmp_path)
     _bounded(lambda: repo.rename("beta", "gamma", update_links=True))
     assert "[[gamma]]" in (repo.path / "notes" / "alpha.md").read_text(encoding="utf-8")
-    assert not (repo.path / "notes" / "beta.md").exists()
+    assert (repo.path / "notes" / "beta.md").exists()
+    assert repo.find_file("gamma") == repo.path / "notes" / "beta.md"
+    assert not (repo.path / "notes" / "gamma.md").exists()

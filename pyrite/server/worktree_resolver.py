@@ -64,7 +64,9 @@ class WorktreeResolver:
         diff_db = self._get_diff_db(user_id, kb_name)
         if not diff_db:
             return self._main_db
-        return WorktreeDB(self._main_db, diff_db)
+        user_kb = self._wt_svc.get_user_kb_config(kb_name, user_id)
+        roots = {kb_name: (user_kb.path,)} if user_kb is not None else {}
+        return WorktreeDB(self._main_db, diff_db, kb_roots=roots)
 
     def get_read_service(self, kb_name: str, auth_user: dict[str, Any] | None) -> KBService:
         """Get a KBService configured for reading with overlay."""

@@ -165,7 +165,7 @@ class TestReading:
         assert fs.allowed_values() == ["b"]
 
     def test_the_agent_schema_sees_the_values_list_as_options(self):
-        agent = schema().to_agent_schema()
+        agent = schema().to_agent_schema(kb_type="generic")
         assert agent["types"]["org"]["fields"]["org_type"]["options"] == ["ngo", "company"]
 
 
@@ -197,10 +197,19 @@ class TestValidateEntrySwitch:
         result = schema(enforce_enums=mode).validate_entry("org", {"title": "T", field: value})
         bucket = result["errors"] if mode else result["warnings"]
         other = result["warnings"] if mode else result["errors"]
-        hits = [f for f in bucket if f["field"] == field]
+
+        # A scalar in a list field also draws the type finding, rule
+        # `field_type` (#1502), under `enforce` (off here, so a warning): its
+        # own rule, never the enum's.
+        types = [f for f in result["errors"] + result["warnings"] if f["rule"] == "field_type"]
+        scalar_on_list = field == "codes" and not isinstance(value, list)
+        assert [(f["field"], f["severity"]) for f in types] == (
+            [("codes", "warning")] if scalar_on_list else []
+        ), result
+
+        hits = [f for f in bucket if f["field"] == field and f["rule"] == rule]
         assert len(hits) == 1, result
-        assert hits[0]["rule"] == rule
-        assert not [f for f in other if f["field"] == field]
+        assert not [f for f in other if f["field"] == field and f["rule"] == rule]
         assert hits[0]["severity"] == ("error" if mode else "warning")
 
     def test_the_switch_defaults_to_on_when_absent(self):
@@ -302,19 +311,24 @@ class TestValidateEntrySwitch:
 
 
 class TestWritePath:
+    @pytest.mark.control(
+        reason="a mapping was always a type error under enforce; the value changed so it stays bad after the #1502 coercion"
+    )
     def test_a_type_error_on_disk_is_a_warning_on_an_unrelated_update(self, svc_factory):
         """A multi-select holding a scalar is a type error under `enforce`.
         ADR-0042 decision 8 (#676): a violation already on disk, in a field the
         request does not name, comes back as a warning; it no longer refuses
         an unrelated update. (Round 1 of #570 pinned the refusal; the decision
-        overrides it.) Setting the field to another bad value still refuses."""
+        overrides it.) Setting the field to another bad value still refuses:
+        a mapping, which stays bad after the coercion (a scalar sent to a
+        multi-select is stored as a one-item list now, #1502)."""
         svc, kb, _ = svc_factory(enforce_enums=True, enforce=True)
         path = _write_org(kb, "acme", labels="a")
         written = svc.update("acme", "t", {"tags": ["x"]})
         assert any(w["field"] == "labels" for w in written.warnings)
         assert 'labels: "a"' in path.read_text()
         with pytest.raises(SchemaViolationError, match="labels"):
-            svc.update("acme", "t", {"labels": "b"})
+            svc.update("acme", "t", {"labels": {"k": 1}})
 
     def test_a_select_cannot_become_a_list_through_the_exception(self, svc_factory):
         """Round 1, should-fix 2: the per-element exception is for list-valued
@@ -482,6 +496,10 @@ def software_kb(tmp_path):
     (kb / "backlog" / "done").mkdir(parents=True)
     shutil.copy(REPO / "kb" / "kb.yaml", kb / "kb.yaml")
     shutil.copy(LIVE_ENTRY, kb / "backlog" / LIVE_ENTRY.name)
+    # The live entry's kind is on-list now (#669); the fixture copy keeps
+    # an off-list value so the drift tests still exercise the warning path.
+    live = kb / "backlog" / LIVE_ENTRY.name
+    live.write_text(live.read_text().replace("kind: chore", "kind: not-a-kind"))
     # An entry with no off-list value (its `rank: -1` draws a plugin
     # `min_value` finding, which is not an enum), and an off-list one in a
     # subdirectory.
@@ -494,7 +512,7 @@ def software_kb(tmp_path):
         "---\n\nB.\n"
     )
     (kb / "backlog" / "done" / "old-chore.md").write_text(
-        "---\nid: old-chore\ntype: backlog_item\ntitle: Old\nkind: chore\nstatus: done\n---\n\nB.\n"
+        "---\nid: old-chore\ntype: backlog_item\ntitle: Old\nkind: not-a-kind\nstatus: done\n---\n\nB.\n"
     )
     config = PyriteConfig(
         knowledge_bases=[KBConfig(name="pyrite", path=kb, kb_type="software")],
@@ -521,12 +539,14 @@ def _payload(output: str) -> dict:
 
 class TestIssue47:
     @pytest.mark.control(
-        reason="guards the fixture: the live #47 entry must still be off-list for the other tests to mean anything"
+        reason="guards the fixture replacement: the live #47 entry must still use kind chore"
     )
-    def test_the_fixture_still_carries_the_live_drift(self):
-        assert "kind: chore" in LIVE_ENTRY.read_text()
+    def test_the_fixture_still_carries_the_live_drift(self, software_kb):
+        assert _fm(LIVE_ENTRY)["kind"] == "chore"
+        _, kb = software_kb
+        assert "kind: not-a-kind" in (kb / "backlog" / LIVE_ENTRY.name).read_text()
 
-    def test_update_tags_succeeds_and_warns_naming_kind_chore(self, software_kb):
+    def test_update_tags_succeeds_and_warns_naming_an_off_list_kind(self, software_kb):
         config, kb = software_kb
         path = kb / "backlog" / LIVE_ENTRY.name
         result = _cli(
@@ -536,9 +556,9 @@ class TestIssue47:
         out = _payload(result.output)
         assert out["updated"] is True
         (w,) = [w for w in out["warnings"] if w["field"] == "kind"]
-        assert w["got"] == "chore"
+        assert w["got"] == "not-a-kind"
         assert "probe" in _fm(path)["tags"]
-        assert _fm(path)["kind"] == "chore"
+        assert _fm(path)["kind"] == "not-a-kind"
         assert LIVE_ENTRY.read_text().count("probe") == 0, "the live file is never touched"
 
     @pytest.mark.control(
@@ -550,7 +570,7 @@ class TestIssue47:
         try:
             with pytest.raises(ValidationError, match="kind"):
                 KBService(config, db).update(
-                    "pyrite-remove-static-renderer", "pyrite", {"kind": "refactor"}
+                    "pyrite-remove-static-renderer", "pyrite", {"kind": "other-not-a-kind"}
                 )
         finally:
             db.close()
@@ -562,7 +582,7 @@ class TestIssue47:
         try:
             with pytest.raises(ValidationError, match="kind"):
                 KBService(config, db).create(
-                    "pyrite", _spec("backlog_item", "new-chore", kind="chore")
+                    "pyrite", _spec("backlog_item", "new-chore", kind="not-a-kind")
                 )
         finally:
             db.close()
@@ -575,8 +595,8 @@ class TestIssue47:
         finally:
             db.close()
         rows = {(r["id"], r["field"], r["value"]) for r in health["off_list_values"]}
-        assert ("pyrite-remove-static-renderer", "kind", "chore") in rows
-        assert ("old-chore", "kind", "chore") in rows  # a subdirectory changes nothing
+        assert ("pyrite-remove-static-renderer", "kind", "not-a-kind") in rows
+        assert ("old-chore", "kind", "not-a-kind") in rows  # a subdirectory changes nothing
         assert not any(r["id"] == "fine" for r in health["off_list_values"])
         assert not any(r["field"] == "status" for r in health["off_list_values"])
         assert [r["id"] for r in health["invalid_statuses"]] == ["bad-status"]
@@ -590,7 +610,7 @@ class TestIssue47:
         out = _payload(result.output)
         assert out["status"] == "warning"
         assert result.exit_code == 0
-        assert any(r["value"] == "chore" for r in out["off_list_values"])
+        assert any(r["value"] == "not-a-kind" for r in out["off_list_values"])
 
 
 class TestCliCreateWarnings:

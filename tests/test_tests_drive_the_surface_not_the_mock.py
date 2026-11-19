@@ -48,7 +48,10 @@ become `pyrite.services.git_service.GitService.fork_repo`). The rules:
      The ceiling and the ALLOWLIST below are separate rules and stay as they are.
 
 Scanned: every `.py` under `tests/` and `extensions/*/tests`, so `conftest.py` and the seed
-helpers are covered too (a patch hidden in a shared helper counts when the file drives).
+helpers are covered too (a patch hidden in a shared helper counts when the file drives). A
+helper's patches also count against every file that imports it from the test tree and drives
+an entry point: the patches of each function it imports (and of the helper's functions those
+call), plus the helper's module-level ones, reported at the import line.
 
 Known limit: the allowlist and its pinned size live in this file, which a PR can edit; review
 is the check on both. Each listed file carries its patch count, so a new patch in a listed file
@@ -109,6 +112,10 @@ EDGES: dict[str, str] = {
     ),
     "pyrite.services.git_service.GitService.fork_repo": (
         "one GitHub API request (a fork); needs the network and a real token"
+    ),
+    "pyrite.services.git_service.GitService._effective_url": (
+        "one `git ls-remote --get-url` subprocess (the account's insteadOf rewrite); a test "
+        "that clones a local bare repo in place of an https host answers it with the URL"
     ),
     "pyrite.services.url_checker.URLChecker._urlopen": (
         "one HEAD request via urlopen; needs the network, status mapping stays in check_url"
@@ -196,8 +203,10 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
         "behind PyriteMCPServer, _dispatch_tool: kb_service.build_entry",
     ),
     "tests/test_kb_export_read_scoping.py": (
-        1,
-        "behind TestClient: export_service.ExportService.export_kb_to_repo",
+        3,
+        "behind TestClient: export_service.ExportService.export_kb_to_repo; and, through "
+        "tests/_git_plans.py::allow_local_destinations, GitService._endpoint/"
+        "check_remote_allowed, so a local bare repo stands in for an allowed https host",
     ),
     "tests/test_kb_policy_availability.py": (
         1,
@@ -205,8 +214,8 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
     ),
     "tests/test_kb_scoped_writes.py": (1, "behind TestClient: clipper.ClipperService.clip_url"),
     "tests/test_mcp_server.py": (
-        2,
-        "behind PyriteMCPServer, _dispatch_tool: <unresolved>:_run_hooks",
+        1,
+        "behind PyriteMCPServer: build_sdk_server",
     ),
     "tests/test_one_reconcile.py": (
         3,
@@ -270,6 +279,12 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
         3,
         "patches a class held in a variable (cls.emit); unresolved",
     ),
+    "tests/test_create_writes_through_apply.py": (
+        2,
+        "through tests/test_doc_write_as_patch.py::_watch_emitter: the yaml library's emitter "
+        "classes it watches are held in loop variables (cls.emit, dumper.__init__), so "
+        "unresolved; library classes, not services. Measured once helpers were counted",
+    ),
     "tests/test_embedding_prewarm.py": (
         2,
         "patches _get_model on a local service instance behind the REST client; unresolved",
@@ -291,15 +306,32 @@ ALLOWLIST: dict[str, tuple[int, str]] = {
         "patches get_hooks_for_kb on a local registry; unresolved",
     ),
     "tests/test_repo_error_disclosure.py": (
-        12,
-        "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate",
+        14,
+        "unit tests of GitService's error text patch GitService in a file whose other classes drive REST via make_client; split the file (Q8) or migrate. "
+        "2 answer the host rule's own git lookups (_remote_plan, _pull_remote; _effective_url is an EDGE) so the stubbed failure is the clone's",
     ),
     "tests/test_shipped_schemas_accept_workflows.py": (
         1,
         "patch target built with an f-string; unresolved",
     ),
+    "tests/test_rest_bodies_carry_no_fault_text.py": (
+        4,
+        "fault injection (ADR-0052 N3): an OS or storage fault whose text must not reach "
+        "a body cannot be seeded into a world; 1 patches every public KBService method by "
+        "name in a loop (unresolved), to call every route and tool with the fault",
+    ),
+    "tests/test_update_walks_every_surface.py": (
+        1,
+        "fault injection: a StorageError from the writer, for kb_update's legacy code; "
+        "no world state makes the writer refuse",
+    ),
 }
-ALLOWLIST_SIZE = 49  # lower it with every file removed; never raise it
+# 52, not 51: tests/test_create_writes_through_apply.py was already in
+# violation at its import of tests/test_doc_write_as_patch.py::_watch_emitter
+# (unresolved yaml emitter patches) and became visible when patches made
+# through a test-tree helper began to count (T1a). It is debt that existed,
+# not a new patch; it comes off with that helper's migration.
+ALLOWLIST_SIZE = 52  # lower it with every file removed; never raise it
 
 
 def _is_service_path(dotted: str) -> bool:
@@ -469,9 +501,15 @@ def violations(source: str) -> list[tuple[int, str]]:
     tree = ast.parse(source)
     if not entry_points(tree):
         return []
-    imports = _file_imports(tree)
+    return _service_patches(tree, _file_imports(tree), tree)
+
+
+def _service_patches(
+    tree: ast.AST, imports: dict[str, str], root: ast.AST
+) -> list[tuple[int, str]]:
+    """``[(line, target)]`` for each service patch under `root` (part of `tree`)."""
     out = []
-    for call, kind in _patch_calls(tree, imports):
+    for call, kind in _patch_calls(root, imports):
         args = call.args
         if not args:
             continue
@@ -505,15 +543,139 @@ def _test_files() -> list[Path]:
     return sorted({*ROOT.glob("tests/**/*.py"), *ROOT.glob("extensions/*/tests/**/*.py")})
 
 
+def _helper_path(node: ast.ImportFrom, importer: Path) -> Path | None:
+    """The test-tree module an import names (``from tests._git_plans import x``,
+    ``from extensions.e.tests.seed import y``, or a relative import), or None."""
+    if node.level:
+        base = importer.parent
+        for _ in range(node.level - 1):
+            base = base.parent
+        parts = (node.module or "").split(".") if node.module else []
+    elif node.module and node.module.split(".")[0] in ("tests", "extensions"):
+        base, parts = ROOT, node.module.split(".")
+    else:
+        return None
+    path = base.joinpath(*parts).with_suffix(".py") if parts else None
+    if path is None or not path.is_file() or "tests" not in path.relative_to(ROOT).parts:
+        return None
+    return path
+
+
+@lru_cache(maxsize=None)  # noqa: UP033
+def _helper_patches(path: Path) -> tuple[dict[str, list[tuple[int, str]]], frozenset, dict]:
+    """A helper module's service patches: (function name -> its own patches,
+    names of its module-level patches' lines, function name -> the module's
+    functions it calls). Counted whether or not the helper drives anything."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    imports = _file_imports(tree)
+    funcs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    own = {name: _service_patches(tree, imports, f) for name, f in funcs.items()}
+    calls = {
+        name: {
+            c.func.id
+            for c in ast.walk(f)
+            if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id in funcs
+        }
+        for name, f in funcs.items()
+    }
+    in_funcs = {line for hits in own.values() for line, _ in hits}
+    module_level = frozenset(
+        hit for hit in _service_patches(tree, imports, tree) if hit[0] not in in_funcs
+    )
+    return own, module_level, calls
+
+
+def _module_file(base: Path, parts: list[str]) -> Path | None:
+    path = base.joinpath(*parts).with_suffix(".py") if parts else None
+    if path is None or not path.is_file() or "tests" not in path.relative_to(ROOT).parts:
+        return None
+    return path
+
+
+def _helper_uses(tree: ast.AST, importer: Path) -> list[tuple[int, Path, set[str]]]:
+    """(import line, helper module, names used from it) for every test-tree
+    helper the file imports: ``from tests.h import f`` (f), ``from tests import h``
+    and ``import tests.h as h`` (every ``h.<name>`` the file reads)."""
+
+    def attributes_of(alias: str) -> set[str]:
+        return {
+            n.attr
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == alias
+        }
+
+    uses = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            helper = _helper_path(node, importer)
+            if helper is not None:
+                uses.append((node.lineno, helper, {a.name for a in node.names}))
+                continue
+            # ``from tests import h``: each name may itself be a helper module.
+            if node.level:
+                base = importer.parent
+                for _ in range(node.level - 1):
+                    base = base.parent
+                prefix = (node.module or "").split(".") if node.module else []
+            elif node.module and node.module.split(".")[0] in ("tests", "extensions"):
+                base, prefix = ROOT, node.module.split(".")
+            else:
+                continue
+            for a in node.names:
+                module = _module_file(base, [*prefix, a.name])
+                if module is not None:
+                    uses.append((node.lineno, module, attributes_of(a.asname or a.name)))
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                parts = a.name.split(".")
+                if parts[0] not in ("tests", "extensions") or not a.asname:
+                    continue
+                module = _module_file(ROOT, parts)
+                if module is not None:
+                    uses.append((node.lineno, module, attributes_of(a.asname)))
+    return uses
+
+
+def helper_violations(source: str, importer: Path) -> list[tuple[int, str]]:
+    """Service patches a file that drives an entry point makes through a helper
+    it imports from the test tree: the patches of each function it uses from
+    it (and the helper's functions those call), plus the helper's module-level
+    ones, each reported at the import line (``<target> via <helper>:<line>``)."""
+    tree = ast.parse(source)
+    if not entry_points(tree):
+        return []
+    out = []
+    for lineno, helper, wanted in _helper_uses(tree, importer):
+        if helper == importer:
+            continue
+        own, module_level, calls = _helper_patches(helper)
+        if "*" in wanted:
+            wanted = set(own)
+        seen: set[str] = set()
+        todo = [n for n in wanted if n in own]
+        while todo:
+            name = todo.pop()
+            if name not in seen:
+                seen.add(name)
+                todo += calls[name]
+        hits = sorted({*module_level, *(h for n in seen for h in own[n])})
+        rel = helper.relative_to(ROOT)
+        out += [(lineno, f"{target} via {rel}:{line}") for line, target in hits]
+    return sorted(out)
+
+
 @lru_cache(maxsize=1)
 def _scan() -> dict[str, list[tuple[int, str, str]]]:
-    """relative path -> [(line, target, entry points)] for every offending file."""
+    """relative path -> [(line, target, entry points)] for every offending file:
+    its own patches and those it makes through a helper it imports."""
     found = {}
     for path in _test_files():
         if path.name == Path(__file__).name:
             continue
         source = path.read_text(encoding="utf-8")
-        hits = violations(source)
+        hits = violations(source) + helper_violations(source, path)
         if hits:
             eps = ", ".join(entry_points(ast.parse(source)))
             found[str(path.relative_to(ROOT))] = [(line, tgt, eps) for line, tgt in hits]
@@ -836,3 +998,46 @@ def test_no_test_mocks_the_service_behind_the_entry_point_it_drives():
 def test_the_allowlist_matches_the_tree_exactly():
     assert ratchet_problems(_scan(), ALLOWLIST, ALLOWLIST_SIZE) == []
     assert all((ROOT / p).exists() for p in ALLOWLIST)
+
+
+# ------------------------------------------------------------------ helpers count
+
+
+_DRIVES = "from typer.testing import CliRunner\n"
+
+
+@pytest.mark.control(reason="Pins the helper count on the tree's own helper module")
+def test_a_helpers_patches_count_against_a_file_that_imports_and_drives():
+    source = _DRIVES + "from tests._git_plans import allow_local_destinations\n"
+    hits = helper_violations(source, ROOT / "tests" / "test_planted.py")
+    assert [t.split(" via ")[0] for _, t in hits] == [
+        "pyrite.services.git_service.GitService._endpoint",
+        "pyrite.services.git_service.GitService.check_remote_allowed",
+    ]
+
+
+@pytest.mark.control(reason="Pins the helper count on the tree's own helper module")
+@pytest.mark.parametrize(
+    "source",
+    [
+        _DRIVES + "from tests._git_plans import plan_for\n",  # a function with no patch
+        "from tests._git_plans import allow_local_destinations\n",  # drives nothing
+    ],
+)
+def test_a_helper_counts_only_for_patching_functions_in_a_driving_file(source):
+    assert helper_violations(source, ROOT / "tests" / "test_planted.py") == []
+
+
+@pytest.mark.control(reason="Pins the helper count for a helper imported as a module")
+@pytest.mark.parametrize(
+    "source",
+    [
+        _DRIVES + "from tests import _git_plans as gp\ndef t(monkeypatch):\n"
+        "    gp.allow_local_destinations(monkeypatch)\n",
+        _DRIVES + "import tests._git_plans as gp\ndef t(monkeypatch):\n"
+        "    gp.allow_local_destinations(monkeypatch)\n",
+    ],
+)
+def test_a_helper_imported_as_a_module_counts_too(source):
+    hits = helper_violations(source, ROOT / "tests" / "test_planted.py")
+    assert len(hits) == 2, hits

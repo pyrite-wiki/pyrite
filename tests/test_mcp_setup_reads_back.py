@@ -3507,7 +3507,7 @@ def _calls_after_the_clients_are_chosen() -> dict[str, str | None]:
                 called.append(node.func.id)
     # The report itself: a raise here is the printing failing, with nothing
     # left to print with. Its inputs are the strings and numbers built above.
-    printing = {"format_output", "Console", "_print_report"}
+    printing = {"format_output", "cli_console", "_print_report"}
     found: dict[str, str | None] = {}
     for name in dict.fromkeys(called):
         if name in printing:

@@ -67,7 +67,7 @@ from rich.text import Text
 
 from ..utils.atomic_write import atomic_write_text
 from ..utils.errors import cli_error
-from .output import format_output, validate_output_format
+from .output import cli_console, format_output, validate_output_format
 
 SERVER_NAME = "pyrite"
 CLAUDE_CODE = "claude-code"
@@ -1464,7 +1464,7 @@ def mcp_setup(
         if not work:
             manual = {"mcpServers": {SERVER_NAME: plain}}
             if fmt == "rich":
-                out = Console(soft_wrap=True, highlight=False)
+                out = cli_console(highlight=False)
                 _print_safe_text(out, "No MCP client found. To add the Pyrite server by hand, run:")
                 _print_safe_text(out, f"  {manual_claude}")
                 _print_safe_text(
@@ -1562,7 +1562,7 @@ def mcp_setup(
         "notes": notes,
     }
     if fmt == "rich":
-        _print_report(Console(soft_wrap=True, highlight=False), report)
+        _print_report(cli_console(highlight=False), report)
     else:
         typer.echo(format_output(report, fmt))
     if not report["ok"]:

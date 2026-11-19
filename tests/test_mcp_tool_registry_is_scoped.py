@@ -85,10 +85,6 @@ CROSS_KB_TOOLS: dict[str, str] = {
         "listing *is* the leak -- the spike's live run had it naming "
         "private-kb to a plain read-tier peer."
     ),
-    "kb_timeline": (
-        "filters. Spans every KB: dated events across the index, via "
-        "KBService.get_timeline(kb_names=...). count/has_more computed after."
-    ),
     "kb_batch_read": (
         "filters. Names its KBs inside the `entries` array, not by a KB "
         "parameter, so the chokepoint cannot see them. Unreadable pairs are "
@@ -145,6 +141,10 @@ _PLUGIN_REFUSAL = (
 )
 
 OPTIONAL_KB_TOOLS: dict[str, str] = {
+    "kb_timeline": (
+        "filters. Optional kb_names narrows readable KBs; omission uses the caller's "
+        "readable set via KBService.get_timeline(kb_names=...)."
+    ),
     # -- core, admin tier ---------------------------------------------------
     # Unreachable by a scoped caller in practice: the admin tier is only
     # served to a caller whose global role is "admin", and a global admin is
@@ -168,14 +168,16 @@ OPTIONAL_KB_TOOLS: dict[str, str] = {
                 # The write-path tools keep the fail-closed listing: a caller
                 # who may write a KB can read it, so the tier guard covers the
                 # read. The cross-KB and single-KB read tools filter by the
-                # readable set now.
+                # readable set now. These declare `default_kb`:
+                # with no KB named, the dispatcher names the first
+                # investigation KB the caller may read and checks it like a
+                # named one; the refusal below is for a caller with none.
                 "investigation_bulk_edges",
                 "investigation_create_claim",
                 "investigation_create_entity",
                 "investigation_create_event",
                 "investigation_ftm_import",
                 "investigation_log_source",
-                "investigation_promote_claim",
                 "investigation_start",
             ),
         }.items()
@@ -229,9 +231,16 @@ def _claiming(kind):
 
 def _optional_kb_tools(servers):
     """Tools whose KB parameter is declared but not required: they span every
-    KB when the caller omits it."""
+    KB when the caller omits it.
+
+    Not a tool that declares ``locates_entry``: its ``kb_name`` is optional so
+    the dispatcher can fill it, and the dispatcher never calls its handler
+    without a named KB -- the one readable KB that holds the id, or a refusal
+    (#1310, ``tests/test_plugin_mcp_tools_locate_ids.py``)."""
     found = {}
     for _tier, name, meta in _all_tools(servers):
+        if meta.get("locates_entry"):
+            continue
         schema = meta.get("inputSchema") or {}
         props = set(schema.get("properties") or {})
         required = set(schema.get("required") or [])
@@ -411,6 +420,9 @@ def test_the_cross_kb_filtering_handlers_actually_accept_the_readable_set(server
     )
 
 
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
 def test_tools_listed_as_refused_are_actually_refused(servers):
     """Fail closed, proven. A tool listed as refused for a scoped caller
     must really be refused -- otherwise the listing is a comment claiming
@@ -421,8 +433,13 @@ def test_tools_listed_as_refused_are_actually_refused(servers):
         # (deliberately -- a probing caller should still be throttled), so a
         # shared client id would exhaust the admin-tier budget partway down
         # this list and report RATE_LIMITED instead of the refusal.
+        # Only a declared argument: a write tool refuses one it does not
+        # declare before any scoping (#1758), which would hide the refusal
+        # this gate exists to prove.
+        props = server.tools[name]["inputSchema"].get("properties") or {}
+        args = {"query": "zebra"} if "query" in props else {}
         result = server._dispatch_tool(
-            name, {"query": "zebra"}, client_id=f"gate-{name}", readable_kbs={"gate-kb"}
+            name, args, client_id=f"gate-{name}", readable_kbs={"gate-kb"}
         )
         assert result.get("error_code") == "NOT_FOUND", (
             f"{name} is listed as refused for a scoped caller but was not refused: {result}"
@@ -452,11 +469,16 @@ def test_the_dispatcher_refuses_an_unreadable_kb_under_every_checked_name(server
     this covers the *names* exhaustively, so a name in the contract that the
     chokepoint reads but never acts on is caught here.
     """
+    from pyrite.server.mcp_server import PLURAL_KB_ARGUMENTS
+
     server = servers["admin"]
     for param in sorted(KB_BEARING_PARAMETERS):
+        # A plural name takes a list; a string there is refused for its shape
+        # before any KB is looked up.
+        value = ["unreadable-kb"] if param in PLURAL_KB_ARGUMENTS else "unreadable-kb"
         result = server._dispatch_tool(
             "kb_search",
-            {"query": "x", param: "unreadable-kb"},
+            {"query": "x", param: value},
             client_id="test",
             readable_kbs={"gate-kb"},
         )

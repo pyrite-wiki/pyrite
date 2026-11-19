@@ -1,7 +1,6 @@
 """Forgetting the read scope fails closed: it is never "see everything".
 
-A structural guard for P-R4/P-R5 (private #39, #40, #55-#58 and batch 3b's
-cold read). The read methods that span KBs take ``readable_kbs`` -- the
+A structural guard for P-R4/P-R5 (and batch 3b's cold read). The read methods that span KBs take ``readable_kbs`` -- the
 caller's ``ReadScope.as_set()``, or ``UNSCOPED`` spelled out by a caller
 with no scope to apply. Two rules, neither of them a hand-kept list of
 methods:
@@ -193,6 +192,7 @@ def test_every_call_to_a_scoped_read_passes_the_scope():
 #: call cannot be classified by name. Rule 1's TypeError covers them; the
 #: list is pinned so a new collision is a reviewed change.
 AMBIGUOUS_SCOPED_METHODS = {
+    "delete_entry": "KBService.delete_entry requires scope; storage and document deletion do not",
     "get_entry": "KBService.get_entry vs the storage row reads (PyriteDB, backends)",
     "get_status": "QAService.get_status vs other services' get_status",
     "validate_entry": "QAService.validate_entry vs KBSchema.validate_entry",
@@ -215,8 +215,8 @@ def test_unscoped_is_never_spelled_where_there_is_a_caller():
     """``UNSCOPED`` is for code with no caller identity at all (the CLI, the
     local UI, a service's own walk inside one named KB). The server and the
     plugins' MCP handlers always have a caller, and take its scope from the
-    policy -- never ``UNSCOPED`` (private #74: the three "named KB, authorized
-    by the route" lookups that spelled it were reachable with a blank KB)."""
+    policy -- never ``UNSCOPED`` (a "named KB, authorized by the route" lookup
+    that spelled it would be reachable with a blank KB)."""
     places = sorted((REPO / "pyrite" / "server").rglob("*.py")) + sorted(
         REPO.glob("extensions/*/src/*/plugin.py")
     )

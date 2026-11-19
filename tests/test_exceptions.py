@@ -381,7 +381,7 @@ class TestServiceExceptionTypes:
             try:
                 svc = KBService(config, db)
                 with pytest.raises(KBNotFoundError):
-                    svc.delete_entry("id", "nonexistent")
+                    svc.delete_entry("id", "nonexistent", readable_kbs=None)
             finally:
                 db.close()
 

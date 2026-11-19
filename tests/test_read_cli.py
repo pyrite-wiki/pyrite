@@ -102,6 +102,20 @@ class TestReadCLICommands:
         result = runner.invoke(read_app, ["tags"])
         assert result.exit_code == 0
 
+    @pytest.mark.parametrize("bad_limit", ["0", "-1"])
+    def test_tags_limit_below_one_is_usage_error(self, cli_env, bad_limit):
+        from pyrite.read_cli import app as read_app
+
+        result = runner.invoke(read_app, ["tags", "--limit", bad_limit])
+        assert result.exit_code == 2
+        assert "Invalid value for '--limit'" in result.output
+
+    def test_tags_limit_one_returns_one_tag(self, cli_env):
+        from pyrite.read_cli import app as read_app
+
+        result = runner.invoke(read_app, ["tags", "--limit", "1"])
+        assert result.exit_code == 0
+
     def test_backlinks(self, cli_env):
         from pyrite.read_cli import app as read_app
 

@@ -9,10 +9,14 @@ Orchestrates QA operations by delegating to focused services:
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import time
+import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -22,17 +26,36 @@ from ..exceptions import (
     EntryNotFoundError,
     EvaluationFailedError,
     InvalidQATierError,
+    KBConfigInvalidError,
     KBUnreadableError,
     PyriteError,
+    ValidationError,
+    public_attribute,
+    public_text,
 )
+from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
-from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata
+from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_statuses
+from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
+from ..utils.kb_files import (
+    KB_YAML_REFUSALS,
+    KBFileOutsideRootError,
+    KBFileReadOutsideRootError,
+    KBFiles,
+    KBFilesUnreadableError,
+)
 from ..utils.metadata import parse_metadata
+from .qa_records import content_only, is_qa_record, records_only
 
 logger = logging.getLogger(__name__)
+
+#: ``_kb_folder_problem``'s answer for a kb.yaml that does not load (#1547).
+_KB_CONFIG_INVALID_PROBLEM = "its kb.yaml could not be loaded (KB_CONFIG_INVALID)"
+#: ... and for a kb.yaml that leads outside the KB (#1547).
+_KB_YAML_OUTSIDE_PROBLEM = "its kb.yaml leads outside the KB (OUTSIDE_KB_ROOT)"
 
 #: The tiers QA runs: 1 = structural and deterministic rubric checks, 2 = tier
 #: 1 plus the model-judged rubric. Every surface that takes a tier refuses any
@@ -53,6 +76,47 @@ def require_qa_tier(tier: int, *, llm_available: Callable[[], bool]) -> None:
             "QA tier 2 runs the model-judged rubric and no model is configured; "
             "nothing was assessed"
         )
+
+
+_WORD_SPLIT = re.compile(r"[\W_]+")
+
+
+def _fold(value: str) -> str:
+    """Casefold, then drop accents: NFKD, remove the marks with a non-zero combining class, recompose (NFC).
+
+    ``Élection`` and ``election`` agree. Supported: scripts whose words are runs
+    of letters (Latin, Cyrillic, Greek, CJK ideographs, Hangul). Not supported:
+    scripts that write vowels or voicing as combining marks (Devanagari, Thai,
+    the kana voicing marks). Removed: marks with a non-zero combining class
+    (accents, kana voicing: ``が`` folds to ``か``). Kept: marks of class 0, which then
+    split the word at the tokeniser. Some Devanagari and Thai marks are kept
+    (DEVANAGARI VOWEL SIGN AA, THAI SARA I) and some are removed (DEVANAGARI
+    VIRAMA and NUKTA, THAI SARA U, the Thai tone marks).
+    Either way two different words can fold alike or break apart. A proper tokeniser for them is a follow-up.
+    """
+    decomposed = unicodedata.normalize("NFKD", (value or "").casefold())
+    kept = "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+    return unicodedata.normalize("NFC", kept)
+
+
+def _duplicate_tokens(value: str, prefixes: tuple[str, ...] = ()) -> set[str]:
+    """Word tokens (see ``_fold`` for the scripts supported), with at most one matching
+    id prefix removed. A word is a run of Unicode word characters; text in a
+    script written without spaces is one token per run."""
+    text = _fold(value)
+    for prefix in prefixes:
+        folded = _fold(prefix)
+        if folded and text.startswith(folded):
+            text = text[len(folded) :]
+            break
+    return {token for token in _WORD_SPLIT.split(text) if token}
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    union = left | right
+    return len(left & right) / len(union)
 
 
 class QAService:
@@ -118,9 +182,11 @@ class QAService:
         """
         issues: list[dict[str, Any]] = []
 
+        # The whole row: the rubric's checkers see every field column
+        # (`checker_entry`, #1587); the other checks read the columns they
+        # always read (below).
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+            "SELECT * FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
             {"entry_id": entry_id, "kb_name": kb_name},
         )
 
@@ -142,7 +208,23 @@ class QAService:
                 self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
             return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
-        entry = rows[0]
+        row = rows[0]
+        # The columns the field and schema checks have always read: the
+        # schema check validates every key it is handed (`_validation_fields`).
+        entry = {
+            k: row[k]
+            for k in (
+                "id",
+                "kb_name",
+                "entry_type",
+                "title",
+                "date",
+                "importance",
+                "body",
+                "status",
+                "metadata",
+            )
+        }
         self._check_entry_fields(entry, issues)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         # The checks below read the KB's folder (its files, its kb.yaml).
@@ -150,7 +232,7 @@ class QAService:
             self._check_unmodellable_frontmatter(issues, kb_name, entry_id=entry_id)
             sources = self._check_file_values(issues, kb_name, entry_id=entry_id)
             self._check_schema_validation(entry, issues, sources.get(entry_id))
-            self._check_rubric_evaluation(entry, issues)
+            self._check_rubric_evaluation(row, issues)
 
         return {"entry_id": entry_id, "kb_name": kb_name, "issues": issues}
 
@@ -177,9 +259,10 @@ class QAService:
         self.require_tier(tier)
         issues: list[dict[str, Any]] = []
 
-        # Count entries
+        # Count content entries: a QA record is not one (#1752)
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name", {"kb_name": kb_name}
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
+            {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
 
@@ -190,6 +273,7 @@ class QAService:
         self._check_invalid_dates(issues, kb_name)
         self._check_importance_range(issues, kb_name)
         self._check_broken_links(issues, kb_name, readable_kbs=readable_kbs)
+        self._check_task_references(issues, kb_name, readable_kbs=readable_kbs)
         self._check_orphans(issues, kb_name, readable_kbs=readable_kbs)
 
         # Rubric evaluation pass (index only)
@@ -199,7 +283,25 @@ class QAService:
         # folder that is missing or unreadable is one error for the KB, and
         # those checks are skipped, never passed or crashed (#950 round 2).
         if not self._report_unreadable_kb(issues, kb_name, tier=tier):
-            self._report_index_out_of_date(issues, kb_name)
+            from ..storage.index import IndexManager
+
+            health = IndexManager(self.db, self.config).check_health(kb_name)
+            self._report_index_out_of_date(issues, kb_name, health=health)
+            kb = self.config.get_kb(kb_name)
+            if kb is not None:
+                for row in health.get("malformed_frontmatter", []):
+                    path = str(Path(row["path"]).relative_to(kb.path))
+                    issues.append(
+                        {
+                            "entry_id": "",
+                            "kb_name": kb_name,
+                            "rule": "malformed_frontmatter",
+                            "severity": "error",
+                            "field": "frontmatter",
+                            "path": path,
+                            "message": f"{path}: {row['error']}",
+                        }
+                    )
             # Files whose frontmatter Pyrite cannot model (#760 (b)): no write
             # reaches them, so say so here with the line, as index health does.
             self._check_unmodellable_frontmatter(issues, kb_name)
@@ -211,6 +313,7 @@ class QAService:
             # Per-entry schema pass (only if kb.yaml exists): the kb.yaml itself,
             # then each entry, its typed attributes read from its file
             self._check_rubric_action_config(issues, kb_name)
+            self._check_settled_statuses_config(issues, kb_name)
             self._check_schema_retypes_core_fields(issues, kb_name)
             self._check_schema_all(issues, kb_name, sources)
 
@@ -230,6 +333,179 @@ class QAService:
             "checked": total,
             "issues": issues,
         }
+
+    def find_duplicates(
+        self,
+        entry_type: str,
+        *,
+        readable_kbs: set[str] | None,
+        statuses: set[str] | None = None,
+        threshold: float = 0.62,
+        strip_prefixes: tuple[str, ...] = (),
+    ) -> dict[str, Any]:
+        """Candidate near-duplicate entries of one type; never merges (#934).
+
+        Two signals are scored over word tokens: the id slug (after removing
+        a matching ``strip_prefixes`` entry) and the title. A pair is a
+        candidate when either score reaches ``threshold``; ``score`` is the
+        higher of the two and ``signal`` names every signal that matched.
+
+        With ``statuses`` the scan keeps only those statuses. Without it, an
+        entry is live while its lifecycle is ``active`` and its effective status is not
+        one the type declares settled (``core_types.settled_statuses``: the
+        type's ``settled_statuses`` metadata, kb.yaml over plugin over core). A type that declares none, or has no
+        status at all, has every entry live.
+        Tasks completed by their children use the shared derived-status rule;
+        reading duplicate candidates never rewrites their files.
+
+        Candidate pairs come from an inverted token index. Tokens shared by
+        more than ``max(64, entries // 25)`` entries are not broadly expanded;
+        ``skipped_tokens`` reports their count, so callers know that near-match
+        coverage is incomplete. Exact nonempty id/title token sets always pair,
+        including large duplicate clusters. Those clusters necessarily produce
+        quadratic output; a common word alone does not expand every pair.
+        Returned pairs are sorted by score and identity, so two runs agree.
+        """
+        if (
+            isinstance(threshold, bool)
+            or not isinstance(threshold, int | float)
+            or not (0.0 <= threshold <= 1.0)  # also false for NaN
+        ):
+            raise ValidationError(f"threshold must be a number from 0 to 1, got {threshold!r}")
+        params: dict[str, Any] = {"entry_type": entry_type}
+        scope = kb_names_clause("kb_name", readable_kbs, params)
+        keys = (
+            effective_status.derived_done_keys(self.db.session, kb_names=readable_kbs)
+            if entry_type == "task"
+            else []
+        )
+        status_expr = effective_status.status_sql("", keys, params)
+        sql = (
+            f"SELECT id, kb_name, title, {status_expr} AS status, lifecycle "
+            "FROM entry WHERE entry_type = :entry_type"
+        )
+        if scope:
+            sql += f" AND {scope}"
+        rows = self.db.execute_sql(sql, params)
+        # A KB's kb.yaml may declare the type's settled statuses, so the set is
+        # read per KB. If the registry cannot be read the resolver logs it and
+        # the set is empty: a report that lists more candidates, never fewer
+        # pairs than exist, and it writes nothing.
+        settled_by_kb: dict[str, frozenset[str]] = {}
+        # A KB whose kb.yaml does not load (#1547), or whose files cannot be
+        # read (#1542), has no answer for "settled": its entries are left out
+        # and it is named, as a sync names it; the other KBs are compared.
+        unreadable_kbs: dict[str, dict[str, str]] = {}
+
+        entries: list[dict[str, Any]] = []
+        for row in rows:
+            status = (row["status"] or "").lower()
+            lifecycle = (row["lifecycle"] or "active").lower()
+            if row["kb_name"] in unreadable_kbs:
+                continue
+            # Every KB's schema is read, with --status too: a KB whose
+            # kb.yaml is refused is left out and named either way (#1547).
+            if row["kb_name"] not in settled_by_kb:
+                kb_config = self.config.get_kb(row["kb_name"])
+                try:
+                    schema = kb_config.kb_schema if kb_config else None
+                except KB_YAML_REFUSALS as e:
+                    unreadable_kbs[row["kb_name"]] = {
+                        "kb": row["kb_name"],
+                        "error": public_text(e, already_logged=True),
+                        "error_code": e.error_code,
+                    }
+                    continue
+                settled_by_kb[row["kb_name"]] = settled_statuses(entry_type, schema)
+            if statuses is not None:
+                if status not in statuses:
+                    continue
+            elif lifecycle != "active" or status in settled_by_kb[row["kb_name"]]:
+                continue
+            entries.append(
+                {
+                    "id": row["id"],
+                    "kb_name": row["kb_name"],
+                    "title": row["title"] or "",
+                    "id_tokens": _duplicate_tokens(row["id"], strip_prefixes),
+                    "title_tokens": _duplicate_tokens(row["title"] or ""),
+                }
+            )
+
+        positions: dict[str, list[int]] = {}
+        for position, entry in enumerate(entries):
+            for token in entry["id_tokens"] | entry["title_tokens"]:
+                positions.setdefault(token, []).append(position)
+
+        max_shared = max(64, len(entries) // 25)
+        candidates: set[tuple[int, int]] = set()
+        skipped_tokens = 0
+        for shared in positions.values():
+            if len(shared) > max_shared:
+                skipped_tokens += 1
+                continue
+            candidates.update(combinations(shared, 2))
+
+        exact_groups: dict[tuple[str, frozenset[str]], list[int]] = {}
+        for position, entry in enumerate(entries):
+            for signal in ("id_tokens", "title_tokens"):
+                tokens = frozenset(entry[signal])
+                if tokens:
+                    exact_groups.setdefault((signal, tokens), []).append(position)
+        for group in exact_groups.values():
+            candidates.update(combinations(group, 2))
+
+        pairs: list[dict[str, Any]] = []
+        for left, right in candidates:
+            first, second = entries[left], entries[right]
+            id_score = _jaccard(first["id_tokens"], second["id_tokens"])
+            title_score = _jaccard(first["title_tokens"], second["title_tokens"])
+            matched = [
+                (name, score)
+                for name, score in (("id", id_score), ("title", title_score))
+                if score >= threshold
+            ]
+            if not matched:
+                continue
+            if (first["kb_name"], first["id"]) > (second["kb_name"], second["id"]):
+                first, second = second, first
+            pairs.append(
+                {
+                    "a": {
+                        "id": first["id"],
+                        "kb_name": first["kb_name"],
+                        "title": first["title"],
+                    },
+                    "b": {
+                        "id": second["id"],
+                        "kb_name": second["kb_name"],
+                        "title": second["title"],
+                    },
+                    "score": round(max(score for _, score in matched), 4),
+                    "signal": "+".join(name for name, _ in matched),
+                }
+            )
+        pairs.sort(
+            key=lambda pair: (
+                -pair["score"],
+                pair["a"]["kb_name"],
+                pair["a"]["id"],
+                pair["b"]["kb_name"],
+                pair["b"]["id"],
+            )
+        )
+        result: dict[str, Any] = {
+            "entry_type": entry_type,
+            "threshold": threshold,
+            "skipped_tokens": skipped_tokens,
+            "count": len(pairs),
+            "pairs": pairs,
+        }
+        if unreadable_kbs:
+            # Left out and named (#1547): ``{kb, error, error_code}`` each;
+            # present only then, so a whole report keeps its shape.
+            result["unreadable_kbs"] = sorted(unreadable_kbs.values(), key=lambda r: r["kb"])
+        return result
 
     def _report_unreadable_kb(
         self, issues: list[dict[str, Any]], kb_name: str, *, tier: int = 1
@@ -258,7 +534,9 @@ class QAService:
         )
         return True
 
-    def _report_index_out_of_date(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+    def _report_index_out_of_date(
+        self, issues: list[dict[str, Any]], kb_name: str, *, health: dict[str, Any] | None = None
+    ) -> None:
         """Add one ``index_out_of_date`` error when the index misses the files.
 
         Every check above the folder pass reads the index. An unindexed KB
@@ -271,7 +549,8 @@ class QAService:
 
         if self.config.get_kb(kb_name) is None:
             return
-        health = IndexManager(self.db, self.config).check_health(kb_name)
+        if health is None:
+            health = IndexManager(self.db, self.config).check_health(kb_name)
         # The same verdict every other reader of this report uses (#1119):
         # this check used to look only at unindexed/stale/missing, so an index
         # whose only defect was orphaned entries (or duplicates) passed.
@@ -329,6 +608,11 @@ class QAService:
         recreate a missing folder (#950 round 2).
         """
         problem = self._kb_folder_problem(kb_name)
+        if problem == _KB_CONFIG_INVALID_PROBLEM:
+            # Its own code, the same as every other operation on this KB (#1547).
+            raise KBConfigInvalidError()
+        if problem == _KB_YAML_OUTSIDE_PROBLEM:
+            raise KBFileReadOutsideRootError()
         if problem is not None:
             raise KBUnreadableError(f"KB '{kb_name}': {problem}; nothing was assessed")
 
@@ -337,24 +621,32 @@ class QAService:
 
         Names no path: the message can reach an MCP or REST caller.
         """
-        import os
 
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
             return None
         path = Path(kb_config.path)
+        if not path.exists():
+            return "its folder is missing"
+        if not path.is_dir():
+            return "its path is not a folder"
+        # The KB's one readability check (``KBConfig.check_readable``): its
+        # folder listed, its kb.yaml probed and read inside the KB (a link
+        # out is not opened here; ``kb_schema`` refuses it, OUTSIDE_KB_ROOT).
+        # One fixed reason whatever the OS refused, since this text can reach
+        # an MCP or REST caller (#1542).
         try:
-            if not path.exists():
-                return "its folder is missing"
-            if not path.is_dir():
-                return "its path is not a folder"
-            with os.scandir(path) as listing:
-                next(listing, None)
-            kb_yaml = path / "kb.yaml"
-            if kb_yaml.exists():
-                kb_yaml.open("rb").close()
-        except OSError as exc:
-            return f"its folder cannot be read ({exc.strerror or type(exc).__name__})"
+            kb_config.check_readable()
+        except KBFilesUnreadableError:
+            return "its files cannot be read (the operating system refused)"
+        except KBConfigInvalidError:
+            # Read, and not loadable as a mapping (#1547): reported, never
+            # the end of a QA run over every KB.
+            return _KB_CONFIG_INVALID_PROBLEM
+        except KBFileOutsideRootError:
+            # A kb.yaml that leads outside the KB (a link out, a second hard
+            # link): the same, with its own code (#1547).
+            return _KB_YAML_OUTSIDE_PROBLEM
         return None
 
     def validate_all(
@@ -451,6 +743,9 @@ class QAService:
         """Assess a single entry and create a qa_assessment entry.
 
         ``readable_kbs`` bounds the link checks, as in `validate_entry`.
+        A KB outside it reads as a miss: the entry is answered exactly as
+        a missing one, so a caller who cannot read the KB cannot write an
+        assessment into it (#1499 acceptance 2).
 
         Returns dict with assessment_id, qa_status, issues_found, issues,
         llm_available.
@@ -467,8 +762,16 @@ class QAService:
         """
         self.require_tier(tier)
         self._require_readable_kb(kb_name)
+        if readable_kbs is not None and kb_name not in readable_kbs:
+            raise EntryNotFoundError(f"Entry '{entry_id}' not found in KB '{kb_name}'")
         result = self.validate_entry(entry_id, kb_name, readable_kbs=readable_kbs)
         issues = result["issues"]
+        # Only the first message is carried: entry_not_found is appended
+        # before any unmodellable-frontmatter note validate_entry adds, so
+        # the error stays the plain not-found message.
+        for issue in issues:
+            if issue.get("rule") == "entry_not_found":
+                raise EntryNotFoundError(issue["message"])
 
         # Tier 2: LLM rubric evaluation, before anything is written
         if tier >= 2:
@@ -535,7 +838,7 @@ class QAService:
         *,
         readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
-        """Assess all entries in a KB (skipping qa_assessment entries and recently assessed).
+        """Assess all entries in a KB (skipping QA records and recently assessed).
 
         ``readable_kbs`` bounds each entry's link checks, as in `validate_entry`.
 
@@ -563,7 +866,7 @@ class QAService:
             etype = row["entry_type"]
 
             # Skip assessment entries themselves
-            if etype == "qa_assessment":
+            if is_qa_record(etype):
                 skipped += 1
                 continue
 
@@ -589,7 +892,10 @@ class QAService:
                     {
                         "entry_id": eid,
                         "error_code": getattr(exc, "error_code", "INTERNAL_ERROR"),
-                        "reason": getattr(exc, "reason", None) or f"{type(exc).__name__}: {exc}",
+                        # A Pyrite error's reason (EvaluationFailedError's);
+                        # the same name on another exception is not Pyrite's.
+                        "reason": public_attribute(exc, "reason")
+                        or public_text(exc, already_logged=True),
                     }
                 )
                 continue
@@ -630,7 +936,7 @@ class QAService:
         """Check if entry was assessed within max_age_hours."""
         rows = self.db.execute_sql(
             "SELECT json_extract(metadata, '$.assessed_at') as assessed_at "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment' "
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()} "
             "AND json_extract(metadata, '$.target_entry') = :entry_id "
             "ORDER BY json_extract(metadata, '$.assessed_at') DESC LIMIT 1",
             {"kb_name": kb_name, "entry_id": entry_id},
@@ -669,7 +975,10 @@ class QAService:
             )
         except Exception as e:
             logger.warning("Task creation failed for %s: %s", entry_id, e, exc_info=True)
-            return {"entry_id": entry_id, "reason": f"{type(e).__name__}: {e}"}
+            return {
+                "entry_id": entry_id,
+                "reason": public_text(e, already_logged=True),
+            }
         return None
 
     # =========================================================================
@@ -686,7 +995,7 @@ class QAService:
         """Query assessment entries with optional filters."""
         sql = (
             "SELECT id, title, body, metadata FROM entry "
-            "WHERE kb_name = :kb_name AND entry_type = 'qa_assessment'"
+            f"WHERE kb_name = :kb_name AND {records_only()}"
         )
         params: dict[str, Any] = {"kb_name": kb_name}
 
@@ -722,10 +1031,10 @@ class QAService:
         """Get entries that have no assessment."""
         rows = self.db.execute_sql(
             "SELECT e.id, e.entry_type, e.title FROM entry e "
-            "WHERE e.kb_name = :kb_name AND e.entry_type != 'qa_assessment' "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM entry a WHERE a.kb_name = :kb_name2 "
-            "  AND a.entry_type = 'qa_assessment' "
+            f"  AND {records_only('a')} "
             "  AND json_extract(a.metadata, '$.target_entry') = e.id"
             ")",
             {"kb_name": kb_name, "kb_name2": kb_name},
@@ -739,7 +1048,7 @@ class QAService:
         """Get assessment coverage stats for a KB."""
         # Total non-assessment entries
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment'",
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
@@ -747,7 +1056,7 @@ class QAService:
         # Entries with at least one assessment
         assessed_rows = self.db.execute_sql(
             "SELECT COUNT(DISTINCT json_extract(metadata, '$.target_entry')) as cnt "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment'",
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()}",
             {"kb_name": kb_name},
         )
         assessed = assessed_rows[0]["cnt"] if assessed_rows else 0
@@ -758,7 +1067,7 @@ class QAService:
         by_status: dict[str, int] = {}
         rows = self.db.execute_sql(
             "SELECT json_extract(metadata, '$.qa_status') as qs, COUNT(*) as cnt "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment' "
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()} "
             "GROUP BY qs",
             {"kb_name": kb_name},
         )
@@ -783,7 +1092,10 @@ class QAService:
     def _check_missing_titles(
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
-        sql = "SELECT id, kb_name, entry_type FROM entry WHERE (title IS NULL OR title = '')"
+        sql = (
+            "SELECT id, kb_name, entry_type FROM entry "
+            f"WHERE (title IS NULL OR title = '') AND {content_only()}"
+        )
         params: dict[str, Any] = {}
         if kb_name:
             sql += " AND kb_name = :kb_name"
@@ -805,7 +1117,7 @@ class QAService:
         sql = (
             "SELECT id, kb_name, entry_type, title FROM entry "
             "WHERE (body IS NULL OR body = '') "
-            "AND entry_type NOT IN ('collection', 'relationship')"
+            f"AND entry_type NOT IN ('collection', 'relationship') AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -852,7 +1164,8 @@ class QAService:
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
         sql = (
-            "SELECT id, kb_name, entry_type, date FROM entry WHERE date IS NOT NULL AND date != ''"
+            "SELECT id, kb_name, entry_type, date FROM entry "
+            f"WHERE date IS NOT NULL AND date != '' AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -875,7 +1188,10 @@ class QAService:
     def _check_importance_range(
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
-        sql = "SELECT id, kb_name, entry_type, importance FROM entry WHERE importance IS NOT NULL"
+        sql = (
+            "SELECT id, kb_name, entry_type, importance FROM entry "
+            f"WHERE importance IS NOT NULL AND {content_only()}"
+        )
         params: dict[str, Any] = {}
         if kb_name:
             sql += " AND kb_name = :kb_name"
@@ -908,6 +1224,7 @@ class QAService:
         sql = (
             "SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation "
             "FROM link l LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name "
+            "AND COALESCE(l.target_resolved, 1) = 1 "
             + (f"AND {scope} " if scope else "")
             + "WHERE e.id IS NULL"
         )
@@ -935,6 +1252,122 @@ class QAService:
                 }
             )
 
+    def _check_task_references(
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> None:
+        """Check a task's ``dependencies`` and deliverable references (#935).
+
+        The deliverable is ``produces`` or ``deliverable`` in the task's
+        fields, a string or a list. A reference is a bare id in the task's KB
+        or ``kb:id``, resolved like a wikilink: the readable KB with that full
+        name, then the readable KB with that shortname (P-R5). A reference
+        that does not resolve is an ``error``. A deliverable that resolves to
+        an entry which is not itself a task, while the task is still open, is
+        a ``warning``: the work may be done. A task that names itself as its
+        deliverable is ignored.
+        """
+        rows = self.db.execute_sql(
+            "SELECT id, status, metadata FROM entry "
+            "WHERE kb_name = :kb_name AND entry_type = 'task'",
+            {"kb_name": kb_name},
+        )
+
+        # (task id, field, raw reference, target KB, target id, resolvable)
+        refs: list[tuple[str, str, str, str, str, bool]] = []
+        for row in rows:
+            metadata = row["metadata"] or {}
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (TypeError, ValueError):
+                    metadata = {}
+            if not isinstance(metadata, dict):
+                metadata = {}
+            status = row["status"] or metadata.get("status") or "open"
+            if status != "open":
+                continue
+            for field in ("dependencies", "produces", "deliverable"):
+                value = metadata.get(field)
+                values = value if isinstance(value, list) else [value]
+                for raw in values:
+                    if not isinstance(raw, str) or not raw.strip():
+                        continue
+                    raw = raw.strip()
+                    prefix, sep, rest = raw.partition(":")
+                    if sep:
+                        target = self.config.readable_kb_named(prefix, readable_kbs=readable_kbs)
+                        if target is None:
+                            target_kb, target_id, resolvable = prefix, rest, False
+                        else:
+                            target_kb, target_id, resolvable = target.name, rest, True
+                    else:
+                        target_kb, target_id, resolvable = kb_name, raw, True
+                    if (
+                        field in ("produces", "deliverable")
+                        and target_kb == kb_name
+                        and target_id == row["id"]
+                    ):
+                        continue
+                    refs.append((row["id"], field, raw, target_kb, target_id, resolvable))
+
+        if not refs:
+            return
+
+        # One lookup per target KB, not one per reference.
+        wanted: dict[str, set[str]] = {}
+        for _, _, _, target_kb, target_id, resolvable in refs:
+            if resolvable:
+                wanted.setdefault(target_kb, set()).add(target_id)
+        existing: dict[tuple[str, str], str] = {}
+        for target_kb, ids in wanted.items():
+            params: dict[str, Any] = {"kb": target_kb}
+            placeholders = []
+            for index, target_id in enumerate(sorted(ids)):
+                key = f"id_{index}"
+                params[key] = target_id
+                placeholders.append(f":{key}")
+            for row in self.db.execute_sql(
+                "SELECT id, entry_type FROM entry "
+                f"WHERE kb_name = :kb AND id IN ({', '.join(placeholders)})",
+                params,
+            ):
+                existing[(target_kb, row["id"])] = row["entry_type"]
+
+        for task_id, field, raw, target_kb, target_id, resolvable in refs:
+            entry_type = existing.get((target_kb, target_id)) if resolvable else None
+            if entry_type is None:
+                issues.append(
+                    {
+                        "entry_id": task_id,
+                        "kb_name": kb_name,
+                        "rule": "task_references",
+                        "severity": "error",
+                        "field": field,
+                        "message": (
+                            f"Task '{task_id}' is open, but its {field} '{raw}' "
+                            "resolves to no entry"
+                        ),
+                    }
+                )
+            elif field in ("produces", "deliverable") and entry_type != "task":
+                issues.append(
+                    {
+                        "entry_id": task_id,
+                        "kb_name": kb_name,
+                        "rule": "task_references",
+                        "severity": "warning",
+                        "field": field,
+                        "message": (
+                            f"Task '{task_id}' is open, but its {field} '{raw}' "
+                            f"already exists ({entry_type}); the work may be done"
+                        ),
+                    }
+                )
+
     def _check_orphans(
         self,
         issues: list[dict[str, Any]],
@@ -944,6 +1377,8 @@ class QAService:
     ) -> None:
         orphans = self.db.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
         for entry in orphans:
+            if is_qa_record(entry.get("entry_type")):
+                continue
             issues.append(
                 {
                     "entry_id": entry["id"],
@@ -1079,7 +1514,7 @@ class QAService:
         if not kb_config:
             return
 
-        if not kb_config.kb_yaml_path.exists():
+        if not kb_config.kb_yaml_present:
             return
 
         schema = kb_config.kb_schema
@@ -1105,6 +1540,7 @@ class QAService:
                     "rule": "schema_violation",
                     "severity": "error",
                     "field": err.get("field", ""),
+                    **_schema_rule(err),
                     "message": (
                         f"Schema error on '{entry['id']}': "
                         f"field '{err.get('field', '')}' — {err.get('rule', '')} "
@@ -1121,6 +1557,7 @@ class QAService:
                     "rule": "schema_violation",
                     "severity": "warning",
                     "field": warn.get("field", ""),
+                    **_schema_rule(warn),
                     "message": (
                         f"Schema warning on '{entry['id']}': "
                         f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
@@ -1140,9 +1577,17 @@ class QAService:
         tagged, complex or duplicate key), with the line and the reason: the
         same walk ``index health`` reports (``storage.index.unmodellable_files``),
         on every file of the KB or on ``entry_id``'s file alone. A warning,
-        as it is to ``index health``: the file reads; no write reaches it."""
+        as it is to ``index health``: the file reads; no write reaches it.
+
+        For one id the cost is what the index allows, as for a read by id:
+        the file the index holds for it, else only the files the index may
+        have missed (``kb_service.files_the_index_may_miss``: no row, or a
+        changed stat; at most ``MISS_SCAN_MAX_FILES``, newest first). A file
+        no lookup can read (a duplicate key) never has a row, so it is among
+        them, and is listed under its stem as the KB walk lists it."""
         from ..storage.index import unmodellable_files
         from ..storage.repository import KBRepository
+        from .kb_service import files_the_index_may_miss
 
         kb_config = self.config.get_kb(kb_name)
         if kb_config is None:
@@ -1150,15 +1595,14 @@ class QAService:
         if entry_id is None:
             rows = unmodellable_files(kb_config)
         else:
-            only = KBRepository(kb_config).find_file(entry_id)
-            # A file no lookup can read (a duplicate key) is found by no id;
-            # the KB walk lists it under its stem, so the one-entry report
-            # takes the KB walk's own rows for that id and the two agree.
-            rows = (
-                unmodellable_files(kb_config, [only])
-                if only is not None
-                else [row for row in unmodellable_files(kb_config) if row["id"] == entry_id]
-            )
+            row = self.db.get_entry(entry_id, kb_name)
+            indexed = row.get("file_path") if row else None
+            if indexed:
+                rows = unmodellable_files(kb_config, [Path(indexed)])
+            else:
+                repo = KBRepository(kb_config)
+                may_miss = sorted(files_the_index_may_miss(self.db, repo))
+                rows = [r for r in unmodellable_files(kb_config, may_miss) if r["id"] == entry_id]
         for row in rows:
             issues.append(
                 {
@@ -1231,7 +1675,9 @@ class QAService:
         else:
             row = self.db.get_entry(entry_id, kb_name)
             path = row.get("file_path") if row else None
-            if not path or not Path(path).is_file():
+            # The KB's own probe: a link out is there, and refused by the
+            # load below, whatever it points at.
+            if not path or not KBFiles(kb_config.path).present(path):
                 return sources
             try:
                 entries = [(repo.load_entry_from_file(Path(path)), Path(path))]
@@ -1249,7 +1695,7 @@ class QAService:
                         "field": "file",
                         "message": (
                             f"Entry '{entry_id}': its file could not be loaded, so the "
-                            f"checks that read it did not run: {exc}"
+                            f"checks that read it did not run: {public_text(exc, log=logger)}"
                         ),
                     }
                 )
@@ -1262,7 +1708,22 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
+            if problem := lifecycle_validation_error(entry.lifecycle):
+                issues.append(
+                    {
+                        **problem,
+                        "entry_id": entry.id,
+                        "kb_name": kb_name,
+                        # QA groups findings by issue category; writes name
+                        # the failed constraint (enum). Both identify the
+                        # same field for callers filtering across surfaces.
+                        "rule": "invalid_lifecycle",
+                        "severity": "error",
+                        "message": f"{shown}: {problem['message']}",
+                    }
+                )
             if entry._source_frontmatter is not None:
                 leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
                 if leaked is not None:
@@ -1298,7 +1759,7 @@ class QAService:
         Naming the kb.yaml and the field says where to fix it.
         """
         kb_config = self.config.get_kb(kb_name)
-        if not kb_config or not kb_config.kb_yaml_path.exists():
+        if not kb_config or not kb_config.kb_yaml_present:
             return
         for type_name, field_name, expected in _CORE_TYPED_FIELDS:
             type_schema = kb_config.kb_schema.types.get(type_name)
@@ -1360,6 +1821,74 @@ class QAService:
             }
         )
 
+    def _check_number_as_text(
+        self,
+        issues: list[dict[str, Any]],
+        kb_name: str,
+        kb_config: Any,
+        entry: Any,
+        file_path: Path,
+        shown: Any,
+    ) -> None:
+        """Report a field the type declares a number whose file value is text.
+
+        The message says what a read returns for it, taken from the reader
+        itself (`IndexManager.read_fields`, the single read every surface
+        uses), never from a description of the rule: a kb.yaml number's
+        ``"7"`` reads 7 and ``"007"`` reads as text, but a task's ``"007"``
+        reads 7, because a task's priority is the model's integer
+        (`coerce_task_priority`). A write of a number read stores that number:
+        the file's text goes (the maintainer's decisions on #1628,
+        2026-11-17). Text that is no number at all (``high``) is the schema
+        pass's ``field_number`` and the task-priority check's, not reported
+        twice here.
+        """
+        from ..exceptions import KBConfigInvalidError
+
+        source = entry._source_frontmatter or {}
+        try:
+            declared = kb_config.kb_schema.type_fields(entry.entry_type)
+        except KBConfigInvalidError:
+            return
+        texts = {}
+        for name, field_schema in declared.items():
+            value = source.get(name)
+            if field_schema.field_type != "number" or not isinstance(value, str):
+                continue
+            try:
+                float(value)
+            except ValueError:
+                continue
+            texts[name] = value
+        if not texts:
+            return
+        from ..storage.index import IndexManager
+
+        read = IndexManager(self.db, self.config).read_fields(
+            entry, kb_name, file_path, content_hash="", row=None
+        )
+        for name, value in texts.items():
+            got = read.get(name)
+            reading = (
+                f"Pyrite reads it as the number {got}, and an update of the value read "
+                f"writes {got} without the quotes"
+                if isinstance(got, int | float) and not isinstance(got, bool)
+                else "Pyrite reads it as that text"
+            )
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "number_as_text",
+                    "severity": "warning",
+                    "field": name,
+                    "message": (
+                        f"{shown}: {name} is the text {value!r} in a field declared a "
+                        f"number; {reading}. Write it as a plain number to keep one form."
+                    ),
+                }
+            )
+
     @staticmethod
     def _check_non_string_titles(
         issues: list[dict[str, Any]], kb_name: str, repo: Any, kb_config: Any
@@ -1372,7 +1901,7 @@ class QAService:
         at load (#704) and is not reported here. The path in the message is the
         handle to use: no index row exists for such a file.
         """
-        from ..storage.repository import _is_regular_file
+        from ..storage.repository import _is_regular_file, _text_of
         from ..utils.frontmatter import Frontmatter, split_frontmatter
         from ..utils.yaml import load_yaml
 
@@ -1380,8 +1909,9 @@ class QAService:
             if not _is_regular_file(file_path):
                 continue  # a FIFO would block the read (#972; the dev-to-arch merge, #1026)
             try:
-                text = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
+                # Only inside the KB, one name: what QA reports may quote it.
+                text = _text_of(repo._read_inside(file_path))
+            except (OSError, UnicodeDecodeError, KBFileOutsideRootError):
                 continue
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -1496,14 +2026,14 @@ class QAService:
         if not kb_config:
             return
 
-        if not kb_config.kb_yaml_path.exists():
+        if not kb_config.kb_yaml_present:
             return
 
         schema = kb_config.kb_schema
 
         rows = self.db.execute_sql(
             "SELECT id, kb_name, entry_type, title, date, importance, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name",
+            f"FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
 
@@ -1526,6 +2056,7 @@ class QAService:
                         "rule": "schema_violation",
                         "severity": "error",
                         "field": err.get("field", ""),
+                        **_schema_rule(err),
                         "message": (
                             f"Schema error on '{entry['id']}': "
                             f"field '{err.get('field', '')}' — {err.get('rule', '')} "
@@ -1542,6 +2073,7 @@ class QAService:
                         "rule": "schema_violation",
                         "severity": "warning",
                         "field": warn.get("field", ""),
+                        **_schema_rule(warn),
                         "message": (
                             f"Schema warning on '{entry['id']}': "
                             f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
@@ -1609,8 +2141,7 @@ class QAService:
             key = (issue.get("entry_id", ""), issue.get("kb_name", ""))
             by_entry.setdefault(key, []).append(issue)
         rows = self.db.execute_sql(
-            "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name ORDER BY id",
+            f"SELECT * FROM entry WHERE kb_name = :kb_name AND {content_only()} ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -1654,6 +2185,54 @@ class QAService:
                     }
                 )
 
+    def _check_settled_statuses_config(self, issues: list[dict[str, Any]], kb_name: str) -> None:
+        """kb.yaml ``types.<name>.settled_statuses``: a list of status names, each
+        in the type's own ``status`` options when kb.yaml declares them (#934)."""
+        from ..schema.core_types import valid_status_list
+
+        config = self.config.get_kb(kb_name)
+        schema = config.kb_schema if config else None
+        if schema is None:
+            return
+        for name, kind in schema.types.items():
+            raw = kind.settled_statuses
+            if raw is None:
+                continue
+            path = f"types.{name}.settled_statuses"
+            declared = valid_status_list(raw)
+            if declared is None:
+                issues.append(
+                    {
+                        "entry_id": "",
+                        "kb_name": kb_name,
+                        "rule": "config_error",
+                        "severity": "error",
+                        "field": path,
+                        "message": f"kb.yaml {path} must be a list of status names; got {raw!r}",
+                    }
+                )
+                continue
+            status_field = kind.fields.get("status")
+            options = [str(o) for o in (status_field.options or [])] if status_field else []
+            if not options:
+                continue
+            known = {o.strip().lower() for o in options}
+            for status in declared:
+                if status.strip().lower() not in known:
+                    issues.append(
+                        {
+                            "entry_id": "",
+                            "kb_name": kb_name,
+                            "rule": "config_error",
+                            "severity": "warning",
+                            "field": path,
+                            "message": (
+                                f"kb.yaml {path} names {status!r}, which is not in the type's "
+                                f"status options ({', '.join(options)})"
+                            ),
+                        }
+                    )
+
     def _get_rubric_action(self, kb_name: str, item: dict[str, Any] | None = None) -> str:
         """Only a named item action overrides the KB's rubric_action (#1166)."""
         if item is not None and "action" in item:
@@ -1668,7 +2247,9 @@ class QAService:
         return action if isinstance(action, str) and action in ("warn", "fail") else "fail"
 
     def _check_rubric_evaluation(self, entry: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-        """Run rubric checks on a single entry."""
+        """Run rubric checks on a single entry: ``entry`` is its whole index
+        row (``SELECT *``), from which ``checker_entry`` builds what the
+        checkers see, as a gate builds it (#1587)."""
         entry_id = entry["id"]
         kb_name = entry["kb_name"]
         entry_type = entry.get("entry_type", "")
@@ -1677,19 +2258,9 @@ class QAService:
         if not rubric_items:
             return
 
-        # Enrich entry with tag count and outlink count for checkers
-        enriched = dict(entry)
-        tag_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry_tag WHERE entry_id = :eid AND kb_name = :kb",
-            {"eid": entry_id, "kb": kb_name},
-        )
-        enriched["_tag_count"] = tag_rows[0]["cnt"] if tag_rows else 0
+        from .checker_entry import checker_entry
 
-        link_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM link WHERE source_id = :eid AND source_kb = :kb",
-            {"eid": entry_id, "kb": kb_name},
-        )
-        enriched["_outlink_count"] = link_rows[0]["cnt"] if link_rows else 0
+        enriched = checker_entry(self.db, entry)
 
         kb_config = self.config.get_kb(kb_name)
         kb_schema = kb_config.kb_schema if kb_config else None
@@ -1747,7 +2318,7 @@ class QAService:
                         "message": (
                             f"Rubric checker '{checker_name}' failed on this entry, so "
                             f"'{item.get('text', '')}' was not checked: "
-                            f"{type(exc).__name__}: {exc}"
+                            f"{public_text(exc, already_logged=True)}"
                         ),
                     }
                 )
@@ -1815,7 +2386,7 @@ class QAService:
             # Whatever the evaluator did not expect is still a check that did
             # not run: name it for this entry, never end the caller's run.
             logger.warning("Tier 2 evaluation of %s failed", entry["id"], exc_info=True)
-            raise EvaluationFailedError(entry["id"], f"{type(exc).__name__}: {exc}") from exc
+            raise EvaluationFailedError(entry["id"], public_text(exc, already_logged=True)) from exc
 
     def _run_evaluator(
         self, entry: dict[str, Any], judgment_items: list[str], guidelines: str
@@ -1844,14 +2415,14 @@ class QAService:
     def _check_llm_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Tier 2 of `validate_kb`: the model-judged rubric over every entry.
 
-        Skips ``qa_assessment`` entries, as `assess_kb` does. A model finding
+        Skips QA records, as `assess_kb` does. A model finding
         is an issue as `assess_entry` records it; an entry the model did not
         answer for is an ``evaluation_failed`` error naming the reason, so
         `ci` can never pass a check that did not run (#795).
         """
         rows = self.db.execute_sql(
             "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment' ORDER BY id",
+            f"FROM entry WHERE kb_name = :kb_name AND {content_only()} ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -1869,7 +2440,7 @@ class QAService:
                         "severity": "error",
                         "field": "evaluation_rubric",
                         "message": f"Tier 2 did not run for '{row['id']}': "
-                        + getattr(exc, "reason", str(exc)),
+                        + (public_attribute(exc, "reason") or public_text(exc, log=logger)),
                     }
                 )
 
@@ -1879,7 +2450,7 @@ class QAService:
         no_tag_rows = self.db.execute_sql(
             "SELECT e.id, e.kb_name, e.entry_type, e.title FROM entry e "
             "LEFT JOIN entry_tag et ON e.id = et.entry_id AND e.kb_name = et.kb_name "
-            "WHERE e.kb_name = :kb_name AND et.entry_id IS NULL",
+            f"WHERE e.kb_name = :kb_name AND et.entry_id IS NULL AND {content_only('e')}",
             {"kb_name": kb_name},
         )
         for row in no_tag_rows:
@@ -1898,7 +2469,7 @@ class QAService:
         # 2. Missing outlinks (excluding stubs)
         no_link_rows = self.db.execute_sql(
             "SELECT e.id, e.kb_name, e.entry_type, e.title, e.body FROM entry e "
-            "WHERE e.kb_name = :kb_name "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l WHERE l.source_id = e.id AND l.source_kb = e.kb_name"
             ")",
@@ -1922,7 +2493,7 @@ class QAService:
         # 3. Generic titles
         rows = self.db.execute_sql(
             "SELECT id, kb_name, title FROM entry WHERE kb_name = :kb_name "
-            "AND title IS NOT NULL AND title != ''",
+            f"AND title IS NOT NULL AND title != '' AND {content_only()}",
             {"kb_name": kb_name},
         )
         from .rubric_checkers import GENERIC_TITLES
@@ -2059,13 +2630,6 @@ class QAService:
         return self._fix_svc._fix_invalid_date(issue)
 
     @staticmethod
-    def _fix_missing_field(issue: dict[str, Any]) -> dict[str, Any] | None:
-        """Delegate to QAFixService."""
-        from .qa_fix_service import QAFixService
-
-        return QAFixService._fix_missing_field(issue)
-
-    @staticmethod
     def _edit_distance(a: str, b: str) -> int:
         """Delegate to QAFixService."""
         from .qa_fix_service import QAFixService
@@ -2168,6 +2732,15 @@ def _keeps_integer_type(field_schema: Any) -> bool:
     if field_schema.field_type == "select" and field_schema.options:
         return all(isinstance(o, int) for o in field_schema.options)
     return False
+
+
+def _schema_rule(item: dict[str, Any]) -> dict[str, str]:
+    """``{"schema_rule": <rule>}`` for a schema error or warning that names its
+    rule (``required``, ``enum``, ...), else ``{}``: a caller tells a required
+    field from the issue's data, never from its message (#958). A plugin
+    validator that gives no rule adds no key."""
+    rule = item.get("rule")
+    return {"schema_rule": rule} if rule else {}
 
 
 def _validation_fields(

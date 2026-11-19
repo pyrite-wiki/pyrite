@@ -139,6 +139,26 @@ class TestOverlayListEntries:
             main_db.close()
             diff_db.close()
 
+    def test_kb_names_filters_both_halves(self, tmp_path):
+        # Regression for #1373: the entries route passes kb_names (the
+        # caller's readable set) and the overlay rejected the argument.
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "e1", "kb-a", "Main A")
+            _insert_entry(main_db, "e2", "kb-b", "Main B")
+            _insert_entry(diff_db, "e3", "kb-a", "Diff A")
+            _insert_entry(diff_db, "e4", "kb-b", "Diff B")
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            results = overlay.list_entries(kb_names={"kb-a"}, limit=10000)
+
+            assert {r["id"] for r in results} == {"e1", "e3"}
+            assert all(r["kb_name"] == "kb-a" for r in results)
+        finally:
+            main_db.close()
+            diff_db.close()
+
 
 class TestOverlayCountEntries:
     def test_count_includes_new_diff_entries(self, tmp_path):
@@ -163,6 +183,23 @@ class TestOverlayCountEntries:
             overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
             count = overlay.count_entries(kb_name="test")
             assert count == 3
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_kb_names_filters_count(self, tmp_path):
+        # Same #1373 gap in count_entries: the route calls it with
+        # kb_names right after list_entries.
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "e1", "kb-a", "Main A")
+            _insert_entry(main_db, "e2", "kb-b", "Main B")
+            _insert_entry(diff_db, "e3", "kb-a", "Diff A")
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            assert overlay.count_entries(kb_names={"kb-a"}) == 2
+            assert overlay.count_entries(kb_names={"kb-b"}) == 1
         finally:
             main_db.close()
             diff_db.close()
@@ -379,6 +416,100 @@ class TestOverlayLinks:
         finally:
             main_db.close()
             diff_db.close()
+
+
+class TestOverlayResolved:
+    """``resolved`` is the overlay reader's answer, not either half's (#64).
+
+    An entry exists in the overlay when the diff or main holds it
+    (``OverlaySearchBackend.get_entry``); each half computes ``resolved``
+    against its own ``entry`` table, so the merge must settle it again.
+    """
+
+    @staticmethod
+    def _link(db, source, kb, target, target_kb):
+        db._backend._sync_links(
+            source,
+            kb,
+            [{"target": target, "kb": target_kb, "relation": "x", "prefix": None, "note": ""}],
+        )
+        db.session.commit()
+
+    @staticmethod
+    def _row(overlay, target, readable_kbs=None):
+        rows = overlay.get_outlinks("source", "test", readable_kbs=readable_kbs)
+        return next(r for r in rows if r["id"] == target)
+
+    @pytest.fixture
+    def dbs(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        _insert_entry(main_db, "source", "test", "Source")
+        yield main_db, diff_db
+        main_db.close()
+        diff_db.close()
+
+    def test_a_target_created_in_the_diff_resolves_a_link_held_by_main(self, dbs):
+        main_db, diff_db = dbs
+        self._link(main_db, "source", "test", "newone", "test")
+        _insert_entry(diff_db, "newone", "test", "New one", entry_type="event")
+        overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+
+        assert overlay.get_entry("newone", "test") is not None
+        row = self._row(overlay, "newone")
+        assert row["resolved"] is True
+        assert (row["title"], row["entry_type"]) == ("New one", "event")
+        assert "resolved_in_kbs" not in row
+
+    def test_a_target_held_only_by_main_resolves_a_link_held_by_the_diff(self, dbs):
+        main_db, diff_db = dbs
+        _insert_entry(main_db, "oldone", "test", "Old one")
+        _insert_entry(diff_db, "source", "test", "Source, edited")
+        self._link(diff_db, "source", "test", "oldone", "test")
+        overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+
+        assert overlay.get_entry("oldone", "test") is not None
+        assert self._row(overlay, "oldone")["resolved"] is True
+
+    def test_a_target_the_diff_created_and_deleted_is_unresolved_again(self, dbs):
+        """A target held by main and deleted in the diff still resolves: the
+        overlay has no tombstones, and `get_entry` still finds it."""
+        main_db, diff_db = dbs
+        self._link(main_db, "source", "test", "newone", "test")
+        _insert_entry(diff_db, "newone", "test", "New one")
+        overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+        assert self._row(overlay, "newone")["resolved"] is True
+
+        overlay.delete_entry("newone", "test")
+
+        assert overlay.get_entry("newone", "test") is None
+        row = self._row(overlay, "newone")
+        assert row["resolved"] is False and row["resolved_in_kbs"] == []
+
+    def test_other_kbs_holding_the_id_are_named_from_both_halves_and_only_readable_ones(self, dbs):
+        main_db, diff_db = dbs
+        self._link(main_db, "source", "test", "widget", "test")
+        _insert_entry(main_db, "widget", "ops", "Widget in ops")
+        _insert_entry(diff_db, "widget", "research", "Widget in research")
+        _insert_entry(diff_db, "widget", "secret", "Widget in secret")
+        overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+
+        row = self._row(overlay, "widget", readable_kbs={"test", "ops", "research"})
+        assert row["resolved"] is False
+        assert row["resolved_in_kbs"] == ["ops", "research"]
+        row = self._row(overlay, "widget", readable_kbs={"test"})
+        assert row["resolved"] is False and row["resolved_in_kbs"] == []
+
+    def test_a_target_in_an_unreadable_kb_stays_unresolved_whichever_half_holds_it(self, dbs):
+        main_db, diff_db = dbs
+        self._link(main_db, "source", "test", "widget", "secret")
+        _insert_entry(diff_db, "widget", "secret", "Widget in secret")
+        overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+
+        row = self._row(overlay, "widget", readable_kbs={"test"})
+        assert row["resolved"] is False
+        assert row["resolved_in_kbs"] == [] and row["title"] is None
+        assert self._row(overlay, "widget", readable_kbs=None)["resolved"] is True
 
 
 class TestOverlayMergeHelper:

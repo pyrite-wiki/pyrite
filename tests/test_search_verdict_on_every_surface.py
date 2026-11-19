@@ -246,6 +246,41 @@ class TestOneVerdictOnEverySurface:
         assert "has_more" in payloads["mcp"] and "has_more" not in payloads["cli"]
 
 
+class TestEverySearchSaysWhatItSearched:
+    """#1757: a miss on a field-only mention must not read as absence, so each
+    response lists the entry parts it searched. Tags and field values are not
+    indexed, so they are not named."""
+
+    # What SQLite's FTS5 table reads on an unqualified MATCH, in table order.
+    EXPECTED = ["id", "kb_name", "entry_type", "title", "body", "summary", "location"]
+    SEMANTIC = ["title", "summary", "body_prefix"]
+
+    @pytest.mark.parametrize("mode", MODES)
+    def test_the_same_list_on_every_surface(self, env, mode):
+        want = self.SEMANTIC if mode == "semantic" else self.EXPECTED
+        service = SearchService(env["db"], settings=env["config"].settings).search_response(
+            "falcon", kb_name=OPEN, mode=mode
+        )
+        assert service["searched"] == want
+        assert service.get("body_prefix_chars") == (500 if mode == "semantic" else None)
+        for surface, payload in walk(env, "falcon", mode).items():
+            assert payload["searched"] == want, surface
+            assert payload.get("body_prefix_chars") == service.get("body_prefix_chars"), surface
+
+    def test_present_on_a_miss_and_under_projection(self, env):
+        payloads = walk(env, ABSENT, "keyword")
+        payloads["cli_fields"] = cli(env, ABSENT, "-k", OPEN, "--fields", "id")
+        for surface, payload in payloads.items():
+            assert payload["match"] == "none"
+            assert payload["searched"] == self.EXPECTED, surface
+
+    def test_tags_and_field_values_are_not_claimed(self, env):
+        for surface, payload in walk(env, "falcon", "keyword").items():
+            assert "tags" not in payload["searched"], surface
+            assert "metadata" not in payload["searched"], surface
+            assert "fields" not in payload["searched"], surface
+
+
 class TestTheVerdictSurvivesRowShaping:
     @pytest.mark.parametrize("mode", MODES)
     def test_a_fields_projection_keeps_the_top_level_keys(self, env, mode):

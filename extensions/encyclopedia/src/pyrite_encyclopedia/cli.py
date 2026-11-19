@@ -3,15 +3,14 @@
 from datetime import UTC, datetime
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
-from pyrite.cli.context import require_kb
+from pyrite.cli.context import require_entry_kb, require_kb
+from pyrite.cli.output import cli_console
 from pyrite.config import load_config
-from pyrite.storage.database import PyriteDB
 
 wiki_app = typer.Typer(help="Encyclopedia (wiki) commands")
-console = Console()
+console = cli_console()
 
 
 @wiki_app.command("review")
@@ -23,6 +22,8 @@ def wiki_review(
     user: str = typer.Option("local", "--user", "-u", help="Reviewer ID"),
 ):
     """Submit a review for an article."""
+    from pyrite.storage.database import PyriteDB
+
     if action not in ("approve", "reject", "comment"):
         console.print("[red]Error:[/red] Action must be 'approve', 'reject', or 'comment'")
         raise typer.Exit(1)
@@ -30,6 +31,8 @@ def wiki_review(
     config = load_config()
 
     require_kb(config, kb_name, output_format="rich")
+    # The review row names the entry's KB, never '' (#911).
+    kb_name = require_entry_kb(entry_id, kb_name, entry_type="article", output_format="rich")
     db = PyriteDB(config.settings.index_path)
 
     try:
@@ -38,7 +41,7 @@ def wiki_review(
             """INSERT INTO encyclopedia_review
                (entry_id, kb_name, reviewer_id, status, comments, created_at)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (entry_id, kb_name or "", user, action, comment, now),
+            (entry_id, kb_name, user, action, comment, now),
         )
         db._raw_conn.commit()
 
@@ -61,6 +64,8 @@ def wiki_quality(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Assess or set article quality level."""
+    from pyrite.storage.database import PyriteDB
+
     from .entry_types import QUALITY_LEVELS
 
     config = load_config()
@@ -78,13 +83,11 @@ def wiki_quality(
             console.print(f"[green]Quality for {entry_id} set to {new_quality}[/green]")
             console.print("[dim]Update the article's frontmatter to apply.[/dim]")
         else:
-            # Show current quality from index
-            entry = db.get_entry(entry_id, kb_name) if kb_name else None
-            if not entry:
-                for kb in config.knowledge_bases:
-                    entry = db.get_entry(entry_id, kb.name)
-                    if entry:
-                        break
+            # Show current quality from index, in the one KB that holds the
+            # id (#911: a loop over config.yaml picked the first KB and
+            # skipped registry-only ones).
+            home = require_entry_kb(entry_id, kb_name, entry_type="article", output_format="rich")
+            entry = db.get_entry(entry_id, home)
 
             if entry:
                 import json
@@ -116,6 +119,8 @@ def wiki_stats(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
     """Show quality distribution and review queue length."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)
@@ -177,9 +182,11 @@ def wiki_stats(
 @wiki_app.command("stubs")
 def wiki_stubs(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    limit: int = typer.Option(20, "--limit", "-n", help="Number of results"),
+    limit: int = typer.Option(20, "--limit", "-n", min=1, help="Number of results"),
 ):
     """List stub articles needing expansion."""
+    from pyrite.storage.database import PyriteDB
+
     config = load_config()
     require_kb(config, kb_name, output_format="rich")
     db = PyriteDB(config.settings.index_path)

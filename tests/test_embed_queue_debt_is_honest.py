@@ -472,7 +472,7 @@ class TestADeletedEntrysDebtIsVoid:
         svc.create_entry("t", "gone", "Gone", "note", "x")
         assert ("gone", "t", "pending") in queue_rows(svc.db)
 
-        svc.delete_entry("gone", "t")
+        svc.delete_entry("gone", "t", readable_kbs=None)
         assert svc.db.get_entry("gone", "t") is None
 
         worker = EmbeddingWorker(svc.db)
@@ -496,7 +496,7 @@ class TestADeletedEntrysDebtIsVoid:
         svc = _svc(tmp_path, auto_embed=True)
         for i in range(10):
             svc.create_entry("t", f"dead{i}", "D", "note", "x")
-            svc.delete_entry(f"dead{i}", "t")
+            svc.delete_entry(f"dead{i}", "t", readable_kbs=None)
         for i in range(5):
             svc.create_entry("t", f"live{i}", "L", "note", "x")
 

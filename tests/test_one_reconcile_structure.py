@@ -22,7 +22,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 
 # Calls that walk a KB's files.
-WALKS = {"list_files", "list_all_files", "list_entries", "rglob", "walk"}
+WALKS = {
+    "list_files",
+    "list_all_files",
+    "list_entries",
+    "rglob",
+    "walk",
+    # The walk behind list_files and the plan, and its alias lookup (#1262).
+    "walk_files",
+    "list_collection_files",
+    "aliases_by_target",
+}
 # Calls that write an index row.
 WRITES = {"upsert_entry", "index_entry"}
 

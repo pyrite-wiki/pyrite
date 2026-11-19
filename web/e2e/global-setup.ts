@@ -25,7 +25,7 @@
  * The world it builds is described, entry by entry, in `fixtures.ts`.
  * See kb/backlog/playwright-e2e-suite-non-deterministic-failures-*.md, Package A.
  */
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,9 +35,12 @@ import {
 	SEEDED_COLLECTION,
 	SEEDED_DAILY_DATES,
 	SEEDED_EVENTS,
+	SEEDED_LINKS,
 	SEEDED_NOTES,
 	SEEDED_ORGANIZATIONS,
-	SEEDED_PEOPLE
+	SEEDED_PEOPLE,
+	type SeededEntry,
+	type SeededLink
 } from './fixtures';
 import { derivePorts } from './ports';
 
@@ -112,7 +115,7 @@ const PYRITE_BIN = join(REPO_ROOT, '.venv', 'bin', 'pyrite');
 export function preflightPort(port: number, label: string): void {
 	let output: string;
 	try {
-		output = execSync(`lsof -sTCP:LISTEN -i :${port}`, {
+		output = execFileSync('lsof', ['-sTCP:LISTEN', '-i', `:${port}`], {
 			encoding: 'utf8',
 			stdio: ['ignore', 'pipe', 'ignore']
 		});
@@ -192,6 +195,65 @@ function create(args: string[]): void {
 }
 
 /**
+ * `--link` args for one seeded entry, from `SEEDED_LINKS` (#162).
+ *
+ * The entry id derives from the title (`pyrite.schema.validators.generate_entry_id`),
+ * so the seed loops look up links by the same id fixtures use. The trap the
+ * groom for #162 names: a `--link` whose target does not exist yet makes the
+ * create a partial success (exit 3) with the link dropped — so the seed
+ * creates every link target before its source (events after people, notes
+ * after events) and lets execFileSync throw on any non-zero exit instead of
+ * ignoring it.
+ */
+function linksFor(entryId: string): string[] {
+	return SEEDED_LINKS.filter((l) => l.source === entryId).flatMap((l) => [
+		'--link',
+		`${l.target}:${l.relation}`
+	]);
+}
+
+/**
+ * Creation order of the seed loops in `seedE2EWorld()` below: people first,
+ * then events, notes, organizations. A `--link` whose target's group is
+ * created after the source's group — or whose target comes later inside the
+ * same group — names an entry that does not exist yet, so the create is a
+ * partial success (exit 3) and the link is silently dropped. Validate up
+ * front so a future link that breaks the order fails here with a loud error
+ * instead of seeding a world with silently missing links.
+ *
+ * `groups`/`links` default to the seed constants but are injectable so the
+ * guard itself is unit-testable (see `global-setup.test.ts`).
+ */
+export function validateLinkCreationOrder(
+	groups: SeededEntry[][] = [SEEDED_PEOPLE, SEEDED_EVENTS, SEEDED_NOTES, SEEDED_ORGANIZATIONS],
+	links: SeededLink[] = SEEDED_LINKS
+): void {
+	const idToPosition = new Map<string, number>();
+	for (const group of groups) {
+		for (const entry of group) {
+			idToPosition.set(entry.id, idToPosition.size);
+		}
+	}
+	for (const link of links) {
+		const sourcePos = idToPosition.get(link.source);
+		const targetPos = idToPosition.get(link.target);
+		if (sourcePos === undefined || targetPos === undefined) {
+			throw new Error(
+				`seed: SEEDED_LINKS references an unknown entry id ` +
+					`(source=${link.source}, target=${link.target})`
+			);
+		}
+		if (targetPos >= sourcePos) {
+			throw new Error(
+				`seed: link ${link.source} → ${link.target} is uncreatable — the target ` +
+					`is created after its source, so the --link target would not exist yet ` +
+					`(partial create, exit 3, link dropped). Reorder the seed loops or the link.`
+			);
+		}
+	}
+}
+
+/**
  * Marker so the seed runs exactly once per `playwright test` invocation.
  *
  * `playwright.config.ts` is evaluated in the main runner process AND again in
@@ -227,6 +289,10 @@ export function seedE2EWorld(): void {
 	preflightPort(E2E_BACKEND_PORT, 'base e2e backend');
 	preflightPort(E2E_VITE_PORT, 'base e2e Vite dev server');
 
+	// Fail fast on an uncreatable link (target created after its source)
+	// before the seed touches the data dir — see validateLinkCreationOrder.
+	validateLinkCreationOrder();
+
 	// A fresh world every run. Without this, a spec that wrote in run N would
 	// still be in the world in run N+1, which is the shared-state failure mode
 	// this package exists to remove.
@@ -236,7 +302,13 @@ export function seedE2EWorld(): void {
 	pyrite(['init', '-t', 'research', '-p', E2E_KB_PATH, '-n', E2E_KB, '--no-examples']);
 
 	for (const p of SEEDED_PEOPLE) {
-		create(['-t', 'person', '--title', p.title, '-b', `Seeded person: ${p.title}.`, '--tags', 'e2e,person']);
+		create([
+			'-t', 'person',
+			'--title', p.title,
+			'-b', `Seeded person: ${p.title}.`,
+			'--tags', 'e2e,person',
+			...linksFor(p.id)
+		]);
 	}
 	for (const e of SEEDED_EVENTS) {
 		create([
@@ -244,14 +316,27 @@ export function seedE2EWorld(): void {
 			'--title', e.title,
 			'-d', e.date,
 			'-b', `Seeded event on ${e.date}.`,
-			'--tags', 'e2e,event'
+			'--tags', 'e2e,event',
+			...linksFor(e.id)
 		]);
 	}
 	for (const n of SEEDED_NOTES) {
-		create(['-t', 'note', '--title', n.title, '-b', `Seeded note: ${n.title}.`, '--tags', 'e2e,note']);
+		create([
+			'-t', 'note',
+			'--title', n.title,
+			'-b', `Seeded note: ${n.title}.`,
+			'--tags', 'e2e,note',
+			...linksFor(n.id)
+		]);
 	}
 	for (const o of SEEDED_ORGANIZATIONS) {
-		create(['-t', 'organization', '--title', o.title, '-b', `Seeded organization.`, '--tags', 'e2e,org']);
+		create([
+			'-t', 'organization',
+			'--title', o.title,
+			'-b', `Seeded organization.`,
+			'--tags', 'e2e,org',
+			...linksFor(o.id)
+		]);
 	}
 
 	// `collection` is not one of the `research` template's declared types, so it

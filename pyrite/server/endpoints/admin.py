@@ -4,14 +4,22 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import ValidationError as PydanticValidationError
 
-from ...exceptions import ConfigError, KBNotFoundError, KBProtectedError, ValidationError
+from ...config import validate_kb_default_role
+from ...exceptions import (
+    ConfigError,
+    KBNotFoundError,
+    KBProtectedError,
+    ValidationError,
+    public_text,
+)
 from ...services.access_policy import ROLES, AccessPolicy, Action, AnyKB, ReadScope
 from ...services.auth_service import AuthService
 from ...services.embedding_worker import EmbeddingWorker
 from ...services.ephemeral_service import EphemeralKBService, InvalidEphemeralKBNameError
+from ...services.index_health import network_shape
 from ...services.index_worker import IndexWorker
 from ...services.kb_registry_service import KBRegistryService
 from ...services.llm_service import LLMService
@@ -76,6 +84,9 @@ def get_stats(
 def sync_index(
     request: Request,
     wait: bool = False,
+    kb: str | None = None,
+    confirm: list[str] | None = Query(None),
+    policy: AccessPolicy = Depends(get_access_policy),
     worker: IndexWorker = Depends(get_index_worker),
     index_mgr: IndexManager = Depends(get_index_mgr),
 ):
@@ -83,10 +94,30 @@ def sync_index(
 
     By default submits a background job and returns immediately with a job_id.
     Pass ?wait=true to block until completion and return the legacy SyncResponse
-    format with counts.
+    format with counts; ?kb= syncs that KB alone.
+
+    ``confirm`` (repeated: ``?confirm=a&confirm=notes/b.md``; one empty value
+    confirms every entry the sync added or changed) adds the ``confirm`` block
+    ``pyrite index sync --confirm`` prints (``services.index_confirm``,
+    #1691). It needs ``wait=true`` and ``kb``.
     """
+    resolved = None
+    if kb is not None:
+        # Through the one resolver, for the caller: an unknown name is 404
+        # KB_NOT_FOUND, as on the other admin KB routes. The confirm takes
+        # this handle (T3-1, #1530).
+        resolved = resolve_named_kb(request, policy, kb)
+        kb = resolved.name if resolved is not None else None
+    if confirm is not None:
+        if not wait:
+            raise ValidationError(
+                "confirm needs wait=true: a confirm reads the sync, which a background job "
+                "has not done yet"
+            )
+        if not kb:
+            raise ValidationError("confirm needs kb: the KB the entries are in")
     if wait:
-        result = index_mgr.sync_incremental()
+        result = index_mgr.sync_incremental(kb)
 
         # ADR-0035: a write enqueues instead of embedding, and this is one of
         # the two server paths that pay that debt back (the other is the
@@ -104,15 +135,29 @@ def sync_index(
 
         broadcast_event("kb_synced", entry_id="", kb_name="")
 
-        return SyncResponse(
+        if confirm is not None:
+            from ...services.index_confirm import confirm_entries
+
+            assert resolved is not None  # confirm without a kb is refused above
+            result["confirm"] = confirm_entries(index_mgr, resolved, confirm, result)
+        # What a network caller gets of the result (#1546, #1552), the confirm
+        # block included: one place decides it.
+        shaped = network_shape(result)
+        response = SyncResponse(
             synced=True,
             added=result.get("added", 0),
             updated=result.get("updated", 0),
             removed=result.get("removed", 0),
             skipped=result.get("skipped", []),
+            unreadable_kbs=result.get("unreadable_kbs", []),
+            # Folders it could not list, rows kept: a count, never a path (#1546).
+            unreadable_folders=shaped["unreadable_folders"],
         )
+        if confirm is None:
+            return response
+        return {**response.model_dump(), "confirm": shaped["confirm"]}
 
-    job_id = worker.submit_sync()
+    job_id = worker.submit_sync(kb)
     return {"job_id": job_id, "status": "submitted"}
 
 
@@ -206,14 +251,17 @@ def create_kb(
             kb = eph_svc.create_ephemeral_kb(name, ttl=ttl or 3600, description=description)
         except InvalidEphemeralKBNameError as e:
             raise HTTPException(
-                status_code=400, detail={"code": "INVALID_KB_NAME", "message": str(e)}
+                status_code=400, detail={"code": "INVALID_KB_NAME", "message": public_text(e)}
             ) from None
         return {"created": True, "name": kb.name, "path": str(kb.path), "ephemeral": True}
 
     try:
         result = registry.add_kb(name=name, path=path, kb_type=kb_type, description=description)
     except ConfigError as e:
-        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": str(e)})
+        # ConfigError fixes its public_message (its text may name a server
+        # path); a subclass that says what conflicts (KB already exists)
+        # shows its own.
+        raise HTTPException(status_code=409, detail={"code": "CONFLICT", "message": public_text(e)})
     return {"created": True, **result}
 
 
@@ -281,7 +329,9 @@ def delete_kb(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
         )
     except KBProtectedError as e:
-        raise HTTPException(status_code=403, detail={"code": "PROTECTED", "message": str(e)})
+        raise HTTPException(
+            status_code=403, detail={"code": "PROTECTED", "message": public_text(e)}
+        )
     return {"deleted": True, "name": name}
 
 
@@ -301,7 +351,7 @@ def reindex_kb(
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{name}' not found"}
         )
-    return KBReindexResponse(name=name, **result)
+    return KBReindexResponse(name=name, **network_shape(result))
 
 
 @router.post("/kbs/gc", dependencies=[Depends(requires_tier("admin"))])
@@ -367,10 +417,10 @@ def create_ephemeral_kb(
         result = auth_service.create_user_ephemeral_kb(auth_user["id"], eph_svc, name=name)
     except InvalidEphemeralKBNameError as e:
         raise HTTPException(
-            status_code=400, detail={"code": "INVALID_KB_NAME", "message": str(e)}
+            status_code=400, detail={"code": "INVALID_KB_NAME", "message": public_text(e)}
         ) from None
     except ValueError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=public_text(e))
 
     return {"created": True, **result}
 
@@ -445,7 +495,7 @@ def manage_kb_permission(
     try:
         auth_service.grant_kb_permission(user_id, name, role, granted_by)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=public_text(e))
 
     return {"granted": True, "user_id": user_id, "kb_name": name, "role": role}
 
@@ -461,12 +511,16 @@ def update_kb_default_role(
 ):
     """Update a KB's default access role. Requires admin."""
     _resolve_named_kb(request, policy, name)
-    if role is not None and role not in ("none", "read", "write"):
-        raise HTTPException(status_code=400, detail="role must be 'none', 'read', 'write', or null")
+    try:
+        validate_kb_default_role(role, f"KB '{name}'")
+    except ConfigError:
+        raise HTTPException(
+            status_code=400, detail="role must be 'none', 'read', 'write', or null"
+        ) from None
     try:
         registry.update_kb(name, default_role=role)
     except KBNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=404, detail=public_text(e))
     return {"ok": True, "kb_name": name, "default_role": role}
 
 

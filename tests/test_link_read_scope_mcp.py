@@ -1,6 +1,6 @@
 """MCP reads learn nothing about a KB the caller cannot read (P-R4, P-R5).
 
-Private #39 (link data on MCP), #40 (`kb_get` without a KB), and the same
+Link data on MCP, `kb_get` without a KB, and the same
 class on the other two MCP content chokepoints: the `pyrite://entries/{id}`
 resource and the `summarize_entry` / `find_connections` prompts, which embed
 whole entries, links included. Surface: the real chokepoints

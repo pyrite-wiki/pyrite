@@ -892,7 +892,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -989,9 +989,10 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -1019,7 +1020,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -1301,6 +1302,13 @@
             "default": false,
             "description": "Run in background (returns job_id for polling). Default: false",
             "type": "boolean"
+          },
+          "confirm": {
+            "description": "After the sync, say for each entry id or KB-relative path whether it is indexed and searchable: a `confirm` block with one row per name (status indexed, not_indexed, not_found, malformed, duplicate or skipped; schema findings; embedding embedded, queued or unavailable) and `outcome` done or partial. An empty list confirms every entry the sync added or changed. Needs kb_name; refused with background.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "Sync specific KB (optional - syncs all if not provided)",
@@ -1658,7 +1666,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -1867,10 +1875,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -1898,6 +1908,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -1909,6 +1933,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -1921,6 +1949,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "append": {
             "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
@@ -1955,7 +1984,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -2043,7 +2072,7 @@
       "inputSchema": {
         "properties": {
           "author_id": {
-            "description": "Author user ID",
+            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "body": {
@@ -2080,8 +2109,7 @@
         "required": [
           "kb_name",
           "title",
-          "body",
-          "author_id"
+          "body"
         ],
         "type": "object"
       }
@@ -2147,7 +2175,7 @@
             "type": "string"
           },
           "user_id": {
-            "description": "Voter user ID",
+            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "value": {
@@ -2161,8 +2189,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
-          "user_id",
           "value"
         ],
         "type": "object"
@@ -2226,7 +2252,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -2308,8 +2341,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2323,7 +2355,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Who is claiming the item",
+            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "item_id": {
@@ -2336,9 +2368,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name",
-          "assignee"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2389,8 +2419,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2458,6 +2487,13 @@
             ],
             "type": "string"
           },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "title": {
             "description": "ADR title",
             "type": "string"
@@ -2504,7 +2540,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -2555,8 +2598,7 @@
           }
         },
         "required": [
-          "epic_id",
-          "kb_name"
+          "epic_id"
         ],
         "type": "object"
       }
@@ -2620,7 +2662,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "summary"
         ],
         "type": "object"
@@ -2677,9 +2718,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "kb_name"
-        ],
+        "required": [],
         "type": "object"
       }
     },
@@ -2751,15 +2790,13 @@
             "type": "string"
           },
           "reviewer": {
-            "description": "Who is reviewing",
+            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "item_id",
-          "kb_name",
-          "outcome",
-          "reviewer"
+          "outcome"
         ],
         "type": "object"
       }
@@ -2828,8 +2865,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -2861,7 +2897,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "to_status"
         ],
         "type": "object"
@@ -2986,7 +3021,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -3000,8 +3035,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -3014,7 +3048,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -3028,9 +3062,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",
@@ -3095,6 +3154,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -3133,6 +3193,45 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -3140,6 +3239,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
@@ -3158,12 +3268,40 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },
@@ -3217,7 +3355,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -3239,7 +3377,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           },
@@ -3286,7 +3425,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "quality"
         ],
         "type": "object"
@@ -3320,7 +3458,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "level"
         ],
         "type": "object"
@@ -3404,14 +3541,12 @@
             "type": "string"
           },
           "reviewer_id": {
-            "description": "Reviewer user ID",
+            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "entry_id",
-          "kb_name",
-          "reviewer_id",
           "action"
         ],
         "type": "object"
@@ -3440,8 +3575,7 @@
           }
         },
         "required": [
-          "entry_id",
-          "kb_name"
+          "entry_id"
         ],
         "type": "object"
       }
@@ -4385,7 +4519,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -4512,10 +4646,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -4543,6 +4679,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -4554,6 +4704,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -4691,7 +4845,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -4773,8 +4934,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -4825,8 +4985,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -4874,8 +5033,7 @@
           }
         },
         "required": [
-          "epic_id",
-          "kb_name"
+          "epic_id"
         ],
         "type": "object"
       }
@@ -5107,6 +5265,17 @@
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "KB name (optional)",
             "type": "string"
@@ -5124,7 +5293,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
@@ -5245,8 +5415,7 @@
           }
         },
         "required": [
-          "entry_id",
-          "kb_name"
+          "entry_id"
         ],
         "type": "object"
       }
@@ -6158,7 +6327,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -6221,9 +6390,10 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -6251,7 +6421,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -6806,7 +6976,7 @@
             "type": "integer"
           },
           "since": {
-            "description": "Only entries updated after this ISO datetime (e.g. 2025-01-01T00:00:00)",
+            "description": "Lower bound on updated_at, inclusive: entries updated at or after this instant. A date (2026-10-22, read as midnight UTC) or an ISO 8601 datetime with or without an offset (2026-10-22T00:00:00Z). Any other form is refused with VALIDATION_FAILED, not matched as text.",
             "type": "string"
           }
         },
@@ -6933,10 +7103,12 @@
           },
           "limit": {
             "description": "Maximum tags to return (default 100)",
+            "minimum": 1,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "prefix": {
@@ -6964,6 +7136,20 @@
             "description": "End date (YYYY-MM-DD)",
             "type": "string"
           },
+          "exclude_status": {
+            "description": "Drop entries whose status matches any of these, the effective status; an entry with no status is kept. An empty list is refused; omit this argument to keep every status.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kb_names": {
+            "description": "Limit the timeline to these KBs. Omit for every KB the caller can read; an empty list or a blank name is refused.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "limit": {
             "description": "Maximum results (default 50)",
             "type": "integer"
@@ -6975,6 +7161,10 @@
           "offset": {
             "description": "Pagination offset (default 0)",
             "type": "integer"
+          },
+          "status": {
+            "description": "Only entries whose status matches, the effective status: a task whose children are all resolved counts as done while its file still says open (or in_progress).",
+            "type": "string"
           }
         },
         "required": [],
@@ -6987,6 +7177,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "append": {
             "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
@@ -7021,7 +7212,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -7109,7 +7300,7 @@
       "inputSchema": {
         "properties": {
           "author_id": {
-            "description": "Author user ID",
+            "description": "Author: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "body": {
@@ -7146,8 +7337,7 @@
         "required": [
           "kb_name",
           "title",
-          "body",
-          "author_id"
+          "body"
         ],
         "type": "object"
       }
@@ -7213,7 +7403,7 @@
             "type": "string"
           },
           "user_id": {
-            "description": "Voter user ID",
+            "description": "Voter: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "value": {
@@ -7227,8 +7417,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
-          "user_id",
           "value"
         ],
         "type": "object"
@@ -7292,7 +7480,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -7374,8 +7569,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7389,7 +7583,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Who is claiming the item",
+            "description": "Who is claiming the item: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           },
           "item_id": {
@@ -7402,9 +7596,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name",
-          "assignee"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7455,8 +7647,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7524,6 +7715,13 @@
             ],
             "type": "string"
           },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "title": {
             "description": "ADR title",
             "type": "string"
@@ -7570,7 +7768,14 @@
               "tech_debt",
               "improvement",
               "spike",
-              "epic"
+              "enhancement",
+              "documentation",
+              "docs",
+              "task",
+              "epic",
+              "refactor",
+              "chore",
+              "process"
             ],
             "type": "string"
           },
@@ -7621,8 +7826,7 @@
           }
         },
         "required": [
-          "epic_id",
-          "kb_name"
+          "epic_id"
         ],
         "type": "object"
       }
@@ -7686,7 +7890,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "summary"
         ],
         "type": "object"
@@ -7743,9 +7946,7 @@
             "type": "string"
           }
         },
-        "required": [
-          "kb_name"
-        ],
+        "required": [],
         "type": "object"
       }
     },
@@ -7817,15 +8018,13 @@
             "type": "string"
           },
           "reviewer": {
-            "description": "Who is reviewing",
+            "description": "Who is reviewing: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "item_id",
-          "kb_name",
-          "outcome",
-          "reviewer"
+          "outcome"
         ],
         "type": "object"
       }
@@ -7894,8 +8093,7 @@
           }
         },
         "required": [
-          "item_id",
-          "kb_name"
+          "item_id"
         ],
         "type": "object"
       }
@@ -7927,7 +8125,6 @@
         },
         "required": [
           "item_id",
-          "kb_name",
           "to_status"
         ],
         "type": "object"
@@ -8052,7 +8249,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "kb_name": {
@@ -8066,8 +8263,7 @@
         },
         "required": [
           "task_id",
-          "kb_name",
-          "assignee"
+          "kb_name"
         ],
         "type": "object"
       }
@@ -8080,7 +8276,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "Assignee (e.g. agent:claude-code-7a3f)",
+            "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
           "body": {
@@ -8094,9 +8290,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",
@@ -8161,6 +8382,7 @@
             "items": {
               "properties": {
                 "assignee": {
+                  "description": "Optional; over a signed-in session it must be you",
                   "type": "string"
                 },
                 "body": {
@@ -8199,6 +8421,45 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -8206,6 +8467,17 @@
           "assignee": {
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
+          },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "KB name (optional)",
@@ -8224,12 +8496,40 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },
@@ -8283,7 +8583,7 @@
       "inputSchema": {
         "properties": {
           "assignee": {
-            "description": "New assignee",
+            "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
             "type": "string"
           },
           "kb_name": {
@@ -8305,7 +8605,8 @@
               "blocked",
               "review",
               "done",
-              "failed"
+              "failed",
+              "cancelled"
             ],
             "type": "string"
           },
@@ -8352,7 +8653,6 @@
         },
         "required": [
           "entry_id",
-          "kb_name",
           "quality"
         ],
         "type": "object"
@@ -8436,14 +8736,12 @@
             "type": "string"
           },
           "reviewer_id": {
-            "description": "Reviewer user ID",
+            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
             "type": "string"
           }
         },
         "required": [
           "entry_id",
-          "kb_name",
-          "reviewer_id",
           "action"
         ],
         "type": "object"
@@ -8472,8 +8770,7 @@
           }
         },
         "required": [
-          "entry_id",
-          "kb_name"
+          "entry_id"
         ],
         "type": "object"
       }

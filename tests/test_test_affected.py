@@ -565,6 +565,27 @@ class TestBaseFallback:
         assert out.returncode == 0, out.stderr
         assert "tests/test_b.py" in out.stdout.split()
 
+    def test_missing_base_diff_hint_suggests_base_option(self, repo):
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-qm", "base")
+        out = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT),
+                "--root",
+                str(repo),
+                "--list",
+                "--base",
+                "nonexistent/ref",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert out.returncode == 2
+        assert "pass --base <REF>" in out.stderr
+
 
 class TestPushedRange:
     """Under the pre-push hook, select from what is being pushed.

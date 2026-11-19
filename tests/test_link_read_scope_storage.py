@@ -1,6 +1,6 @@
 """Link queries answer only over what the caller can read (P-R4, P-R5).
 
-Private #39/#56 (link lists), #57 (graph), #40/#55 (lookup without a KB).
+Link lists, the graph, a lookup without a KB.
 Surface: the storage layer and `KBService`/`GraphService`, driven with the
 readable set `ReadScope.as_set()` hands a handler. The REST and MCP surfaces
 have their own modules; this one pins the rule where it is enforced.

@@ -44,9 +44,12 @@ test.describe('Collections Page', () => {
 		await expect(page.getByRole('heading', { name: SEEDED_COLLECTION.title })).toBeVisible();
 
 		for (const person of SEEDED_PEOPLE) {
+			// entryHref() appends `?kb=<name>` when the entry carries a kb; the
+			// collection page only needs to link to the right entry, so match
+			// the path prefix rather than the exact href.
 			await expect(page.getByRole('link', { name: person.title })).toHaveAttribute(
 				'href',
-				`/entries/${person.id}`
+				new RegExp(`^/entries/${person.id}(\\?|$)`)
 			);
 		}
 

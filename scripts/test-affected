@@ -1220,7 +1220,7 @@ def main(argv: list[str] | None = None) -> int:
         selection = Selection(files={}, core=[], full="--full" if opts.full else "PYRITE_PUSH_FULL")
     else:
         diff_context = f"base {opts.base!r}"
-        diff_hint = "fetch origin dev, or push with PYRITE_PUSH_FULL=1"
+        diff_hint = "fetch origin dev, pass --base <REF>, or push with PYRITE_PUSH_FULL=1"
         try:
             if opts.files is not None:
                 changed = opts.files

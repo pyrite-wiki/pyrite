@@ -17,7 +17,6 @@ import sys
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
 
@@ -37,8 +36,6 @@ from ..exceptions import (
     ValidationError,
 )
 from ..logging import configure_entry_point_logging
-from ..services.access_policy import UNSCOPED
-from ..services.kb_service import KBService
 from ..utils.errors import PyriteCLIGroup, cli_error, exit_unless_whole
 from .browse_commands import register_browse_commands
 from .collection_commands import collections_app
@@ -53,7 +50,7 @@ from .init_command import init_kb
 from .kb_commands import kb_app
 from .link_commands import links_app
 from .mcp_setup_command import MCP_CHECK_OK, mcp_setup, mcp_tool_counts
-from .output import output_format_choice, validate_output_format
+from .output import cli_console, output_format_choice, path_line, validate_output_format
 from .protocol_commands import protocol_app
 from .qa_commands import qa_app
 from .repo_commands import repo_collab_app
@@ -107,11 +104,19 @@ class _LazyPluginTyper(typer.Typer):
             # A plugin whose get_cli_commands raised would vanish from `app`;
             # say so on stderr rather than only in a logger nobody listens to
             # (#900).
+            # A refused type mapping (#468) leaves that core type stored as
+            # named: say so too, or the dropped mapping is invisible.
             for plugin, method, exc in registry.aggregate_failures:
                 if method == "get_cli_commands":
                     print(
                         f"pyrite: plugin '{plugin}' CLI commands are unavailable: "
-                        f"{type(exc).__name__}: {exc}",
+                        f"{exc.type_name}: {exc.text(local=True)}",
+                        file=sys.stderr,
+                    )
+                elif method == "get_type_mappings":
+                    print(
+                        f"pyrite: plugin '{plugin}' type mappings refused: "
+                        f"{exc.type_name}: {exc.text(local=True)}",
                         file=sys.stderr,
                     )
             for name, command in commands:
@@ -133,7 +138,7 @@ app = _LazyPluginTyper(
     epilog="New to a KB? Run `pyrite orient -k <kb-name>` first -- it summarizes "
     "types, tags, recent changes, and schema in one call.",
 )
-console = Console()
+console = cli_console()
 
 
 def _version_callback(value: bool) -> None:
@@ -152,6 +157,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         None,
         "--version",
@@ -173,6 +179,15 @@ def _main(
     ),
 ) -> None:
     # No docstring: `TAGLINE` is the help text.
+    # The CLI is the operator (`services.acting.OPERATOR`), bound explicitly
+    # for the command it runs and released when it returns. A server it
+    # starts unbinds it per request (`api.NobodyActingMiddleware`), and an MCP
+    # call binds its own principal.
+    from ..services.acting import OPERATOR, acting_as, local_process
+
+    ctx.with_resource(acting_as(OPERATOR))
+    # And the call is the local process (`services.acting.is_local_process`).
+    ctx.with_resource(local_process(True))
     return None
 
 
@@ -181,6 +196,8 @@ def _get_svc():
 
     Deprecated: use cli_context() directly in new code.
     """
+    from ..services.kb_service import KBService
+
     config = load_config()
     db = open_index_db(config)
     return KBService(config, db), db
@@ -274,6 +291,8 @@ def ci_command(
     tier: int = typer.Option(
         1,
         "--tier",
+        min=1,
+        max=2,
         help="Assessment tier: 1=structural, 2=structural plus the model-judged rubric "
         "(one model call per entry with judgment items; needs a configured model)",
     ),
@@ -285,7 +304,7 @@ def ci_command(
     Use --tier 2 to include the model-judged rubric: its findings are warnings
     that count at the gate, and an entry the model did not answer for is an
     `evaluation_failed` error. With no model configured, --tier 2 is refused
-    (AI_NOT_CONFIGURED); an unknown tier is refused (INVALID_TIER).
+    (AI_NOT_CONFIGURED); an out-of-range tier is refused as a usage error.
 
     Without --kb, every KB is validated: those in the config and those
     registered in the index (`pyrite kb add`). A KB whose folder is missing or
@@ -331,6 +350,7 @@ def ci_command(
             )
 
         qa = QAService(config, db, llm_service=llm_service)
+        from ..services.access_policy import UNSCOPED
 
         if kb:
             result = {"kbs": [qa.validate_kb(kb, readable_kbs=UNSCOPED, tier=tier)]}
@@ -505,7 +525,7 @@ def list_kbs(
 def show_config():
     """Show current configuration."""
     config_file = current_config_file()
-    console.print(f"[bold]Config file:[/bold] {config_file}")
+    console.print(path_line("[bold]Config file:[/bold] ", config_file))
     console.print(f"[bold]Exists:[/bold] {config_file.exists()}")
 
     if config_file.exists():
@@ -523,7 +543,14 @@ def show_config():
 @app.command("serve")
 def serve(
     host: str = typer.Option(None, "--host", "-h", help="Host to bind to"),
-    port: int = typer.Option(None, "--port", "-p", help="Port to bind to"),
+    port: int = typer.Option(
+        None,
+        "--port",
+        "-p",
+        min=1,
+        max=65535,
+        help="Port to bind to",
+    ),
     dev: bool = typer.Option(
         False, "--dev", help="API-only mode (frontend dev server runs separately on :5173)"
     ),
@@ -857,7 +884,7 @@ def mcp_server(
         return
 
     # stderr, not stdout -- stdout carries the MCP protocol stream itself.
-    Console(stderr=True).print(f"[dim]Starting MCP server ({tier} tier) on stdio...[/dim]")
+    cli_console(stderr=True).print(f"[dim]Starting MCP server ({tier} tier) on stdio...[/dim]")
     server = PyriteMCPServer(tier=tier)
     try:
         server.run_stdio()
@@ -886,8 +913,10 @@ def import_entries(
     allow_undeclared: bool = typer.Option(
         False,
         "--allow-undeclared",
-        help="Allow entry types not declared in the KB's kb.yaml (the entries "
-        "will be flagged by `pyrite index health`).",
+        help="Allow an entry_type the KB does not declare. Only a KB whose "
+        "kb.yaml declares types refuses others (core types included); "
+        "`pyrite index health` then lists the entry. A KB that declares no "
+        "types accepts any type.",
     ),
     stream: bool = typer.Option(
         False,
@@ -1052,16 +1081,17 @@ def generate_readme_cmd(
             from ..utils.kb_files import KBFiles
 
             try:
+                kb_config.refuse_writes()  # a read-only KB takes no README either
                 # A README.md that is a link out of the KB is not written through.
                 KBFiles(readme_path.parent).write_bytes(readme_path, readme.encode("utf-8"))
             except PyriteError as e:
                 cli_error_from(e)
             except OSError as e:  # a hard-linked README.md (`HardLinked`)
                 cli_error(str(e), error_code="STORAGE_ERROR")
-            console.print(f"[green]Written:[/green] {readme_path}")
+            console.print(path_line("[green]Written:[/green] ", readme_path))
         elif output:
             output.write_text(readme, encoding="utf-8")
-            console.print(f"[green]Written:[/green] {output}")
+            console.print(path_line("[green]Written:[/green] ", output))
         else:
             typer.echo(readme)
 

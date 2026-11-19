@@ -424,7 +424,7 @@ def test_cli_import_dry_run_works_on_a_read_only_kb(env):
 
 
 def test_bulk_create_missing_title_is_a_validation_refusal(env, mcp):
-    """#358's per-item title failure now carries the pipeline's code too."""
+    """#358's per-item title failure now carries the pipeline's code and row too."""
     res = mcp._dispatch_tool(
         "kb_bulk_create",
         {"kb_name": KB, "entries": [{"entry_type": "person", "body": "untitled"}]},
@@ -433,6 +433,8 @@ def test_bulk_create_missing_title_is_a_validation_refusal(env, mcp):
         "created": False,
         "error": "title is required",
         "error_code": "VALIDATION_FAILED",
+        # The row the refusal built travels with the record (#1381 review).
+        "errors": [{"field": "title", "rule": "required", "message": "title is required"}],
     }, res
 
 
@@ -548,14 +550,9 @@ def test_rest_create_accepts_the_web_forms_default_payload_in_pyrites_own_kb(sof
     create (web/src/lib/api/client.ts), so the form keeps dev's behaviour in a
     KB that declares types. API callers that do not send it are refused.
 
-    The exact-path assertion below is red without #391's fix for an incidental
-    reason worth naming: this KB's `note` -> most-derived-NoteEntry-subtype
-    resolution silently resolves the entry to an ADREntry (#468, filed,
-    out of scope for #391), so the file only lands under `adrs/` with the
-    `0000-` prefix once the `adr` type's `file_pattern` entry-field
-    placeholder support (this PR) exists at all; on dev, `{adr_number:04d}`
-    is unrecognized and `resolve_filename` falls back to the default
-    `<id>.md`, landing at `adrs/from-the-form.md` instead."""
+    The entry is stored as the `note` the form named (#468): before, the
+    software plugin's most-derived `NoteEntry` subclass won and the note was
+    written as an ADR at `adrs/0000-from-the-form.md`."""
     client, close = _rest_for(software_env)
     try:
         form = {"kb": "sw", "entry_type": "note", "title": "From the form", "body": ""}
@@ -565,17 +562,14 @@ def test_rest_create_accepts_the_web_forms_default_payload_in_pyrites_own_kb(sof
 
         resp = client.post("/api/entries", json={**form, "allow_undeclared": True})
         assert resp.status_code == 200, resp.text
-        # Exact path, not a substring match: #468 (filed, out of scope for
-        # #391) means this KB's `note` -> most-derived-NoteEntry-subtype
-        # resolution silently resolves this to an ADREntry, so the file
-        # lands under adrs/ with the adr type's file_pattern
-        # (adr_number defaults to 0 since this create never sets it).
         assert resp.json()["id"] == "from-the-form"
-        expected = software_env["kb_path"] / "adrs" / "0000-from-the-form.md"
-        assert expected.exists(), (
-            f"expected {expected} (see #468: `note` resolves to ADREntry here); "
-            f"found: {sorted(p.relative_to(software_env['kb_path']) for p in software_env['kb_path'].rglob('*.md'))}"
+        written = sorted(
+            p.relative_to(software_env["kb_path"]).as_posix()
+            for p in software_env["kb_path"].rglob("*.md")
         )
+        assert [p for p in written if "from-the-form" in p] == ["notes/from-the-form.md"], written
+        text = (software_env["kb_path"] / "notes" / "from-the-form.md").read_text()
+        assert "type: note" in text and "adr_number" not in text, text
     finally:
         close()
 

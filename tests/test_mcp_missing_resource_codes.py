@@ -10,6 +10,18 @@ from pyrite.exceptions import StorageBusyError, StorageError
 from pyrite.server.mcp_server import PyriteMCPServer
 
 
+@pytest.fixture(autouse=True)
+def _as_the_local_operator():
+    """These tests call ``KBRegistryService.add_kb`` directly, as the
+    operator's own process does (``acting.is_local_process``). A network
+    caller is held to ``settings.kb_roots``:
+    ``tests/test_kb_roots_limit_network_registration.py``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
+
+
 @pytest.fixture
 def mcp_server(tmp_path):
     kb_path = tmp_path / "notes"
@@ -73,13 +85,15 @@ def test_missing_entry_has_domain_code_and_legacy_code(mcp_server, tool):
     assert result["retryable"] is False
 
 
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
 @pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
 def test_missing_kb_has_domain_code(mcp_server, tool):
-    result = _call(
-        mcp_server,
-        tool,
-        {"kb_name": "missing", "entry_id": "missing", "title": "New title"},
-    )
+    args = {"kb_name": "missing", "entry_id": "missing"}
+    if tool == "kb_update":
+        args["title"] = "New title"
+    result = _call(mcp_server, tool, args)
     assert result["error_code"] == "KB_NOT_FOUND", result
     assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
     assert result["retryable"] is False

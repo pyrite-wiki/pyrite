@@ -291,20 +291,40 @@ def test_hand_written_shapes_read_as_written(env, svc, shape):
 @contextmanager
 def _files_opened():
     """Every file opened, as a Path: ``Path.read_bytes``/``read_text``/``open``
-    go through ``io.open``, a bare ``open()`` through ``builtins.open``; each
-    open is recorded once."""
+    go through ``io.open``, a bare ``open()`` through ``builtins.open``, and
+    the contained read (``KBFiles.read_bytes``) through ``os.open`` beneath a
+    folder's descriptor, recorded as that folder's path joined with the name;
+    each open is recorded once."""
     import builtins
     import io
+    import sys
 
     opened: list[Path] = []
     real = io.open
+    real_os_open = os.open
+
+    def fd_path(fd: int) -> Path:
+        if sys.platform == "darwin":
+            import fcntl
+
+            return Path(fcntl.fcntl(fd, fcntl.F_GETPATH, b"\0" * 1024).rstrip(b"\0").decode())
+        return Path(os.readlink(f"/proc/self/fd/{fd}"))
 
     def spy(file, *a, **k):
         if isinstance(file, (str, os.PathLike)):
             opened.append(Path(file))
         return real(file, *a, **k)
 
-    with patch.object(io, "open", spy), patch.object(builtins, "open", spy):
+    def os_spy(path, flags, mode=0o777, *, dir_fd=None):
+        if isinstance(path, (str, os.PathLike)):
+            opened.append(Path(path) if dir_fd is None else fd_path(dir_fd) / path)
+        return real_os_open(path, flags, mode, dir_fd=dir_fd)
+
+    with (
+        patch.object(io, "open", spy),
+        patch.object(builtins, "open", spy),
+        patch.object(os, "open", os_spy),
+    ):
         yield opened
 
 
@@ -473,17 +493,20 @@ def test_two_files_hold_the_id_the_index_winner_is_read(env, svc):
     assert got["body"].endswith("hand text")
 
 
-def test_a_symlinked_entry_reads_its_target_now(env, svc, tmp_path):
+def test_a_link_out_of_the_kb_is_never_read(env, svc, tmp_path):
+    """A read by id hands the file's bytes to the caller, so it reads only
+    inside the KB (`KBFiles.read_bytes`): an entry file that is a link out of
+    the KB is neither indexed nor read, now or after the target changes.
+    (It used to be read through; tests/test_indexed_bytes_stay_inside_the_kb.py
+    holds the property for every surface.)"""
     outside = tmp_path / "outside.md"
-    outside.write_text(ORIGINAL)
+    outside.write_text(ORIGINAL.replace("id: multi", "id: linked"))
     link = env["kb_path"] / "notes" / "linked.md"
     os.symlink(outside, link)
-    outside.write_text(ORIGINAL.replace("id: multi", "id: linked"))
     _index(env["config"])
     outside.write_text(HAND_EDITED.replace("id: multi", "id: linked"))
     got = svc.get_entry("linked", KB, readable_kbs=None)
-    assert "### Added by hand" in got["body"]
-    assert got["content_hash"] == hashlib.sha256(outside.read_bytes()).hexdigest()
+    assert got is None or "### Added by hand" not in (got.get("body") or ""), got
 
 
 @pytest.mark.control(

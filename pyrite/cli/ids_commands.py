@@ -24,14 +24,17 @@ commands (docs/json-contracts.md); ``--format text`` is for reading.
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import typer
 
-from ..exceptions import PyriteError, ValidationError
-from ..services import id_pin_service
+from ..exceptions import KBReadOnlyError, PyriteError, ValidationError
 from ..utils.errors import cli_error, cli_error_from
 from .context import cli_context
 from .output import output_format_choice
+
+if TYPE_CHECKING:
+    from ..services.id_pin_service import IdScan
 
 OUTSIDE_CONTRACT = 3
 
@@ -46,13 +49,17 @@ def _err_format(output_format: str) -> str:
 
 def _find_kb(kb_name: str, output_format: str):
     """The KB, found without writes; a refusal is rendered in the command's format."""
+    from ..services import id_pin_service
+
     try:
         return id_pin_service.find_kb_without_writes(kb_name)
     except PyriteError as e:
         cli_error_from(e, _err_format(output_format))
 
 
-def _scan(kb_config, kb_name: str, output_format: str) -> id_pin_service.IdScan:
+def _scan(kb_config, kb_name: str, output_format: str) -> IdScan:
+    from ..services import id_pin_service
+
     if kb_config is None:
         cli_error(
             f"Knowledge base '{kb_name}' not found",
@@ -108,13 +115,18 @@ def ids_missing(
 
 
 def _pin(kb_config, kb_name: str, rename: list[str], output_format: str, *, write=False) -> dict:
+    from ..services import id_pin_service
+
     found = _scan(kb_config, kb_name, output_format)
     try:
         the_plan = id_pin_service.plan(found, id_pin_service.parse_renames(rename))
     except ValidationError as e:
         cli_error(str(e), _err_format(output_format), error_code="INVALID_RENAME")
     if write:
-        return id_pin_service.apply(found, the_plan)
+        try:
+            return id_pin_service.apply(found, the_plan)
+        except KBReadOnlyError as e:
+            cli_error_from(e, _err_format(output_format))
     return id_pin_service.check(found, the_plan)
 
 

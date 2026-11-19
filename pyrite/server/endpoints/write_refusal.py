@@ -5,19 +5,28 @@ refusal into an ``HTTPException`` with its own ``error_code``, and the raw
 request body into the ADR-0034 check the pydantic models cannot see.
 """
 
-from fastapi import HTTPException, Request
+from collections.abc import Awaitable, Callable
 
-from ...exceptions import ValidationError
-from ...services.body_bounds import ensure_not_truncated
-from ..schemas import CreateEntryRequest, PatchEntryRequest
+from fastapi import HTTPException, Request
+from pydantic import BaseModel
+
+from ...exceptions import (
+    UpdateWouldNotLoadError,
+    ValidationError,
+    public_attribute,
+    public_text,
+    refusal_fields,
+)
+from ...services.body_bounds import MARKER_KEYS, ensure_not_truncated
 
 
 def refusal_http(exc: ValidationError) -> HTTPException:
     """Map a write-pipeline refusal to REST, keeping its own code.
 
     The service decides; this only picks the status. `ENTRY_EXISTS` is a
-    conflict (409); every other refusal is a bad request (400). Never
-    retryable: the same request fails the same way.
+    conflict (409). Unloadable files and unloadable updates return 422.
+    Other refusals return 400. Never retryable: the same request fails
+    the same way.
 
     ``exc.error_code`` is a class attribute on every ``PyriteError`` since
     ADR-0037 theme 2 -- the base ``ValidationError``'s is
@@ -33,18 +42,30 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     one code, on every surface including this one.
     """
     code = exc.error_code
-    detail: dict = {"code": code, "message": str(exc), "retryable": False}
-    suggestion = getattr(exc, "suggestion", None)
+    detail: dict = {"code": code, "message": public_text(exc), "retryable": False}
+    # REST's write path built its own body, so it copied only ``suggestion``
+    # and ``declared_types``: the structured ``errors`` rows of a field refusal
+    # (#1284) never reached the caller, and neither did the ``candidate_kbs``/
+    # ``did_you_mean`` an endpoint answers itself -- the central handler in
+    # ``server/errors.py`` already copies them for the refusals it sees. One
+    # mapper, three surfaces.
+    detail.update(refusal_fields(exc))
+    suggestion = public_attribute(exc, "suggestion")
     if suggestion:
         detail["hint"] = suggestion
-    declared = getattr(exc, "declared_types", None)
+    declared = public_attribute(exc, "declared_types")
     if declared is not None:
         detail["declared_types"] = declared
         detail.setdefault(
             "hint",
             f"Use an entry_type in [{', '.join(declared)}], or send allow_undeclared: true.",
         )
-    return HTTPException(status_code=409 if code == "ENTRY_EXISTS" else 400, detail=detail)
+    # A file its declared type cannot load is not a bad request: the same
+    # 422 as the central handler gives it (ADR-0042 8a).
+    status = {"ENTRY_EXISTS": 409, "ENTRY_UNREADABLE": 422}.get(code, 400)
+    if isinstance(exc, UpdateWouldNotLoadError):
+        status = 422
+    return HTTPException(status_code=status, detail=detail)
 
 
 async def refuses_truncated_body(request: Request) -> None:
@@ -95,61 +116,45 @@ async def refuses_truncated_body(request: Request) -> None:
         raise refusal_http(e) from e
 
 
-async def refuses_unknown_create_keys(request: Request) -> None:
-    """#1090: refuse a top-level key the create body model does not declare.
+def refuses_undeclared_keys(
+    model: type[BaseModel], verb: str
+) -> Callable[[Request], Awaitable[None]]:
+    """Refuse unknown entry-write keys before validating declared values.
 
-    The model drops every key it does not declare, so a managed field sent at
-    the top level (``evidence``, ``status_change_log``, ``provenance``) was
-    answered 200 ``created: true``, never written and never named -- the
-    caller was not told (ADR-0042 decision 3). Read the raw JSON, as
-    :func:`refuses_truncated_body` does, and answer the write pipeline's own
-    refusal shape: 400 ``VALIDATION_FAILED`` naming the keys. The ``metadata``
-    envelope spelling reaches the service and is refused there (#1010); the
-    model's ``extra="forbid"`` is the belt to this dependency's braces.
+    ADR-0034 markers are accepted transport on all three verbs. After the
+    truncation dependency has checked them, remove them from the parsed JSON
+    before the model's extra-forbid guard; they are never entry content.
     """
-    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if not (media_type == "application/json" or media_type.endswith("+json")):
-        return
-    try:
-        payload = await request.json()
-    except Exception:
-        return
-    if not isinstance(payload, dict):
-        return
-    unknown = sorted(set(payload) - set(CreateEntryRequest.model_fields))
-    if not unknown:
-        return
-    accepted = ", ".join(sorted(CreateEntryRequest.model_fields))
-    raise refusal_http(
-        ValidationError(
-            f"Unknown field(s) on a create: {', '.join(unknown)}. A create accepts: {accepted}."
-        )
-    )
+    allowed = set(model.model_fields) | set(MARKER_KEYS)
 
+    async def check(request: Request) -> None:
+        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if not (media_type == "application/json" or media_type.endswith("+json")):
+            return
+        try:
+            payload = await request.json()
+        except ValueError:
+            return  # FastAPI owns malformed JSON; other read failures propagate.
+        if not isinstance(payload, dict):
+            return
+        unknown = sorted(set(payload) - allowed)
+        if unknown:
+            message = (
+                f"Unknown field(s) on a {verb}: {', '.join(unknown)}. "
+                f"A {verb} accepts: {', '.join(sorted(allowed))}."
+            )
+            raise refusal_http(
+                ValidationError(
+                    message,
+                    # One row per key the model does not declare (#1381 review).
+                    errors=[
+                        {"field": key, "rule": "unknown_field", "message": message}
+                        for key in unknown
+                    ],
+                )
+            )
+        # FastAPI validates this same parsed object after solving dependencies.
+        for key in MARKER_KEYS:
+            payload.pop(key, None)
 
-async def refuses_unknown_patch_keys(request: Request) -> None:
-    """#1221: refuse a top-level key the patch body model does not declare.
-
-    Mirrors :func:`refuses_unknown_create_keys` and :func:`refuses_truncated_body`,
-    including FastAPI's JSON media-type check, so a misspelt ``vaule`` is refused
-    with 400 ``VALIDATION_FAILED`` naming the keys before a missing ``value`` can
-    become a null write.
-    """
-    media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-    if not (media_type == "application/json" or media_type.endswith("+json")):
-        return
-    try:
-        payload = await request.json()
-    except Exception:
-        return
-    if not isinstance(payload, dict):
-        return
-    unknown = sorted(set(payload) - set(PatchEntryRequest.model_fields))
-    if not unknown:
-        return
-    accepted = ", ".join(sorted(PatchEntryRequest.model_fields))
-    raise refusal_http(
-        ValidationError(
-            f"Unknown field(s) on a patch: {', '.join(unknown)}. A patch accepts: {accepted}."
-        )
-    )
+    return check
