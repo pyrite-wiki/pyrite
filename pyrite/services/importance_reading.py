@@ -18,8 +18,8 @@ from typing import Any
 from ..exceptions import FrontmatterError
 from ..models.base import DEFAULT_IMPORTANCE
 from ..schema.validators import importance_value
-from ..utils.kb_files import KBFileOutsideRootError, KBFiles
 from ..utils.parse import safe_int
+from .review_service import _read_entry_file
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +40,18 @@ def file_importance(root: str | Path | None, path: str | Path | None) -> Any:
     """The ``importance`` the file at ``path`` holds, as parsed; ``ABSENT`` when
     there is no file, no frontmatter or no such key, and for a path that is
     not the KB's (a link out of ``root``): nothing outside the KB is read.
-    The bytes come through ``KBFiles.read_bytes``, like every read whose
-    answer reaches a caller. Never raises."""
+    The bytes come through ``review_service._read_entry_file`` (``KBFiles.read_bytes``,
+    the one classified read of an entry file), like every read whose answer reaches a caller. Never raises."""
     if not root or not path:
         return ABSENT
     try:
         from ..utils.frontmatter import load_frontmatter
 
-        raw = KBFiles(root).read_bytes(Path(path))
+        raw = _read_entry_file(Path(root), path)
         if raw is None:
             return ABSENT
         loaded = load_frontmatter(raw.decode("utf-8"))
-    except (OSError, ValueError, FrontmatterError, KBFileOutsideRootError):
+    except (OSError, ValueError, FrontmatterError):
         logger.debug("importance reading: cannot read %s", path, exc_info=True)
         return ABSENT
     if loaded is None:
