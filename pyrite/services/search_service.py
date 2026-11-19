@@ -765,13 +765,17 @@ class SearchService:
            leg ran: the parts the backend's keyword index reads
            (``keyword_searched_parts``: on SQLite every ``entry_fts`` column,
            ``id``, ``kb_name``, ``entry_type``, ``title``, ``body``,
-           ``summary``, ``location``, narrowed to the named columns when the
-           query carries an FTS5 column filter such as ``title:hawk``; on
+           ``summary``, ``location``, narrowed to the columns an FTS5 column
+           filter leaves (``title:hawk``, ``"title":``, ``{a b}:``, ``- title:``;
+           a filter binds to the next phrase or group, filters nest by
+           intersection, and the list is the union over terms; a query not
+           understood lists none); on
            Postgres ``title``, ``summary``, ``body``), the whole body included.
            Only the vector leg ran (``semantic`` mode): ``title``, ``summary``
            and ``body_prefix``, with ``body_prefix_chars`` giving the length the
-           body is cut to before it is embedded, so a word past that point is
-           not searched. Declared field values and tags are in no leg's index,
+           body is cut to before it is embedded (a character count: the model's
+           token window may cut sooner), so a word past that point is not
+           searched. Declared field values and tags are in no leg's index,
            so they are never listed: a keyword search does not find a word that
            appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
@@ -1089,7 +1093,7 @@ class SearchService:
         (`keyword_searched_parts`), the whole body included. Only the vector
         leg ran: the text it was built from, `title`, `summary` and a
         ``body_prefix``, whose length is the second value (``None`` when the
-        vectors hold the whole body).
+        limit is 0, and then no body is named).
         """
         if "keyword" in legs_run:
             query_as_matched = query
@@ -1099,10 +1103,12 @@ class SearchService:
             parts = reader(query_as_matched) if reader else list(KEYWORD_SEARCHED_PARTS)
             return list(parts), None
         if "semantic" in legs_run:
+            # What `_entry_text` embeds: title, summary and `body[:chars]`. A limit
+            # of 0 (or none recorded) embeds no body, so none is claimed.
             chars = signal.get("body_chars")
             if chars:
                 return list(EMBEDDED_PARTS), chars
-            return [p.removesuffix("_prefix") for p in EMBEDDED_PARTS], None
+            return [p for p in EMBEDDED_PARTS if p != "body_prefix"], None
         return [], None
 
     @staticmethod
@@ -1198,7 +1204,8 @@ class SearchService:
         svc = self._embedder()
         if signal is not None:
             signal["model"] = svc.model_name
-            # How much of a body the vectors were built from (0: all of it).
+            # How many characters of a body the vectors were built from (0: none of it,
+            # as `_entry_text` takes `body[:0]`).
             signal["body_chars"] = svc.max_body_chars
         # Asked of the KBs this search covers, not of the index (#668): whether
         # some other KB has vectors must not change what a scoped caller is

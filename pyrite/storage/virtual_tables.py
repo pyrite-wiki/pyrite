@@ -37,31 +37,165 @@ def postgres_fts_vector_expression(row: str = "NEW") -> str:
     )
 
 
-_COLUMN_FILTER = re.compile(r"(?<![\w])(-)?\s*(?:\{([^}]*)\}|([A-Za-z_]\w*))\s*:")
-_PHRASE = re.compile(r'"(?:[^"]|"")*"')
+_ALL_COLUMNS = frozenset(FTS_COLUMNS)
+_BAREWORD = re.compile(r"[^\s(){}\",:]+")
+_QUOTED = re.compile(r'"(?:[^"]|"")*"')
+
+
+class _NotParsedError(Exception):
+    """The query's filter structure is not one this reader understands."""
 
 
 def fts_columns_read(query: str) -> list[str]:
     """The ``entry_fts`` columns a MATCH of ``query`` reads, in table order.
 
-    FTS5 reads ``title:hawk`` and ``{title body}: hawk`` as a search of the named
-    columns only, and ``- title: hawk`` as every column but that one. ``query``
-    is the text that reaches MATCH (after sanitizing, which quotes a stray
-    ``word:``); a colon inside a quoted phrase is not a filter. A query that
-    mixes filtered and unfiltered terms reads every column for the unfiltered
-    ones; this reports the filtered columns, which understates, never overstates.
+    Never more than the MATCH reads: ``searched`` is a claim a reader acts on,
+    so this errs by naming too few, never too many (#1757). ``query`` is the
+    text that reaches MATCH (after sanitizing, which quotes a stray ``word:``).
+
+    FTS5 binds a column filter to the one operand that follows it, a phrase, a
+    parenthesised group or a ``NEAR(...)``: ``title: hawk falcon`` filters
+    ``hawk`` and reads every column for ``falcon``. The filter is ``col:``,
+    ``"col":`` (quoted), ``{a b}:`` or, with a leading ``-``, every column but
+    those. Filters nest by intersection: ``{title body}: ({body summary}: x)``
+    reads ``body`` only. The columns read are the union, over every term, of the
+    columns that term is read in. A query this reader cannot follow reads
+    ``[]`` (nothing claimed); a query with no filter reads every column.
     """
-    unquoted = _PHRASE.sub(" ", query)
-    named: set[str] = set()
-    excluded: set[str] = set()
-    for negated, group, single in _COLUMN_FILTER.findall(unquoted):
-        names = group.split() if group else [single]
-        (excluded if negated else named).update(
-            n.lower() for n in names if n.lower() in FTS_COLUMNS
-        )
-    if named:
-        return [c for c in FTS_COLUMNS if c in named and c not in excluded]
-    return [c for c in FTS_COLUMNS if c not in excluded]
+    if ":" not in query:
+        return list(FTS_COLUMNS)
+    try:
+        read = _columns_read(query)
+    except _NotParsedError:
+        return []
+    return [c for c in FTS_COLUMNS if c in read]
+
+
+def _columns_read(query: str) -> frozenset[str]:
+    scopes = [_ALL_COLUMNS]  # the columns each open group leaves readable
+    near: list[bool] = []  # per open group: is it a NEAR(...)
+    pending: frozenset[str] | None = None  # a filter waiting for its operand
+    last_applied: frozenset[str] | None = None  # for a `+` chain
+    skip_number = False
+    read: set[str] = set()
+    i, n = 0, len(query)
+
+    def take_filter(spec: frozenset[str]) -> None:
+        nonlocal pending
+        if pending is not None:
+            raise _NotParsedError
+        pending = spec
+
+    def colspec_at(j: int) -> tuple[frozenset[str], int] | None:
+        """A ``name:``, ``"name":`` or ``{a b}:`` at ``j``: (names, index after the colon)."""
+        if query[j] == "{":
+            end = query.find("}", j)
+            if end < 0:
+                raise _NotParsedError
+            names = [a or b for a, b in re.findall(r'"([^"]*)"|(\S+)', query[j + 1 : end])]
+            k = end + 1
+        elif query[j] == '"':
+            m = _QUOTED.match(query, j)
+            if not m:
+                raise _NotParsedError
+            names, k = [m.group()[1:-1]], m.end()
+        else:
+            m = _BAREWORD.match(query, j)
+            if not m:
+                return None
+            names, k = [m.group()], m.end()
+        while k < n and query[k].isspace():
+            k += 1
+        if k >= n or query[k] != ":":
+            return None
+        lowered = [x.lower() for x in names]
+        if not lowered or any(x not in _ALL_COLUMNS for x in lowered):
+            raise _NotParsedError
+        return frozenset(lowered), k + 1
+
+    def term() -> None:
+        nonlocal pending, last_applied
+        effective = scopes[-1] if pending is None else scopes[-1] & pending
+        last_applied, pending = pending, None
+        read.update(effective)
+
+    while i < n:
+        c = query[i]
+        if c.isspace():
+            i += 1
+        elif c == "(":
+            scopes.append(scopes[-1] if pending is None else scopes[-1] & pending)
+            near.append(False)
+            last_applied, pending = pending, None
+            i += 1
+        elif c == ")":
+            if len(scopes) == 1 or pending is not None:
+                raise _NotParsedError
+            scopes.pop()
+            near.pop()
+            i += 1
+        elif c == ",":
+            if not near or not near[-1]:
+                raise _NotParsedError
+            skip_number = True
+            i += 1
+        elif c == ":":
+            raise _NotParsedError
+        elif c == "-":
+            j = i + 1
+            while j < n and query[j].isspace():
+                j += 1
+            found = colspec_at(j) if j < n else None
+            if found is None:
+                raise _NotParsedError
+            take_filter(_ALL_COLUMNS - found[0])
+            i = found[1]
+        elif c in '{"':
+            found = colspec_at(i)
+            if found is not None:
+                take_filter(found[0])
+                i = found[1]
+            elif c == '"':
+                m = _QUOTED.match(query, i)
+                if not m:
+                    raise _NotParsedError
+                i = m.end()
+                term()
+            else:
+                raise _NotParsedError
+        else:
+            m = _BAREWORD.match(query, i)
+            if not m:
+                raise _NotParsedError
+            word = m.group()
+            found = colspec_at(i)
+            if found is not None:
+                take_filter(found[0])
+                i = found[1]
+                continue
+            i = m.end()
+            if word in ("AND", "OR", "NOT") or set(word) <= set("^*"):
+                continue
+            if word == "+":
+                pending = last_applied
+                continue
+            if word == "NEAR":
+                k = i
+                while k < n and query[k].isspace():
+                    k += 1
+                if k < n and query[k] == "(":
+                    scopes.append(scopes[-1] if pending is None else scopes[-1] & pending)
+                    near.append(True)
+                    last_applied, pending = pending, None
+                    i = k + 1
+                    continue
+            if skip_number:
+                skip_number = False
+                continue
+            term()
+    if len(scopes) != 1 or pending is not None or not read:
+        raise _NotParsedError
+    return frozenset(read)
 
 
 _COLS = ", ".join(FTS_COLUMNS)

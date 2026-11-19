@@ -124,13 +124,13 @@ class TestAColumnFilterNarrowsIt:
 
     def test_a_column_set(self, db, svc):
         add_entry(db, "in-summary", title="Plain", summary="hawk")
-        resp = svc.search_response("{summary body}: hawk OR falcon", mode="keyword")
+        resp = svc.search_response("{summary body}: (hawk OR falcon)", mode="keyword")
         assert ids(resp) == ["in-summary"]
         assert resp["searched"] == ["body", "summary"]
 
     def test_a_column_exclusion(self, db, svc):
         add_entry(db, "in-title", title="hawk", body="plain")
-        resp = svc.search_response("- title: hawk OR falcon", mode="keyword")
+        resp = svc.search_response("- title: (hawk OR falcon)", mode="keyword")
         assert resp["results"] == []
         assert resp["searched"] == ["id", "kb_name", "entry_type", "body", "summary", "location"]
 
@@ -145,6 +145,116 @@ class TestAColumnFilterNarrowsIt:
         resp = svc.search_response("title:hawk", mode="keyword")
         assert ids(resp) == ["a"]
         assert resp["searched"] == SQLITE_ALL
+
+
+# Where `hawk` is the only word, one entry per column it can be read in.
+HAWK_IN = {
+    "id": {"entry_id": "hawk", "title": "plain"},
+    "kb_name": {"entry_id": "e-kb", "kb": "hawk-kb"},
+    "entry_type": {"entry_id": "e-type", "entry_type": "hawk"},
+    "title": {"entry_id": "e-title", "title": "hawk"},
+    "body": {"entry_id": "e-body", "body": "hawk"},
+    "summary": {"entry_id": "e-summary", "summary": "hawk"},
+    "location": {"entry_id": "e-location", "location": "hawk"},
+}
+
+
+@pytest.fixture
+def hawks(db, svc, tmp_path):
+    db.register_kb("hawk-kb", KBType.GENERIC, str(tmp_path / "hawk-kb"))
+    for spec in HAWK_IN.values():
+        spec = dict(spec)
+        add_entry(db, spec.pop("entry_id"), spec.pop("kb", "t"), **spec)
+    return {spec["entry_id"]: column for column, spec in HAWK_IN.items()}
+
+
+class TestSearchedNeverOverstatesAFilter:
+    """Each query is run against real FTS5 on entries holding `hawk` in one
+    column at a time: the columns that find it are the columns read, and
+    `searched` must list exactly those (every term here is `hawk`, so the union
+    over terms is what the index reads)."""
+
+    ORDER = ["id", "kb_name", "entry_type", "title", "body", "summary", "location"]
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("hawk", ORDER),
+            ("title: hawk", ["title"]),
+            ('"title": hawk', ["title"]),
+            ('"title" : hawk', ["title"]),
+            ('{"title" summary}: hawk', ["title", "summary"]),
+            ("{title body}: hawk", ["title", "body"]),
+            ("- title: hawk", ["id", "kb_name", "entry_type", "body", "summary", "location"]),
+            ("-{title body}: hawk", ["id", "kb_name", "entry_type", "summary", "location"]),
+            ("title: hawk OR body: hawk", ["title", "body"]),
+            ("title: (hawk OR hawk)", ["title"]),
+            # the operand after OR is not filtered
+            ("title: hawk OR hawk", ORDER),
+            # nested filters intersect
+            ("{title body}: ({body summary}: hawk)", ["body"]),
+            ("title: (body: hawk)", []),
+            ("{title body summary}: ({body summary}: (summary: hawk))", ["summary"]),
+        ],
+    )
+    def test_searched_is_what_the_index_reads(self, svc, hawks, query, expected):
+        # Unquoted, a filter reaches MATCH only beside an operator or a quote
+        # (sanitizing quotes a stray `col:` otherwise): repeat it with OR.
+        if not any(marker in query for marker in (" OR ", '"')):
+            query = f"{query} OR {query}"
+        resp = svc.search_response(query, mode="keyword")
+        found = [
+            column for column in self.ORDER if column in {hawks[r["id"]] for r in resp["results"]}
+        ]
+        assert found == expected, "the real index disagrees with the hand-written columns"
+        assert resp["searched"] == expected
+
+    def test_a_bare_colon_query_is_quoted_by_sanitizing_so_it_is_no_filter(self, svc, hawks):
+        resp = svc.search_response("title: hawk", mode="keyword")
+        assert resp["searched"] == self.ORDER
+
+    def test_an_unfiltered_operand_after_a_filtered_one_reads_every_column(self, db, svc):
+        add_entry(db, "a", title="hawk", body="falcon")
+        resp = svc.search_response("title: hawk falcon OR hawk falcon", mode="keyword")
+        assert ids(resp) == ["a"], "falcon was read in the body, not only in the title"
+        assert resp["searched"] == SQLITE_ALL
+
+    def test_a_filter_binds_to_a_near_group(self, db, svc):
+        add_entry(db, "a", title="hawk hawk", body="x")
+        near = "{title body}: NEAR(hawk hawk, 5)"
+        resp = svc.search_response(f"{near} OR {near}", mode="keyword")
+        assert ids(resp) == ["a"]
+        assert resp["searched"] == ["title", "body"]
+
+    def test_a_query_this_reader_cannot_follow_claims_nothing(self):
+        from pyrite.storage.virtual_tables import fts_columns_read
+
+        assert fts_columns_read("title: (hawk") == []
+        assert fts_columns_read("title: body: hawk") == []
+        assert fts_columns_read("nosuchcolumn: hawk") == []
+        assert fts_columns_read("title:") == []
+
+
+class TestALimitOfZeroEmbedsNoBody:
+    def test_searched_agrees_with_what_embedding_does(self, db, svc, monkeypatch):
+        seen: list[str] = []
+
+        class Recording(FakeModel):
+            def encode(self, text, **kwargs):
+                seen.extend(text if isinstance(text, list) else [text])
+                return super().encode(text, **kwargs)
+
+        install_fake_model(monkeypatch, Recording())
+        monkeypatch.setattr(es, "max_body_chars_for_model", lambda model_name: 0)
+        add_entry(db, "a", title="the title", summary="the summary", body="needleword")
+        assert es.EmbeddingService(db).embed_entry("a", "t")
+        assert "needleword" not in seen[-1] and "the summary" in seen[-1]
+
+        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        resp = SearchService(db).search_response("x", mode="semantic")
+        assert resp["legs_run"] == ["semantic"]
+        assert resp["searched"] == ["title", "summary"]
+        assert "body_prefix_chars" not in resp
 
 
 class TestPostgresReportsItsOwnColumns:
