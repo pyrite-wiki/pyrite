@@ -449,6 +449,16 @@ MCP_CASES: dict[str, Case] = {
         lambda s: {"kb_name": NOTES, "task_id": s[0], "reason": "shipped"},
         seeds=((NOTES, "task", "status: in_progress\nassignee: {holder}\n"),),
     ),
+    "task_park": Case(
+        WRITES,
+        lambda s: {"kb_name": NOTES, "task_id": s[0], "reason": "reply"},
+        seeds=((NOTES, "task", "status: open\n"),),
+    ),
+    "task_unpark": Case(
+        WRITES,
+        lambda s: {"kb_name": NOTES, "task_id": s[0]},
+        seeds=((NOTES, "task", "status: open\nparked_awaiting: reply\n"),),
+    ),
     "task_decompose": Case(
         WRITES,
         lambda s: {"kb_name": NOTES, "parent_id": s[0], "children": [{"title": f"Child {s.tag}"}]},

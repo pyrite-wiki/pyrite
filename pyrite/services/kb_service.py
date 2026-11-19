@@ -808,6 +808,51 @@ class KBService:
                 kept.append(err)
         return kept, excepted
 
+    @staticmethod
+    def _raise_schema_violation(entry: Entry, kb_name: str, errors: list[dict[str, Any]]) -> None:
+        """Refuse with the schema path's own rows, rendered once.
+
+        The message is the one :meth:`_validate_write` has always produced,
+        so a refusal raised here and one raised there answer alike on every
+        surface. Always raises; the ``None`` return is for the type checker.
+        """
+        parts = []
+        for e in errors:
+            field = e.get("field", "?")
+            rule = e.get("rule", "")
+            got = e.get("got")
+            expected = e.get("expected")
+            message = e.get("message")
+            if is_off_list(e) and isinstance(expected, list):
+                # Every declared-enum refusal reads the same way, naming the
+                # field, the value and the allowed list (#555); the rule
+                # identifiers themselves are unchanged.
+                rendered = f"{field}: {got!r} is not one of {expected}"
+                # A validator's `message` can say more than the generic
+                # "Invalid <field>: <got>" (e.g. explaining why an enum only
+                # applies conditionally) -- append it when it does, same
+                # spirit as the `required` case below.
+                generic = f"Invalid {field}: {got}"
+                if message and message != generic:
+                    rendered += f" ({message})"
+                parts.append(rendered)
+            elif rule == "required":
+                # A conditional `required` rule (e.g. journalism's "amount is
+                # required when transaction_type is payment") sets `message`
+                # to explain *why*; dropping it for the bare "field: required"
+                # loses the only useful part of the refusal (#429).
+                parts.append(f"{field}: {message or 'required'}")
+            elif message:
+                # A rule this renderer does not know, or none at all (e.g.
+                # journalism-investigation's "Importance must be 1-10, got: 99"): the
+                # validator's own message beats "(expected None, got None)".
+                parts.append(f"{field}: {message}" if field != "?" else message)
+            else:
+                parts.append(f"{field}: {rule} (expected {expected}, got {got!r})")
+        raise SchemaViolationError(
+            f"Invalid {entry.entry_type} for KB '{kb_name}': " + "; ".join(parts), errors
+        )
+
     def _validate_write(
         self,
         entry: Entry,
@@ -1799,6 +1844,81 @@ class KBService:
             fields["metadata"] = envelope
         return {**fields, **added}, attributes
 
+    def create_template_fields(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        *,
+        allow_undeclared: bool = False,
+        importance: int | None = None,
+    ) -> dict[str, Any]:
+        """The fields a create of this type in this KB would write, with their values (#1598).
+
+        Read-only: the entry is built the way :meth:`_prepare` builds one
+        (:meth:`_with_declared_fields` + :func:`build_entry`), but nothing is
+        checked against the filesystem and nothing is written, so a preview
+        never refuses an id that already exists. The type is resolved the way
+        :meth:`_prepare` resolves it (:meth:`_resolve_entry_type` and
+        :meth:`_refuse_undeclared_mapping_target`), so the returned ``type``
+        is the type a create would store, not the name the caller gave. The
+        base fields the skeleton sets itself (``id``, ``title``, ``tags``,
+        ``importance``) are left out; the caller adds those. An undeclared
+        type is refused exactly as a create refuses it, unless
+        `allow_undeclared` says otherwise -- and a type the KB's schema does
+        not know, in a KB that enforces validation, is refused with the
+        create's own ``known_type`` rule even under `allow_undeclared`
+        (the flag only lifts the undeclared-type refusal above). That is the
+        type-level refusal only: other value validation is a create's, with
+        values a preview does not have, so it is not run here. The one value
+        a preview does have is the caller's ``importance``: when given, it
+        is judged by the model's own rule, so an out-of-range importance is
+        refused exactly as a create refuses it.
+        """
+        # Resolve first, as `_prepare` does since #1601: the refusal is
+        # on the type that will be stored, the mapped target when a
+        # mapping applies, else the named type.
+        named = entry_type
+        entry_type = self._resolve_entry_type(named, kb_config)
+        if not allow_undeclared:
+            if entry_type != named:
+                self._refuse_undeclared_mapping_target(named, entry_type, kb_config.name, kb_config)
+            else:
+                self._refuse_undeclared_type(named, kb_config.name, kb_config)
+        fields, attributes = self._with_declared_fields(entry_type, kb_config, {})
+        build_kwargs = dict(fields)
+        if importance is not None:
+            build_kwargs["importance"] = importance
+        entry = build_entry(
+            entry_type, entry_id="", title="Your Title Here", body="", **build_kwargs
+        )
+        entry._create_fields = attributes
+        if importance is not None:
+            # The model's own row, the way `_validate_write` raises it: the
+            # skeleton must not show an importance a create would refuse.
+            rows = [row for row in entry.validation_errors() if row.get("field") == "importance"]
+            if rows:
+                raise ValidationError(
+                    "; ".join(row["message"] for row in rows),
+                    errors=rows,
+                    suggestion=_validation_suggestion(rows),
+                )
+        schema = kb_config.kb_schema
+        if schema is not None:
+            # The schema's own `known_type` row, so this refusal cannot
+            # drift from what a create raises: only that row is taken,
+            # the required-field rows a preview has no values for are not.
+            rows = [
+                row
+                for row in schema.validate_entry(entry_type, {}).get("errors", [])
+                if row.get("field") == "entry_type" and row.get("rule") == "known_type"
+            ]
+            if rows:
+                self._raise_schema_violation(entry, kb_config.name, rows)
+        meta = entry.declared_frontmatter()
+        for key in ("id", "title", "tags", "importance"):
+            meta.pop(key, None)
+        return meta
+
     def _prepare_and_save(
         self,
         kb_name: str,
@@ -2340,6 +2460,7 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
+        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
         ``file_operations`` operations (``Set``, ``Append``, ``Remove``,
@@ -2355,7 +2476,11 @@ class KBService:
         #1685): the states the write passes through, first to last, handed
         to the ``before_save`` hooks, where the workflow judges every edge.
         ``expect_holder`` refuses the write unless the bytes it replaces name
-        that assignee (`task start`'s retry and `task finish`, #1685)."""
+        that assignee (`task start`'s retry and `task finish`, #1685).
+        ``drop_emptied_metadata``: when the write unsets every key of the
+        file's ``metadata:`` block, the block goes with them rather than
+        staying as ``metadata: {}`` (`task unpark`, #1688 round 1); decided
+        on the file's own keys, never the caller's word."""
         return self._update(
             entry_id,
             kb_name,
@@ -2365,6 +2490,7 @@ class KBService:
             merge_spellings=merge_spellings,
             status_path=status_path,
             expect_holder=expect_holder,
+            drop_emptied_metadata=drop_emptied_metadata,
         )
 
     def _update(
@@ -2378,6 +2504,7 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
+        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2473,6 +2600,8 @@ class KBService:
                         continue  # the same field named twice with one value
                     placed[resolved.path] = resolved.value
                 all_ops.append(resolved)
+            if drop_emptied_metadata:
+                all_ops = _drop_emptied_metadata(file_values, all_ops)
             self._refuse_conflicting_spellings(entry, updates)
             try:
                 # The file is this KB's: its parser's words go to a reader of it.
@@ -5165,6 +5294,28 @@ def _same_yaml_value(a: Any, b: Any) -> bool:
     if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
         return True
     return values_identical(a, b)
+
+
+def _drop_emptied_metadata(file_values: dict[str, Any], ops: list[Any]) -> list[Any]:
+    """``ops`` with the unsets of every key of the file's ``metadata:`` block
+    replaced by one unset of the block, when they remove all of it; else
+    ``ops`` unchanged (#1688 round 1: a park cleared to nothing)."""
+    bag = file_values.get("metadata")
+    if not isinstance(bag, dict) or not bag:
+        return ops
+
+    def nested_unset(op: Any) -> bool:
+        path = getattr(op, "path", None)
+        return (
+            isinstance(op, Unset)
+            and isinstance(path, tuple)
+            and len(path) == 2
+            and path[0] == "metadata"
+        )
+
+    if not set(bag) <= {op.path[1] for op in ops if nested_unset(op)}:
+        return ops
+    return [op for op in ops if not nested_unset(op)] + [Unset(("metadata",))]
 
 
 def _nested_block_is_all_equal_pairs(entry: Entry, file_values: dict[str, Any]) -> bool:

@@ -336,6 +336,10 @@ Recorded changes to the allowlist's size:
 - 2026-11-18, maintainer: raised by three for task start/finish, guarded as
   task_claim; they migrate with it. (`task_start` and `task_finish` on the MCP
   list, `POST /api/tasks/{task_id}/start` on the REST list; #1685, PR #1708.)
+- maintainer, 2026-11-19 (PR #1777): 108 -> 110, raised by two for task
+  park/unpark, write tier as task_claim; they migrate with it.
+  (`task_park` and `task_unpark` on the MCP list; no REST route; #1688, PR
+  #1777.)
 
 ## Relationship to #380 (T6) and #383
 
