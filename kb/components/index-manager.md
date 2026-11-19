@@ -29,10 +29,25 @@ files git changed and adds history through its `enrich` hook.
   one hard link is `skipped` before its stat is trusted and never read: most
   exports write from the index, so it holds only bytes read inside the root
   (`tests/test_indexed_bytes_stay_inside_the_kb.py`).
+  A path the plan could not reach keeps its row (#1546): the row of every
+  known path under a folder the walk could not list (`unreadable_folders`),
+  of a file it could not stat, read or hash (an `OSError`, listed in
+  `unreadable_files` and `malformed`), unless `KBFiles.present` answers
+  absent (a loop, a file removed meanwhile: retired, as before), becomes a
+  claim built from the row (`plan.kept`, `_Claim.unreached`), so every kept
+  row is named in the result. It stands only for an id no file read now
+  holds; otherwise the file read now takes the row and the kept path is no
+  duplicate. A known path the walk did not meet under a folder whose listing
+  worked is gone: its row is retired. A file that reads and does not parse
+  holds no id and its row is retired.
 - **Apply**: write a winner whose row is missing, moved or has another content
   hash (`added`/`updated`); rewrite silently when only the stat moved (a touch);
-  retire every row no parseable file claims (`removed`). A file whose row
-  cannot be written is reported as malformed and holds no row.
+  retire every row no parseable file claims (`removed`); a kept claim is
+  neither written nor retired. A file whose row cannot be written is
+  reported as malformed and holds no row. The result names what it could not
+  reach (`unreadable_folders`, `unreadable_files`); the CLI counts each as
+  failed for its exit code, and `services/index_health.network_shape` decides
+  what REST and MCP get (a count).
 
 `DocumentManager.delete_entry` asks the plan who holds the id (#494);
 `check_health` takes duplicates, winners and staleness from it.

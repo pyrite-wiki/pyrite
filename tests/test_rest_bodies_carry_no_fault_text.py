@@ -21,6 +21,7 @@ import inspect
 import json
 import logging
 import subprocess
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +199,134 @@ def test_qa_validate_does_not_quote_an_unreadable_files_error(world, monkeypatch
         r = w.client.get(url)
         assert r.status_code == 200, r.text
         assert SENTINEL not in r.text, url
+
+
+# A named rubric checker that raises. QAService reports the item it could not
+# check as a ``checker_failed`` issue whose message ends with
+# ``public_text(exc)``: the text a network caller sees is Pyrite's, unless the
+# exception is a PyriteError (whose text Pyrite wrote for the caller).
+
+#: ``pyrite.exceptions.OUTSIDE_TEXT_WITHHELD``, written out.
+OUTSIDE_TEXT_WITHHELD = "the server log has the details"
+RAISING_CHECKER = "qa_pin.raises"
+RUBRIC_ITEM = "Pinned item"
+
+
+def _wrapped_in_outside_text(sentinel: str) -> Exception:
+    """How ``body_has_pattern`` reports a regex that does not compile: a
+    CheckerConfigError whose text places the cause through ``outside_text``.
+    Built when the checker runs, inside the request."""
+    from pyrite.exceptions import outside_text
+    from pyrite.services.rubric_checkers import CheckerConfigError
+
+    return CheckerConfigError(f"qa_pin could not run: {outside_text(OSError(sentinel))}")
+
+
+# (raised, shown): what the checker raises, built from the sentinel; and the
+# text the issue's message ends with, or None where the sentinel itself is shown.
+_CHECKER_FAULTS = {
+    "OSError": (OSError, INTERNAL_PUBLIC_MESSAGE),
+    "ValueError": (ValueError, INTERNAL_PUBLIC_MESSAGE),
+    "CheckerConfigError-outside_text": (
+        _wrapped_in_outside_text,
+        f"qa_pin could not run: {OUTSIDE_TEXT_WITHHELD}",
+    ),
+    "ValidationError": (ValidationError, None),
+}
+
+
+@pytest.fixture
+def raising_checker():
+    """A plugin that contributes one named rubric checker, registered with the
+    real plugin registry the way an installed plugin's is; removed after."""
+    from pyrite.plugins import get_registry
+    from pyrite.plugins.capabilities import Capability
+
+    state: dict[str, Any] = {"raise": None, "calls": 0}
+
+    def checker(entry, schema, params=None):
+        state["calls"] += 1
+        raise state["raise"]()
+
+    class RaisingCheckerPlugin:
+        name = "qa_pin_raising_checker"
+        capabilities = {Capability.DOMAIN}
+
+        def get_rubric_checkers(self):
+            return {RAISING_CHECKER: checker}
+
+    registry = get_registry()
+    registry.discover()
+    registry.register(RaisingCheckerPlugin())
+    try:
+        yield state
+    finally:
+        registry._plugins.pop(RaisingCheckerPlugin.name, None)
+        registry._conformance_cache.pop(RaisingCheckerPlugin.name, None)
+        registry._aliases_changed()
+
+
+@pytest.fixture
+def rubric_world(world):
+    """The world's KB with a second entry, and a kb.yaml rubric naming the
+    raising checker."""
+    w, kb = world
+    (kb / "kb.yaml").write_text(
+        f"name: {KB}\nevaluation_rubric:\n  - {{text: {RUBRIC_ITEM}, checker: {RAISING_CHECKER}}}\n"
+    )
+    (kb / "notes" / "two.md").write_text("---\nid: two\ntitle: Two\ntype: note\n---\nbody\n")
+    w.index(KB)
+    return w
+
+
+def _checker_failures(body: dict) -> list[dict]:
+    return [i for i in body["issues"] if i.get("rule") == "checker_failed"]
+
+
+@pytest.mark.parametrize("fault", list(_CHECKER_FAULTS))
+@pytest.mark.parametrize(
+    "url", [f"/api/qa/validate/one?kb={KB}", f"/api/qa/validate?kb={KB}"], ids=["entry", "kb"]
+)
+@pytest.mark.control(
+    reason="a pin: QAService._check_rubric_evaluation already passes the checker's "
+    "exception through public_text"
+)
+def test_qa_validate_does_not_quote_a_failing_rubric_checkers_text(
+    rubric_world, raising_checker, url, fault
+):
+    w = rubric_world
+    sentinel = f"/srv/sentinel-{uuid.uuid4().hex}/secret.txt"
+    make, shown = _CHECKER_FAULTS[fault]
+    raising_checker["raise"] = lambda: make(sentinel)
+    kb_wide = "/validate?" in url
+    expected_entries = ["one", "two"] if kb_wide else ["one"]
+    prefix = f"Rubric checker '{RAISING_CHECKER}' failed on this entry, so '{RUBRIC_ITEM}' was not checked: "
+
+    calls = 0
+    for attempt in ("first", "second") if kb_wide else ("first",):
+        r = w.client.get(url)
+        assert r.status_code == 200, r.text
+        failures = _checker_failures(r.json())
+        assert sorted(i["entry_id"] for i in failures) == expected_entries, r.text
+        for issue in failures:
+            assert issue["message"].startswith(prefix), issue
+        if shown is None:
+            # Documents the contract in pyrite/exceptions.py: a PyriteError
+            # with no ``public_message`` has its text written for the caller,
+            # so it is shown. Changing that is a decision, not an accident.
+            for issue in failures:
+                assert issue["message"] == prefix + sentinel, issue
+        else:
+            # The whole body, every row: not only one issue's message.
+            assert sentinel not in r.text, (attempt, r.text)
+            for issue in failures:
+                assert issue["message"] == prefix + shown, issue
+        if attempt == "first":
+            calls = raising_checker["calls"]
+            assert calls == len(expected_entries)  # this report was computed, not reused
+        else:
+            # The second KB-wide call is the cached report.
+            assert raising_checker["calls"] == calls
 
 
 # -- export --------------------------------------------------------------------

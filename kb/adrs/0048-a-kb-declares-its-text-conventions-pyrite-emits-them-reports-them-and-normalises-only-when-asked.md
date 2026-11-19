@@ -53,7 +53,7 @@ What ADR-0042 does not answer:
 ## Decision
 
 1. **Where.** A KB declares its conventions in `kb.yaml`, in a `text:` block,
-   beside `validation:` and the `exclude:` key decided on 2026-10-14 (#22).
+   beside `validation:`.
    `kb.yaml` is the operator's documented file (principle 7). Pyrite does not
    read `.editorconfig` or `.gitattributes`: they belong to other tools, and
    two sources would need a precedence rule.
@@ -98,8 +98,7 @@ What ADR-0042 does not answer:
 ## Questions for the maintainer
 
 - **Q1. kb.yaml or .editorconfig?** **Decided: kb.yaml only.** Recommendation was kb.yaml only. It is where
-  the operator already configures this KB, and `exclude:` set the precedent on
-  2026-10-14. Counter-case: `.editorconfig` is already read by every editor,
+  the operator already configures this KB. Counter-case: `.editorconfig` is already read by every editor,
   so a hand-editor's own tools would enforce the same convention for free.
   Pyrite could read it later as a default for an undeclared `text:` block
   without changing this decision.

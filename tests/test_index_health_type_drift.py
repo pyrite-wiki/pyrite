@@ -185,7 +185,12 @@ def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surfac
     assert result.exception is None or isinstance(result.exception, SystemExit), repr(
         result.exception
     )
-    assert result.exit_code == 0, result.output
+    # A kb.yaml that does not parse leaves the KB unusable (KB_CONFIG_INVALID,
+    # #1547): index health is unhealthy and exits 1. A key with the wrong
+    # shape (#1498's class) is still a warning.
+    unusable = shape == "invalid-yaml"
+    expected_exit = 1 if unusable and surface.startswith("index") else 0
+    assert result.exit_code == expected_exit, result.output
     if fmt == "json":
         data = json.loads(result.stdout)
         assert [e["kb"] for e in data["schema_errors"]] == ["one"]
@@ -195,7 +200,7 @@ def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surfac
         assert {s["type"] for s in spellings} == {"research-note", "research_note", "research note"}
         assert not any(s["declared"] for s in spellings)
         if surface.startswith("index"):
-            assert data["status"] == "warning"
+            assert data["status"] == ("unhealthy" if unusable else "warning")
             assert data["checks"]["schema_errors"] == data["schema_errors"]
             # No declared types means unrestricted (#595): nothing is
             # undeclared; the failed load shows in schema_errors above.

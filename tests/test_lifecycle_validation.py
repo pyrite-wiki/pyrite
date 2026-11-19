@@ -125,7 +125,7 @@ def test_unrelated_edit_warns_and_preserves_invalid_lifecycle_but_another_bad_va
     assert succeeded, body
     warnings = [row for row in body["warnings"] if row["field"] == "lifecycle"]
     assert len(warnings) == 1, body
-    assert warnings[0]["rule"] == "model_validation"
+    assert warnings[0]["rule"] == "enum"  # the model row's own rule (#1588 acceptance 5)
     assert warnings[0]["severity"] == "warning"
     assert repr(value) in warnings[0]["message"]
     assert path.read_bytes() == original.replace(b"title: Base", b"title: Renamed")

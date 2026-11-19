@@ -51,6 +51,14 @@ def parse_cli_fields(fields: str | None) -> list[str] | None:
     return None if parsed and "*" in parsed else parsed
 
 
+#: The entry-level warnings an entry read or a search row carries when the file
+#: holds a value its reading does not show faithfully (a refused ``importance``,
+#: #1761). Not search's page-level ``warnings`` ("a leg was skipped"). A
+#: projection keeps it: it is the one key a projection adds, because dropping it
+#: would show the legacy reading silently.
+ENTRY_WARNINGS_KEY = "entry_warnings"
+
+
 def project_fields(
     record: dict[str, Any],
     fields: list[str] | None,
@@ -65,7 +73,7 @@ def project_fields(
     """
     if not fields:
         return record
-    keys = dict.fromkeys((*required, *fields))
+    keys = dict.fromkeys((*required, *fields, ENTRY_WARNINGS_KEY))
     return {key: record[key] for key in keys if key in record}
 
 

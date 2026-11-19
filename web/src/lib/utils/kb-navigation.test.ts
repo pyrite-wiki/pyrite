@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/svelte';
-import type { Writable } from 'svelte/store';
 
-vi.mock('$app/stores', async () => {
-    const { writable } = await import('svelte/store');
-    return { page: writable({ url: new URL('http://localhost/graph') }) };
+vi.mock('$app/state', async () => {
+    const { createPageState } = await import('$lib/test-utils/page-state.svelte');
+    return { page: createPageState({ url: new URL('http://localhost/graph') }) };
 });
 vi.mock('$lib/stores/kbs.svelte', () => ({
     kbStore: {
@@ -13,12 +12,12 @@ vi.mock('$lib/stores/kbs.svelte', () => ({
         resolveName: (name: string | undefined) => name
     }
 }));
-import { page } from '$app/stores';
+import { page } from '$app/state';
+import { setPage } from '$lib/test-utils/page-state.svelte';
 import GraphPage from '../../routes/graph/+page.svelte';
 import OrientPage from '../../routes/orient/+page.svelte';
 
 const requests: string[] = [];
-const route = page as unknown as Writable<{ url: URL }>;
 beforeEach(() => {
     requests.length = 0;
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
@@ -33,7 +32,7 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 it('scopes the graph request and selection from the URL, then allows dropdown changes', async () => {
-    route.set({ url: new URL('http://localhost/graph?kb=otherkb') });
+    setPage(page, { url: new URL('http://localhost/graph?kb=otherkb') });
     const view = render(GraphPage);
     await waitFor(() => expect(requests.some(u => u.startsWith('/api/graph?'))).toBe(true));
     const initial = requests.find(u => u.startsWith('/api/graph?'))!;
@@ -49,14 +48,14 @@ it('scopes the graph request and selection from the URL, then allows dropdown ch
 });
 
 it('keeps an unscoped graph unscoped even with an active KB', async () => {
-    route.set({ url: new URL('http://localhost/graph') });
+    setPage(page, { url: new URL('http://localhost/graph') });
     render(GraphPage);
     await waitFor(() => expect(requests.some(u => u.startsWith('/api/graph?'))).toBe(true));
     expect(new URL(requests.find(u => u.startsWith('/api/graph?'))!, 'http://localhost').searchParams.has('kb')).toBe(false);
 });
 
 it('carries the orient KB and encodes IDs in recent-change links', async () => {
-    route.set({ url: new URL('http://localhost/orient?kb=otherkb') });
+    setPage(page, { url: new URL('http://localhost/orient?kb=otherkb') });
     const view = render(OrientPage);
     const link = await view.findByRole('link', { name: /Recent note/ });
     expect(link.getAttribute('href')).toBe('/entries/space%20%2F%20id?kb=otherkb');

@@ -234,6 +234,7 @@ _RECORDS_A_PERSON = {
     "sw_claim": "assignee",
     "sw_review": "reviewer",
     "task_claim": "assignee",
+    "task_start": "assignee",
 }
 
 

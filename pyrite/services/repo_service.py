@@ -11,7 +11,7 @@ import os
 import shutil
 from pathlib import Path
 
-from pyrite.utils.yaml import load_yaml_file
+from pyrite.utils.yaml import read_kb_yaml
 
 from ..config import (
     ConfigError,
@@ -477,7 +477,7 @@ class RepoService:
             kb_yaml = repo_path / "kb.yaml"
             if kb_yaml.exists():
                 try:
-                    data = load_yaml_file(kb_yaml, kb_root=repo_path)  # inside the clone
+                    data = read_kb_yaml(repo_path)  # inside the clone; the one kb.yaml loader
                     kb = KBConfig(
                         name=data.get("name", repo_path.name),
                         path=repo_path,

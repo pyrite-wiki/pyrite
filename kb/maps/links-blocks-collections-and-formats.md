@@ -27,6 +27,17 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    with `![[...]]`; the syntax is Obsidian-compatible and cross-KB with a
    `kb:` prefix. A derived `block` table indexes blocks per entry. **decided**
    [[adr-0012]].
+   An ordinary Markdown link to an entry file in the same KB
+   (`[text](other.md)`, relative to the linking file, with or without a
+   `#fragment`) is a link as well: one row with relation `markdown_link`
+   that keeps the path it names (`link.target_path`, symbolic links followed)
+   and whose `target_id` is the id of the entry indexed at that path now, or
+   the path text when nothing is there (a broken link). One backend resolver
+   re-derives those rows on every write and delete, so the order of writes
+   does not matter. A URL, an image, a link in code, a self-link, a path that
+   leaves the KB, a root-relative `/x.md` and a path the walk does not list
+   are not links; a listed `.md` that is not indexed as an entry is a broken
+   link (#1723).
 2. Backlinks, outlinks and edge endpoints are index rows rebuilt from the
    files; no save rewrites another entry's frontmatter. **decided**
    [[adr-0022]]; the save hooks that write links today are replaced by
@@ -48,8 +59,14 @@ relationship an entry?", "what formats does Pyrite emit?". Layer 2 under
    collection is an entry whose source is a query; `__`-prefixed files are
    collection metadata, not entries. **decided** [[adr-0011]] (five phases;
    completion unchecked).
-7. `object-ref` fields reference other entries and feed the reference table.
-   **decided** [[adr-0008]].
+7. `object-ref` fields reference other entries and feed the reference table
+   (`entry_ref`). Four spellings index as the entry they name: `x` and `[[x]]`
+   are `(x, this KB)`; `other:x` and `[[other:x]]` are `(x, KB other)` when
+   `other` is a registered KB's name or shortname. Any other value (`doi:1-x`,
+   `https://ex.org/x`) is the whole id in this KB. `[[]]` gets no row; one row
+   per field and entry named. Not handled: `[[x|text]]`, `[[x#h]]`, `[[x^b]]`,
+   a prefix with uppercase or `_`, unquoted YAML `[[x]]`. Only fields kb.yaml
+   declares `object-ref` are indexed. **decided** [[adr-0008]]; spellings #1693.
 8. Output formats (json, markdown, yaml, csv, toon, text) come from one registry
    behind `Accept` and `--format`; the file stays Markdown and YAML. Import
    reuses the registry and is marked future. **decided** [[adr-0010]].

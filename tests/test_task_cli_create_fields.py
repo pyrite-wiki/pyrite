@@ -166,9 +166,13 @@ def test_conductor_desk_recipe_creates_a_task_in_one_step(desk_env):
     assert fm["priority"] == 3
 
 
+@pytest.mark.control(
+    reason="a JSON array was always stored as sent; the comma cell beside it is red"
+)
 @pytest.mark.cli
 def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
-    """A schema-declared list field uses the shared comma-list parser."""
+    """A schema-declared list field uses the shared value parser: several
+    items as a JSON array; a comma value is never split (#1502)."""
     task_cli_env["config"].get_kb("test-tasks").kb_yaml_path.write_text(
         """name: tasks\ntypes:\n  task:\n    fields:\n      custom_list:\n        type: list\n""",
         encoding="utf-8",
@@ -183,7 +187,7 @@ def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
             "-k",
             "test-tasks",
             "--field",
-            "custom_list=a,b",
+            'custom_list=["a", "b"]',
             "--format",
             "json",
         ],
@@ -192,6 +196,25 @@ def test_task_create_field_uses_the_shared_value_parser(task_cli_env):
     data = json.loads(result.output)
     fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
     assert fm["custom_list"] == ["a", "b"], fm
+
+
+@pytest.mark.cli
+def test_task_create_field_keeps_a_comma_value_as_one_list_item(task_cli_env):
+    """`--field custom_list=a,b` on a declared list is the one item `a,b` (#1502)."""
+    task_cli_env["config"].get_kb("test-tasks").kb_yaml_path.write_text(
+        """name: tasks\ntypes:\n  task:\n    fields:\n      custom_list:\n        type: list\n""",
+        encoding="utf-8",
+    )
+    task_cli_env["config"].get_kb("test-tasks").invalidate_schema_cache()
+    result = runner.invoke(
+        app,
+        ["task", "create", "Parsed", "-k", "test-tasks", "--field", "custom_list=a,b",
+         "--format", "json"],
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
+    assert fm["custom_list"] == ["a,b"], fm
 
 
 @pytest.mark.cli
@@ -214,6 +237,42 @@ def test_task_create_field_keeps_commas_for_an_undeclared_value(task_cli_env):
     data = json.loads(result.output)
     fm = _task_frontmatter(task_cli_env["config"], "test-tasks", data["entry_id"], "tasks")
     assert fm["why_me"] == "a login, a payment"
+
+
+@pytest.mark.cli
+def test_task_create_field_refuses_a_repeated_key(task_cli_env):
+    """`pyrite task create --field k=1 --field k=2` is refused (#1726).
+
+    Aligns `task create` with `pyrite create` and `update` (#1502): a repeated
+    `--field` key raises `VALIDATION_FAILED` (exit 2 under Typer), points to a
+    JSON array, and writes no task entry file.
+    """
+    tasks_dir = task_cli_env["config"].get_kb("test-tasks").path / "tasks"
+    before = set(tasks_dir.iterdir())
+    result = runner.invoke(
+        app,
+        [
+            "task",
+            "create",
+            "Repeated field task",
+            "-k",
+            "test-tasks",
+            "--field",
+            "custom_val=1",
+            "--field",
+            "custom_val=2",
+            "--format",
+            "json",
+        ],
+    )
+    assert result.exit_code != 0, result.output
+    data = json.loads(result.output)
+    assert data["error_code"] == "VALIDATION_FAILED", data
+    assert '["' in data["error"] or "JSON" in data["error"], data
+    assert "is given more than once" in data["error"], data
+    assert data["errors"][0]["rule"] == "repeated", data
+    after = set(tasks_dir.iterdir())
+    assert after == before
 
 
 @pytest.mark.parametrize(

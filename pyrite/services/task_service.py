@@ -4,22 +4,26 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ..config import PyriteConfig
 from ..exceptions import (
     AmbiguousEntryError,
+    EntryLoadError,
     EntryNotFoundError,
+    KBNotFoundError,
     PyriteError,
     ValidationError,
     public_text,
 )
 from ..models.task import TASK_RESOLVED_STATUSES, coerce_task_priority
 from ..models.task_completion import derive_completion, no_derived
+from ..models.task_queue import classify_tasks, count_reasons, dependency_ids
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
 from ..utils.metadata import parse_metadata
 from .access_policy import UNSCOPED, named_kb
+from .read_shaping import project_fields
 
 if TYPE_CHECKING:
     from ..models import Entry
@@ -373,6 +377,8 @@ class TaskService:
         than one readable KB is refused with ``AmbiguousEntryError`` (#528),
         never answered by whichever row SQLite returns first; the candidates
         are listed in config order, readable KBs only.
+
+        The row returned is shaped by :meth:`task_view` (#1759).
         """
         sql = (
             "SELECT id, title, kb_name, status, assignee, priority, due_date, metadata "
@@ -395,7 +401,59 @@ class TaskService:
             order = [kb.name for kb in self.config.all_kbs()]
             candidates = [n for n in order if n in held] + sorted(held - set(order))
             raise AmbiguousEntryError(task_id, candidates)
-        return rows[0]
+        return self.task_view(rows[0])
+
+    def get_task_detail(
+        self,
+        task_id: str,
+        kb_name: str | None = None,
+        *,
+        readable_kbs: set[str] | None,
+    ) -> dict[str, Any] | None:
+        """Get full task details including body, children and derived completion.
+
+        The single builder for CLI `task get` and MCP `task_status` (#1681).
+        Reads fields from the fresh index row and body from the file on disk.
+        If either the index row or the underlying file is missing, returns None.
+        """
+        task = self.get_task(task_id, kb_name, readable_kbs=readable_kbs)
+        if not task:
+            return None
+
+        task_kb = task.get("kb_name", kb_name or "")
+        entry = self.kb_svc.get_entry(task_id, kb_name=task_kb, readable_kbs=readable_kbs)
+        if not entry:
+            return None
+
+        meta = parse_metadata(task.get("metadata"))
+
+        children_list = self.list_tasks(
+            kb_name=task_kb,
+            kb_names=None if kb_name else readable_kbs,
+            parent=task_id,
+        )
+        children = [
+            {"id": c["id"], "title": c["title"], "status": c["status"], "derived": c["derived"]}
+            for c in children_list
+        ]
+
+        return {
+            "id": task["id"],
+            "title": task["title"],
+            "status": task.get("status") or meta.get("status", "open"),
+            "assignee": task.get("assignee") or meta.get("assignee", ""),
+            # Shaped by `task_view` in `get_task` (#1759): already the int.
+            "priority": task["priority"],
+            "parent": meta.get("parent", ""),
+            "dependencies": meta.get("dependencies", []),
+            "evidence": meta.get("evidence", []),
+            "due_date": task.get("due_date") or meta.get("due_date", ""),
+            "agent_context": meta.get("agent_context", {}),
+            "children": children,
+            "kb_name": task_kb,
+            "derived": self.derived_for(task_kb, task["id"]),
+            "body": entry.get("body", "") or "",
+        }
 
     def derived_completion(self, kb_name: str) -> dict[str, dict[str, Any]]:
         """Every task's derived completion in ``kb_name``, keyed by task id.
@@ -416,6 +474,28 @@ class TaskService:
     def derived_for(self, kb_name: str, task_id: str) -> dict[str, Any]:
         """One task's derived value; a task missing from the index derives nothing."""
         return self.derived_completion(kb_name).get(task_id) or no_derived()
+
+    @staticmethod
+    def task_view(row: dict[str, Any]) -> dict[str, Any]:
+        """One raw index row of a task, shaped for its readers (#1759).
+
+        The one shaping of a task row: ``get_task`` returns it,
+        ``get_task_detail`` builds on it and ``list_tasks`` reads its
+        ``priority`` from it, so no caller shapes a row of its own. The
+        row's ``priority`` column is a string, and a row written before
+        the model's reading existed can hold a word (``medium``) or
+        nothing; the shaped row carries the integer
+        :func:`coerce_task_priority` reads (the model's reading, not
+        ``int()``: one row holding `medium` ended a whole listing,
+        #554). Every other key is the row's own, unchanged.
+        """
+        meta = parse_metadata(row.get("metadata"))
+        return {
+            **row,
+            "priority": coerce_task_priority(
+                row.get("priority") or meta.get("priority"), row.get("id", "")
+            ),
+        }
 
     def list_tasks(
         self,
@@ -470,19 +550,15 @@ class TaskService:
         rows = self._query(query, params)
         tasks = []
         for row in rows:
-            meta = _parse_metadata(row.get("metadata"))
+            meta = parse_metadata(row.get("metadata"))
             tasks.append(
                 {
                     "id": row["id"],
                     "title": row["title"],
                     "status": row.get("status") or meta.get("status", "open"),
                     "assignee": row.get("assignee") or meta.get("assignee", ""),
-                    # The model's reading, not int(): an index row written
-                    # before TaskEntry coerced a word still holds `medium`,
-                    # and one such row ended the whole listing (#554).
-                    "priority": coerce_task_priority(
-                        row.get("priority") or meta.get("priority"), row["id"]
-                    ),
+                    # The one shaping of a task row (#1759, #554).
+                    "priority": self.task_view(row)["priority"],
                     "parent": meta.get("parent", ""),
                     "kb_name": row["kb_name"],
                     # Why a task is parked. Drives the human worklist board's
@@ -529,6 +605,181 @@ class TaskService:
                     t["parked_awaiting"] = (entry.get("parked_awaiting") or "").strip()
 
         return tasks
+
+    #: Every key a `list_tasks` row carries. `task list --fields` names on
+    #: stderr a requested field that is none of these and that no returned row
+    #: carries, as search does with its own row's keys; nothing is refused.
+    TASK_ROW_FIELDS: tuple[str, ...] = (
+        "id", "title", "status", "assignee", "priority", "parent", "kb_name",
+        "parked_awaiting", "updated_at", "derived",
+    )  # fmt: skip
+
+    def task_listing(
+        self,
+        kb_name: str | None = None,
+        status: str | None = None,
+        assignee: str | None = None,
+        parent: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
+        priority: int | None = None,
+        *,
+        dispatchable: bool = False,
+        fields: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """The body of `task list` on every surface: ``{"count", "tasks"}``.
+
+        The CLI ``task list``, the MCP ``task_list`` tool and REST ``GET
+        /tasks`` return this and nothing else. Without ``dispatchable`` and
+        ``fields`` it is exactly :meth:`list_tasks` under ``tasks``, as before
+        #1686.
+
+        ``dispatchable`` keeps only the tasks a worker can take now -- each
+        one a task ``claim_task`` accepts now -- as
+        :func:`~pyrite.models.task_queue.classify_tasks` decides (the one
+        place that is decided), in its order: priority highest first, then
+        oldest. It adds ``counts`` (every task the other filters matched, per
+        reason, ``dispatchable`` included) and ``excluded`` (each open task
+        left out, with its one reason, in the same order). Nothing is written.
+
+        ``fields`` projects each ``tasks`` row through
+        :func:`~pyrite.services.read_shaping.project_fields`.
+        """
+        tasks = self.list_tasks(
+            kb_name=kb_name,
+            status=status,
+            assignee=assignee,
+            parent=parent,
+            kb_names=kb_names,
+            priority=priority,
+        )
+        out: dict[str, Any] = {}
+        if dispatchable:
+            classified = self._classify_for_dispatch(tasks, kb_name, kb_names)
+            tasks = [row for row, reason in classified if reason is None]
+            out["counts"] = count_reasons(classified)
+            out["excluded"] = [
+                {"id": row["id"], "kb_name": row["kb_name"], "reason": reason}
+                for row, reason in classified
+                if reason not in (None, "not_open")
+            ]
+        if fields:
+            tasks = [project_fields(row, fields) for row in tasks]
+        return {"count": len(tasks), "tasks": tasks, **out}
+
+    def _classify_for_dispatch(
+        self,
+        tasks: list[dict[str, Any]],
+        kb_name: str | None,
+        kb_names: set[str] | list[str] | None,
+    ) -> list[tuple[dict[str, Any], str | None]]:
+        """Gather what :func:`classify_tasks` reads beyond a ``list_tasks``
+        row, ask it, and hand back the rows as ``list_tasks`` shaped them.
+
+        The I/O is here, so the classifier stays pure: one index read for
+        each row's ``created_at``, ``file_path`` and ``dependencies``, a
+        stat of the file of each task whose effective status is open, a load
+        through the claim's loader of each task every other check lists, and
+        the derived completion of a KB a ``kb:id`` dependency names -- only
+        when this listing reads that KB, so a dependency on a KB the caller
+        may not read stays unresolved (blocked) and reveals nothing.
+        """
+        if not tasks:
+            return []
+        if kb_name:
+            scope = {kb_name}
+        elif kb_names is not None:
+            scope = set(kb_names)
+        else:
+            scope = {kb.name for kb in self.config.all_kbs()}
+        listed_kbs = sorted({t["kb_name"] for t in tasks})
+        params: dict[str, Any] = {}
+        in_listed = kb_names_clause("kb_name", listed_kbs, params)
+        extra_rows = self._query(
+            "SELECT kb_name, id, status, created_at, file_path, metadata FROM entry "
+            f"WHERE entry_type = 'task' AND {in_listed}",
+            params,
+        )
+        extra = {(r["kb_name"], r["id"]): r for r in extra_rows}
+
+        derived = {kb: self.derived_completion(kb) for kb in listed_kbs}
+        inputs = []
+        for task in tasks:
+            row = extra.get((task["kb_name"], task["id"]), {})
+            deps = parse_metadata(row.get("metadata")).get("dependencies")
+            open_now = task["derived"]["effective_status"] == "open"
+            inputs.append(
+                {
+                    **task,
+                    # The column the claim's compare-and-swap reads, not the
+                    # row's `status` (which reads an empty one as `open`).
+                    "index_status": row.get("status"),
+                    "created_at": row.get("created_at") or "",
+                    "dependencies": deps,
+                    "file_present": not open_now or self._file_present(task, row),
+                }
+            )
+            for dep in dependency_ids(deps):
+                other, sep, _ = dep.partition(":")
+                if sep and other in scope and other not in derived:
+                    derived[other] = self.derived_completion(other)
+
+        # The one check that reads a file runs last and only on the rows every
+        # other check lists, so its cost is the listed set: does the claim's
+        # own loader load the file? A row it does not is `unreadable`.
+        for row, reason in classify_tasks(inputs, derived):
+            if reason is None:
+                row["file_loads"] = self._claim_can_load(row)
+
+        by_key = {(t["kb_name"], t["id"]): t for t in tasks}
+        return [
+            (by_key[(row["kb_name"], row["id"])], reason)
+            for row, reason in classify_tasks(inputs, derived)
+        ]
+
+    def _row_kb(self, kb_name: str):
+        """The configured KB an index row names, through the one resolver
+        (``kb_resolver.resolve_kb``, #1530), or None when no configured KB
+        has that name any more: a row's KB is not a caller's request, so a
+        KB no longer configured is skipped by the listing, never refused."""
+        from .kb_resolver import resolve_kb
+
+        try:
+            return resolve_kb(self.config, kb_name, readable_kbs=None)
+        except KBNotFoundError:
+            return None
+
+    def _claim_can_load(self, task: dict[str, Any]) -> bool:
+        """Whether ``KBService.claim_entry``'s load of this task succeeds: the
+        same call (``KBRepository(kb).load``), so the list never promises a
+        task the claim then refuses at its load. No entry (the file's YAML
+        broke, or no file holds the id) and a load error (its type refuses
+        it) are both false. A KB no longer configured is not loaded by the
+        claim either, so it is not judged here."""
+        from ..storage.repository import KBRepository
+
+        kb = self._row_kb(task["kb_name"])
+        if kb is None:
+            return True
+        try:
+            return KBRepository(kb).load(task["id"]) is not None
+        except EntryLoadError:  # the claim's load refuses this file's type: leave it out
+            return False
+
+    def _file_present(self, task: dict[str, Any], row: dict[str, Any]) -> bool:
+        """Whether the task's file is still there, as its KB answers it
+        (``KBFiles.present``). A row that records no path, a KB no longer
+        configured, or a folder the OS will not answer for cannot be checked,
+        and such a task is not called orphaned: a listing never fails on it."""
+        from ..utils.kb_files import KBFiles, KBPresenceUnknownError
+
+        file_path = row.get("file_path")
+        kb = self._row_kb(task["kb_name"])
+        if not file_path or kb is None:
+            return True
+        try:
+            return KBFiles(kb.path).present(file_path)
+        except KBPresenceUnknownError:
+            return True
 
     # -- Protocol finders (ADR-0017) -------------------------------------
     # Cross-type queries over the protocol columns. The MCP `kb_find_*`
@@ -601,6 +852,179 @@ class TaskService:
     def claim_task(self, task_id: str, kb_name: str, assignee: str) -> dict[str, Any]:
         """Atomically claim an open task. Delegates to KBService.claim_entry()."""
         return self.kb_svc.claim_entry(task_id, kb_name, assignee)
+
+    def start_task(self, task_id: str, kb_name: str, assignee: str) -> dict[str, Any]:
+        """Claim and start an open task in one write (#1685).
+
+        The decision is ``claim_entry``'s compare-and-set, the one `task
+        claim` runs, from ``open`` straight to ``in_progress``; the file write
+        passes through ``claimed`` (both edges judged by the workflow) and
+        appends one ``status_change_log`` item per edge. A task the same
+        assignee already holds as ``claimed`` (a worker that died between
+        claim and start) is moved on to ``in_progress`` by the same
+        compare-and-set from ``claimed``. Anything else is claim's lost
+        claim, unchanged: ``claimed: False``, ``error``, ``current_status``.
+
+        On success the result adds ``task`` (the single-entry read, with its
+        body) and ``parent`` (``{id, title, body}`` or None), their bodies
+        bounded together by the response budget (json-contracts, "Body
+        truncation").
+        """
+        self._refuse_not_a_task(task_id, kb_name)
+
+        def edge(old: str, new: str):
+            return _log_item(old, new, assignee)
+
+        result: dict[str, Any] = self.kb_svc.claim_entry(
+            task_id,
+            kb_name,
+            assignee,
+            from_status="open",
+            to_status="in_progress",
+            via=("claimed",),
+            ops=[edge("open", "claimed"), edge("claimed", "in_progress")],
+        )
+        if not result.get("claimed") and result.get("current_status") == "claimed":
+            holder = self._query(
+                "SELECT assignee FROM entry WHERE id = :id AND kb_name = :kb_name",
+                {"id": task_id, "kb_name": kb_name},
+            )
+            if holder and (holder[0].get("assignee") or "") == assignee:
+                result = self.kb_svc.claim_entry(
+                    task_id,
+                    kb_name,
+                    assignee,
+                    from_status="claimed",
+                    to_status="in_progress",
+                    ops=[edge("claimed", "in_progress")],
+                    # Only the holder read above moves it on: every check
+                    # the claim passes matches it, so a claim taken in
+                    # between is refused, never replaced.
+                    holder=assignee,
+                )
+        if not result.get("claimed"):
+            return result
+        return {**result, **self._started_context(task_id, kb_name)}
+
+    def _refuse_not_a_task(self, task_id: str, kb_name: str) -> None:
+        rows = self._query(
+            "SELECT entry_type FROM entry WHERE id = :id AND kb_name = :kb_name",
+            {"id": task_id, "kb_name": kb_name},
+        )
+        if rows and rows[0].get("entry_type") != "task":
+            raise ValidationError(
+                f"'{task_id}' is a {rows[0].get('entry_type')!r}, not a task: "
+                "`task start` and `task finish` move tasks only."
+            )
+
+    def _started_context(self, task_id: str, kb_name: str) -> dict[str, Any]:
+        """The started task and its parent, as a worker needs them to begin."""
+        from .body_bounds import load_body_bounds
+
+        task = self.kb_svc.get_entry(task_id, kb_name, readable_kbs=UNSCOPED) or {}
+        parent_id = task.get("parent") or ""
+        parent = None
+        if parent_id:
+            found = self.kb_svc.get_entry(parent_id, kb_name, readable_kbs=UNSCOPED)
+            if found:
+                parent = {
+                    "id": found.get("id"),
+                    "title": found.get("title"),
+                    "body": found.get("body") or "",
+                }
+        bounded = load_body_bounds().fill_budget([task, *([parent] if parent else [])])
+        return {"task": bounded[0], "parent": bounded[1] if parent else None}
+
+    def finish_task(
+        self,
+        task_id: str,
+        kb_name: str,
+        *,
+        walk: bool = False,
+        reason: str = "",
+        by: str = "",
+        operator_override: bool = False,
+    ) -> dict[str, Any]:
+        """Move a held task to ``done`` in one write (#1685).
+
+        Finish requires the caller to hold the task; operators have an
+        explicit override. The caller is ``by`` (the surface sets it: the
+        signed-in account, or the label a caller with no account names), and
+        must be the task's current assignee. A caller who is not, or no caller
+        at all, is refused (``Forbidden``) before any write. With
+        ``operator_override`` the operator (``acting() is OPERATOR``: the local
+        process, an operator key) finishes a task it does not hold; the log
+        items record ``by: operator`` and ``override: true``. The override is
+        never implied, and anyone but the operator asking for it is refused.
+        The write rechecks the holder in the bytes it replaces.
+
+        The path is the workflow's shortest declared one (``status_walk``);
+        without ``walk`` only a direct edge is taken and the refusal names
+        the path ``walk`` would take. One write sets ``status``,
+        ``status_reason`` (when ``reason`` is given) and appends one
+        ``status_change_log`` item per edge; the ``before_save`` workflow hook
+        judges every edge and refuses unless the path starts at the status
+        the file holds when the write reads it. A task nothing holds (the path
+        passes through the workflow's initial state) is refused: ``cancelled``
+        retires one.
+        """
+        from ..models.task import resolve_workflow_for_type, status_walk
+        from ..storage.file_operations import Set
+        from ..storage.repository import KBRepository
+
+        kb_config = self.config.require_kb(kb_name, db=self.db)
+        entry = KBRepository(kb_config).load(task_id)
+        if not entry:
+            raise EntryNotFoundError(f"Task '{task_id}' not found in KB '{kb_name}'")
+        if entry.entry_type != "task":
+            raise ValidationError(
+                f"'{task_id}' is a {entry.entry_type!r}, not a task: "
+                "`task finish` moves tasks only."
+            )
+        holder = getattr(entry, "assignee", "") or ""
+        who, override = _finisher(task_id, holder, by, operator_override)
+        workflow = resolve_workflow_for_type("task", getattr(kb_config, "kb_schema", None))
+        initial = workflow.get("initial", "open")
+        target = "done"
+        current = getattr(entry, "status", "") or initial
+        if current == target:
+            raise ValidationError(f"Task '{task_id}' is already '{target}'; nothing to finish.")
+        path = status_walk(workflow, current, target)
+        if path is None:
+            raise ValidationError(
+                f"Cannot finish task '{task_id}': its workflow has no path from "
+                f"'{current}' to '{target}'."
+            )
+        if initial in path:
+            raise ValidationError(
+                f"Cannot finish task '{task_id}' from '{current}': nothing holds it "
+                f"(the path to '{target}' passes through '{initial}'). Start it with "
+                f"`pyrite task start`, or retire it with `task update --status cancelled`."
+            )
+        if len(path) > 2 and not walk:
+            raise ValidationError(
+                f"Cannot move task '{task_id}' from '{current}' to '{target}' in one step. "
+                f"`--walk` (MCP `walk: true`) would pass through: {' → '.join(path)}."
+            )
+        ops: list[Any] = [Set("status", target)]
+        if reason:
+            ops.append(Set("status_reason", reason))
+        ops.extend(
+            _log_item(old, new, who, reason, override=override)
+            for old, new in zip(path, path[1:], strict=False)
+        )
+        written = self.kb_svc.apply_operations(
+            task_id, kb_name, ops, status_path=path, expect_holder=holder
+        )
+        return {
+            "finished": True,
+            "task_id": task_id,
+            "status": getattr(written.entry, "status", target),
+            "path": path,
+            "status_reason": getattr(written.entry, "status_reason", "") or "",
+            "by": who,
+            "override": override,
+        }
 
     def reset_task(
         self,
@@ -759,7 +1183,7 @@ class TaskService:
 
         unblocked = []
         for row in rows:
-            meta = _parse_metadata(row.get("metadata"))
+            meta = parse_metadata(row.get("metadata"))
             deps = meta.get("dependencies", [])
             if not deps or task_id not in deps:
                 continue
@@ -791,7 +1215,7 @@ class TaskService:
         if not task:
             return None
 
-        meta = _parse_metadata(task.get("metadata") or {})
+        meta = parse_metadata(task.get("metadata") or {})
         parent_id = meta.get("parent") or task.get("parent", "")
         if not parent_id:
             return None
@@ -804,7 +1228,7 @@ class TaskService:
         if not parent:
             return None
 
-        parent_meta = _parse_metadata(parent.get("metadata") or {})
+        parent_meta = parse_metadata(parent.get("metadata") or {})
         parent_evidence = parent_meta.get("evidence", []) or parent.get("evidence", []) or []
 
         # Only what the parent lacks, each appended as one item in the
@@ -858,7 +1282,7 @@ class TaskService:
         if not task:
             return {"linked": False, "error": "Task not found"}
 
-        meta = _parse_metadata(task.get("metadata") or {})
+        meta = parse_metadata(task.get("metadata") or {})
         evidence = meta.get("evidence", []) or task.get("evidence", []) or []
 
         if assessment_id not in evidence:
@@ -926,7 +1350,7 @@ class TaskService:
             if not task:
                 break
 
-            meta = _parse_metadata(task.get("metadata") or {})
+            meta = parse_metadata(task.get("metadata") or {})
             parent_id = meta.get("parent") or task.get("parent", "")
             if not parent_id:
                 break
@@ -1048,9 +1472,59 @@ class TaskService:
         return result
 
 
+def _finisher(task_id: str, holder: str, by: str, operator_override: bool) -> tuple[str, bool]:
+    """Who finishes the task and whether by override: finish requires the
+    caller to hold the task; operators have an explicit override."""
+    from ..exceptions import Forbidden
+    from .acting import OPERATOR, acting
+
+    if by and holder and by == holder:
+        return by, False
+    if operator_override:
+        if acting() is not OPERATOR:
+            raise Forbidden(
+                f"Task '{task_id}': only the operator may finish a task it does not hold "
+                "(the operator override). Nothing was written."
+            )
+        return "operator", True
+    who = f"'{by}'" if by else "a caller with no identity"
+    held = f"held by '{holder}'" if holder else "held by no one"
+    refusal = Forbidden(
+        f"Task '{task_id}' is {held}: finish requires the caller to hold the task, "
+        f"and {who} does not. Nothing was written."
+    )
+    # `suggestion` is a public attribute every refusal may carry
+    # (exceptions.PUBLIC_ATTRIBUTES); Forbidden does not declare it.
+    cast(Any, refusal).suggestion = (
+        "Finish it as its holder (`--by <holder>`; MCP: sign in as the holder or pass `by`), "
+        "or, as the operator, pass the explicit override (`--operator-override`; "
+        "MCP `operator_override: true`)."
+    )
+    raise refusal
+
+
+def _log_item(old: str, new: str, by: str, comment: str = "", *, override: bool = False):
+    """One ``status_change_log`` item for the edge ``old`` -> ``new``, as an
+    ``Append`` (the earlier items keep their bytes). ``comment`` only when
+    there is one: nothing is written that was not asked for."""
+    from ..storage.file_operations import Append
+
+    item: dict[str, Any] = {
+        "date": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "from": old,
+        "to": new,
+        "by": by,
+    }
+    if comment:
+        item["comment"] = comment
+    if override:
+        item["override"] = True
+    return Append("status_change_log", item)
+
+
 def _task_dependency_ids(task: dict[str, Any]) -> list[str]:
     """Return a task's dependency IDs in their stored order."""
-    metadata = _parse_metadata(task.get("metadata") or {})
+    metadata = parse_metadata(task.get("metadata") or {})
     dependencies = metadata.get("dependencies") or task.get("dependencies") or []
     if isinstance(dependencies, str):
         return [dependencies] if dependencies else []
@@ -1076,11 +1550,6 @@ def _task_dependency_summary(
         "entry_type": task.get("entry_type", "task"),
         "derived": derived.get(task_id) or no_derived(),
     }
-
-
-def _parse_metadata(raw) -> dict[str, Any]:
-    """Parse metadata JSON from a DB row."""
-    return parse_metadata(raw)
 
 
 # =============================================================================
@@ -1122,11 +1591,7 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
     if not hasattr(entry, "entry_type"):
         return entry
 
-    from ..models.task import (
-        TASK_WORKFLOW,
-        resolve_workflow_for_type,
-        validate_status_change,
-    )
+    from ..models.task import TASK_WORKFLOW, resolve_workflow_for_type
 
     # Resolve the workflow for this entry-type. If we're not the core
     # `task` type AND no state_machine is declared, the resolver falls
@@ -1144,6 +1609,22 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
 
     old_status = context.get("old_status")
     new_status = getattr(entry, "status", None)
+    status_path = context.get("status_path")
+    if status_path is not None:
+        # A multi-step change (`task start`, `task finish --walk`; #1685):
+        # every edge of the path is judged below, as one change each, and the
+        # path must start at the status the file holds now (the file decides,
+        # ADR-0042 decision 10) and end at the one written. No fail-open here.
+        path = list(status_path)
+        if len(path) < 2 or path[0] != old_status or path[-1] != new_status:
+            raise ValidationError(
+                f"Cannot move '{entry.id}' along {' → '.join(map(str, path))}: "
+                f"the file's status is '{old_status}', and this write sets '{new_status}'. "
+                "Nothing was written; read the task again and retry."
+            )
+        for before, after in zip(path, path[1:], strict=False):
+            _judge_status_edge(entry, context, workflow, before, after)
+        return entry
     # Fails OPEN on a missing old status. That is safe only because every
     # update hands this hook the old status of a fully loaded file: a file its
     # type cannot load is refused before any hook (ADR-0042 8a), never given
@@ -1160,6 +1641,17 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
         )["completion"]
         if completion.get("complete") is True and completion.get("basis") == "children":
             return entry
+
+    _judge_status_edge(entry, context, workflow, old_status, new_status)
+    return entry
+
+
+def _judge_status_edge(
+    entry: Entry, context: dict, workflow: dict, old_status: str, new_status: str
+) -> None:
+    """Refuse one status edge ``old_status`` -> ``new_status`` that ``workflow``
+    does not allow, through ``validate_status_change`` (the one judge)."""
+    from ..models.task import validate_status_change
 
     # The reason field carries through frontmatter as `status_reason`; an
     # absent attribute is treated as empty string.
@@ -1200,8 +1692,6 @@ def _task_validate_transition(entry: Entry, context: dict) -> Entry:
                 )
             raise refusal
         raise ValidationError(err)
-
-    return entry
 
 
 def register_task_hooks(runner: HookRunner) -> None:

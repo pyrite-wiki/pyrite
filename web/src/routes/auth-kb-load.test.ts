@@ -1,12 +1,11 @@
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { render, cleanup, waitFor } from '@testing-library/svelte';
-import { writable } from 'svelte/store';
 vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 // jsdom has no Web Animations API; transition timing is outside this regression.
 vi.mock('svelte/transition', () => ({ fade: () => ({ duration: 0 }) }));
-vi.mock('$app/stores', async () => {
-  const { writable } = await import('svelte/store');
-  return { page: writable({ url: new URL('http://localhost/entries'), route: { id: '/entries' }, params: {} }) };
+vi.mock('$app/state', async () => {
+  const { createPageState } = await import('$lib/test-utils/page-state.svelte');
+  return { page: createPageState({ url: new URL('http://localhost/entries'), route: { id: '/entries' }, params: {} }) };
 });
 vi.mock('$lib/api/client', () => ({ api: {
   getAuthConfig: vi.fn(), getMe: vi.fn(), login: vi.fn(), onUnauthorized: vi.fn(),
@@ -27,12 +26,13 @@ vi.mock('$lib/components/common/ConnectionStatus.svelte', async () => ({ default
 import { api } from '$lib/api/client';
 import { authStore } from '$lib/stores/auth.svelte';
 import { kbStore } from '$lib/stores/kbs.svelte';
-import { page } from '$app/stores';
+import { page } from '$app/state';
+import { setPage } from '$lib/test-utils/page-state.svelte';
 import { goto } from '$app/navigation';
 import LayoutHarness from './test-fixtures/LayoutHarness.svelte';
 const alice = { id: 1, username: 'alice', display_name: 'Alice', role: 'read' as const, auth_provider: 'local', avatar_url: null, kb_permissions: {} };
 const config = { enabled: true, allow_registration: false, require_invite_code: false, providers: [], anonymous_tier: 'none' as const };
-function route(path: string) { (page as unknown as ReturnType<typeof writable>).set({ url: new URL(`http://localhost${path}`), route: { id: path }, params: {} }); }
+function route(path: string) { setPage(page, { url: new URL(`http://localhost${path}`), route: { id: path }, params: {} }); }
 beforeEach(() => {
   vi.clearAllMocks(); authStore.user = null; authStore.loading = true;
   authStore.authConfig = { ...config }; kbStore.kbs = []; kbStore.activeKB = null; kbStore.initialized = false;

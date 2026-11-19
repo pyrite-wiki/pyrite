@@ -381,3 +381,14 @@ class TestHealthKB:
         """health_kb on a missing KB raises KBNotFoundError."""
         with pytest.raises(KBNotFoundError):
             registry.health_kb("nonexistent")
+
+    def test_health_registry_row_not_in_config_is_not_scanned(self, registry, db, tmp_kb_path):
+        """A registry row get_kb_config does not return is not scanned by check_health."""
+        db.register_kb(
+            name="orphaned-config-kb", kb_type="generic", path=str(tmp_kb_path), source="config"
+        )
+        assert registry.get_kb_config("orphaned-config-kb") is None
+        result = registry.health_kb("orphaned-config-kb")
+        assert result["path_exists"] is True
+        assert result["healthy"] is True
+        assert result["file_count"] >= 2
