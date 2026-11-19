@@ -177,6 +177,11 @@ class SearchResponse(BaseModel):
     #: With ``searched`` holding ``body_prefix`` (only the vector leg ran): how many
     #: characters of each body its vectors were built from. Omitted otherwise.
     body_prefix_chars: int | None = None
+    #: With ``body_prefix_chars``: present and true when the embedding model's
+    #: token window was measured cutting an entry's body before that many
+    #: characters, so the number is an upper bound on what the vectors saw.
+    #: Omitted otherwise; its absence claims nothing either way (#1785).
+    body_truncated_by_model: bool | None = None
     #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
     #: or ``none``.
     keyword_match: str | None = None
