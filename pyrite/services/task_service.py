@@ -1661,7 +1661,8 @@ def _park_keys_present(entry: Any) -> set[str]:
     """The park keys the task's file spells, at the top level or nested
     under ``metadata:``, whatever their value (an empty one included)."""
     source = getattr(entry, "_source_frontmatter", None) or {}
-    nested = source.get("metadata") if isinstance(source.get("metadata"), dict) else {}
+    bag = source.get("metadata")
+    nested: dict[str, Any] = bag if isinstance(bag, dict) else {}
     return {key for key in PARK_FIELDS if key in source or key in nested}
 
 
