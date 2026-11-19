@@ -58,6 +58,14 @@ and when to look again (`--retest-after YYYY-MM-DD`). It writes
 changes the status, so an open or an in-progress task can be parked. A new
 park replaces the old one; `task unpark` removes the three keys.
 
+Park and unpark follow the holder rule `task finish` follows. A task another
+caller holds is parked or unparked only by its holder (`--by <holder>`; over
+MCP the signed-in account, or `by`) or by the operator with
+`--operator-override` (MCP `operator_override: true`); anyone else is refused
+with `FORBIDDEN` and nothing is written. A task no one holds may be parked by
+anyone. A task that is already `done` or `cancelled` is not parked (the
+refusal writes nothing); it can still be unparked, to clear a stale park.
+
 One predicate reads a park, given today's date, and every view uses it. A
 task is parked when `parked_awaiting` gives a reason or `retest_after` is
 set. Empty, whitespace-only and `''` reasons are not reasons, and text in the

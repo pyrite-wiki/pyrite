@@ -1300,8 +1300,8 @@ without them the body is unchanged:
 ## Task park: `task park`, `task unpark`, `task_park`, `task_unpark`
 
 `task park <id> -k <kb> --reason R [--kind person|external] [--retest-after
-YYYY-MM-DD]` (MCP `task_park {task_id, kb_name, reason, kind?,
-retest_after?}`, write tier) sets `parked_awaiting` and sets or removes
+YYYY-MM-DD] [--by WHO] [--operator-override]` (MCP `task_park {task_id,
+kb_name, reason, kind?, retest_after?, by?, operator_override?}`, write tier) sets `parked_awaiting` and sets or removes
 `park_kind` and `retest_after` in one write: a park replaces the previous
 one whole. The status never changes. The result, the same on both surfaces
 (the CLI adds `outcome: done`):
@@ -1315,13 +1315,25 @@ one whole. The status never changes. The result, the same on both surfaces
 Refusals write nothing and answer `VALIDATION_FAILED`: a reason that is empty,
 whitespace or quote marks; a kind other than `person` or `external`; a
 `retest_after` that is not exactly `YYYY-MM-DD` and a real date; an entry that
-is not a task. A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND`
-on MCP.
+is not a task; a task whose status is `done` or `cancelled` (the operator
+override does not change that).
 
-`task unpark <id> -k <kb>` (MCP `task_unpark {task_id, kb_name}`) removes the
+Park and unpark follow the holder rule `task finish` follows: a task another
+caller holds is refused with `FORBIDDEN` and nothing is written. The caller is
+`--by` (MCP: `by`, else the signed-in account) and must be the task's
+assignee; the operator (the CLI, stdio MCP, an operator key) may act on a task
+it does not hold with `--operator-override` (MCP `operator_override: true`),
+which is refused for anyone else. A task no one holds may be parked or
+unparked by anyone. REST has no park or unpark route.
+
+A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND` on MCP.
+
+`task unpark <id> -k <kb> [--by WHO] [--operator-override]` (MCP `task_unpark
+{task_id, kb_name, by?, operator_override?}`) removes the
 three keys, never leaving an empty value, in one write (keys spelled under
 `metadata:` too: a block that held only park keys goes with them); a task with none of
-them is left byte-for-byte as it was, and the outcome is still `done`:
+them is left byte-for-byte as it was, and the outcome is still `done`. A `done`
+or `cancelled` task may be unparked, which clears a stale park:
 
 ```json
 {"task_id": "await-records", "kb_name": "test-kb", "status": "open",
