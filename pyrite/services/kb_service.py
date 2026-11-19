@@ -91,6 +91,7 @@ from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
+from .importance_reading import refused_importance_message
 from .wikilink_service import WikilinkService
 
 logger = logging.getLogger(__name__)
@@ -1308,6 +1309,9 @@ class KBService:
                 # (left out above): the read names them rather than presenting
                 # a default or answering "not found" (ADR-0042 decision 8a).
                 result["load_problems"] = problems
+            # A refused importance keeps its legacy reading above; say so (#1761).
+            if (said := refused_importance_message(entry._importance_given)) is not None:
+                result["warnings"] = [said]
             return result
         except TypeError as exc:
             # A file with no readable fields: a tagged or complex key, or a

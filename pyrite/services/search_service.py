@@ -24,6 +24,7 @@ from ..exceptions import (
 )
 from ..storage.errors import storage_error_from
 from ..storage.virtual_tables import EMBEDDED_PARTS, KEYWORD_SEARCHED_PARTS
+from .importance_reading import file_importance_warning
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB
@@ -1065,6 +1066,15 @@ class SearchService:
             )
             if ran
         ]
+        # A refused importance keeps its legacy reading in the row; say so (#1761).
+        for row in results:
+            if not isinstance(row, dict) or not row.get("id") or not row.get("kb_name"):
+                continue
+            path = row.get("file_path") or (self.db.get_entry(row["id"], row["kb_name"]) or {}).get(
+                "file_path"
+            )
+            if said := file_importance_warning(path):
+                row["warnings"] = [said]
         response: dict[str, Any] = {
             "results": results,
             "match": match,

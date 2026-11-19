@@ -48,6 +48,7 @@ from ..utils.kb_files import (
     KBFilesUnreadableError,
 )
 from ..utils.metadata import parse_metadata
+from .importance_reading import file_importance_warning
 
 logger = logging.getLogger(__name__)
 
@@ -1182,14 +1183,30 @@ class QAService:
     def _check_importance_range(
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
-        sql = "SELECT id, kb_name, entry_type, importance FROM entry WHERE importance IS NOT NULL"
+        sql = (
+            "SELECT id, kb_name, entry_type, importance, file_path "
+            "FROM entry WHERE importance IS NOT NULL"
+        )
         params: dict[str, Any] = {}
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
 
         for row in self.db.execute_sql(sql, params):
-            if not validate_importance(row["importance"]):
+            # The file's value, not the index column: the column holds the
+            # legacy reading of a refused value (7.5 -> 7) and never fires (#1761).
+            if (refused := file_importance_warning(row.get("file_path"))) is not None:
+                issues.append(
+                    {
+                        "entry_id": row["id"],
+                        "kb_name": row["kb_name"],
+                        "rule": "importance_range",
+                        "severity": "warning",
+                        "field": "importance",
+                        "message": f"Entry '{row['id']}': {refused}",
+                    }
+                )
+            elif not validate_importance(row["importance"]):
                 issues.append(
                     {
                         "entry_id": row["id"],
@@ -1971,6 +1988,8 @@ class QAService:
         for key, value in kept.items():
             if key not in RESERVED_FIELD_NAMES:
                 continue
+            if key == "importance":
+                continue  # a base field with its own rule: `importance_range` (#1761)
             # A key the model leaves out at its default (`lifecycle:
             # active`) is read, not lost: fall back to the attribute.
             read_as = emitted[key] if key in emitted else getattr(entry, key, None)

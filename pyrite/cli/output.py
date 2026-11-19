@@ -1,5 +1,7 @@
 """CLI output formatting utilities."""
 
+from typing import Any
+
 import typer
 from rich.console import Console
 from rich.text import Text
@@ -234,7 +236,21 @@ def format_output(data: dict, fmt: str, **kwargs) -> str | None:
     from ..formats import format_response
 
     content, _ = format_response(data, fmt, **kwargs)
+    if fmt == "csv":
+        note_entry_warnings(data)
     return content
+
+
+def note_entry_warnings(data: Any) -> None:
+    """CSV has no place for an entry's warnings: say them on stderr (#1761)."""
+    import sys
+
+    rows = data.get("results") or data.get("entries") or [data] if isinstance(data, dict) else []
+    for row in rows:
+        if isinstance(row, dict) and isinstance(row.get("warnings"), list):
+            for warning in row["warnings"]:
+                if isinstance(warning, str) and "importance" in warning:
+                    print(f"warning: {row.get('id', '')}: {warning}", file=sys.stderr)
 
 
 def backlinks_table(entry_id: str, links: list[dict]):

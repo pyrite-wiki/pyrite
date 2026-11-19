@@ -1,0 +1,1 @@
+A refused `importance` (7.5, 0, 11, "high", NaN) is no longer shown silently. `qa validate` reports it as `importance_range` ("a whole number 1-10", no "rename the key" advice) from the file's own value, `get` and `search` JSON carry a `warnings` entry on that entry, and CSV output writes a note to stderr. Readers still show the legacy whole-number reading (#1761).

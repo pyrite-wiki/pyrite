@@ -364,6 +364,10 @@ def register_search_command(app: typer.Typer):
                         if f not in IDENTITY_FIELDS and any(f in r for r in results)
                     ]
                 content, _ = format_response(resp_data, output_format, fields=table_fields)
+                if output_format == "csv":
+                    from .output import note_entry_warnings
+
+                    note_entry_warnings(resp_data)
                 typer.echo(content)
                 return
 
@@ -472,7 +476,14 @@ def _shape_rows(results, row_fields, asked: bool, include_body: bool):
     """
     if row_fields:
         missing = unmatched_search_fields(results, row_fields) if asked else []
-        return [project_fields(record, row_fields) for record in results], missing
+        # A row's `warnings` (a refused importance, #1761) survives the projection.
+        shaped = []
+        for record in results:
+            row = project_fields(record, row_fields)
+            if record.get("warnings"):
+                row["warnings"] = record["warnings"]
+            shaped.append(row)
+        return shaped, missing
     if not include_body:
         for r in results:
             r.pop("body", None)
