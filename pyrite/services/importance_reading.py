@@ -19,7 +19,6 @@ from ..exceptions import FrontmatterError
 from ..models.base import DEFAULT_IMPORTANCE
 from ..schema.validators import importance_value
 from ..utils.parse import safe_int
-from .review_service import _read_entry_file
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +44,10 @@ def file_importance(root: str | Path | None, path: str | Path | None) -> Any:
     if not root or not path:
         return ABSENT
     try:
+        # Local: review_service loads sqlalchemy, which the CLI entry points
+        # must not load at import (tests/test_cli_import_performance.py).
         from ..utils.frontmatter import load_frontmatter
+        from .review_service import _read_entry_file
 
         raw = _read_entry_file(Path(root), path)
         if raw is None:
