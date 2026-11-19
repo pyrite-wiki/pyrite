@@ -482,7 +482,12 @@ def test_no_write_lands_and_no_guard_sees_the_entry(make_world, spies, shape, me
         assert set(after) == set(before)
     else:
         assert after == before, sorted(k for k in after if after.get(k) != before.get(k))
-    seen = [c for c in spies if c[1] == "x"]
+    # A validator handed data with no `id` records "" (the spy records
+    # `data.get("id", "")`); it may have run on the refused entry, so an
+    # id-less call fails the test the same way a call with the entry's id
+    # does. Calls on the companion entries (`ok`, `ok2`) are not the refused
+    # entry and stay out.
+    seen = [c for c in spies if c[1] in ("x", "")]
     assert seen == [], f"a guard was handed the entry its type did not load: {seen}"
 
 
@@ -609,7 +614,9 @@ def test_nothing_moves_in_a_templated_subdirectory(make_world, spies):
         assert rel in result.output.replace("\n", "")
 
     assert _snapshot(root) == before
-    assert [c for c in spies if c[1] == "x"] == []
+    # Same as the matrix: an id-less validator call may have run on the
+    # refused entry, so it fails the test too.
+    assert [c for c in spies if c[1] in ("x", "")] == []
 
 
 # -- the enumeration: every loader and every entry-file writer -----------------
