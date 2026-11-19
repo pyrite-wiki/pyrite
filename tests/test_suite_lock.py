@@ -550,6 +550,31 @@ class TestBoundedWait:
         assert not _started(log, "late")
         assert list(Path(str(lock) + ".queue").glob("*.ticket")) == []
 
+    def test_the_fake_command_stops_itself_when_the_release_never_comes(self, fake, log, tmp_path):
+        """Groom acceptance 3: a child nobody releases ends on its own.
+
+        The lock script bounds its own wait, but a test that SIGKILLs it leaves
+        the command running; without a bound in the command itself that is a
+        process for hours after the run (#932). The bound is overridable so the
+        wait here is a fraction of a second instead of two minutes.
+        """
+        release = tmp_path / "never-released"
+        started = time.monotonic()
+        proc = _popen(
+            [sys.executable, str(fake), str(log), "orphan"],
+            env=_clean_env(
+                tmp_path / "unused.lock", FAKE_RELEASE=str(release), FAKE_MAX_WAIT="0.5"
+            ),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        proc.wait(timeout=GROUP_DEADLINE)
+        elapsed = time.monotonic() - started
+        assert proc.returncode == 124
+        assert _events(log)[-1][0] == "timeout"
+        assert 0.4 <= elapsed < GROUP_DEADLINE, f"exited after {elapsed:.2f}s, not at its bound"
+
     @pytest.mark.parametrize("value", ["soon", "-1", ""])
     def test_a_bad_timeout_is_refused_not_guessed(self, lock, fake, log, value):
         out = subprocess.run(
