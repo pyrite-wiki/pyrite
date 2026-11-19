@@ -192,13 +192,17 @@ _FRONTMATTER_REFUSAL = (
 
 
 class _BodySourceCommand(TyperCommand):
-    """A task command that takes ``--body``/``--body-file``/``--stdin`` (#1687).
+    """A command that takes ``--body``/``--body-file``/``--stdin`` (#1687).
 
     What can be judged without reading is judged while click parses, so it is a
     usage error (``USAGE_ERROR``, exit 2) before any KB is opened or anything is
     written (ADR-0046: the command body has no usage errors): two body sources.
     A ``--body-file`` that is missing or a directory is found by reading, so it is
-    a refusal from the command body (``require_input_file``, exit 1)."""
+    a refusal from the command body (``require_input_file``, exit 1).
+
+    ``create`` and ``update`` reuse this check (#1780). Whether a source counts
+    as given is the subclass's to say (``_body_given``, ``_stdin_given``),
+    because the parameter names and defaults differ between the commands."""
 
     def parse_args(self, ctx, args):
         rest = super().parse_args(ctx, args)
@@ -208,15 +212,21 @@ class _BodySourceCommand(TyperCommand):
         given = [
             flag
             for flag, on in (
-                ("--body", p.get("body") is not None),
+                ("--body", self._body_given(p)),
                 ("--body-file", body_file is not None and not dash),
-                ("--stdin", bool(p.get("stdin_flag")) or dash),
+                ("--stdin", self._stdin_given(p) or dash),
             )
             if on
         ]
         if len(given) > 1:
             raise typer.BadParameter(f"give one body source, not {' and '.join(given)}", ctx=ctx)
         return rest
+
+    def _body_given(self, p):
+        return p.get("body") is not None
+
+    def _stdin_given(self, p):
+        return bool(p.get("stdin_flag"))
 
 
 def _task_body(body: str | None, body_file: Path | None, stdin_flag: bool) -> str | None:

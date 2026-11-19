@@ -53,6 +53,7 @@ from ..utils.frontmatter import (
 from .context import cli_context, read_input_file, require_input_file
 from .outcome import Outcome
 from .output import OUTPUT_FORMAT, cli_console, validate_output_format
+from .task_commands import _BodySourceCommand
 
 logger = logging.getLogger(__name__)
 console = cli_console()
@@ -136,6 +137,22 @@ def _parse_link_option(spec: str) -> tuple[str, str]:
             suggestion=getattr(e, "suggestion", None),
         ) from None
     return target, relation
+
+
+class _EntryBodySourceCommand(_BodySourceCommand):
+    """``create``'s body sources, judged as the task commands' are (#1780).
+
+    Two differences from ``_BodySourceCommand``: ``--body`` defaults to ""
+    rather than None, so it counts as given only when non-empty (an empty
+    ``--body`` beside another source writes what that source writes, as it
+    does today), and the stdin flag is the parameter ``stdin``, not
+    ``stdin_flag``."""
+
+    def _body_given(self, p):
+        return bool(p.get("body"))
+
+    def _stdin_given(self, p):
+        return bool(p.get("stdin"))
 
 
 def _read_stdin() -> str:
@@ -363,7 +380,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                     else:
                         console.print(f"  • {src.title}: {src.url}")
 
-    @app.command("create")
+    @app.command("create", cls=_EntryBodySourceCommand)
     def create_entry(
         kb_name: str = typer.Option(
             None, "--kb", "-k", help="Target knowledge base (required unless --template)"
@@ -607,7 +624,7 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         return Outcome.done(data, rich=rich)
 
-    @app.command("update")
+    @app.command("update", cls=_BodySourceCommand)
     def update_entry(
         entry_id: str = typer.Argument(..., help="Entry ID to update"),
         kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
