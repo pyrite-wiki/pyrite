@@ -185,10 +185,9 @@ def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surfac
     assert result.exception is None or isinstance(result.exception, SystemExit), repr(
         result.exception
     )
-    # A kb.yaml that does not parse leaves the KB unusable (KB_CONFIG_INVALID,
-    # #1547): index health is unhealthy and exits 1. A key with the wrong
-    # shape (#1498's class) is still a warning.
-    unusable = shape == "invalid-yaml"
+    # A kb.yaml that does not parse or whose schema block is invalid leaves the KB
+    # unusable (KB_CONFIG_INVALID, #1547, #1591): index health is unhealthy and exits 1.
+    unusable = shape in BROKEN_KB_YAML
     expected_exit = 1 if unusable and surface.startswith("index") else 0
     assert result.exit_code == expected_exit, result.output
     if fmt == "json":
