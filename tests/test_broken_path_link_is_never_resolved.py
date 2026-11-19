@@ -12,6 +12,10 @@ counted as resolved by any reader. The resolver marks each path row
 (``link.target_resolved``: 1 matched, 0 broken, NULL for every row that names
 an id), and every SQL that reads ``link`` by ``target_id`` honours the mark,
 which ``test_every_link_target_reader_honours_the_mark`` checks in the source.
+The check counts joins, not strings: a text that joins on ``target_id``
+twice needs the predicate twice, SQL split across ``+`` operands is folded
+into the one text it builds before scanning, and an ORM join from ``Link``
+to ``Entry`` on ``target_id`` must filter on ``target_resolved`` too (#1764).
 """
 
 from __future__ import annotations
@@ -132,7 +136,8 @@ def test_renaming_the_decoy_leaves_the_broken_link_broken(world):
 
 
 # ---------------------------------------------------------------------------
-# The source rule: every SQL that reads link by target_id honours the mark
+# The source rule: every reader that joins link to entry on target_id, in
+# SQL or in ORM code, honours the mark
 # ---------------------------------------------------------------------------
 
 #: SQL that reads ``link`` and names ``target_id`` without the mark, with the
@@ -147,37 +152,189 @@ EXEMPT: dict[tuple[str, str], str] = {
 
 _READS_LINK = re.compile(r"\b(?:FROM|JOIN)\s+link\b", re.IGNORECASE)
 
+#: Words that can follow a table name in SQL without being its alias.
+_SQL_KEYWORDS = {
+    "where",
+    "on",
+    "left",
+    "right",
+    "inner",
+    "outer",
+    "full",
+    "cross",
+    "join",
+    "group",
+    "order",
+    "limit",
+    "offset",
+    "and",
+    "or",
+    "not",
+    "exists",
+    "in",
+    "as",
+    "by",
+    "having",
+    "union",
+    "select",
+    "from",
+    "set",
+    "values",
+}
+
+
+def _folded_text(node: ast.AST) -> str | None:
+    """The text of a string expression: a literal, an f-string's constant
+    text, or constants joined by ``+``. None when any part is not constant,
+    so the caller walks into the parts instead."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            v.value for v in node.values if isinstance(v, ast.Constant) and isinstance(v.value, str)
+        )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _folded_text(node.left)
+        right = _folded_text(node.right)
+        if left is not None and right is not None:
+            return left + right
+    return None
+
 
 def _sql_strings(tree: ast.AST):
-    """Each string expression (adjacent literals, an f-string's text) with the
-    qualified name of the function it is in."""
+    """Each string expression with the qualified name of the function it is
+    in. Constants joined by ``+`` are folded into the one text they build, so
+    SQL split across operands is scanned whole."""
 
     def walk(node, scope):
         for child in ast.iter_child_nodes(node):
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 yield from walk(child, [*scope, child.name])
-            elif isinstance(child, ast.JoinedStr):
-                text = "".join(
-                    v.value
-                    for v in child.values
-                    if isinstance(v, ast.Constant) and isinstance(v.value, str)
-                )
+            elif (text := _folded_text(child)) is not None:
                 yield ".".join(scope), text
-            elif isinstance(child, ast.Constant) and isinstance(child.value, str):
-                yield ".".join(scope), child.value
             else:
                 yield from walk(child, scope)
 
     yield from walk(tree, [])
 
 
+def _table_aliases(text: str, table: str) -> set[str]:
+    """The names ``table`` is read under in one SQL text: its aliases, or the
+    table name itself when it is read unaliased or not at all."""
+    aliases: set[str] = set()
+    unaliased = False
+    for match in re.finditer(
+        rf"\b(?:FROM|JOIN)\s+{table}\b(?:\s+(?:AS\s+)?(\w+))?", text, re.IGNORECASE
+    ):
+        alias = match.group(1)
+        if alias is None or alias.lower() in _SQL_KEYWORDS:
+            unaliased = True
+        else:
+            aliases.add(alias)
+    if unaliased or not aliases:
+        aliases.add(table)
+    return aliases
+
+
+def _target_joins(text: str) -> int:
+    """How many times one SQL text joins ``link`` to ``entry`` on
+    ``target_id``: an equality between a link alias's ``target_id`` and an
+    entry alias's ``id``, in either order, in an ON clause or a WHERE
+    correlation alike."""
+    joins = 0
+    for link_alias in _table_aliases(text, "link"):
+        for entry_alias in _table_aliases(text, "entry"):
+            joins += len(
+                re.findall(
+                    rf"\b{re.escape(link_alias)}\.target_id\s*=\s*{re.escape(entry_alias)}\.id\b",
+                    text,
+                    re.IGNORECASE,
+                )
+            )
+            joins += len(
+                re.findall(
+                    rf"\b{re.escape(entry_alias)}\.id\s*=\s*{re.escape(link_alias)}\.target_id\b",
+                    text,
+                    re.IGNORECASE,
+                )
+            )
+    return joins
+
+
+def _sql_unmarked(text: str) -> bool:
+    """One SQL text reads ``link`` by ``target_id`` without honouring the
+    mark: it carries fewer ``target_resolved`` predicates than it has joins
+    on ``target_id`` (and a text that joins none still needs one predicate,
+    as before)."""
+    if not _READS_LINK.search(text) or "target_id" not in text:
+        return False
+    marks = len(re.findall(r"\btarget_resolved\b", text))
+    return marks < max(_target_joins(text), 1)
+
+
+def _is_link_target(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "target_id"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "Link"
+    )
+
+
+def _is_entry_id(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "id"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "Entry"
+    )
+
+
+def _orm_unmarked(tree: ast.AST) -> set[str]:
+    """Qualified scopes whose ORM code joins ``Link`` to ``Entry`` on
+    ``target_id`` (``Link.target_id == Entry.id``, in a ``.join`` or a
+    ``.filter`` alike) without filtering on ``Link.target_resolved``
+    anywhere in the same scope."""
+
+    def walk(node, scope):
+        yield scope, node
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                yield from walk(child, [*scope, child.name])
+            else:
+                yield from walk(child, scope)
+
+    joins: set[str] = set()
+    marked: set[str] = set()
+    for scope, node in walk(tree, []):
+        name = ".".join(scope)
+        if isinstance(node, ast.Compare):
+            operands = [node.left, *node.comparators]
+            if any(
+                (_is_link_target(a) and _is_entry_id(b)) or (_is_entry_id(a) and _is_link_target(b))
+                for a, b in zip(operands, operands[1:], strict=False)
+            ):
+                joins.add(name)
+        elif (
+            isinstance(node, ast.Attribute)
+            and node.attr == "target_resolved"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "Link"
+        ):
+            marked.add(name)
+    return joins - marked
+
+
 def _unmarked_readers(paths, base: Path = ROOT) -> set[tuple[str, str]]:
     found = set()
     for path in paths:
         rel = path.relative_to(base).as_posix()
-        for scope, text in _sql_strings(ast.parse(path.read_text(encoding="utf-8"))):
-            if _READS_LINK.search(text) and "target_id" in text and "target_resolved" not in text:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for scope, text in _sql_strings(tree):
+            if _sql_unmarked(text):
                 found.add((rel, scope))
+        for scope in _orm_unmarked(tree):
+            found.add((rel, scope))
     return found
 
 
@@ -188,9 +345,10 @@ def _sources():
 def test_every_link_target_reader_honours_the_mark():
     unmarked = _unmarked_readers(_sources())
     assert unmarked <= set(EXEMPT), (
-        "SQL reads link by target_id without `COALESCE(l.target_resolved, 1) = 1` (a broken "
-        "Markdown link would read as resolved); add it, or list the function in EXEMPT with the "
-        f"reason: {sorted(unmarked - set(EXEMPT))}"
+        "a reader joins link to entry on target_id without honouring the mark (one "
+        "`COALESCE(l.target_resolved, 1) = 1` per join in SQL, a filter on "
+        "`Link.target_resolved` in ORM code; a broken Markdown link would read as resolved); "
+        f"add it, or list the function in EXEMPT with the reason: {sorted(unmarked - set(EXEMPT))}"
     )
     assert set(EXEMPT) <= unmarked, (
         f"exempt but no longer unmarked: {sorted(set(EXEMPT) - unmarked)}"
@@ -206,7 +364,23 @@ def test_the_source_rule_catches_a_new_unmarked_join(tmp_path):
         "def g():\n"
         '    return f"SELECT e.id FROM link l JOIN entry e ON l.target_id = e.id {1}"\n'
         "def h():\n"
-        '    return "SELECT 1 FROM link l WHERE COALESCE(l.target_resolved, 1) = 1 AND l.target_id = :x"\n',
+        '    return "SELECT 1 FROM link l WHERE COALESCE(l.target_resolved, 1) = 1 AND l.target_id = :x"\n'
+        "def i():\n"
+        '    return "SELECT e.id FROM link l JOIN entry e ON l.target_id = e.id '
+        'JOIN entry e2 ON l.target_id = e2.id AND COALESCE(l.target_resolved, 1) = 1"\n'
+        "def j():\n"
+        '    return "SELECT e.id FROM link l " + "JOIN entry e ON l.target_id = e.id"\n'
+        "def k():\n"
+        "    return session.query(Link).join(Entry, Link.target_id == Entry.id)\n"
+        "def m():\n"
+        "    return session.query(Link).join(Entry, Link.target_id == Entry.id)"
+        ".filter(Link.target_resolved == 1)\n",
         encoding="utf-8",
     )
-    assert _unmarked_readers([module], base=tmp_path) == {("probe.py", "f"), ("probe.py", "g")}
+    assert _unmarked_readers([module], base=tmp_path) == {
+        ("probe.py", "f"),
+        ("probe.py", "g"),
+        ("probe.py", "i"),
+        ("probe.py", "j"),
+        ("probe.py", "k"),
+    }
