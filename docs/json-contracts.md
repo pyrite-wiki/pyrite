@@ -180,6 +180,15 @@ the dispatcher reads itself, listed below. Only top-level keys are checked. A
 nested map such as `kb_create`'s `metadata` or an investigation tool's
 `fields` takes any key, as before.
 
+The published schemas say which tools are checked (#1779): every tool this
+section's check covers publishes `"additionalProperties": false` in its
+`inputSchema` in `tools/list`, and the free-form tools below publish `true`,
+so what `tools/list` says matches what the dispatcher does. The keys the
+dispatcher reads itself (the KB argument names, the ADR-0034 markers) are
+not tool arguments and are not added to `properties` for this: none of them
+is ever a required argument, and a client that validates against the schema
+simply does not send them.
+
 - **Write tool** (any tool above the read tier, core or plugin): every argument
   the caller sent either decides the call or is refused. A refusal comes before
   any lookup or write, with `VALIDATION_FAILED`, `retryable: false`. `error`
@@ -1602,15 +1611,6 @@ Source of truth: `pyrite/server/mcp_server.py` (`_kb_search`,
 A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
-
-The entry's `links` list holds one item per link row,
-`{"target_id", "target_kb", "relation", "note"}`. An item for a Markdown
-link to an entry file (#1723) also carries `target_path`, the KB-relative
-path the link names, and `broken`: `true` when no entry file is at that
-path, `false` when one is. A broken item's `target_id` is its path text,
-which an unrelated entry's hand-set id may equal, so `broken` is the
-signal to read; an item for a link that names an id carries neither field
-(#1765).
 
 A single task (`pyrite task get`, MCP `task_status`) returns the task
 detail dictionary with `body` included directly from the file. Over the
