@@ -24,7 +24,7 @@ from ..exceptions import (
 )
 from ..storage.errors import storage_error_from
 from ..storage.virtual_tables import EMBEDDED_PARTS, KEYWORD_SEARCHED_PARTS
-from .importance_reading import file_importance_warning
+from .importance_reading import row_importance_warning
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB
@@ -1073,7 +1073,7 @@ class SearchService:
             path = row.get("file_path") or (self.db.get_entry(row["id"], row["kb_name"]) or {}).get(
                 "file_path"
             )
-            if said := file_importance_warning(path):
+            if said := row_importance_warning(self.db, row["kb_name"], path):
                 row["warnings"] = [said]
         response: dict[str, Any] = {
             "results": results,

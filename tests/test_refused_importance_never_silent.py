@@ -17,6 +17,8 @@ import pytest
 from pyrite.config import KBConfig
 from tests._world import build_world
 
+from pyrite.services.importance_reading import ABSENT  # noqa: E402
+
 REFUSED = ["7.5", "0", "11", "high", ".nan"]
 ACCEPTED = ["5.0", '"05"']
 
@@ -114,3 +116,24 @@ def test_csv_accepted_importance_writes_no_note(make_world, value):
 def test_readers_keep_the_legacy_reading(make_world):
     body = json.loads(make_world("7.5").cli("get", "n", "-k", "k").stdout)
     assert body["importance"] == 7 and isinstance(body["importance"], int)
+
+
+def test_a_file_linked_out_of_the_kb_root_shows_no_importance_sentence(make_world, tmp_path):
+    """A row whose file now resolves outside its KB's root is not the KB's to
+    read: no sentence names what a file outside the root holds."""
+    world = make_world("5")
+    outside = tmp_path / "outside.md"
+    outside.write_text(_note("7.5"))
+    entry = world.kb_path("k") / "n.md"
+    entry.unlink()
+    entry.symlink_to(outside)
+
+    from pyrite.services.importance_reading import file_importance
+
+    assert file_importance(world.kb_path("k"), entry) is ABSENT
+    search = world.cli("search", "zebra", "-k", "k")
+    assert search.exit_code == 0, search.output
+    for row in json.loads(search.stdout)["results"]:
+        assert not row.get("warnings"), row
+    qa = world.cli("qa", "validate", "k")
+    assert "7.5" not in qa.stdout

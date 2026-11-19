@@ -48,7 +48,7 @@ from ..utils.kb_files import (
     KBFilesUnreadableError,
 )
 from ..utils.metadata import parse_metadata
-from .importance_reading import file_importance_warning
+from .importance_reading import row_importance_warning
 
 logger = logging.getLogger(__name__)
 
@@ -1195,7 +1195,9 @@ class QAService:
         for row in self.db.execute_sql(sql, params):
             # The file's value, not the index column: the column holds the
             # legacy reading of a refused value (7.5 -> 7) and never fires (#1761).
-            if (refused := file_importance_warning(row.get("file_path"))) is not None:
+            if (
+                refused := row_importance_warning(self.db, row["kb_name"], row.get("file_path"))
+            ) is not None:
                 issues.append(
                     {
                         "entry_id": row["id"],
