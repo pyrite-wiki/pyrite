@@ -32,9 +32,12 @@ touch (revision 008's ``global_access`` grant is the case that matters).
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from ..exceptions import StorageError
 
 if TYPE_CHECKING:  # alembic is imported only when the chain runs
     from alembic.config import Config
@@ -67,11 +70,37 @@ def alembic_config(connection: Any = None) -> Config:
     return cfg
 
 
-def upgrade_to_head(connection: Any) -> None:
-    """``alembic upgrade head`` on ``connection`` (one transaction on Postgres)."""
-    from alembic import command
+# alembic's `context` and `op` are module-global proxies: two threads running
+# a command in one process at once overwrite each other's (KeyError 'script').
+_UPGRADE_LOCK = threading.Lock()
 
-    command.upgrade(alembic_config(connection), "head")
+
+def upgrade_to_head(connection: Any) -> None:
+    """``alembic upgrade head`` on ``connection``, one upgrade at a time.
+
+    **Serialized.** Two processes starting on one database at once both
+    found a table missing and both created it ("already exists"), where
+    dev's ``ADD COLUMN IF NOT EXISTS`` tolerated the race. On Postgres a
+    transaction-scoped advisory lock, keyed by this database's own schema, is
+    taken before alembic looks at anything: the second process waits, then
+    finds the work done. It is held by the caller's transaction (``ensure_schema``
+    runs this in ``engine.begin()``) and released when that commits or rolls
+    back, so a crashed process leaves no lock behind. Within one process a
+    thread lock does the same for alembic's global state, on every dialect.
+
+    **Refuses an unknown schema** (`own_schema`).
+    """
+    from alembic import command
+    from sqlalchemy import text
+
+    with _UPGRADE_LOCK:
+        if connection.dialect.name == "postgresql":
+            schema = own_schema(connection)
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": f"pyrite.alembic_chain:{schema}"},
+            )
+        command.upgrade(alembic_config(connection), "head")
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +110,8 @@ def upgrade_to_head(connection: Any) -> None:
 
 def own_schema(bind: Any) -> str | None:
     """The schema this database's tables live in: Postgres's ``current_schema()``
-    (the first on ``search_path``), None on SQLite.
+    (the first existing schema on ``search_path``), None on SQLite. Raises
+    `StorageError` when no schema on the search_path exists.
 
     Every existence check names it. Postgres's inspector otherwise answers for
     any table *visible* on the ``search_path``, so a second instance in its own
@@ -92,7 +122,17 @@ def own_schema(bind: Any) -> str | None:
         return None
     from sqlalchemy import text
 
-    return str(bind.execute(text("SELECT current_schema()")).scalar_one())
+    schema = bind.execute(text("SELECT current_schema()")).scalar_one()
+    if schema is None:
+        # No schema on the search_path exists. Building anyway would put the
+        # tables wherever the server falls back to, or check a schema named
+        # "None"; refuse before anything is written.
+        raise StorageError(
+            "Cannot upgrade the Postgres schema: no schema on the connection's "
+            "search_path exists (current_schema() is NULL). Create the schema the "
+            "search_path names, or correct the search_path, and start again."
+        )
+    return str(schema)
 
 
 def existing_columns(table: str) -> set[str] | None:

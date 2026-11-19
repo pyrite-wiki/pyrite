@@ -28,6 +28,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,7 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from pyrite.storage.migrations import MIGRATIONS
@@ -622,4 +624,148 @@ def test_another_schemas_tables_do_not_stand_in_for_this_ones():
         with admin.begin() as conn:
             for schema in (other, mine):
                 conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        admin.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Fail closed where the old ensure_schema tolerated the case (#1820 cold read)
+# ---------------------------------------------------------------------------
+
+
+def _fresh_pg_schema(name: str):
+    """A new, empty schema and an engine whose search_path is only it."""
+    url = _pg_url()
+    if not url:
+        pytest.skip("PYRITE_TEST_PG_URL not set")
+    from pyrite.storage.backends.postgres_backend import create_postgres_engine
+
+    schema = f"{name}_{os.environ.get('PYTEST_XDIST_WORKER', 'serial')}"
+    admin = create_postgres_engine(url)
+    with admin.begin() as conn:
+        conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    return admin, schema, url
+
+
+_START_ONE = """
+import sys, time
+from sqlalchemy import text
+from pyrite.storage.alembic_chain import upgrade_to_head
+from pyrite.storage.backends.postgres_backend import create_postgres_engine
+
+url, schema, start_at = sys.argv[1], sys.argv[2], float(sys.argv[3])
+engine = create_postgres_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+with engine.connect() as conn:
+    conn.execute(text("SELECT 1"))  # connected before the start line
+    conn.rollback()
+    time.sleep(max(0.0, start_at - time.time()))
+    with conn.begin():
+        upgrade_to_head(conn)
+engine.dispose()
+"""
+
+
+def test_two_first_startups_at_once_both_succeed():
+    """Two processes starting on one never-upgraded database at once. dev's
+    ``ADD COLUMN IF NOT EXISTS`` tolerated that; a check-then-create chain
+    does not ("relation ... already exists") unless the upgrade is serialized
+    across processes (a transaction-scoped advisory lock per schema): the
+    second must wait, then find the work done."""
+    import subprocess
+    import time
+
+    admin, schema, url = _fresh_pg_schema("pyrite_alembic_race")
+    start_at = time.time() + 3.0
+    try:
+        procs = [
+            subprocess.Popen(
+                [sys.executable, "-c", _START_ONE, url, schema, str(start_at)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            for _ in range(2)
+        ]
+        results = [p.communicate(timeout=120) for p in procs]
+        failed = [err[-600:] for p, (_, err) in zip(procs, results, strict=True) if p.returncode]
+        assert not failed, f"a concurrent first startup failed: {failed}"
+        engine = create_engine(
+            make_url(url).set(drivername="postgresql+psycopg2"),
+            connect_args={"options": f"-csearch_path={schema}"},
+        )
+        try:
+            assert _version(engine) == _head()
+            with engine.connect() as conn:
+                assert conn.execute(text("SELECT count(*) FROM alembic_version")).scalar_one() == 1
+        finally:
+            engine.dispose()
+    finally:
+        with admin.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        admin.dispose()
+
+
+def test_two_threads_upgrading_at_once_in_one_process_both_succeed(tmp_path):
+    """alembic's ``context`` and ``op`` are module-global: two threads running
+    an upgrade at once in one process (two databases, no shared rows) trampled
+    each other's state (KeyError 'script'). `upgrade_to_head` runs one at a
+    time per process."""
+    import threading
+
+    from pyrite.storage.alembic_chain import upgrade_to_head
+
+    engines = [create_engine(f"sqlite:///{(tmp_path / f'{i}.db').as_posix()}") for i in range(2)]
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def start(engine) -> None:
+        try:
+            with engine.begin() as conn:
+                barrier.wait()
+                upgrade_to_head(conn)
+        except BaseException as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=start, args=(e,)) for e in engines]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=120)
+        assert not errors, f"a concurrent upgrade failed: {errors!r}"
+        assert [_version(e) for e in engines] == [_head(), _head()]
+    finally:
+        for e in engines:
+            e.dispose()
+
+
+def test_a_search_path_naming_no_existing_schema_is_refused():
+    """``current_schema()`` is NULL when no schema on the search_path exists.
+    The upgrade must refuse with a clear error, never build tables under a
+    schema named "None" or wherever the server falls back to."""
+    from pyrite.exceptions import StorageError
+    from pyrite.storage.backends.postgres_backend import create_postgres_engine
+
+    admin, schema, url = _fresh_pg_schema("pyrite_alembic_noschema")
+    missing = f"{schema}_absent"
+    engine = create_postgres_engine(url, connect_args={"options": f"-csearch_path={missing}"})
+    try:
+        with pytest.raises(StorageError, match="search_path"):
+            with engine.begin() as conn:
+                from pyrite.storage.alembic_chain import upgrade_to_head
+
+                upgrade_to_head(conn)
+        with admin.connect() as conn:
+            made = conn.execute(
+                text(
+                    "SELECT count(*) FROM information_schema.tables"
+                    " WHERE table_schema IN (:a, 'None')"
+                ),
+                {"a": missing},
+            ).scalar_one()
+        assert made == 0
+    finally:
+        engine.dispose()
+        with admin.begin() as conn:
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         admin.dispose()
