@@ -29,10 +29,9 @@ from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
 logger = logging.getLogger(__name__)
 
-# The Postgres backend is experimental in 0.25.x (#718): the alembic chain was
-# broken (forked at 004, stopped at 006) and 007 now covers the entry columns
-# the ORM has added since; other post-006 table changes still rely on create_all,
-# so an existing Postgres database may still not upgrade between releases. Said
+# The Postgres backend is experimental (#718): nothing in the product selects it
+# yet (`search_backend` and `database_url` are read nowhere). Its schema now
+# upgrades through the alembic chain, which `ensure_schema` runs. Said
 # once per process, from the one place the backend is built, so the CLI, the
 # REST server and the MCP server all get it without a per-command change.
 EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
@@ -157,43 +156,30 @@ def create_postgres_engine(url: str | URL, **kwargs: Any) -> Engine:
 
 
 def ensure_schema(engine) -> None:
-    """Create pgvector extension, FTS column, embedding column, and indexes.
+    """Bring the database to this build's schema, then add the Postgres-only objects.
 
-    Idempotent — safe to call on every startup.
+    Idempotent, safe to call on every startup. Two steps:
+
+    1. ``alembic upgrade head`` (``alembic_chain.upgrade_to_head``): every table,
+       column and index the models and SQLite's migrations declare, with the
+       data steps that belong to them (#718). Until #718 this function also
+       added ``entry.aliases``, ``link.target_prefix``, ``link.target_path``,
+       ``link.target_resolved``, their indexes and the v30 re-read itself, a
+       third schema mechanism. Revision 012 owns them now. A database nobody
+       stamped (every Postgres database built before this) upgrades from the
+       base of the chain, and each guarded step skips what it already has.
+    2. What only Postgres has, and so no revision mirrors: pgvector, the
+       ``fts_vector`` and ``embedding`` columns, their GIN and HNSW indexes
+       and the FTS trigger.
     """
+    from ..alembic_chain import upgrade_to_head
+
+    with engine.begin() as conn:
+        upgrade_to_head(conn)
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS fts_vector tsvector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS embedding vector(384)"))
-        # The entry's `aliases` as a JSON list (#1001, #1011): create_all never alters
-        # an existing table, so a database from before it gets the column here.
-        conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS aliases TEXT"))
-        # The link's `kb:` prefix as written (#980): create_all never alters an
-        # existing table, so a database from before it gets the column here.
-        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_prefix TEXT"))
-        # The path a Markdown link names (#1723), the same way. A database
-        # from before it holds no Markdown link rows for files whose stat is
-        # unchanged, and a sync never re-reads those: so when the column is
-        # new here, the recorded stat is cleared and the next sync reads every
-        # file once (SQLite's migration v30 does the same, decision D3).
-        had_target_path = conn.execute(
-            text(
-                "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()"
-                " AND table_name = 'link' AND column_name = 'target_path'"
-            )
-        ).first()
-        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_path TEXT"))
-        # Whether a Markdown link row's path matched an entry file; added with
-        # target_path (one release), so the re-read below covers both.
-        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_resolved INTEGER"))
-        if had_target_path is None:
-            conn.execute(text("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL"))
-        conn.execute(
-            text("CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)")
-        )
-        conn.execute(
-            text("CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)")
-        )
         # GIN index for FTS
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")

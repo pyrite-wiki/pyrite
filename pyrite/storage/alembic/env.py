@@ -15,9 +15,15 @@ from pyrite.storage.models import Base
 # Alembic Config object
 config = context.config
 
-# Set up logging from alembic.ini if available
+# Logging from alembic.ini, only when run from the alembic command line with
+# it. Never disabling the loggers that already exist: inside a process (the
+# Postgres backend's ensure_schema, the test suite) the default
+# disable_existing_loggers=True silenced every logger created before this
+# line, and later log-capturing tests on the same worker got nothing (#718,
+# the #1021 review). Pyrite itself builds its Config with no ini file
+# (pyrite.storage.alembic_chain.alembic_config).
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
@@ -48,17 +54,30 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = _connectable()
+    # A connection handed over by the caller (alembic_chain.upgrade_to_head):
+    # run on it, so the upgrade shares the caller's engine, search_path and
+    # transaction.
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _run_on(connection)
+        return
+    with _connectable().connect() as connection:
+        _run_on(connection)
 
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            include_object=include_object,
-        )
 
-        with context.begin_transaction():
-            context.run_migrations()
+def _run_on(connection) -> None:
+    from pyrite.storage.alembic_chain import own_schema
+
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+        # alembic_version in this database's own schema, not whichever one
+        # the search_path shows first with such a table (#718).
+        version_table_schema=own_schema(connection),
+    )
+    with context.begin_transaction():
+        context.run_migrations()
 
 
 def _connectable():

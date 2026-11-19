@@ -28,6 +28,8 @@ down_revision: str = "006"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+sqlite_versions = (11, 21, 27)
+
 # column -> (type on any dialect, mirrors SQLite migration)
 _ENTRY_COLUMNS: dict[str, str] = {
     "lifecycle": "TEXT DEFAULT 'active'",  # v11 — archive support
@@ -45,7 +47,9 @@ def upgrade() -> None:
     existing = {c["name"] for c in inspector.get_columns("entry")}
     if "lifecycle" not in existing:
         op.execute("ALTER TABLE entry ADD COLUMN lifecycle TEXT DEFAULT 'active'")
-        op.execute("CREATE INDEX IF NOT EXISTS idx_entry_lifecycle ON entry(lifecycle)")
+    # Whether or not the column was just added, as SQLite's v11 does: a table
+    # create_all built has the column but not this index (#718).
+    op.execute("CREATE INDEX IF NOT EXISTS idx_entry_lifecycle ON entry(lifecycle)")
     if "content_hash" not in existing:
         op.execute("ALTER TABLE entry ADD COLUMN content_hash VARCHAR(64)")
     for column in ("file_mtime_ns", "file_size"):
