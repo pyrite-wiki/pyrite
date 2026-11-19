@@ -297,9 +297,6 @@ UNCLASSIFIED: dict[tuple[str, str], str] = {
 #: The ``pyrite-read`` rows are the same declarations as their ``pyrite`` twins,
 #: except ``timeline``: a second copy in read_cli.py.
 NOT_YET: set[tuple[str, str]] = {
-    # pyrite/cli/search_commands.py
-    ("pyrite search", "limit"),
-    ("pyrite-read search", "limit"),
     #
     # pyrite/cli/entry_commands.py (see also #1537)
     ("pyrite create", "importance"),
@@ -721,3 +718,21 @@ def test_a_float_range_and_an_open_bound_are_bounded_and_a_clamped_open_bound_is
         ("app open", "n"): True,
         ("app openclamp", "n"): False,
     }
+
+
+@pytest.mark.control(
+    reason="a row-count option bounded by ROW_COUNT_MAX refuses 2**63 and accepts 2**63-1 (#1800)"
+)
+def test_a_row_count_bounded_by_max_refuses_sqlite_overflow_and_accepts_at_the_bound():
+    from pyrite.cli.context import ROW_COUNT_MAX
+
+    command = _one_param(min=1, max=ROW_COUNT_MAX)
+    (param,) = _params_for(_app(command))
+    assert param.bounded and not param.clamps
+    click_type = next(
+        p for p in commands_of(_app(command))["app command"].params if p.name == "limit"
+    ).type
+    assert click_type.convert(ROW_COUNT_MAX, None, None) == ROW_COUNT_MAX
+    with pytest.raises(Exception, match="not in the range") as refused:
+        click_type.convert(ROW_COUNT_MAX + 1, None, None)
+    assert "BadParameter" in {k.__name__ for k in type(refused.value).__mro__}
