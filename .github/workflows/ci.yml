@@ -1265,9 +1265,28 @@ jobs:
             fi
           done
 
+      # Create the pgvector extension once, serially, before pytest starts.
+      # The backends conftest isolates xdist workers by schema, but the
+      # extension is per-database, not per-schema: every worker's first
+      # backend (and `ensure_schema`) runs `CREATE EXTENSION IF NOT EXISTS
+      # vector` against the one shared pyrite_test database, and that
+      # statement is not race-safe -- two workers that both find the
+      # extension missing both insert into pg_extension, and one loses with
+      # a UniqueViolation on pg_extension_name_index. This job's first run
+      # errored three conformance tests exactly that way, in fixture setup,
+      # before any test body ran. With the extension already present, every
+      # later `IF NOT EXISTS` is a no-op existence check and the race is
+      # gone; `-n auto` below stays.
+      - name: Create the pgvector extension
+        env:
+          PYRITE_TEST_PG_URL: postgresql://postgres:postgres@localhost:5432/pyrite_test
+        run: |
+          python -c "import os, psycopg2; conn = psycopg2.connect(os.environ['PYRITE_TEST_PG_URL']); conn.autocommit = True; cur = conn.cursor(); cur.execute('CREATE EXTENSION IF NOT EXISTS vector SCHEMA public'); conn.close()"
+
       # -n auto like every other pytest gate: the backends conftest gives
       # each xdist worker its own schema on the one database, and the
-      # Postgres test modules do the same, so the directory is xdist-safe.
+      # Postgres test modules do the same, so the directory is xdist-safe
+      # once the extension exists (previous step).
       # HF_HUB_OFFLINE as in the `experimental` job: no test here needs a
       # model download to prove the backend.
       - name: Run the backend tests against Postgres
