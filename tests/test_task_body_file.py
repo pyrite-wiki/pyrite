@@ -1,8 +1,9 @@
 """`task create` and `task update` take --body-file and --stdin (#1687).
 
 Property: for the same text, --body, --body-file, --stdin and `-` write
-byte-identical bodies, on create and on update. Bad sources are refused as
-usage errors (exit 2) before any write.
+byte-identical bodies, on create and on update. Two body sources are a usage
+error (exit 2); a missing path or a directory is refused as every input file is
+(exit 1, NOT_FOUND / VALIDATION_FAILED, #846); all before any write.
 """
 
 import json
@@ -147,7 +148,7 @@ def test_update_non_utf8_leaves_task_unchanged(world, tmp_path):
 
 @pytest.mark.parametrize("command", ["create", "update"])
 @pytest.mark.parametrize("bad", ["missing", "directory"])
-def test_bad_path_is_a_usage_refusal(world, tmp_path, command, bad):
+def test_bad_path_is_refused_as_every_input_file_is(world, tmp_path, command, bad):
     world.cli("task", "create", "target", "-k", "test-kb")
     path = tmp_path / "nope.md" if bad == "missing" else tmp_path
     argv = (
@@ -156,11 +157,10 @@ def test_bad_path_is_a_usage_refusal(world, tmp_path, command, bad):
         else ["task", "update", "target", "-k", "test-kb"]
     )
     r = world.cli(*argv, "--body-file", str(path))
-    assert r.exit_code == 2, r.output
+    assert r.exit_code == 1, r.output
     err = _error(r)
     assert err["outcome"] == "error"
-    assert err["error_code"] == "USAGE_ERROR"
-    assert "--body-file" in err["error"]
+    assert err["error_code"] == ("NOT_FOUND" if bad == "missing" else "VALIDATION_FAILED")
     assert str(path) in err["error"]
     assert err["retryable"] is False
     if command == "create":

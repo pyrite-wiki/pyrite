@@ -196,8 +196,9 @@ class _BodySourceCommand(TyperCommand):
 
     What can be judged without reading is judged while click parses, so it is a
     usage error (``USAGE_ERROR``, exit 2) before any KB is opened or anything is
-    written (ADR-0046: the command body has no usage errors): two body sources,
-    and a ``--body-file`` that is missing or not a file."""
+    written (ADR-0046: the command body has no usage errors): two body sources.
+    A ``--body-file`` that is missing or a directory is found by reading, so it is
+    a refusal from the command body (``require_input_file``, exit 1)."""
 
     def parse_args(self, ctx, args):
         rest = super().parse_args(ctx, args)
@@ -215,14 +216,6 @@ class _BodySourceCommand(TyperCommand):
         ]
         if len(given) > 1:
             raise typer.BadParameter(f"give one body source, not {' and '.join(given)}", ctx=ctx)
-        if body_file is not None and not dash:
-            from ..exceptions import PyriteError
-            from .context import require_input_file
-
-            try:
-                require_input_file(body_file, "Body file")
-            except PyriteError as exc:
-                raise typer.BadParameter(f"--body-file: {exc}", ctx=ctx) from None
         return rest
 
 

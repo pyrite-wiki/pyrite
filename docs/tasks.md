@@ -113,7 +113,8 @@ Run `make docs` with $HOME set; keep "quotes" intact.
 `task create` and `task update` take `--body-file <path>` (`-` reads stdin) or
 `--stdin`, and write the text as the body. Give one body source only: `--body`
 with `--body-file`, or `--body-file` with `--stdin`, is a usage error (exit 2).
-A file that opens with a `---` frontmatter block is refused; `pyrite create -t task
+A path that is missing or a directory is refused as for any input file (exit 1,
+`NOT_FOUND` or `VALIDATION_FAILED`). A file that opens with a `---` frontmatter block is refused; `pyrite create -t task
 --body-file <file>` reads frontmatter.
 
 ```bash

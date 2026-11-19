@@ -42,6 +42,24 @@ INPUT_FILE_PARAMS: dict[tuple[tuple[str, ...], str], object] = {
         p,
     ],  # fmt: skip
     (("update",), "body_file"): lambda p: ["update", "hello", "-k", "k", "--body-file", p],
+    (("task", "create"), "body_file"): lambda p: [
+        "task",
+        "create",
+        "T",
+        "-k",
+        "k",
+        "--body-file",
+        p,
+    ],
+    (("task", "update"), "body_file"): lambda p: [
+        "task",
+        "update",
+        "hello",
+        "-k",
+        "k",
+        "--body-file",
+        p,
+    ],
     (("add",), "file_path"): lambda p: ["add", p, "-k", "k"],
     (("links", "bulk-create"), "file_option"): lambda p: [
         "links",
@@ -103,14 +121,6 @@ NOT_INPUT_FILE: dict[tuple[tuple[str, ...], str], str] = {
     (("mcp-setup",), "config_path"): "another program's config, guarded by #582",
     (("kb", "commit"), "paths"): "paths inside a KB for git, not read by Pyrite",
     (("kb", "schema", "add-type"), "subdirectory"): "a KB subdirectory name",
-    (
-        ("task", "create"),
-        "body_file",
-    ): "checked by require_input_file at parse time, a usage error (#1687)",
-    (
-        ("task", "update"),
-        "body_file",
-    ): "checked by require_input_file at parse time, a usage error (#1687)",
     (("search",), "use_files"): "a boolean",
     (("repo", "unsubscribe"), "delete_files"): "a boolean",
     (("link",), "bidirectional"): "a boolean",
