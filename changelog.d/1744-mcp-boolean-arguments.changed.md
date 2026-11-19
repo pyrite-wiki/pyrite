@@ -1,0 +1,1 @@
+- A declared-boolean MCP argument sent as the string `"false"` no longer reads as true. One helper now reads every declared-boolean argument: it accepts JSON `true`/`false` or the strings `"true"`/`"false"`, and any other value answers `INVALID_PARAMETER` naming the argument, before the tool runs (#1744).
