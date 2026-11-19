@@ -1824,11 +1824,12 @@ class QAService:
         - a ``retest_after`` with no ``parked_awaiting``: parked until the
           date, but nothing says why.
         """
-        from ..models.task_queue import PARK_KINDS, is_parked, retest_date
+        from ..models.task_queue import PARK_KINDS, is_parked, park_fields, retest_date
 
         if entry.entry_type != "task":
             return
-        source = entry._source_frontmatter or {}
+        # Top level, else under `metadata:`, as the views read it.
+        source = park_fields(entry._source_frontmatter or {})
 
         def finding(field: str, message: str) -> None:
             issues.append(

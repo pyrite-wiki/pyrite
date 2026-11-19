@@ -2334,6 +2334,7 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
+        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
         ``file_operations`` operations (``Set``, ``Append``, ``Remove``,
@@ -2349,7 +2350,11 @@ class KBService:
         #1685): the states the write passes through, first to last, handed
         to the ``before_save`` hooks, where the workflow judges every edge.
         ``expect_holder`` refuses the write unless the bytes it replaces name
-        that assignee (`task start`'s retry and `task finish`, #1685)."""
+        that assignee (`task start`'s retry and `task finish`, #1685).
+        ``drop_emptied_metadata``: when the write unsets every key of the
+        file's ``metadata:`` block, the block goes with them rather than
+        staying as ``metadata: {}`` (`task unpark`, #1688 round 1); decided
+        on the file's own keys, never the caller's word."""
         return self._update(
             entry_id,
             kb_name,
@@ -2359,6 +2364,7 @@ class KBService:
             merge_spellings=merge_spellings,
             status_path=status_path,
             expect_holder=expect_holder,
+            drop_emptied_metadata=drop_emptied_metadata,
         )
 
     def _update(
@@ -2372,6 +2378,7 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
+        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2467,6 +2474,8 @@ class KBService:
                         continue  # the same field named twice with one value
                     placed[resolved.path] = resolved.value
                 all_ops.append(resolved)
+            if drop_emptied_metadata:
+                all_ops = _drop_emptied_metadata(file_values, all_ops)
             self._refuse_conflicting_spellings(entry, updates)
             try:
                 # The file is this KB's: its parser's words go to a reader of it.
@@ -5124,6 +5133,28 @@ def _same_yaml_value(a: Any, b: Any) -> bool:
     if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
         return True
     return values_identical(a, b)
+
+
+def _drop_emptied_metadata(file_values: dict[str, Any], ops: list[Any]) -> list[Any]:
+    """``ops`` with the unsets of every key of the file's ``metadata:`` block
+    replaced by one unset of the block, when they remove all of it; else
+    ``ops`` unchanged (#1688 round 1: a park cleared to nothing)."""
+    bag = file_values.get("metadata")
+    if not isinstance(bag, dict) or not bag:
+        return ops
+
+    def nested_unset(op: Any) -> bool:
+        path = getattr(op, "path", None)
+        return (
+            isinstance(op, Unset)
+            and isinstance(path, tuple)
+            and len(path) == 2
+            and path[0] == "metadata"
+        )
+
+    if not set(bag) <= {op.path[1] for op in ops if nested_unset(op)}:
+        return ops
+    return [op for op in ops if not nested_unset(op)] + [Unset(("metadata",))]
 
 
 def _nested_block_is_all_equal_pairs(entry: Entry, file_values: dict[str, Any]) -> bool:

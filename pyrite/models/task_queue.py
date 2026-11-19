@@ -142,6 +142,26 @@ def retest_date(value: Any) -> _dt.date | None:
         return None
 
 
+#: The three keys of a park, in the order `task unpark` reports them.
+PARK_KEYS: tuple[str, ...] = ("parked_awaiting", "park_kind", "retest_after")
+
+
+def park_fields(frontmatter: Mapping[str, Any]) -> dict[str, Any]:
+    """A file's park as the views read it: each key at the top level, else
+    under ``metadata:`` (the second spelling every read lifts, #1001). Keys
+    absent at both are left out. ``qa validate`` reads a file through this,
+    so it reports what the views act on (#1688, round 1)."""
+    bag = frontmatter.get("metadata")
+    nested: Mapping[str, Any] = bag if isinstance(bag, Mapping) else {}
+    out: dict[str, Any] = {}
+    for key in PARK_KEYS:
+        if key in frontmatter:
+            out[key] = frontmatter[key]
+        elif key in nested:
+            out[key] = nested[key]
+    return out
+
+
 def _has_value(value: Any) -> bool:
     return value is not None and not (isinstance(value, str) and not value.strip())
 

@@ -56,6 +56,17 @@ def _today() -> _dt.date:
     return _dt.date.today()
 
 
+def _park_extra(source: dict[str, Any]) -> dict[str, str]:
+    """``park_kind`` and ``retest_after`` as a listing row carries them, from
+    one source (an index row's metadata, or an entry read from its file):
+    text, ``""`` when absent."""
+    kind = source.get("park_kind")
+    return {
+        "park_kind": "" if kind is None else str(kind),
+        "retest_after": _retest_text(source.get("retest_after")),
+    }
+
+
 def _retest_text(value: Any) -> str:
     """A ``retest_after`` value as a listing returns it: a date as
     ``YYYY-MM-DD``, a datetime in ISO form, anything else as text, and
@@ -517,8 +528,16 @@ class TaskService:
         parent: str | None = None,
         kb_names: set[str] | list[str] | None = None,
         priority: int | None = None,
+        *,
+        with_park: bool = False,
     ) -> list[dict[str, Any]]:
         """List tasks with optional filters.
+
+        ``with_park`` adds ``park_kind`` and ``retest_after`` to each row,
+        read from the same source as its ``parked_awaiting``: the index row,
+        or -- in the assignee hydration pass, for a row the index holds no
+        park for -- the file, all three keys together (#1688 round 1), so a
+        park is never assembled from two sources.
 
         ``kb_names`` restricts the result to the caller's readable KBs;
         ``None`` means unrestricted, an empty set means no rows.
@@ -596,6 +615,7 @@ class TaskService:
                     # (#1688).
                     "parked_awaiting": park_reason(meta.get("parked_awaiting")),
                     "updated_at": row.get("updated_at") or "",
+                    **(_park_extra(meta) if with_park else {}),
                 }
             )
 
@@ -612,17 +632,23 @@ class TaskService:
         # a caller is looking at a bounded set (a specific assignee, e.g. the
         # human worklist) -- an unfiltered listing would turn this into an
         # N+1 across the whole backlog for a field it doesn't use.
+        #
+        # A park is read whole from one source (#1688 round 1): a row whose
+        # index entry holds any park key keeps the index's three; otherwise
+        # all three come from the file.
         if assignee:
             for t in tasks:
-                if t["parked_awaiting"]:
+                if t["parked_awaiting"] or (with_park and (t["park_kind"] or t["retest_after"])):
                     continue
                 try:
                     entry = self.kb_svc.get_entry(t["id"], t["kb_name"], readable_kbs=UNSCOPED)
                 except Exception:
                     continue
                 if entry:
-                    # A declared field of a task (#1025), read at its own name.
+                    # Declared fields of a task (#1025, #1688), read at their own names.
                     t["parked_awaiting"] = park_reason(entry.get("parked_awaiting"))
+                    if with_park:
+                        t.update(_park_extra(entry))
 
         return tasks
 
@@ -674,6 +700,7 @@ class TaskService:
         ``fields`` projects each ``tasks`` row through
         :func:`~pyrite.services.read_shaping.project_fields`.
         """
+        wants_park = dispatchable or parked is not None
         tasks = self.list_tasks(
             kb_name=kb_name,
             status=status,
@@ -681,12 +708,19 @@ class TaskService:
             parent=parent,
             kb_names=kb_names,
             priority=priority,
+            with_park=wants_park,
         )
         out: dict[str, Any] = {}
-        if dispatchable or parked is not None:
+        if wants_park:
             today = _today()
+            # Each row's park, as list_tasks read it from one source; the rows
+            # go back out in today's shape, the park keys added only where a
+            # view below says so.
+            park = {
+                _key(t): {"park_kind": t.pop("park_kind"), "retest_after": t.pop("retest_after")}
+                for t in tasks
+            }
             extra = self._index_extras(tasks)
-            park = {key: self._park_of(row) for key, row in extra.items()}
             if parked is not None:
                 kept = []
                 for t in tasks:
@@ -748,18 +782,6 @@ class TaskService:
             params,
         )
         return {(r["kb_name"], r["id"]): r for r in rows}
-
-    @staticmethod
-    def _park_of(index_row: dict[str, Any]) -> dict[str, Any]:
-        """``park_kind`` and ``retest_after`` as an index row's metadata holds
-        them (#1688), as text; ``parked_awaiting`` is already on the
-        ``list_tasks`` row."""
-        meta = parse_metadata(index_row.get("metadata"))
-        kind = meta.get("park_kind")
-        return {
-            "park_kind": "" if kind is None else str(kind),
-            "retest_after": _retest_text(meta.get("retest_after")),
-        }
 
     def _classify_for_dispatch(
         self,
@@ -1201,8 +1223,11 @@ class TaskService:
         removed = [key for key in PARK_FIELDS if key in _park_keys_present(entry)]
         status = getattr(entry, "status", "")
         if removed:
+            # Keys spelled under `metadata:` are cleared to nothing: a block
+            # that held only park keys goes with them, never left as
+            # `metadata: {}` (#1688 round 1).
             written = self.kb_svc.apply_operations(
-                task_id, kb_name, [Unset(key) for key in removed]
+                task_id, kb_name, [Unset(key) for key in removed], drop_emptied_metadata=True
             ).entry
             status = getattr(written, "status", status)
         return {"task_id": task_id, "kb_name": kb_name, "status": status, "removed": removed}
