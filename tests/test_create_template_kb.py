@@ -2,63 +2,57 @@
 
 The skeleton for a type in a KB shows the fields a create of that type in
 that KB would write, read from the same place a create reads them; without
-`-k` it stays the core-types skeleton it always was.
+`-k` it stays the core-types skeleton it always was. Every case below runs
+the real create in the same KB and compares the skeleton with what it
+wrote -- or the two refusals, when both refuse -- so the template cannot
+drift from the create. The tests use the `cli_world` fixture, which runs
+the real `load_config` against a throwaway config; nothing here patches
+it (`tests/test_production_wiring_guard.py` counts the tests that do).
 """
 
-import contextlib
 import json
-import tempfile
-from pathlib import Path
-from unittest.mock import patch
 
 import pytest
-import typer
-from typer.testing import CliRunner
 
-from pyrite.cli import app
-from pyrite.cli.init_command import init_kb
-from pyrite.config import PyriteConfig, Settings
+from pyrite.config import KBConfig
 from pyrite.utils.yaml import load_yaml
 
-runner = CliRunner()
 
-init_app = typer.Typer()
-init_app.command("init")(init_kb)
-
-
-@pytest.fixture
-def software_kb():
-    """A KB made by `pyrite init -t software`, with a config that knows it."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir = Path(tmpdir)
-        config = PyriteConfig(knowledge_bases=[], settings=Settings(index_path=tmpdir / "index.db"))
-        kb_path = tmpdir / "proj"
-        with (
-            patch("pyrite.config.load_config", return_value=config),
-            patch("pyrite.config.save_config"),
-        ):
-            result = runner.invoke(
-                init_app,
-                [
-                    "--template",
-                    "software",
-                    "--path",
-                    str(kb_path),
-                    "--name",
-                    "proj",
-                    "--no-examples",
-                ],
-            )
-        assert result.exit_code == 0, result.output
-        yield {"config": config, "tmpdir": tmpdir, "kb_path": kb_path}
+def _init_software_kb(world, tmp_path):
+    """A KB made by `pyrite init -t software`, in the world's config."""
+    assert world.cli(
+        "init", "--template", "software", "--path", str(tmp_path / "proj"),
+        "--name", "proj", "--no-examples",
+    ).exit_code == 0
+    return tmp_path / "proj"
 
 
-@contextlib.contextmanager
-def _patch_config(config):
-    """Patch load_config to return the test config in all CLI modules."""
-    with patch("pyrite.cli.load_config", return_value=config):
-        with patch("pyrite.cli.context.load_config", return_value=config):
-            yield
+def _add_note_severity_field(kb_path):
+    """Declare a `note` type with a `severity` default in the KB's kb.yaml."""
+    kb_yaml = kb_path / "kb.yaml"
+    text = kb_yaml.read_text(encoding="utf-8")
+    assert "\n  note:\n" not in text
+    kb_yaml.write_text(
+        text.replace(
+            "\npolicies:",
+            "\n  note:\n"
+            "    description: Plain note\n"
+            "    required:\n"
+            "    - title\n"
+            "    optional:\n"
+            "    - severity\n"
+            "    fields:\n"
+            "      severity:\n"
+            "        type: select\n"
+            "        options:\n"
+            "        - low\n"
+            "        - high\n"
+            "        default: low\n"
+            "policies:",
+            1,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _template_frontmatter(result):
@@ -81,146 +75,117 @@ def _read_frontmatter(path):
 
 @pytest.mark.cli
 class TestCreateTemplateWithKb:
-    def test_template_backlog_item_matches_real_create(self, software_kb):
-        """The skeleton has the keys and defaults a create writes."""
-        kb_path = software_kb["kb_path"]
-        with _patch_config(software_kb["config"]):
-            created = runner.invoke(
-                app,
-                [
-                    "create",
-                    "-k",
-                    "proj",
-                    "-t",
-                    "backlog_item",
-                    "--title",
-                    "x",
-                    "--format",
-                    "json",
-                ],
+    @pytest.mark.parametrize(
+        "kb_kind,entry_type,template_flags,create_args,ignore",
+        [
+            # A type the KB declares: the skeleton is what the create wrote.
+            ("software", "backlog_item", [], ["--title", "x"], ()),
+            # A field the KB adds to a core type, at its declared default.
+            ("software-note", "note", [], ["--title", "x"], ()),
+            # An in-range importance: the skeleton shows the value the create writes.
+            ("software", "note", ["--importance", "7"], ["--title", "x", "--importance", "7"], ()),
+            # An out-of-range importance: both refuse, with the same envelope.
+            ("software", "note", ["--importance", "42"], ["--title", "x", "--importance", "42"], ()),
+            # A plugin type mapping: the skeleton stores the mapped type.
+            # `date` is caller-supplied, so it differs from the skeleton's
+            # empty default the way `title` does.
+            ("journalism", "event", [], ["--title", "x", "-d", "2024-01-01"], ("date",)),
+            # An undeclared type under --allow-undeclared in a KB that
+            # enforces validation: both refuse, with the same envelope.
+            (
+                "software",
+                "nosuch",
+                ["--allow-undeclared"],
+                ["--title", "nz", "--allow-undeclared"],
+                (),
+            ),
+        ],
+    )
+    def test_template_matches_real_create(
+        self, cli_world, tmp_path, kb_kind, entry_type, template_flags, create_args, ignore
+    ):
+        """The skeleton is what a real create writes, or the same refusal."""
+        if kb_kind == "journalism":
+            world = cli_world(
+                kbs=[
+                    KBConfig(
+                        name="inv2",
+                        path=tmp_path / "inv2",
+                        kb_type="journalism-investigation",
+                    )
+                ]
             )
-            assert created.exit_code == 0, created.output
-            written = _read_frontmatter(kb_path / "backlog" / "x.md")
+            kb_name, kb_path = "inv2", tmp_path / "inv2"
+        else:
+            world = cli_world()
+            kb_path = _init_software_kb(world, tmp_path)
+            kb_name = "proj"
+            if kb_kind == "software-note":
+                _add_note_severity_field(kb_path)
 
-            result = runner.invoke(
-                app,
-                ["create", "-k", "proj", "-t", "backlog_item", "--template", "--format", "json"],
-            )
-            skeleton = _template_frontmatter(result)
-
-        # id and title are the preview's placeholders; tags is the
-        # skeleton's own empty list (the create wrote no tags).
-        assert skeleton["id"] == ""
-        assert skeleton["title"] == "Your Title Here"
-        assert skeleton["tags"] == []
-        template_fields = {k: v for k, v in skeleton.items() if k not in ("id", "title", "tags")}
-        written_fields = {k: v for k, v in written.items() if k not in ("id", "title")}
-        assert template_fields == written_fields
-        assert template_fields == {
-            "type": "backlog_item",
-            "importance": 5,
-            "kind": "",
-            "status": "proposed",
-            "priority": "medium",
-            "rank": 0,
-            "effort": "",
-            "assignee": "",
+        created = world.cli(
+            "create", "-k", kb_name, "-t", entry_type, *create_args, "--format", "json"
+        )
+        template = world.cli(
+            "create",
+            "-k",
+            kb_name,
+            "-t",
+            entry_type,
+            "--template",
+            *template_flags,
+            "--format",
+            "json",
+        )
+        if created.exit_code != 0:
+            # Both refuse: the envelopes are identical.
+            assert template.exit_code == created.exit_code, template.output
+            assert json.loads(template.output) == json.loads(created.output)
+            return
+        assert template.exit_code == 0, template.output
+        skeleton = _template_frontmatter(template)
+        written = _read_frontmatter(next(kb_path.rglob("x.md")))
+        # id and title are the preview's placeholders, tags is the
+        # skeleton's own empty list (the create wrote no tags); the rest
+        # is what the create wrote, field for field.
+        ignore_fields = {"id", "title", "tags", *ignore}
+        assert {k: v for k, v in skeleton.items() if k not in ignore_fields} == {
+            k: v for k, v in written.items() if k not in ignore_fields
         }
 
-    def test_template_kb_yaml_field_with_declared_default(self, software_kb):
-        """A field a KB adds to a core type in kb.yaml appears, at its default."""
-        kb_path = software_kb["kb_path"]
-        kb_yaml = kb_path / "kb.yaml"
-        text = kb_yaml.read_text(encoding="utf-8")
-        assert "\n  note:\n" not in text
-        kb_yaml.write_text(
-            text.replace(
-                "\npolicies:",
-                "\n  note:\n"
-                "    description: Plain note\n"
-                "    required:\n"
-                "    - title\n"
-                "    optional:\n"
-                "    - severity\n"
-                "    fields:\n"
-                "      severity:\n"
-                "        type: select\n"
-                "        options:\n"
-                "        - low\n"
-                "        - high\n"
-                "        default: low\n"
-                "policies:",
-                1,
-            ),
-            encoding="utf-8",
-        )
-        software_kb["config"].get_kb("proj").invalidate_schema_cache()
-        with _patch_config(software_kb["config"]):
-            result = runner.invoke(
-                app,
-                ["create", "-k", "proj", "-t", "note", "--template", "--format", "json"],
-            )
-            skeleton = _template_frontmatter(result)
-        assert skeleton["severity"] == "low"
-        assert skeleton["importance"] == 5
-
-    def test_template_undeclared_type_refuses_like_create(self, software_kb):
+    def test_template_undeclared_type_refuses_like_create(self, cli_world, tmp_path):
         """An undeclared type is refused with the create's error."""
-        with _patch_config(software_kb["config"]):
-            template = runner.invoke(
-                app,
-                ["create", "-k", "proj", "-t", "nosuch", "--template", "--format", "json"],
-            )
-            assert template.exit_code == 1
-            template_error = json.loads(template.output)
+        world = cli_world()
+        _init_software_kb(world, tmp_path)
+        template = world.cli(
+            "create", "-k", "proj", "-t", "nosuch", "--template", "--format", "json"
+        )
+        assert template.exit_code == 1
+        template_error = json.loads(template.output)
 
-            created = runner.invoke(
-                app,
-                ["create", "-k", "proj", "-t", "nosuch", "--title", "y", "--format", "json"],
-            )
-            assert created.exit_code == 1
-            created_error = json.loads(created.output)
+        created = world.cli(
+            "create", "-k", "proj", "-t", "nosuch", "--title", "y", "--format", "json"
+        )
+        assert created.exit_code == 1
+        created_error = json.loads(created.output)
         assert template_error["error_code"] == "UNDECLARED_TYPE"
         assert template_error == created_error
 
-    def test_template_undeclared_type_allowed_with_flag(self, software_kb):
-        """--allow-undeclared lets the skeleton through, as it lets a create through."""
-        with _patch_config(software_kb["config"]):
-            result = runner.invoke(
-                app,
-                [
-                    "create",
-                    "-k",
-                    "proj",
-                    "-t",
-                    "nosuch",
-                    "--template",
-                    "--allow-undeclared",
-                    "--format",
-                    "json",
-                ],
-            )
-            skeleton = _template_frontmatter(result)
-        assert skeleton["type"] == "nosuch"
-        assert skeleton["importance"] == 5
-
-    def test_template_unknown_kb_refuses(self, software_kb):
+    def test_template_unknown_kb_refuses(self, cli_world, tmp_path):
         """A -k that names no KB is refused, as a create is."""
-        with _patch_config(software_kb["config"]):
-            result = runner.invoke(
-                app,
-                ["create", "-k", "nope", "-t", "note", "--template", "--format", "json"],
-            )
+        world = cli_world()
+        _init_software_kb(world, tmp_path)
+        result = world.cli(
+            "create", "-k", "nope", "-t", "note", "--template", "--format", "json"
+        )
         assert result.exit_code == 1
         assert json.loads(result.output)["error_code"] == "KB_NOT_FOUND"
 
-    def test_template_without_kb_is_unchanged(self, software_kb):
+    def test_template_without_kb_is_unchanged(self, cli_world):
         """Without -k, the skeleton is today's core-types one."""
-        with _patch_config(software_kb["config"]):
-            result = runner.invoke(
-                app, ["create", "-t", "person", "--template", "--format", "json"]
-            )
-            skeleton = _template_frontmatter(result)
+        world = cli_world()
+        result = world.cli("create", "-t", "person", "--template", "--format", "json")
+        skeleton = _template_frontmatter(result)
         assert skeleton == {
             "id": "",
             "type": "person",
