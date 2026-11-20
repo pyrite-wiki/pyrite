@@ -3,7 +3,7 @@
 `ensure_schema` runs the alembic chain on every Postgres startup. Every
 third-party module that path imports must therefore come with the core
 dependencies or the `postgres` extra. Until #718's round 2, alembic came only
-with `server`, and CI could not tell: every CI job installs `.[all,...]`.
+with `server` (fixed in #718's round 2), and CI could not tell: every CI job installs `.[all,...]`.
 
 The modules come from the source itself (an AST walk over the files that
 path loads), not from a hand list. The distributions come from the installed
@@ -20,7 +20,6 @@ import tomllib
 from importlib.metadata import packages_distributions
 from pathlib import Path
 
-import pytest
 
 ROOT = Path(__file__).parents[1]
 STORAGE = ROOT / "pyrite" / "storage"
@@ -52,15 +51,6 @@ def _requirement_names(requirements: list[str]) -> set[str]:
     }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "#718 round 2: alembic is not yet in the `postgres` extra. Adding it makes "
-        "scripts/lock-deps.sh (uv 0.11.32 here) rewrite unrelated platform markers in "
-        "uv.lock, so the extra waits for a lock from the maintainer's uv. Strict: this "
-        "goes red once the extra lands, and the marker comes off then."
-    ),
-)
 def test_every_module_ensure_schema_imports_comes_with_the_postgres_extra():
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     provided = _requirement_names(project["dependencies"]) | _requirement_names(
