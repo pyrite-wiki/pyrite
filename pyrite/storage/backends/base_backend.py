@@ -431,9 +431,20 @@ class BaseBackend(ABC):
                     if link.get("relation") != "markdown_link"
                 ]
                 self._sync_links(entry_id, kb_name, links, keep_path_rows=True)
-            self._sync_entry_refs(entry_id, kb_name, entry_data)
-            self._sync_blocks(entry_id, kb_name, entry_data)
-            self._sync_edge_endpoints(entry_id, kb_name, entry_data)
+            # Derived rows (refs, blocks, edge endpoints) are replaced only
+            # by a write that can name them: one made from the entry's file
+            # (it carries ``_kb_root``; ``_entry_to_dict`` sets each key only
+            # when non-empty, so an absent key there means "none now") or one
+            # that carries the key itself. A write back from a read (dedup)
+            # names none of them, and dropping them would lose the rows
+            # until the next index -- the rule links follow above (#1723,
+            # #1733).
+            if entry_data.get("_kb_root") or "_refs" in entry_data:
+                self._sync_entry_refs(entry_id, kb_name, entry_data)
+            if entry_data.get("_kb_root") or "_blocks" in entry_data:
+                self._sync_blocks(entry_id, kb_name, entry_data)
+            if entry_data.get("_kb_root") or "_edge_endpoints" in entry_data:
+                self._sync_edge_endpoints(entry_id, kb_name, entry_data)
             self._session.commit()
         except Exception:
             self._session.rollback()
