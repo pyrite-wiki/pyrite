@@ -59,38 +59,6 @@ class TestInitCommand:
         assert (kb_path / "standards").is_dir()
         assert (kb_path / "runbooks").is_dir()
 
-    def test_init_software_template_registers_software_kb_type(self, init_env):
-        """Init with software template registers the KB as type software (#1405)."""
-        kb_path = init_env["tmpdir"] / "my-sw-kb"
-        config = init_env["config"]
-
-        with (
-            patch("pyrite.config.load_config", return_value=config),
-            patch("pyrite.config.save_config"),
-        ):
-            result = runner.invoke(test_app, ["--template", "software", "--path", str(kb_path)])
-
-        assert result.exit_code == 0, result.output
-        kb = config.get_kb("my-sw-kb")
-        assert kb is not None
-        assert kb.kb_type == "software"
-
-    def test_init_zettelkasten_template_registers_generic(self, init_env):
-        """Init with a built-in template still registers the KB as generic (#1405)."""
-        kb_path = init_env["tmpdir"] / "my-zk"
-        config = init_env["config"]
-
-        with (
-            patch("pyrite.config.load_config", return_value=config),
-            patch("pyrite.config.save_config"),
-        ):
-            result = runner.invoke(test_app, ["--template", "zettelkasten", "--path", str(kb_path)])
-
-        assert result.exit_code == 0, result.output
-        kb = config.get_kb("my-zk")
-        assert kb is not None
-        assert kb.kb_type == "generic"
-
     def test_init_zettelkasten_template(self, init_env):
         """Init with zettelkasten template creates expected directories."""
         kb_path = init_env["tmpdir"] / "my-zk"
@@ -434,3 +402,102 @@ class TestInitCommand:
 
         assert result.exit_code == 1
         assert "Unknown template" in result.output
+
+
+# --- #1405: a template a plugin supplies registers with the plugin's KB type ---
+
+# The presets an installed extension supplies under the name of a KB type the
+# same extension declares (checked against the extensions in this repo; the
+# registry test below fails if the list drifts from the installed plugins).
+PLUGIN_PRESETS = [
+    ("software", "software"),
+    ("zettelkasten", "zettelkasten"),
+    ("encyclopedia", "encyclopedia"),
+    ("social", "social"),
+    ("journalism-investigation", "journalism-investigation"),
+    ("known-entities", "known-entities"),
+]
+
+
+def _registered_type(world, name):
+    result = world.cli("kb", "list", "--format", "json")
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)
+    rows = rows.get("kbs", rows) if isinstance(rows, dict) else rows
+    return next(r["type"] for r in rows if r["name"] == name)
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize(
+    ("template", "expected"), [*PLUGIN_PRESETS, ("research", "generic")], ids=lambda v: v
+)
+def test_init_registers_the_template_kb_type_through_the_cli(
+    cli_world, tmp_path, template, expected
+):
+    world = cli_world()
+    result = world.cli(
+        "init", "-t", template, "-p", str(tmp_path / "made"), "-n", "made", "--no-examples"
+    )
+    assert result.exit_code == 0, result.output
+    assert _registered_type(world, "made") == expected
+
+
+@pytest.mark.cli
+def test_plugin_presets_list_matches_the_installed_extensions():
+    from pyrite.plugins import get_registry
+
+    registry = get_registry()
+    supplied = {
+        name
+        for name in registry.get_all_kb_presets()
+        if registry.get_kb_type_for_preset(name) == name
+    }
+    assert supplied == {t for t, _ in PLUGIN_PRESETS}
+
+
+@pytest.mark.cli
+def test_schema_file_keeps_generic_even_for_a_plugin_template_name(cli_world, tmp_path):
+    world = cli_world()
+    schema = tmp_path / "schema.yaml"
+    schema.write_text("name: custom\ntypes:\n  note:\n    description: n\n")
+    result = world.cli(
+        "init", "-t", "software", "-p", str(tmp_path / "made"), "-n", "made",
+        "--schema-file", str(schema), "--no-examples",
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert _registered_type(world, "made") == "generic"
+
+
+@pytest.mark.cli
+def test_init_made_software_kb_answers_like_one_added_with_kb_add_type(cli_world, tmp_path):
+    """The audit's test (#1405 groom 2026-11-16): the same files, registered two ways."""
+    import shutil
+
+    world = cli_world()
+    made = world.cli(
+        "init", "-t", "software", "-p", str(tmp_path / "sw"), "-n", "sw", "--no-examples"
+    )
+    assert made.exit_code == 0, made.output
+    shutil.copytree(tmp_path / "sw", tmp_path / "sw2")
+    kb_yaml = tmp_path / "sw2" / "kb.yaml"
+    kb_yaml.write_text(kb_yaml.read_text().replace("name: sw\n", "name: sw2\n", 1))
+    added = world.cli("kb", "add", str(tmp_path / "sw2"), "--name", "sw2", "--type", "software")
+    assert added.exit_code == 0, added.output
+
+    def create(kb):
+        r = world.cli(
+            "create", "-k", kb, "-t", "adr", "--title", "Use sqlite", "-b", "x",
+            "--allow-undeclared", "--format", "json",
+        )  # fmt: skip
+        assert r.exit_code == 0, r.output
+        return json.loads(r.output)
+
+    def has_orient_block(kb):
+        r = world.cli("orient", "-k", kb, "--format", "json")
+        assert r.exit_code == 0, r.output
+        return '"software": {' in r.output
+
+    for kb in ("sw", "sw2"):
+        warnings = create(kb).get("warnings", [])
+        assert [w["rule"] for w in warnings] == ["date_recommended"], (kb, warnings)
+        assert has_orient_block(kb), kb
