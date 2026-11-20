@@ -750,9 +750,7 @@ class TaskService:
                         kept.append({**row, "park_state": state})
                 tasks = kept
             if dispatchable:
-                classified = self._classify_for_dispatch(
-                    tasks, kb_name, kb_names, extra=extra, park=park, today=today
-                )
+                classified = self._classify_for_dispatch(tasks, extra=extra, park=park, today=today)
                 listed = []
                 for row, reason in classified:
                     if reason is not None:
@@ -806,8 +804,6 @@ class TaskService:
     def _classify_for_dispatch(
         self,
         tasks: list[dict[str, Any]],
-        kb_name: str | None,
-        kb_names: set[str] | list[str] | None,
         *,
         extra: dict[tuple[str, str], dict[str, Any]],
         park: dict[tuple[str, str], dict[str, Any]],
@@ -821,9 +817,11 @@ class TaskService:
         (``extra``) and its park fields (``park``), a stat of the file of
         each task whose effective status is open, a load through the claim's
         loader of each task every other check lists, and the derived
-        completion of a KB a ``kb:id`` dependency names -- only when this
-        listing reads that KB, so a dependency on a KB the caller may not
-        read stays unresolved (blocked) and reveals nothing.
+        completion of a KB a ``kb:id`` dependency names -- every registered
+        KB, through the one resolver, even when this listing reads only one
+        KB, so a dependency that lives in another registered KB resolves
+        there (#1739). A prefix that names no registered KB names no task:
+        the dependency stays missing (blocked).
 
         That same load is where a park written into the file after the last
         index is seen (#1743). ``parked_state`` stays the only rule, at the
@@ -835,12 +833,6 @@ class TaskService:
         """
         if not tasks:
             return []
-        if kb_name:
-            scope = {kb_name}
-        elif kb_names is not None:
-            scope = set(kb_names)
-        else:
-            scope = {kb.name for kb in self.config.all_kbs()}
         listed_kbs = sorted({t["kb_name"] for t in tasks})
 
         derived = {kb: self.derived_completion(kb) for kb in listed_kbs}
@@ -863,7 +855,7 @@ class TaskService:
             )
             for dep in dependency_ids(deps):
                 other, sep, _ = dep.partition(":")
-                if sep and other in scope and other not in derived:
+                if sep and other not in derived and self._row_kb(other) is not None:
                     derived[other] = self.derived_completion(other)
 
         # The one check that reads a file runs last and only on the rows every
