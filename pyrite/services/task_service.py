@@ -1271,7 +1271,9 @@ class TaskService:
                 ops.append(Set(key, value))
             elif key in present:
                 ops.append(Unset(key))
-        written = self.kb_svc.apply_operations(task_id, kb_name, ops, expect_holder=holder).entry
+        written = self.kb_svc.apply_operations(
+            task_id, kb_name, ops, expect_holder=holder, refuse_statuses=TASK_RESOLVED_STATUSES
+        ).entry
         result = {
             "task_id": task_id,
             "kb_name": kb_name,

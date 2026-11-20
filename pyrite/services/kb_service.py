@@ -2460,6 +2460,7 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
+        refuse_statuses: Sequence[str] | None = None,
         drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
@@ -2477,6 +2478,8 @@ class KBService:
         to the ``before_save`` hooks, where the workflow judges every edge.
         ``expect_holder`` refuses the write unless the bytes it replaces name
         that assignee (`task start`'s retry and `task finish`, #1685).
+        ``refuse_statuses`` refuses the write if the bytes it replaces name
+        any of those statuses (`task park`, #1817).
         ``drop_emptied_metadata``: when the write unsets every key of the
         file's ``metadata:`` block, the block goes with them rather than
         staying as ``metadata: {}`` (`task unpark`, #1688 round 1); decided
@@ -2490,6 +2493,7 @@ class KBService:
             merge_spellings=merge_spellings,
             status_path=status_path,
             expect_holder=expect_holder,
+            refuse_statuses=refuse_statuses,
             drop_emptied_metadata=drop_emptied_metadata,
         )
 
@@ -2504,6 +2508,7 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
+        refuse_statuses: Sequence[str] | None = None,
         drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
@@ -2571,6 +2576,15 @@ class KBService:
                     raise ValidationError(
                         f"'{entry_id}' is held by '{file_holder}', not '{expect_holder}': "
                         "only its holder moves it on. Nothing was written."
+                    )
+            if refuse_statuses is not None:
+                # `task park` refuses done or cancelled tasks (#1817): re-checked
+                # in these bytes on every attempt so a task completed in between
+                # is refused, not parked.
+                file_status = getattr(entry, "status", "") or ""
+                if file_status in refuse_statuses:
+                    raise ValidationError(
+                        f"Task '{entry_id}' is {file_status}: a {file_status} task is not parked. Nothing was written."
                     )
             text = raw.decode("utf-8")
             split = split_frontmatter(text)
