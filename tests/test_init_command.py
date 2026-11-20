@@ -480,7 +480,7 @@ def test_schema_file_keeps_generic_even_for_a_plugin_template_name(cli_world, tm
 
 @pytest.mark.cli
 def test_init_made_software_kb_answers_like_one_added_with_kb_add_type(
-    cli_world, tmp_path, monkeypatch
+    cli_world, tmp_path, request
 ):
     """The audit's test (#1405 groom 2026-11-16): the same files, registered two ways."""
     import shutil
@@ -493,7 +493,10 @@ def test_init_made_software_kb_answers_like_one_added_with_kb_add_type(
     registry = get_registry()
     registry.discover()
     for plugin_name in registry.list_plugins():
-        monkeypatch.setattr(registry.get_plugin(plugin_name), "ctx", None, raising=False)
+        plugin = registry.get_plugin(plugin_name)
+        if getattr(plugin, "ctx", None) is not None:
+            request.addfinalizer(lambda p=plugin, c=plugin.ctx: setattr(p, "ctx", c))
+            plugin.ctx = None
 
     world = cli_world()
     made = world.cli(
