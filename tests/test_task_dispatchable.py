@@ -99,6 +99,9 @@ WORK_FILES = {
     "dep-missing": _task("dep-missing", extra="dependencies: [no-such-task]\n"),
     "dep-kb-ok": _task("dep-kb-ok", created=_t(57), extra="dependencies: ['other:o-done']\n"),
     "dep-kb-open": _task("dep-kb-open", extra="dependencies: ['other:o-open']\n"),
+    "dep-kb-unregistered": _task(  # a `kb:` prefix that names no registered KB
+        "dep-kb-unregistered", extra="dependencies: ['nope:o-done']\n"
+    ),
     "dep-parent-done": _task(  # a dependency complete by its children
         "dep-parent-done", priority=4, created=_t(15), extra="dependencies: [par-done]\n"
     ),
@@ -180,6 +183,7 @@ EXCLUDED = {
     "dep-str": "blocked",
     "dep-missing": "blocked",
     "dep-kb-open": "blocked",
+    "dep-kb-unregistered": "blocked",
     "cyc-a": "blocked",
     "cyc-b": "blocked",
 }
@@ -206,7 +210,7 @@ COUNTS = {
     "has_children": 2,
     "assigned": 2,
     "parked": 2,
-    "blocked": 6,
+    "blocked": 7,
     "empty_status": 1,
     "unreadable": 1,
 }
@@ -361,12 +365,31 @@ def test_the_claim_refuses_what_the_list_leaves_out(claim_world, tid):
 
 def test_counts_cover_every_task_in_scope(world):
     out = cli(world, "--dispatchable", "-k", WORK)
-    # `-k work`: o-open and o-done are not listed; `other:` dependencies are no
-    # longer in this listing's scope, so dep-kb-ok is blocked too.
-    want = dict(COUNTS, dispatchable=17, not_open=9, blocked=7)
+    # `-k work`: o-open and o-done are not listed, but a `kb:id` dependency is
+    # resolved against the named registered KB even when the listing reads
+    # only one KB (#1739), so dep-kb-ok is listed here too.
+    want = dict(COUNTS, dispatchable=18, not_open=9, blocked=7)
     assert out["counts"] == want
-    assert out["count"] == 17 == len(out["tasks"])
-    assert {e["id"]: e["reason"] for e in out["excluded"]}["dep-kb-ok"] == "blocked"
+    assert out["count"] == 18 == len(out["tasks"])
+    assert "dep-kb-ok" in {t["id"] for t in out["tasks"]}
+
+
+@pytest.mark.parametrize("surface", list(SURFACES))
+def test_a_kb_dependency_resolves_in_its_own_kb_when_the_listing_reads_one(world, surface):
+    """#1739: the listing reads only `work`; `other:o-done` still resolves,
+    `other:o-open` still blocks, and an unregistered prefix stays a missing
+    dependency -- the same on CLI, REST and MCP."""
+    if surface == "cli":
+        out = cli(world, "--dispatchable", "-k", WORK)
+    elif surface == "mcp":
+        out = mcp(world, dispatchable=True, kb_name=WORK)
+    else:
+        out = rest(world, dispatchable="true", kb=WORK)
+    listed = {t["id"] for t in out["tasks"]}
+    reasons = {e["id"]: e["reason"] for e in out["excluded"]}
+    assert "dep-kb-ok" in listed
+    assert reasons["dep-kb-open"] == "blocked"
+    assert reasons["dep-kb-unregistered"] == "blocked"
 
 
 @pytest.mark.parametrize("shape", sorted(EXPECTED_REASON))
