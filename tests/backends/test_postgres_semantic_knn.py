@@ -14,6 +14,13 @@ These tests take the chance out. ``SET LOCAL enable_sort = off`` makes any
 index-ordered plan win, so the index path runs whenever it is available. The
 property must hold anyway: a row that matches the filter is returned, or the
 result says it was capped.
+
+Which plans exist depends on the Postgres version. Up to PG16 the index can
+serve only an ORDER BY it matches whole, so a ``(kb_name, id)`` tiebreaker
+alone keeps it out. PG17 also allows "index scan on the distance key, then an
+Incremental Sort on the rest", and on PG17 the first two tests fail unless the
+distance key is an expression no index matches. CI runs PG16; run these
+against a PG17 pgvector image to see that guard work.
 """
 
 from __future__ import annotations

@@ -669,17 +669,22 @@ class PostgresBackend(BaseBackend):
         sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_cosine_distance"
         params["vec3"] = vec_str
         params["max_cosine_distance"] = 1.0 - min_similarity
-        # Exact KNN, never the HNSW index (#1401). Ordered by distance alone,
-        # the planner may serve this from idx_entry_embedding, which returns at
-        # most hnsw.ef_search (40) candidates before the WHERE runs, so a
-        # selective filter can empty the result without saying so; whether it
-        # does follows table statistics that autoanalyze refreshes on its own
-        # schedule. The (kb_name, id) tiebreaker closes that path: Postgres
-        # uses an ordering-operator index only when it matches the whole ORDER
-        # BY. It also makes equal distances keep the same rows on every run
-        # instead of whichever the plan reached first. The LIMIT then applies
-        # to every row the WHERE admits, as the docstring promises.
-        sql += " ORDER BY e.embedding <=> CAST(:vec2 AS vector), e.kb_name, e.id LIMIT :limit"
+        # Exact KNN, never the HNSW index (#1401). Served from
+        # idx_entry_embedding, an ORDER BY on ``<=>`` returns at most
+        # hnsw.ef_search (40) candidates before the WHERE runs, so a selective
+        # filter can empty the result without saying so. Whether the planner
+        # takes that path follows table statistics, which autoanalyze
+        # refreshes on its own schedule.
+        #
+        # ``(... <=> ...) + 0`` is a different expression from the indexed
+        # operator, so no index can supply this sort key, on any Postgres
+        # version and as any key position (PG17 lets an index supply the first
+        # key and an Incremental Sort the rest; a tiebreaker alone kept the
+        # index out only up to PG16). The rows are therefore every row the
+        # WHERE admits, sorted, and the LIMIT applies after filtering, as the
+        # docstring promises. (kb_name, id), the primary key, makes the order
+        # total: equal distances keep the same rows on every run.
+        sql += " ORDER BY (e.embedding <=> CAST(:vec2 AS vector)) + 0, e.kb_name, e.id LIMIT :limit"
         params["vec2"] = vec_str
         params["limit"] = limit
 
