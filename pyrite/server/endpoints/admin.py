@@ -150,8 +150,9 @@ def sync_index(
             removed=result.get("removed", 0),
             skipped=result.get("skipped", []),
             unreadable_kbs=result.get("unreadable_kbs", []),
-            # Folders it could not list, rows kept: a count, never a path (#1546).
+            # Unreadable folders and files are reported as counts.
             unreadable_folders=shaped["unreadable_folders"],
+            unreadable_files=shaped["unreadable_files"],
         )
         if confirm is None:
             return response

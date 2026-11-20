@@ -436,11 +436,13 @@ CORE_PERSON_ARGUMENTS: dict[str, dict[str, str]] = {
     "task_claim": {"assignee": CALLER},
     "task_start": {"assignee": CALLER},
     "task_finish": {"by": OPTIONAL},
+    "task_park": {"by": OPTIONAL},
+    "task_unpark": {"by": OPTIONAL},
     "task_create": {"assignee": OPTIONAL},
     "task_update": {"assignee": OPTIONAL},
     "task_decompose": {"children[].assignee": OPTIONAL},
 }
-CORE_ACTING_KEYWORD = frozenset({"task_update", "task_finish"})
+CORE_ACTING_KEYWORD = frozenset({"task_update", "task_finish", "task_park", "task_unpark"})
 
 #: Admin actions that write no file of the KB they name, so a read-only KB
 #: still takes them: tool -> its actions (None: every call). Everything else
@@ -2028,6 +2030,7 @@ class PyriteMCPServer:
             assignee=args.get("assignee"),
             parent=args.get("parent"),
             dispatchable=bool(args.get("dispatchable")),
+            parked=None if args.get("parked") is None else bool(args["parked"]),
             fields=parse_fields_param(args.get("fields")),
         )
         return listing
@@ -2252,6 +2255,34 @@ class PyriteMCPServer:
         )
         return result
 
+    def _task_park(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
+        """Park a task (`TaskService.park_task`, #1688): the service's dict,
+        the shape `task park` prints. Park follows the holder rule finish
+        follows: the caller is `by` (a person argument), else the signed-in
+        caller (`acting`); the operator has `operator_override: true`."""
+        result: dict[str, Any] = self.task_svc.park_task(
+            args["task_id"],
+            args["kb_name"],
+            args.get("reason") or "",
+            kind=args.get("kind"),
+            retest_after=args.get("retest_after"),
+            by=args.get("by") or acting or "",
+            operator_override=args.get("operator_override") is True,
+        )
+        return result
+
+    def _task_unpark(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
+        """Unpark a task (`TaskService.unpark_task`, #1688): the three park
+        keys removed; the service's dict, the shape `task unpark` prints. The
+        holder rule as for `task_park`."""
+        result: dict[str, Any] = self.task_svc.unpark_task(
+            args["task_id"],
+            args["kb_name"],
+            by=args.get("by") or acting or "",
+            operator_override=args.get("operator_override") is True,
+        )
+        return result
+
     def _task_finish(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
         """Move a held task to done in one write (`TaskService.finish_task`,
         #1685). Finish requires the caller to hold the task: the caller is `by`
@@ -2353,6 +2384,7 @@ class PyriteMCPServer:
             # Folders it could not list, rows kept (#1546): a count, never a
             # path, over the network (``network_shape``).
             "unreadable_folders": shaped["unreadable_folders"],
+            "unreadable_files": shaped["unreadable_files"],
         }
         if confirm is not None:
             answer["confirm"] = shaped["confirm"]
@@ -2549,7 +2581,7 @@ class PyriteMCPServer:
             result = self.registry.reindex_kb(name)
             from ..services.index_health import network_shape
 
-            # Folders it could not list as a count, never a path (#1546).
+            # Unreadable folders and files are reported as counts.
             return {"reindexed": True, "name": name, **network_shape(result)}
         except KBNotFoundError as e:
             return _error("NOT_FOUND", str(e))

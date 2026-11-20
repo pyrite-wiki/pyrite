@@ -551,7 +551,7 @@ the account's environment: the operator chose that destination.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_AUTH_ENABLED` | `false` | Turn on user accounts and per-KB permissions |
-| `PYRITE_AUTH_ANONYMOUS_TIER` | unset | What an unauthenticated request may do when auth is enabled: `read`, `write`, or `none` for nothing. Any other value, including `admin`, is refused at startup. It is a ceiling: on each KB the visitor gets the lower of this and the KB's `default_role` (a `default_role: none` KB stays hidden, a `default_role: read` KB stays read-only, and `default_role: write` never lifts a `read` visitor to write). Unset falls back to the API-key role. |
+| `PYRITE_AUTH_ANONYMOUS_TIER` | unset | What a request that sends no credential may do when auth is enabled (a key or session cookie that does not verify gets `401` instead, whatever this says): `read`, `write`, or `none` for nothing. Any other value, including `admin`, is refused at startup. It is a ceiling: on each KB the visitor gets the lower of this and the KB's `default_role` (a `default_role: none` KB stays hidden, a `default_role: read` KB stays read-only, and `default_role: write` never lifts a `read` visitor to write). Unset falls back to the API-key role. |
 | `PYRITE_AUTH_ALLOW_REGISTRATION` | `true` | Let people create accounts on the web (still closed until an admin exists; see below) |
 | `PYRITE_AUTH_LOGIN_RATE_LIMIT` | `20/minute;200/hour` | `/auth/login` attempts per client (`settings.auth.login_rate_limit`) |
 | `PYRITE_AUTH_LOGIN_RATE_LIMIT_PER_USERNAME` | `5/minute;30/hour` | Failed `/auth/login` attempts per username (`settings.auth.login_rate_limit_per_username`) |
@@ -604,6 +604,17 @@ global access to every user present at that time, self-registered ones
 included. To share a KB with every signed-in user,
 set its `default_role` to `read` (which also opens it to anonymous readers, below),
 or grant it per user.
+
+**A credential that does not verify is refused, never anonymous.** With auth
+enabled, a wrong, empty, expired or revoked key or session cookie gets `401`
+on REST, `/mcp` and the live-update socket, whatever `anonymous_tier` says.
+Two consequences, both accepted with #1754 (details in
+[REST API](rest-api.md#authenticate)): a request carrying a Bearer token is
+judged by that token alone, so a token a reverse proxy adds for itself is
+refused even next to a valid `X-API-Key`; and two instances on one host share
+the `pyrite_session` cookie name, so signing in to one can clear the other's
+session cookie and sign the user out there. Give each instance its own host
+name.
 
 Per-KB access: each KB in `config.yaml` may carry `default_role: read` (public
 to any authenticated user), `write`, or `none` (private: explicit grants only).

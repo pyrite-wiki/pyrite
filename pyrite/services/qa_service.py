@@ -48,6 +48,7 @@ from ..utils.kb_files import (
     KBFilesUnreadableError,
 )
 from ..utils.metadata import parse_metadata
+from .importance_reading import row_importance_warning
 from .qa_records import content_only, is_qa_record, records_only
 
 logger = logging.getLogger(__name__)
@@ -226,6 +227,11 @@ class QAService:
             )
         }
         self._check_entry_fields(entry, issues)
+        # The same file-value judgment as the KB-wide sweep (#1761): it replaces
+        # the column-based finding `_check_entry_fields` gave for this entry.
+        if range_issue := self._importance_range_issue(row):
+            issues[:] = [i for i in issues if i.get("rule") != "importance_range"]
+            issues.append(range_issue)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         # The checks below read the KB's folder (its files, its kb.yaml).
         if not self._report_unreadable_kb(issues, kb_name):
@@ -1189,7 +1195,7 @@ class QAService:
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
         sql = (
-            "SELECT id, kb_name, entry_type, importance FROM entry "
+            "SELECT id, kb_name, entry_type, importance, file_path FROM entry "
             f"WHERE importance IS NOT NULL AND {content_only()}"
         )
         params: dict[str, Any] = {}
@@ -1197,18 +1203,35 @@ class QAService:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
 
+        roots: dict[str, Any] = {}
         for row in self.db.execute_sql(sql, params):
-            if not validate_importance(row["importance"]):
-                issues.append(
-                    {
-                        "entry_id": row["id"],
-                        "kb_name": row["kb_name"],
-                        "rule": "importance_range",
-                        "severity": "warning",
-                        "field": "importance",
-                        "message": f"Entry '{row['id']}' has importance {row['importance']} (must be 1-10)",
-                    }
-                )
+            if issue := self._importance_range_issue(row, roots):
+                issues.append(issue)
+
+    def _importance_range_issue(
+        self, row: dict[str, Any], roots: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """The `importance_range` finding for an index row, or None.
+
+        The file's value, not the index column: the column holds the legacy
+        reading of a refused value (7.5 -> 7) and never fires (#1761). The
+        column still judges a row with no readable file.
+        """
+        refused = row_importance_warning(self.db, row["kb_name"], row.get("file_path"), roots)
+        if refused is not None:
+            message = f"Entry '{row['id']}': {refused}"
+        elif not validate_importance(row["importance"]):
+            message = f"Entry '{row['id']}' has importance {row['importance']} (must be 1-10)"
+        else:
+            return None
+        return {
+            "entry_id": row["id"],
+            "kb_name": row["kb_name"],
+            "rule": "importance_range",
+            "severity": "warning",
+            "field": "importance",
+            "message": message,
+        }
 
     def _check_broken_links(
         self,
@@ -1708,6 +1731,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_task_park(issues, kb_name, entry, shown)
             self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
@@ -1820,6 +1844,61 @@ class QAService:
                 ),
             }
         )
+
+    @staticmethod
+    def _check_task_park(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """Report a task park the views read conservatively (#1688), from the
+        file's own values; nothing is rewritten.
+
+        - a ``park_kind`` other than ``person`` or ``external``: read as
+          ``person``, so the task never returns to agents by date;
+        - a ``retest_after`` that names no date: the task stays parked;
+        - a ``retest_after`` with no ``parked_awaiting``: parked until the
+          date, but nothing says why.
+        """
+        from ..models.task_queue import PARK_KINDS, is_parked, park_fields, retest_date
+
+        if entry.entry_type != "task":
+            return
+        # Top level, else under `metadata:`, as the views read it.
+        source = park_fields(entry._source_frontmatter or {})
+
+        def finding(field: str, message: str) -> None:
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "task_park",
+                    "severity": "warning",
+                    "field": field,
+                    "message": f"{shown}: {message}",
+                }
+            )
+
+        kind = source.get("park_kind")
+        if kind not in (None, "") and str(kind).strip().lower() not in PARK_KINDS:
+            finding(
+                "park_kind",
+                f"park_kind {kind!r} is not one of {', '.join(PARK_KINDS)}; Pyrite reads "
+                "it as person, so the task never returns to agents by date.",
+            )
+        retest = source.get("retest_after")
+        if retest in (None, "") or (isinstance(retest, str) and not retest.strip()):
+            return
+        if retest_date(retest) is None:
+            finding(
+                "retest_after",
+                f"retest_after {retest!r} is not a date (YYYY-MM-DD); the task stays "
+                "parked until it is unparked.",
+            )
+        if not is_parked(source.get("parked_awaiting")):
+            finding(
+                "parked_awaiting",
+                "retest_after is set but parked_awaiting is not; the task is parked "
+                "until that date with no reason given (`pyrite task park` sets both).",
+            )
 
     def _check_number_as_text(
         self,
@@ -1981,6 +2060,11 @@ class QAService:
         emitted = entry.to_frontmatter()
         for key, value in kept.items():
             if key not in RESERVED_FIELD_NAMES:
+                continue
+            if key == "importance" and not isinstance(value, (dict, list, tuple, set)):
+                # A scalar importance has its own rule, `importance_range`
+                # (#1761); a mapping or list is a key used for something
+                # else, and keeps the rename advice.
                 continue
             # A key the model leaves out at its default (`lifecycle:
             # active`) is read, not lost: fall back to the attribute.

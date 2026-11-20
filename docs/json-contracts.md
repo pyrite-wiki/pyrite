@@ -1236,7 +1236,7 @@ the findings still in the document (`missing_targets`, `total_references`,
 
 The three return one body, built by `TaskService.task_listing`:
 `{"count", "tasks"}` (the CLI adds `outcome`), newest task first. A zero-row
-list is `done` (ADR-0046). Two optional arguments, each absent by default, and
+list is `done` (ADR-0046). Three optional arguments, each absent by default, and
 without them the body is unchanged:
 
 - **`--fields a,b`** (MCP `fields: ["a","b"]`, REST `?fields=a,b`) projects
@@ -1253,7 +1253,10 @@ without them the body is unchanged:
    "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
               "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
               "unreadable": 0},
-   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}]}
+   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}],
+   "due_rechecks": [{"id": "await-ruling", "kb_name": "test-kb", "status": "in_progress",
+                     "priority": 7, "assignee": "agent:x", "parked_awaiting": "ruling",
+                     "park_kind": "", "retest_after": "2026-12-10"}]}
   ```
 
   `counts` has every key, even at zero, and sums to the tasks the other
@@ -1270,12 +1273,76 @@ without them the body is unchanged:
   | `orphaned` | its index row's file is gone |
   | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
   | `assigned` | names any assignee |
-  | `parked` | `parked_awaiting` says why it waits; empty, whitespace, `''` and `null` do not park, and the body is never read |
+  | `parked` | its park state (`parked_state`, #1688) is `parked` or `person`: `parked_awaiting` gives a reason or `retest_after` is set, and the park is not yet due (a `person` park never is). Empty, whitespace, `''` and `null` reasons do not park, and the body is never read. For a row every other check would list, the claim's loader reads the file, so a park written after the last `index sync` still excludes it, judged by the same rule on the file's `parked_awaiting`, `park_kind` and `retest_after` (a file park whose `retest_after` has come is due, not parked). An index row that already says parked stays parked until the next sync, even when the file no longer does |
   | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
   | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
 
+  A listed task whose park has come due (an external park whose
+  `retest_after` is today or earlier) carries `recheck: true`, `park_kind`
+  and `retest_after`. `due_rechecks` lists every other live task (effective
+  status not `done`, `cancelled` or `failed`) whose park is due -- in
+  progress, claimed, blocked, or open but excluded for another reason --
+  ordered by priority (highest first), then `retest_after`, then KB and id.
+  A `person` park is never in it. Today is read once per call; the
+  predicate itself never reads the clock.
+
   With `--fields`, the CLI names on stderr any field no task carries (as
   `search` does); nothing is refused.
+- **`--parked` / `--unparked`** (MCP `parked: true|false`, REST
+  `?parked=true|false`, #1688) keeps the tasks whose park state is anything
+  but `none` (due rechecks and person parks included), or exactly `none`.
+  Each row gains `park_kind` (as written, `""` when absent), `retest_after`
+  (a date as `YYYY-MM-DD`, other text as written, `""` when absent) and
+  `park_state`: `none`, `parked`, `due` or `person`. A `park_kind` absent or
+  empty counts as `external`; any value but `person`/`external` is read as
+  `person`.
+
+## Task park: `task park`, `task unpark`, `task_park`, `task_unpark`
+
+`task park <id> -k <kb> --reason R [--kind person|external] [--retest-after
+YYYY-MM-DD] [--by WHO] [--operator-override]` (MCP `task_park {task_id,
+kb_name, reason, kind?, retest_after?, by?, operator_override?}`, write tier) sets `parked_awaiting` and sets or removes
+`park_kind` and `retest_after` in one write: a park replaces the previous
+one whole. The status never changes. The result, the same on both surfaces
+(the CLI adds `outcome: done`):
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "parked_awaiting": "foia-response", "park_kind": "", "retest_after": "2099-01-01",
+ "park_state": "parked"}
+```
+
+Refusals write nothing and answer `VALIDATION_FAILED`: a reason that is empty,
+whitespace or quote marks; a kind other than `person` or `external`; a
+`retest_after` that is not exactly `YYYY-MM-DD` and a real date; an entry that
+is not a task; a task whose status is `done` or `cancelled` (the operator
+override does not change that).
+
+Park and unpark follow the holder rule `task finish` follows: a task another
+caller holds is refused with `FORBIDDEN` and nothing is written. The caller is
+`--by` (MCP: `by`, else the signed-in account) and must be the task's
+assignee; the operator (the CLI, stdio MCP, an operator key) may act on a task
+it does not hold with `--operator-override` (MCP `operator_override: true`),
+which is refused for anyone else. A task no one holds may be parked or
+unparked by anyone. REST has no park or unpark route.
+
+A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND` on MCP.
+
+`task unpark <id> -k <kb> [--by WHO] [--operator-override]` (MCP `task_unpark
+{task_id, kb_name, by?, operator_override?}`) removes the
+three keys, never leaving an empty value, in one write (keys spelled under
+`metadata:` too: a block that held only park keys goes with them); a task with none of
+them is left byte-for-byte as it was, and the outcome is still `done`. A `done`
+or `cancelled` task may be unparked, which clears a stale park:
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "removed": ["parked_awaiting", "park_kind", "retest_after"]}
+```
+
+`qa validate` reports (rule `task_park`, severity `warning`, never a rewrite)
+a `park_kind` other than `person`/`external`, a `retest_after` that names no
+date, and a `retest_after` with no `parked_awaiting`.
 
 ## Link discovery: what is left out
 
@@ -1394,6 +1461,18 @@ per-result `legs`. `distance` is not in the default. The page-level keys below
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
 
+**`entry_warnings`** (#1761). A row, and a `get` result, whose file holds a
+value its reading does not show faithfully carries `entry_warnings`, a list of
+sentences. Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
+`11`, `"high"`, `.nan`): readers keep showing the legacy whole number, and the
+sentence names the file's value. An accepted spelling (`5.0`, `"05"`), a missing
+key, and a mapping or list value (which `qa validate` reports as
+`reserved_key_collision`) add nothing. It is not the page-level `warnings` ("a
+leg was skipped"): that key is on the response, this one is on the entry. It is
+absent when there is nothing to say. CSV has no place for it and writes one
+`warning: <id>: <sentence>` line per entry to stderr. A search page of N rows
+opens N entry files to look (a stated limit, not a bound).
+
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
 as before #54 (`body` still needs `--include-body`), a named list
 (`--fields title,date,status`) is those fields after `id` and `kb_name`, and
@@ -1410,7 +1489,7 @@ is not special. `search --files` ignores both and says so on stderr.
 `--include-body` adds `body` to the default row. In CSV the
 columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
-whole row.
+whole row, `entry_warnings` included.
 
 ### `search --batch`: many searches in one process (CLI only)
 
@@ -2214,6 +2293,9 @@ classified):
 The identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
+The one key a projection adds is `entry_warnings`, when the record has it, on
+every surface above: a projection never hides that the reading is not the
+file's.
 
 CSV, Markdown, and Rich retain every requested column, even when all records
 lack that field; absent and null values are empty cells. A single entry
@@ -2392,13 +2474,14 @@ not parse still loses its row, as before.
   keys. Each counts as failed for `exit_unless_whole`: `3` when a KB synced,
   `1` when none did.
 - **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
-  /api/kbs/{name}/reindex`, MCP `kb_index_sync`, MCP `kb_registry_reindex`,
+  /api/kbs/{name}/reindex`, MCP `kb_index_sync` and MCP `kb_registry_reindex`
+  carry `unreadable_folders` and `unreadable_files` as integer counts. Neither
+  count exposes paths or operating-system error text. Reindex omits unreadable
+  files from its `malformed` list. The shared formatter for these fields is
+  `pyrite.services.index_health.network_shape`.
   REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
-  `unreadable_folders` as a count (an integer), never a path and never the
-  OS's words, and do not carry `unreadable_files` (following the
-  maintainer's 2026-11-17 decision for `unlisted_entry_files`;
-  `pyrite.services.index_health.network_shape` is the one place that decides
-  it). Network health's `healthy` is `false`.
+  `unreadable_folders` only, omitting `unreadable_files`. Network health's
+  `healthy` is `false`.
 - **Health.** `pyrite index health` names each folder in
   `unreadable_folders` and each file in `unreadable_files`, and is
   `unhealthy`, exit `1`.
@@ -2527,6 +2610,9 @@ is the error shape above in one line.
 
 Renaming an entry changes its id while preserving its filename and folder.
 A subsequent update or delete resolves the new id in the existing file.
+A `pyrite rename --dry-run` preview reports the requested `new_id` and the
+retained `file_path` relative to the KB. Its JSON result has `dry_run: true`
+and `renamed: false`, and its rich output shows the retained path.
 Updates preserve deliberate placement, including the KB root; a schema with
 a templated subdirectory may still move the file when its folder fields change.
 

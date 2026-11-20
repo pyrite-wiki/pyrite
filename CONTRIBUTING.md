@@ -49,7 +49,9 @@ pre-commit install
 scripts/setup-checkout.sh
 pyrite kb list   # the `pyrite` KB path must be this checkout's kb/
 
-# Verify imports resolve to this checkout, including every extension
+# Verify imports resolve to this checkout, including every extension. Pytest
+# repeats this check at startup, so a manually created or tool-created worktree
+# fails before tests run if its editable installs point at another checkout.
 .venv/bin/python scripts/check_checkout_imports.py
 
 # Verify installation
@@ -58,6 +60,12 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+Each checkout must use its own environment. Run `scripts/setup-checkout.sh`
+for a manually created or tool-created worktree before testing. The pytest
+guard reports the package and both checkout paths when it refuses a run. An
+environment that intentionally uses non-editable installs may set
+`PYRITE_SKIP_CHECKOUT_IMPORTS=1` for that run.
 
 #### The dependency lock
 

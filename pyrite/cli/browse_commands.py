@@ -13,7 +13,7 @@ from ..exceptions import PyriteError, ValidationError
 from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
-from .context import cli_context, require_kb
+from .context import ROW_COUNT_MAX, cli_context, require_kb
 from .output import cli_console, output_format_choice, validate_output_format
 
 console = cli_console()
@@ -78,7 +78,9 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="Sort direction: asc, desc",
         ),
         limit: int = typer.Option(50, "--limit", "-n", min=0, help="Max entries (max 200)"),
-        offset: int = typer.Option(0, "--offset", min=0, help="Pagination offset"),
+        offset: int = typer.Option(
+            0, "--offset", min=0, max=ROW_COUNT_MAX, help="Pagination offset"
+        ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
             "json",
@@ -545,7 +547,9 @@ def register_browse_commands(app: typer.Typer) -> None:
     def tags_cmd(
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-        limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
+        limit: int = typer.Option(
+            100, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Max tags to show"
+        ),
         output_format: str = typer.Option(
             "json",
             "--format",
