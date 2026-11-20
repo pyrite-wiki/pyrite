@@ -878,8 +878,9 @@ class KBService:
         """
         # A model row is the file's ("kept") only when the loaded entry has the
         # same row (field, rule, message) AND the value the rule judged is the
-        # same YAML value, type included (#1588 fix round 1). Pairing by the
-        # message alone let a different value whose row prints the same pass
+        # same value under the one comparison (#1704; #1588 fix round 1).
+        # Pairing by the message alone let a different value whose row
+        # prints the same pass
         # as kept and be written: `importance: 5.5` updated with "5.5".
         prior_rows = (
             [
@@ -891,6 +892,8 @@ class KBService:
         )
         model_errors = []
         model_warnings = []
+        from ..schema.field_aliases import same_yaml_value
+
         # The structured rows (#1284) are what a refusal carries: one per
         # refused field, so REST, MCP and the CLI name the field.
         for row in entry.validation_errors():
@@ -902,7 +905,7 @@ class KBService:
                     for i, (prior, value) in enumerate(prior_rows)
                     if (prior.get("field"), prior.get("rule"), prior["message"])
                     == (row.get("field"), row.get("rule"), message)
-                    and _same_yaml_value(value, judged)
+                    and same_yaml_value(value, judged)
                 ),
                 None,
             )
@@ -2395,12 +2398,15 @@ class KBService:
         updates: dict[str, Any] = {}
         ignored: list[str] = []
         unchanged: list[str] = []
+        from ..schema.field_aliases import same_yaml_value
+
         for key, value in fields.items():
             if key in not_written or (value is None and key not in updatable):
                 ignored.append(key)
-            elif key in reading and _same_yaml_value(reading[key], value):
-                # The same YAML value, type included (#1588 fix round 1):
-                # `true` is not an echo of a reading of 1, so it is judged.
+            elif key in reading and same_yaml_value(reading[key], value):
+                # The one comparison (#1704): `true` is not an echo of a
+                # reading of 1, so it is judged; a number in another
+                # spelling (`5.0` for a reading of 5) is the same value.
                 unchanged.append(key)
             else:
                 updates[key] = value
@@ -2460,7 +2466,6 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
-        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
         ``file_operations`` operations (``Set``, ``Append``, ``Remove``,
@@ -2476,11 +2481,7 @@ class KBService:
         #1685): the states the write passes through, first to last, handed
         to the ``before_save`` hooks, where the workflow judges every edge.
         ``expect_holder`` refuses the write unless the bytes it replaces name
-        that assignee (`task start`'s retry and `task finish`, #1685).
-        ``drop_emptied_metadata``: when the write unsets every key of the
-        file's ``metadata:`` block, the block goes with them rather than
-        staying as ``metadata: {}`` (`task unpark`, #1688 round 1); decided
-        on the file's own keys, never the caller's word."""
+        that assignee (`task start`'s retry and `task finish`, #1685)."""
         return self._update(
             entry_id,
             kb_name,
@@ -2490,7 +2491,6 @@ class KBService:
             merge_spellings=merge_spellings,
             status_path=status_path,
             expect_holder=expect_holder,
-            drop_emptied_metadata=drop_emptied_metadata,
         )
 
     def _update(
@@ -2504,7 +2504,6 @@ class KBService:
         merge_spellings: bool = False,
         status_path: Sequence[str] | None = None,
         expect_holder: str | None = None,
-        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2600,8 +2599,6 @@ class KBService:
                         continue  # the same field named twice with one value
                     placed[resolved.path] = resolved.value
                 all_ops.append(resolved)
-            if drop_emptied_metadata:
-                all_ops = _drop_emptied_metadata(file_values, all_ops)
             self._refuse_conflicting_spellings(entry, updates)
             try:
                 # The file is this KB's: its parser's words go to a reader of it.
@@ -5278,44 +5275,6 @@ def _frontmatter_span(text: str) -> FrontmatterSpan:
     split = split_frontmatter(text)
     assert isinstance(split, Frontmatter), split  # apply() just produced it
     return FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
-
-
-def _same_yaml_value(a: Any, b: Any) -> bool:
-    """``values_identical`` (the same YAML value, type included: ``True`` is not
-    ``1``, ``"5.5"`` is not ``5.5``), and ``.nan`` is the same value as itself.
-
-    What "the update sent the value the file holds" means for a kept model row
-    and for an echo's unchanged key (#1588 fix round 1). ``values_identical``
-    compares a float with ``==``, so ``.nan`` never equals itself there and a
-    file's own ``importance: .nan`` would stop an update of another field.
-    """
-    from ..schema.field_aliases import values_identical
-
-    if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
-        return True
-    return values_identical(a, b)
-
-
-def _drop_emptied_metadata(file_values: dict[str, Any], ops: list[Any]) -> list[Any]:
-    """``ops`` with the unsets of every key of the file's ``metadata:`` block
-    replaced by one unset of the block, when they remove all of it; else
-    ``ops`` unchanged (#1688 round 1: a park cleared to nothing)."""
-    bag = file_values.get("metadata")
-    if not isinstance(bag, dict) or not bag:
-        return ops
-
-    def nested_unset(op: Any) -> bool:
-        path = getattr(op, "path", None)
-        return (
-            isinstance(op, Unset)
-            and isinstance(path, tuple)
-            and len(path) == 2
-            and path[0] == "metadata"
-        )
-
-    if not set(bag) <= {op.path[1] for op in ops if nested_unset(op)}:
-        return ops
-    return [op for op in ops if not nested_unset(op)] + [Unset(("metadata",))]
 
 
 def _nested_block_is_all_equal_pairs(entry: Entry, file_values: dict[str, Any]) -> bool:
