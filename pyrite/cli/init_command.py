@@ -529,16 +529,12 @@ def plugin_kb_type_for_template(template: str) -> str:
     same name, and registers with the KB type the plugin declares under that
     name (``get_kb_type_for_preset``). Built-in templates give ``generic``.
     """
-    try:
-        from ..plugins import get_registry
+    from ..plugins import get_registry
 
-        registry = get_registry()
-        if template not in registry.get_all_kb_presets():
-            return "generic"
-        return registry.get_kb_type_for_preset(template) or "generic"
-    except Exception:
-        logger.warning("Failed to resolve KB type for template '%s'", template, exc_info=True)
+    registry = get_registry()
+    if template not in registry.get_all_kb_presets():
         return "generic"
+    return registry.get_kb_type_for_preset(template) or "generic"
 
 
 def _template_help() -> str:
