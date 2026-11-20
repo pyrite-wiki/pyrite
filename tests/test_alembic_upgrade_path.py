@@ -715,7 +715,7 @@ def test_two_threads_upgrading_at_once_in_one_process_both_succeed(tmp_path):
     from pyrite.storage.alembic_chain import upgrade_to_head
 
     engines = [create_engine(f"sqlite:///{(tmp_path / f'{i}.db').as_posix()}") for i in range(2)]
-    barrier = threading.Barrier(2)
+    barrier = threading.Barrier(2, timeout=60)
     errors: list[BaseException] = []
 
     def start(engine) -> None:
