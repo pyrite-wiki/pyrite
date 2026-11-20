@@ -1486,13 +1486,14 @@ class KBRepository:
                 touching the filesystem.
 
         Returns:
-            Plan/result dict with keys ``renamed`` (bool), ``old_id``,
-            ``new_id``, ``files_rewritten`` (linking files written),
+            Plan/result dict with keys ``renamed`` (true only after a write),
+            ``old_id``, ``new_id``, ``files_rewritten`` (linking files written),
             ``links_rewritten``, ``files_skipped`` (linking files the rename
             could not patch, each ``{"path", "reason"}``), ``files_partial``
             (linking files whose body was rewritten while a wikilink in a
             frontmatter that could not be patched as values still names the
-            old id, each ``{"path", "reason"}``), ``dry_run``.
+            old id, each ``{"path", "reason"}``), ``dry_run``. A dry run also
+            includes ``file_path``, the retained path relative to the KB.
 
         A rename either completes, with every linker it could not patch
         listed, or changes nothing (#978 delta review, round 1): the entry
@@ -1582,7 +1583,7 @@ class KBRepository:
                     rewrites.append((md_file, linker, rewrite))
 
         if dry_run:
-            return self._rename_result(
+            plan = self._rename_result(
                 old_id,
                 new_id,
                 files_rewritten=len(rewrites),
@@ -1591,6 +1592,8 @@ class KBRepository:
                 partial=partial,
                 dry_run=True,
             )
+            plan["file_path"] = self._rel(src)
+            return plan
 
         # Execute: the entry first, so a rename that cannot write it changes
         # nothing (the delta review's "half-applied rename": the linkers used
@@ -1661,7 +1664,7 @@ class KBRepository:
         dry_run: bool,
     ) -> dict:
         return {
-            "renamed": True,
+            "renamed": not dry_run,
             "old_id": old_id,
             "new_id": new_id,
             "files_rewritten": files_rewritten,
