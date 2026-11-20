@@ -6,7 +6,7 @@ Extracted from api.py to reduce file size and improve organization.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 # =============================================================================
 # Knowledge Bases
@@ -102,16 +102,18 @@ class KBReindexResponse(BaseModel):
     #: never a path, over the network. The local CLI names them.
     unreadable_folders: int = 0
 
-    @field_validator("unreadable_folders", mode="before")
+    unreadable_files: int = 0
+
+    @field_validator("unreadable_folders", "unreadable_files", mode="before")
     @classmethod
-    def _folders_as_counted(cls, value: Any) -> Any:
-        """The route builds this from the registry's dict (``**result``):
-        the folder rows are shaped by ``network_shape``, the one place that
-        decides what a network caller gets, whichever way the dict arrives."""
+    def _unreadable_as_counted(cls, value: Any, info: ValidationInfo) -> Any:
+        """Accept raw registry rows as well as the route's shaped counts."""
         if isinstance(value, list):
             from ..services.index_health import network_shape
 
-            return network_shape({"unreadable_folders": value})["unreadable_folders"]
+            field = info.field_name
+            assert field is not None
+            return network_shape({field: value})[field]
         return value
 
 
@@ -485,6 +487,7 @@ class SyncResponse(BaseModel):
     #: How many folders it could not list in the KBs it synced: their rows
     #: kept (#1546). A count, never a path; the local CLI names them.
     unreadable_folders: int = 0
+    unreadable_files: int = 0
 
 
 class ErrorResponse(BaseModel):
