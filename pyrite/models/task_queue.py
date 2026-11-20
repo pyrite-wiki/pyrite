@@ -213,10 +213,12 @@ def dependency_ids(value: Any) -> list[str]:
 def _dependency_resolved(
     dep: str, own_kb: str, derived: dict[str, dict[str, dict[str, Any]]]
 ) -> bool:
-    """A dependency is resolved when it names a task this listing reads and
-    that task's effective status resolves it. An id in the task's own KB
-    first; then ``kb:id`` in a KB the listing reads. Anything else -- no such
-    task, a KB the listing does not read -- is not resolved.
+    """A dependency is resolved when it names a task and that task's
+    effective status resolves it. An id in the task's own KB first; then
+    ``kb:id`` in the named KB: the service supplies the derived completion
+    of every registered KB a dependency names, even one the listing does
+    not read (#1739). Anything else -- no such task, a prefix that names no
+    registered KB -- is not resolved.
 
     This differs from ``TaskService.get_blocked_by``, which skips a
     dependency it cannot find (so ``task_blocked_by`` reports it as blocking
@@ -239,7 +241,8 @@ def classify_task(
     ``retest_after`` (read by :func:`parked_state` at ``today``),
     ``index_status`` (the index's
     own status column, which the claim compares), ``dependencies``,
-    ``file_present`` and ``file_loads`` (both default true). ``derived`` maps each KB this listing reads to its
+    ``file_present`` and ``file_loads`` (both default true). ``derived`` maps each KB this listing reads, and every
+    registered KB a dependency names, to its
     :func:`~pyrite.models.task_completion.derive_completion` result, which
     is how dependencies are resolved.
     """
