@@ -259,16 +259,37 @@ class OverlaySearchBackend:
         diff = self._diff.search_by_tag_prefix(prefix, kb_name, limit=10000)
         return self._merge_entry_lists(main, diff)[:limit]
 
-    # ── edge endpoints → delegate to main ────────────────────────────
+    # ── edge endpoints → merge ───────────────────────────────────────
+    #
+    # Endpoint rows are written only to the diff, so reading main alone
+    # made a change set's edges invisible (#1733). Rows keyed by the edge
+    # entry itself come from the diff wholesale when the diff holds that
+    # entry; rows keyed by an endpoint combine both halves by the edge
+    # entry they name.
 
     def get_edge_endpoints(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        if self._diff.get_entry(entry_id, kb_name) is not None:
+            rows = self._diff.get_edge_endpoints(entry_id, kb_name)
+            return self._fill_titles(rows, "endpoint_id", "endpoint_kb")
         return self._main.get_edge_endpoints(entry_id, kb_name)
 
     def get_edges_by_endpoint(self, endpoint_id: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._main.get_edges_by_endpoint(endpoint_id, kb_name)
+        diff_rows = self._diff.get_edges_by_endpoint(endpoint_id, kb_name)
+        main_rows = [
+            row
+            for row in self._main.get_edges_by_endpoint(endpoint_id, kb_name)
+            if self._diff.get_entry(row["id"], row["kb_name"]) is None
+        ]
+        return main_rows + diff_rows
 
     def get_edges_between(self, id_a: str, id_b: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._main.get_edges_between(id_a, id_b, kb_name)
+        diff_rows = self._diff.get_edges_between(id_a, id_b, kb_name)
+        main_rows = [
+            row
+            for row in self._main.get_edges_between(id_a, id_b, kb_name)
+            if self._diff.get_entry(row["id"], row["kb_name"]) is None
+        ]
+        return main_rows + diff_rows
 
     # ── graph → merge ───────────────────────────────────────────────
 
@@ -503,13 +524,47 @@ class OverlaySearchBackend:
     def delete_embedding(self, entry_id: str, kb_name: str) -> None:
         self._diff.delete_embedding(entry_id, kb_name)
 
-    # ── object refs → delegate to main ──────────────────────────────
+    # ── object refs → merge ──────────────────────────────────────────
+    #
+    # Ref rows are written only to the diff, so reading main alone made a
+    # change set's refs invisible (#1733). ``get_refs_from`` is keyed by
+    # the source entry: the diff's rows replace main's wholesale for an
+    # entry the diff holds, so a ref the diff removed does not reappear
+    # from main. ``get_refs_to`` is keyed by the target: main's rows count
+    # only for source entries the diff does not hold, plus all diff rows.
 
     def get_refs_from(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        if self._diff.get_entry(entry_id, kb_name) is not None:
+            rows = self._diff.get_refs_from(entry_id, kb_name)
+            return self._fill_titles(rows, "id", "kb_name")
         return self._main.get_refs_from(entry_id, kb_name)
 
     def get_refs_to(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._main.get_refs_to(entry_id, kb_name)
+        diff_rows = self._diff.get_refs_to(entry_id, kb_name)
+        main_rows = [
+            row
+            for row in self._main.get_refs_to(entry_id, kb_name)
+            if self._diff.get_entry(row["id"], row["kb_name"]) is None
+        ]
+        return main_rows + diff_rows
+
+    def _fill_titles(
+        self, rows: list[dict[str, Any]], id_field: str, kb_field: str
+    ) -> list[dict[str, Any]]:
+        """Fill ``title``/``entry_type`` on diff rows from main (#1733).
+
+        A ref or endpoint row read from the diff joins its target in the
+        diff's own table; a target that exists only in main comes back
+        titleless. The overlay's reader can see main's entry, so the row
+        carries its title, as a read on main would have spelled it.
+        """
+        for row in rows:
+            if row.get("title") is None:
+                target = self._main.get_entry(row[id_field], row[kb_field])
+                if target is not None:
+                    row["title"] = target["title"]
+                    row["entry_type"] = target["entry_type"]
+        return rows
 
     # ── folder queries → delegate to main ───────────────────────────
 
@@ -662,6 +717,24 @@ class WorktreeDB:
         self, entry_id: str, kb_name: str, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
         return self._overlay.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
+
+    # Derived-row reads (refs, edge endpoints) merge the change set like
+    # the entry reads do (#1733); they are defined here, not forwarded to
+    # main, for the same reason.
+    def get_refs_from(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_refs_from(entry_id, kb_name)
+
+    def get_refs_to(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_refs_to(entry_id, kb_name)
+
+    def get_edge_endpoints(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_edge_endpoints(entry_id, kb_name)
+
+    def get_edges_by_endpoint(self, endpoint_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_edges_by_endpoint(endpoint_id, kb_name)
+
+    def get_edges_between(self, id_a: str, id_b: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_edges_between(id_a, id_b, kb_name)
 
     def get_all_tags(self, kb_name: str | None = None) -> list[tuple[str, int]]:
         return self._overlay.get_all_tags(kb_name)
@@ -829,11 +902,10 @@ _READS_FROM_MAIN = frozenset(
         "entry_version_exists", "find_by_assignee", "find_by_location",
         "find_by_status", "find_overdue", "get_all_backlinks_for_kb", "get_all_outlinks_for_kb",
         "get_all_settings", "get_all_sources_for_kb", "get_contributors", "get_distinct_types",
-        "get_edge_endpoints", "get_edges_between", "get_edges_by_endpoint",
         "get_entries_for_indexing", "get_entry_version_file_path", "get_entry_versions",
         "get_global_counts", "get_graph_data", "get_kb_stats", "get_kbs_for_repo",
         "get_latest_review", "get_migration_status", "get_most_linked",
-        "get_orphans", "get_refs_from", "get_refs_to", "get_related", "get_repo", "get_review",
+        "get_orphans", "get_related", "get_repo", "get_review",
         "get_reviews", "get_schema_version", "get_setting", "get_tag_tree", "get_tags_as_dicts",
         "get_timeline", "get_type_counts", "get_user", "get_workspace_repos",
         "list_entries_in_folder", "list_entry_version_rows", "list_repos", "search_by_date_range",
