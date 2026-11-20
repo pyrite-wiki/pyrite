@@ -2474,13 +2474,14 @@ not parse still loses its row, as before.
   keys. Each counts as failed for `exit_unless_whole`: `3` when a KB synced,
   `1` when none did.
 - **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
-  /api/kbs/{name}/reindex`, MCP `kb_index_sync`, MCP `kb_registry_reindex`,
+  /api/kbs/{name}/reindex`, MCP `kb_index_sync` and MCP `kb_registry_reindex`
+  carry `unreadable_folders` and `unreadable_files` as integer counts. Neither
+  count exposes paths or operating-system error text. Reindex omits unreadable
+  files from its `malformed` list. The shared formatter for these fields is
+  `pyrite.services.index_health.network_shape`.
   REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
-  `unreadable_folders` as a count (an integer), never a path and never the
-  OS's words, and do not carry `unreadable_files` (following the
-  maintainer's 2026-11-17 decision for `unlisted_entry_files`;
-  `pyrite.services.index_health.network_shape` is the one place that decides
-  it). Network health's `healthy` is `false`.
+  `unreadable_folders` only, omitting `unreadable_files`. Network health's
+  `healthy` is `false`.
 - **Health.** `pyrite index health` names each folder in
   `unreadable_folders` and each file in `unreadable_files`, and is
   `unhealthy`, exit `1`.
@@ -2609,6 +2610,9 @@ is the error shape above in one line.
 
 Renaming an entry changes its id while preserving its filename and folder.
 A subsequent update or delete resolves the new id in the existing file.
+A `pyrite rename --dry-run` preview reports the requested `new_id` and the
+retained `file_path` relative to the KB. Its JSON result has `dry_run: true`
+and `renamed: false`, and its rich output shows the retained path.
 Updates preserve deliberate placement, including the KB root; a schema with
 a templated subdirectory may still move the file when its folder fields change.
 

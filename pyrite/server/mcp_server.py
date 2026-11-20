@@ -2384,6 +2384,7 @@ class PyriteMCPServer:
             # Folders it could not list, rows kept (#1546): a count, never a
             # path, over the network (``network_shape``).
             "unreadable_folders": shaped["unreadable_folders"],
+            "unreadable_files": shaped["unreadable_files"],
         }
         if confirm is not None:
             answer["confirm"] = shaped["confirm"]
@@ -2580,7 +2581,7 @@ class PyriteMCPServer:
             result = self.registry.reindex_kb(name)
             from ..services.index_health import network_shape
 
-            # Folders it could not list as a count, never a path (#1546).
+            # Unreadable folders and files are reported as counts.
             return {"reindexed": True, "name": name, **network_shape(result)}
         except KBNotFoundError as e:
             return _error("NOT_FOUND", str(e))

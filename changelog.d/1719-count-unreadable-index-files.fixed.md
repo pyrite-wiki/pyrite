@@ -1,0 +1,1 @@
+- REST and MCP sync and reindex return an `unreadable_files` count. Reindex reports files it could not read in that count and omits them from its `malformed` list (#1719, #1700).

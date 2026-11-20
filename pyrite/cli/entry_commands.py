@@ -914,6 +914,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                         f"{escape(item['reason'])}"
                     )
             if dry_run:
+                console.print(f"  File: {escape(result['file_path'])}")
                 console.print("[yellow]Dry run — no files modified.[/yellow]")
 
         if skipped or partial:
