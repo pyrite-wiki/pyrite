@@ -479,9 +479,21 @@ def test_schema_file_keeps_generic_even_for_a_plugin_template_name(cli_world, tm
 
 
 @pytest.mark.cli
-def test_init_made_software_kb_answers_like_one_added_with_kb_add_type(cli_world, tmp_path):
+def test_init_made_software_kb_answers_like_one_added_with_kb_add_type(
+    cli_world, tmp_path, monkeypatch
+):
     """The audit's test (#1405 groom 2026-11-16): the same files, registered two ways."""
     import shutil
+
+    from pyrite.plugins import get_registry
+
+    # The CLI runs a plugin without a context. Another test may have left one on
+    # the process-wide plugin (tests/test_orient_software.py does), and orient
+    # would then resolve `sw` against that test's config and answer "not found".
+    registry = get_registry()
+    registry.discover()
+    for plugin_name in registry.list_plugins():
+        monkeypatch.setattr(registry.get_plugin(plugin_name), "ctx", None, raising=False)
 
     world = cli_world()
     made = world.cli(
