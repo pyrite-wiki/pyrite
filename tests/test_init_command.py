@@ -428,10 +428,8 @@ def _registered_type(world, name):
 
 
 @pytest.mark.cli
-@pytest.mark.parametrize(
-    ("template", "expected"), [*PLUGIN_PRESETS, ("research", "generic")], ids=lambda v: v
-)
-def test_init_registers_the_template_kb_type_through_the_cli(
+@pytest.mark.parametrize(("template", "expected"), PLUGIN_PRESETS, ids=lambda v: v)
+def test_init_registers_the_plugin_template_kb_type_through_the_cli(
     cli_world, tmp_path, template, expected
 ):
     world = cli_world()
@@ -443,19 +441,31 @@ def test_init_registers_the_template_kb_type_through_the_cli(
 
 
 @pytest.mark.cli
-def test_plugin_presets_list_matches_the_installed_extensions():
-    from pyrite.plugins import get_registry
-
-    registry = get_registry()
-    supplied = {
-        name
-        for name in registry.get_all_kb_presets()
-        if registry.get_kb_type_for_preset(name) == name
-    }
-    assert supplied == {t for t, _ in PLUGIN_PRESETS}
+@pytest.mark.control(reason="built-in templates register generic before and after #1405")
+def test_init_builtin_template_registers_generic_through_the_cli(cli_world, tmp_path):
+    world = cli_world()
+    result = world.cli(
+        "init", "-t", "research", "-p", str(tmp_path / "made"), "-n", "made", "--no-examples"
+    )
+    assert result.exit_code == 0, result.output
+    assert _registered_type(world, "made") == "generic"
 
 
 @pytest.mark.cli
+@pytest.mark.control(reason="guards the hand-written preset list above against drift")
+def test_plugin_presets_list_matches_the_installed_extensions():
+    """A plugin supplying a preset named like a KB type it declares is a case to list."""
+    from pyrite.plugins import get_registry
+
+    registry = get_registry()
+    declared = set(registry.get_all_kb_types())
+    assert {name for name in registry.get_all_kb_presets() if name in declared} == {
+        t for t, _ in PLUGIN_PRESETS
+    }
+
+
+@pytest.mark.cli
+@pytest.mark.control(reason="--schema-file registers generic before and after #1405")
 def test_schema_file_keeps_generic_even_for_a_plugin_template_name(cli_world, tmp_path):
     world = cli_world()
     schema = tmp_path / "schema.yaml"

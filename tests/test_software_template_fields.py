@@ -97,6 +97,7 @@ def test_update_refuses_off_list_value_without_changing_file(software, entry_typ
     assert entry.file_path.read_bytes() == before
 
 
+@pytest.mark.control(reason="schema-layer enforce_enums switch; run as generic, as before #1405")
 @pytest.mark.parametrize(("entry_type", "field"), CASES)
 def test_enforcement_disabled_preserves_warning(software, entry_type, field):
     svc, kb = software
