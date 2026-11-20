@@ -5,7 +5,7 @@ from typing import Any
 
 from pyrite.config import KBConfig, PyriteConfig
 from pyrite.exceptions import KBNotFoundError, ValidationError, outside_text
-from pyrite.utils.yaml import load_yaml_file
+from pyrite.utils.yaml import read_kb_yaml
 
 
 def migration_operations(before: dict[str, Any], after: dict[str, Any]) -> list[Any]:
@@ -53,10 +53,10 @@ class SchemaService:
         """Load kb.yaml, returning empty dict if missing. Read only inside the
         KB: a kb.yaml that is a link out of it, or a hard link, raises
         ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``), so no schema
-        command shows it or writes it back into the KB."""
-        if kb.kb_yaml_present:
-            return load_yaml_file(kb.kb_yaml_path, kb_root=kb.path)
-        return {}
+        command shows it or writes it back into the KB. One that cannot be
+        loaded as a mapping raises ``KBConfigInvalidError`` before any write,
+        so ``add``, ``remove`` and ``set`` never rewrite it (#1547)."""
+        return read_kb_yaml(kb.path)
 
     def _save_kb_yaml(self, kb: KBConfig, data: dict[str, Any]) -> None:
         """Save kb.yaml and refresh in-memory config. A kb.yaml that is a link

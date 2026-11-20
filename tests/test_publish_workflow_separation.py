@@ -9,7 +9,12 @@ write to the repository, or what a credential job runs or publishes, each with
 a planted mutation of the present file; `PLANTED_GRANTS` is generated from
 GitHub's documented list of permission scopes, so every scope at every level
 is planted at every place a grant can sit. The present file is the one green
-control.
+control. `PUBLISH_SPEC` also states, for each job, the exact ordered list of
+steps that use an action: the full `uses` (action and SHA) and the exact `with`
+values, compared with `==`, so a moved SHA, a changed artifact name, path or
+`packages-dir`, or an extra step goes red. A Dependabot bump of an action used
+in `publish.yml` therefore needs the pinned SHA in this file changed in the
+same pull request, by a person who has looked at what the new version does.
 
 For any other workflow:
 
@@ -221,6 +226,31 @@ DOCUMENTED_SCOPES = {
 PERMISSION_SHORTHANDS = ("read-all", "write-all", {})
 
 _ABSENT = object()
+# The pinned SHAs, written out here and not read from publish.yml: a Dependabot
+# bump of an action used in publish.yml now needs the SHA below changed in the
+# same pull request, by a person who has looked at what the new version does.
+_SHA_CHECKOUT = "3d3c42e5aac5ba805825da76410c181273ba90b1"  # v7.0.1
+_SHA_SETUP_PYTHON = "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"  # v7.1.0
+_SHA_UPLOAD = "cf430e030ddbb5b0abf93d22962f4752f3646cd9"  # v7.0.2
+_SHA_DOWNLOAD = "9000827ccba6bdab643e8b6fd33ac0654aef8333"  # v8.0.2
+_SHA_PUBLISH = "7245906fb61fa33a13554f9d5fb856fe61758086"  # release/v1
+_PUBLISH_PYRITE_STEPS = [
+    {
+        "uses": f"actions/download-artifact@{_SHA_DOWNLOAD}",
+        "with": {"name": "dist-pyrite", "path": "dist/"},
+    },
+    {"uses": f"pypa/gh-action-pypi-publish@{_SHA_PUBLISH}", "with": _ABSENT},
+]
+_PUBLISH_MCP_STEPS = [
+    {
+        "uses": f"actions/download-artifact@{_SHA_DOWNLOAD}",
+        "with": {"name": "dist-pyrite-mcp", "path": "pyrite-mcp/dist/"},
+    },
+    {
+        "uses": f"pypa/gh-action-pypi-publish@{_SHA_PUBLISH}",
+        "with": {"packages-dir": "pyrite-mcp/dist/"},
+    },
+]
 _TOKEN_PERMS = {"contents": "read", "id-token": "write"}
 _TOKEN_JOB = {
     "keys": {"name", "runs-on", "needs", "environment", "permissions", "steps"},
@@ -251,9 +281,38 @@ PUBLISH_SPEC = {
             },
             # What is built is what is published: the commands are the spec.
             "runs": ("pip install build==1.6.1", "python -m build", "python -m build"),
+            # Every `uses` step, in order, exactly: what is checked out, which
+            # Python builds it, and which bytes are uploaded under which name.
+            "steps": [
+                {"uses": f"actions/checkout@{_SHA_CHECKOUT}", "with": _ABSENT},
+                {
+                    "uses": f"actions/setup-python@{_SHA_SETUP_PYTHON}",
+                    "with": {"python-version": "3.12"},
+                },
+                {
+                    "uses": f"actions/upload-artifact@{_SHA_UPLOAD}",
+                    "with": {
+                        "name": "dist-pyrite",
+                        "path": "dist/",
+                        "if-no-files-found": "error",
+                    },
+                },
+                {
+                    "uses": f"actions/upload-artifact@{_SHA_UPLOAD}",
+                    "with": {
+                        "name": "dist-pyrite-mcp",
+                        "path": "pyrite-mcp/dist/",
+                        "if-no-files-found": "error",
+                    },
+                },
+            ],
         },
-        "publish-pyrite": {**_TOKEN_JOB, "needs": "build"},
-        "publish-pyrite-mcp": {**_TOKEN_JOB, "needs": ["build", "publish-pyrite"]},
+        "publish-pyrite": {**_TOKEN_JOB, "needs": "build", "steps": _PUBLISH_PYRITE_STEPS},
+        "publish-pyrite-mcp": {
+            **_TOKEN_JOB,
+            "needs": ["build", "publish-pyrite"],
+            "steps": _PUBLISH_MCP_STEPS,
+        },
     },
 }
 
@@ -261,6 +320,40 @@ PUBLISH_SPEC = {
 def _on(workflow):
     """`on:`, which PyYAML reads as the key True (YAML 1.1 boolean)."""
     return workflow.get("on", workflow.get(True, _ABSENT))
+
+
+_FIX = "; if this change is intended, change the literal in PUBLISH_SPEC in this file"
+
+
+def _show(value):
+    return "no `with:`" if value is _ABSENT else repr(value)
+
+
+def _step_violations(name, used, want):
+    """The `uses` steps of one job against its exact ordered list: the count,
+    and for each step the full `uses` (action and SHA) and the whole `with`
+    mapping (an absent `with` is its own value). Each line names the job, the
+    step index in the job, the field and the value found."""
+    bad = []
+    if len(used) != len(want):
+        bad.append(
+            f"{name}: {len(used)} steps with `uses`, spec has {len(want)} "
+            f"(found {[s.get('uses') for _, s in used]!r}){_FIX}"
+        )
+    for (index, step), spec_step in zip(
+        used, want, strict=False
+    ):  # a count mismatch is reported above
+        if step.get("uses") != spec_step["uses"]:
+            bad.append(
+                f"{name}: step {index} uses {step.get('uses')!r}, "
+                f"spec has {spec_step['uses']!r}{_FIX}"
+            )
+        if step.get("with", _ABSENT) != spec_step["with"]:
+            bad.append(
+                f"{name}: step {index} with {_show(step.get('with', _ABSENT))}, "
+                f"spec has {_show(spec_step['with'])}{_FIX}"
+            )
+    return bad
 
 
 def publish_violations(workflow, spec=PUBLISH_SPEC):
@@ -293,7 +386,8 @@ def publish_violations(workflow, spec=PUBLISH_SPEC):
         if job.get("runs-on") != spec["runs_on"]:
             bad.append(f"{name}: runs-on {job.get('runs-on')!r}")
         runs = []
-        for step in job.get("steps") or []:
+        used = []  # (index, step) of every step with a `uses`
+        for index, step in enumerate(job.get("steps") or []):
             if not isinstance(step, dict):
                 bad.append(f"{name}: step {step!r}")
                 continue
@@ -302,6 +396,7 @@ def publish_violations(workflow, spec=PUBLISH_SPEC):
             if "run" in step:
                 runs.append(step["run"])
                 continue
+            used.append((index, step))
             m = PINNED_USES.match(str(step.get("uses", "")))
             if not m or m["action"] not in want["actions"]:
                 bad.append(f"{name}: action {step.get('uses')!r}")
@@ -311,6 +406,7 @@ def publish_violations(workflow, spec=PUBLISH_SPEC):
                 bad.append(f"{name}: inputs {sorted(extra)} to {m['action']}")
         if tuple(runs) != want["runs"]:
             bad.append(f"{name}: commands {runs!r}")
+        bad.extend(_step_violations(name, used, want["steps"]))
     return bad
 
 
@@ -647,6 +743,89 @@ def test_every_enumerated_key_changed_is_refused(row):
     wf = _normal(_load(PUBLISH))
     row[3](wf)
     assert publish_violations(wf) != [], row[1]
+
+
+_OTHER_SHA = "b" * 40
+_DL = "actions/download-artifact@"
+_PUB = "pypa/gh-action-pypi-publish@"
+_UP = "actions/upload-artifact@"
+
+
+def _set_sha(path):
+    """Move the `uses` at `path` to another full-length SHA, same action."""
+
+    def mutate(wf):
+        node = wf
+        for part in path[:-1]:
+            node = node[part]
+        action = node[path[-1]].split("@")[0]
+        node[path[-1]] = f"{action}@{_OTHER_SHA}"
+
+    return mutate
+
+
+def _drop(path):
+    def mutate(wf):
+        node = wf
+        for part in path[:-1]:
+            node = node[part]
+        del node[path[-1]]
+
+    return mutate
+
+
+def _dup_step(job, index):
+    def mutate(wf):
+        steps = wf["jobs"][job]["steps"]
+        steps.insert(index, copy.deepcopy(steps[index]))
+
+    return mutate
+
+
+_P = ("jobs", "publish-pyrite", "steps")
+_M = ("jobs", "publish-pyrite-mcp", "steps")
+_B = ("jobs", "build", "steps")
+
+#: The five ways `publish.yml` could change what is downloaded, published or
+#: uploaded that the key-and-name checks above passed: a value, a SHA, a count.
+#: (id, mutation), each applied to the present file.
+VALUE_ROWS = [
+    # 1. a download step's artifact name or path, in each publishing job
+    ("download-name:publish-pyrite", _set(_P + (0, "with", "name"), "dist-pyrite-mcp")),
+    ("download-path:publish-pyrite", _set(_P + (0, "with", "path"), "elsewhere/")),
+    ("download-name:publish-pyrite-mcp", _set(_M + (0, "with", "name"), "dist-pyrite")),
+    ("download-path:publish-pyrite-mcp", _set(_M + (0, "with", "path"), "dist/")),
+    # 2. packages-dir on a publish step, including adding one where there is none
+    ("packages-dir-added:publish-pyrite", _set(_P + (1, "with"), {"packages-dir": "dist/"})),
+    ("packages-dir-changed:publish-pyrite-mcp", _set(_M + (1, "with", "packages-dir"), "dist/")),
+    ("packages-dir-removed:publish-pyrite-mcp", _drop(_M + (1, "with"))),
+    # 3. the build job's upload steps
+    ("upload-path:dist-pyrite", _set(_B + (5, "with", "path"), "pyrite-mcp/dist/")),
+    ("upload-name:dist-pyrite", _set(_B + (5, "with", "name"), "dist-other")),
+    ("upload-path:dist-pyrite-mcp", _set(_B + (6, "with", "path"), "dist/")),
+    ("upload-name:dist-pyrite-mcp", _set(_B + (6, "with", "name"), "dist-other")),
+    ("upload-if-no-files-found", _set(_B + (6, "with", "if-no-files-found"), "ignore")),
+    # 4. an action moved to another full-length SHA
+    ("sha:publish:publish-pyrite", _set_sha(_P + (1, "uses"))),
+    ("sha:publish:publish-pyrite-mcp", _set_sha(_M + (1, "uses"))),
+    ("sha:download:publish-pyrite", _set_sha(_P + (0, "uses"))),
+    ("sha:download:publish-pyrite-mcp", _set_sha(_M + (0, "uses"))),
+    ("sha:upload:build", _set_sha(_B + (5, "uses"))),
+    ("sha:checkout:build", _set_sha(_B + (0, "uses"))),
+    # 5. a second download step in a publishing job
+    ("second-download:publish-pyrite", _dup_step("publish-pyrite", 0)),
+    ("second-download:publish-pyrite-mcp", _dup_step("publish-pyrite-mcp", 0)),
+]
+
+
+@pytest.mark.control(
+    reason="self-test of publish_violations over the present file; every one of these passed the checks that came before the step lists"
+)
+@pytest.mark.parametrize("row", VALUE_ROWS, ids=lambda r: r[0])
+def test_a_changed_step_value_sha_or_count_is_refused(row):
+    wf = _normal(_load(PUBLISH))
+    row[1](wf)
+    assert publish_violations(wf) != [], row[0]
 
 
 def test_the_normalised_present_file_is_still_green():

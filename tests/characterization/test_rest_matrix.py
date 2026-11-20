@@ -41,7 +41,7 @@ golden recorded" (`assert_matches`, unchanged). A route in `golden` but not
 `live` is the dangerous case: it dropped out of the scoping the ADR-0037
 guard is meant to enforce, and `test_no_golden_key_is_orphaned` fails loudly
 naming it, rather than the matrix quietly running one route fewer. The
-overall counts (74 REST operations, 106 MCP tools) are pinned in
+overall counts (75 REST operations, 108 MCP tools) are pinned in
 `test_surface_counts_are_pinned` below, in this file for REST.
 """
 
@@ -63,7 +63,7 @@ from tests.characterization.world import MISSING, NO_DEFAULT_ROLE, PRIVATE, READ
 
 GOLDEN_NAME = "rest"
 KB_STATES = (READABLE, PRIVATE, MISSING, NO_DEFAULT_ROLE)
-PINNED_REST_OPERATION_COUNT = 74
+PINNED_REST_OPERATION_COUNT = 75  # 74 until #1685 added POST /api/tasks/{task_id}/start
 
 
 def _golden_routes_for(principal_name: str, golden: dict) -> set[tuple[str, str]]:

@@ -780,6 +780,17 @@ class TestMCPToolSchemas:
         assert tags["items"] == {"type": "string"}
         assert "tags" not in schema["required"]
 
+    def test_task_create_schema_includes_optional_due_date_and_links(self):
+        schema = WRITE_TOOLS["task_create"]["inputSchema"]
+        props = schema["properties"]
+        assert "due_date" in props
+        assert props["due_date"]["type"] == "string"
+        assert "due_date" not in schema["required"]
+        assert "links" in props
+        assert props["links"]["type"] == "array"
+        assert "links" not in schema["required"]
+        assert props["links"]["items"]["additionalProperties"] is False
+
     def test_task_claim_requires_the_task_and_kb(self):
         # The assignee defaults to the signed-in caller, so the schema
         # cannot require it; the handler requires it when there is no caller.
@@ -934,3 +945,84 @@ class TestMCPTaskCreateTags:
         assert not entry.tags
         frontmatter = entry.to_frontmatter()
         assert "tags" not in frontmatter or not frontmatter.get("tags")
+
+    def test_task_create_handler_writes_due_date(self, tmp_path):
+        from pyrite.storage.repository import KBRepository
+
+        server, kb_config = self._server(tmp_path)
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Due task via MCP",
+                "due_date": "2026-12-31",
+            }
+        )
+        assert result.get("created") is True
+        assert result.get("due_date") == "2026-12-31"
+        entry = KBRepository(kb_config).load(result["entry_id"])
+        assert entry.due_date == "2026-12-31"
+
+        # Verify due_date through task_status
+        status_res = server._task_status({"task_id": result["entry_id"], "kb_name": "test-tasks"})
+        assert status_res.get("due_date") == "2026-12-31"
+
+    @pytest.mark.parametrize("bad_due", ["not-a-date", "2026-02-30", False, 0])
+    def test_task_create_handler_invalid_due_date_refusal(self, tmp_path, bad_due):
+        server, kb_config = self._server(tmp_path)
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Bad date via MCP",
+                "due_date": bad_due,
+            }
+        )
+        assert result.get("error_code") == "VALIDATION_FAILED"
+        assert "due_date" in result.get("error", "").lower()
+
+    def test_task_create_handler_attaches_links(self, tmp_path):
+        server, kb_config = self._server(tmp_path)
+        t1 = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Target task",
+            }
+        )
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Linked task via MCP",
+                "links": [{"target": t1["entry_id"], "relation": "blocks"}],
+            }
+        )
+        get_res = server._kb_get({"entry_id": result["entry_id"], "kb_name": "test-tasks"})
+        assert result.get("created") is True
+        assert "links" not in result
+        assert result.get("linked") == [{"target": t1["entry_id"], "relation": "blocks"}]
+        assert result.get("failed_links") == []
+
+        entry = get_res.get("entry", {})
+        assert any(l["target_id"] == t1["entry_id"] for l in entry.get("links", []))
+
+        backlinks_res = server._kb_backlinks({"entry_id": t1["entry_id"], "kb_name": "test-tasks"})
+        assert any(b["id"] == result["entry_id"] for b in backlinks_res.get("backlinks", []))
+
+    @pytest.mark.parametrize(
+        ("bad_links", "expected_err"),
+        [
+            ([{"target": ""}], "target"),
+            ([{"target": "t", "note": "extra"}], "note"),
+            ([{"target": "t", "target_kb": "extra"}], "target_kb"),
+            (["target:blocks"], "dictionary"),
+        ],
+    )
+    def test_task_create_handler_invalid_link_refusal(self, tmp_path, bad_links, expected_err):
+        server, kb_config = self._server(tmp_path)
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Bad link task",
+                "links": bad_links,
+            }
+        )
+        assert result.get("error_code") == "VALIDATION_FAILED"
+        assert expected_err in result.get("error", "").lower()

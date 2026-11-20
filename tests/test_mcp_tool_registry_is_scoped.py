@@ -420,6 +420,9 @@ def test_the_cross_kb_filtering_handlers_actually_accept_the_readable_set(server
     )
 
 
+@pytest.mark.control(
+    reason="edited for #1758 only to send keys the tool declares; tests its own property"
+)
 def test_tools_listed_as_refused_are_actually_refused(servers):
     """Fail closed, proven. A tool listed as refused for a scoped caller
     must really be refused -- otherwise the listing is a comment claiming
@@ -430,8 +433,13 @@ def test_tools_listed_as_refused_are_actually_refused(servers):
         # (deliberately -- a probing caller should still be throttled), so a
         # shared client id would exhaust the admin-tier budget partway down
         # this list and report RATE_LIMITED instead of the refusal.
+        # Only a declared argument: a write tool refuses one it does not
+        # declare before any scoping (#1758), which would hide the refusal
+        # this gate exists to prove.
+        props = server.tools[name]["inputSchema"].get("properties") or {}
+        args = {"query": "zebra"} if "query" in props else {}
         result = server._dispatch_tool(
-            name, {"query": "zebra"}, client_id=f"gate-{name}", readable_kbs={"gate-kb"}
+            name, args, client_id=f"gate-{name}", readable_kbs={"gate-kb"}
         )
         assert result.get("error_code") == "NOT_FOUND", (
             f"{name} is listed as refused for a scoped caller but was not refused: {result}"

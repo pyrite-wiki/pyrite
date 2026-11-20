@@ -1,0 +1,1 @@
+- `pyrite task get` and MCP `task_status` now return the task's body text from the file on disk, with ADR-0034 truncation markers applied on MCP when exceeding the chunk default (#1681).

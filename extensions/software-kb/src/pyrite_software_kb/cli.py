@@ -87,8 +87,10 @@ def _json_output(items: list[dict]) -> None:
 @sw_app.command("adrs")
 def sw_adrs(
     status: str | None = typer.Option(None, "--status", "-s", help="Filter by status"),
-    limit: int | None = typer.Option(None, "--limit", help="Max ADRs to return (default 50)"),
-    offset: int = typer.Option(0, "--offset", help="Skip this many ADRs before returning"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max ADRs to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(0, "--offset", min=0, help="Skip this many ADRs before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -185,6 +187,7 @@ def sw_new_adr(
     title: str = typer.Argument(..., help="ADR title"),
     status: str = typer.Option("proposed", "--status", "-s", help="Initial status"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
+    tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
 ):
     """Create a new ADR with the next sequential number, through the write
     pipeline."""
@@ -248,6 +251,7 @@ def sw_new_adr(
                 body,
                 owns=frozenset({"adr_number"}),  # the owner sets its own number
                 adr_number=next_num,
+                tags=[tag.strip() for tag in tags.split(",")] if tags else None,
                 status=status,
                 date=today,
             )
@@ -265,7 +269,7 @@ def sw_new_adr(
         repo = KBRepository(kb_conf)
         file_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
 
-        console.print(f"[green]Created ADR-{next_num:04d}:[/green] {title}")
+        console.print(f"[green]Created {entry.id} (ADR-{next_num:04d}):[/green] {title}")
         console.print(path_line("  File: ", file_path, path_style="cyan"))
         console.print(f"  Status: [yellow]{status}[/yellow]")
     finally:
@@ -284,9 +288,10 @@ def sw_backlog(
         None,
         "--limit",
         "-l",
-        help="Max items to return (default 50; pass 0 or a negative number for no limit)",
+        min=0,
+        help="Max items to return (default 50; pass 0 for no limit)",
     ),
-    offset: int = typer.Option(0, "--offset", help="Skip this many items before returning"),
+    offset: int = typer.Option(0, "--offset", min=0, help="Skip this many items before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -535,8 +540,12 @@ def sw_prioritize(
 @sw_app.command("standards")
 def sw_standards(
     category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
-    limit: int | None = typer.Option(None, "--limit", help="Max standards to return (default 50)"),
-    offset: int = typer.Option(0, "--offset", help="Skip this many standards before returning"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max standards to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(
+        0, "--offset", min=0, help="Skip this many standards before returning"
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -546,7 +555,7 @@ def sw_standards(
         help="Output format: json, rich",
     ),
 ):
-    """List all standards (standard + programmatic_validation + development_convention). [deprecated: use validations/conventions]"""
+    """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.27.0: use validations/conventions]"""
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -739,7 +748,7 @@ def sw_migrate_standards(
     """Migrate type:standard entries to programmatic_validation or development_convention."""
     from pathlib import Path
 
-    from pyrite.exceptions import EntryLoadError, KBReadOnlyError
+    from pyrite.exceptions import EntryLoadError, KBReadOnlyError, ValidationError
     from pyrite.storage.database import PyriteDB
     from pyrite.storage.entry_writer import FileChanged, move_entry_text, publish_entry_text
     from pyrite.storage.file_operations import FrontmatterSpan, Set, Unset, apply
@@ -880,6 +889,10 @@ def sw_migrate_standards(
                     )
                     skipped += 1
                     continue
+                except ValidationError as e:
+                    console.print(f"  [red]Skip[/red] {row['title']}: {e}", markup=False)
+                    skipped += 1
+                    continue
                 console.print(path_line(f"  [green]Migrated[/green] {row['title']} -> ", new_path))
             else:
                 try:
@@ -994,6 +1007,48 @@ def sw_milestones(
         db.close()
 
 
+def _refusal_rendered(call, fmt: str):
+    """``call()``, with a refusal it raises printed in the CLI's error shape
+    (exit 1), as every legacy command renders its own: a board config that
+    cannot be loaded, or a KB that does not resolve (#1538).
+
+    An exception Pyrite did not raise (an ``OSError``, a ``TimeoutError``, a
+    ``sqlite3.OperationalError`` from a lookup that reads the index) is
+    answered as the MCP dispatcher answers it: its traceback goes to the log,
+    and the CLI prints ``INTERNAL``, retryable, with the fixed message and none
+    of the exception's text (#1585).
+
+    The CLI's own control-flow exceptions (Click's and Typer's ``Exit``,
+    ``Abort``, ``BadParameter``) and ``MemoryError`` are re-raised rather than
+    swallowed into an ``INTERNAL`` response: unlike the MCP dispatcher which
+    catches all ``Exception`` subclasses, the CLI lets ``MemoryError`` propagate
+    so fatal out-of-memory errors terminate the process immediately (#1630)."""
+    import click
+    import typer
+
+    from pyrite.exceptions import INTERNAL_PUBLIC_MESSAGE, PyriteError
+    from pyrite.utils.errors import cli_error, cli_error_from
+
+    try:
+        return call()
+    except PyriteError as e:
+        cli_error_from(e, fmt)
+    except (
+        click.exceptions.ClickException,
+        click.exceptions.Exit,
+        click.exceptions.Abort,
+        typer.Exit,
+        typer.Abort,
+        typer.BadParameter,
+    ):
+        raise  # the CLI's own control flow, not a fault
+    except MemoryError:
+        raise
+    except Exception:
+        logger.exception("pyrite sw command failed")
+        cli_error(INTERNAL_PUBLIC_MESSAGE, fmt, error_code="INTERNAL", retryable=True)
+
+
 @sw_app.command("board")
 def sw_board_cmd(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
@@ -1006,11 +1061,10 @@ def sw_board_cmd(
     ),
 ):
     """View kanban board with backlog items grouped by lane."""
-    from pathlib import Path
-
+    from pyrite.services.access_policy import UNSCOPED
     from pyrite.storage.database import PyriteDB
 
-    from .board import load_board_config
+    from .plugin import SoftwareKBPlugin
 
     config = load_config()
 
@@ -1018,14 +1072,14 @@ def sw_board_cmd(
     db = PyriteDB(config.settings.index_path)
 
     try:
-        # Load board config
-        if kb_name:
-            kb_conf = config.get_kb(kb_name)
-            board_config = (
-                load_board_config(kb_conf.path) if kb_conf else load_board_config(Path("."))
-            )
-        else:
-            board_config = load_board_config(Path("."))
+        # The plugin's one path to the board config: the named KB's own root,
+        # or the defaults for a board across every KB (#1538).
+        board_config = _refusal_rendered(
+            lambda: SoftwareKBPlugin()._board_config(
+                db, kb_name, readable_kbs=UNSCOPED, unnamed_gives_defaults=True
+            ),
+            fmt,
+        )
 
         rows = _query_entries(db, "backlog_item", kb_name)
 
@@ -1356,7 +1410,7 @@ def sw_pull_next(
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
-    result = plugin._mcp_pull_next({"kb_name": kb_name})
+    result = _refusal_rendered(lambda: plugin._mcp_pull_next({"kb_name": kb_name}), fmt)
 
     if fmt == "json":
         _json_output(result)
@@ -1406,17 +1460,16 @@ def sw_review_cmd(
     from .plugin import SoftwareKBPlugin
 
     plugin = SoftwareKBPlugin()
-    result = plugin._mcp_review(
-        {
-            "item_id": item_id,
-            "kb_name": require_entry_kb(
-                item_id, kb_name, entry_type="backlog_item", output_format="rich"
-            ),
-            "outcome": outcome,
-            "reviewer": reviewer,
-            "feedback": feedback,
-        }
-    )
+    args = {
+        "item_id": item_id,
+        "kb_name": require_entry_kb(
+            item_id, kb_name, entry_type="backlog_item", output_format="rich"
+        ),
+        "outcome": outcome,
+        "reviewer": reviewer,
+        "feedback": feedback,
+    }
+    result = _refusal_rendered(lambda: plugin._mcp_review(args), "rich")
 
     if result.get("reviewed"):
         console.print(f"[green]Reviewed:[/green] {item_id}")
@@ -1469,8 +1522,12 @@ def sw_log_cmd(
 @sw_app.command("components")
 def sw_components(
     kind: str | None = typer.Option(None, "--kind", "-t", help="Filter by kind"),
-    limit: int | None = typer.Option(None, "--limit", help="Max components to return (default 50)"),
-    offset: int = typer.Option(0, "--offset", help="Skip this many components before returning"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max components to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(
+        0, "--offset", min=0, help="Skip this many components before returning"
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
@@ -1566,7 +1623,9 @@ def sw_check_ready(
 
     plugin = SoftwareKBPlugin()
     home = require_entry_kb(item_id, kb_name, entry_type="backlog_item", output_format=fmt)
-    result = plugin._mcp_check_ready({"item_id": item_id, "kb_name": home})
+    result = _refusal_rendered(
+        lambda: plugin._mcp_check_ready({"item_id": item_id, "kb_name": home}), fmt
+    )
 
     if "error" in result:
         console.print(f"[red]Error:[/red] {result['error']}")
@@ -1612,7 +1671,7 @@ def sw_refine_cmd(
     args: dict = {"kb_name": kb_name or ""}
     if status:
         args["status"] = status
-    result = plugin._mcp_refine(args)
+    result = _refusal_rendered(lambda: plugin._mcp_refine(args), fmt)
 
     if fmt == "json":
         _json_output(result)

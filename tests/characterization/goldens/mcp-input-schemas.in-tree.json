@@ -892,7 +892,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -989,9 +989,10 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -1019,7 +1020,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -1301,6 +1302,13 @@
             "default": false,
             "description": "Run in background (returns job_id for polling). Default: false",
             "type": "boolean"
+          },
+          "confirm": {
+            "description": "After the sync, say for each entry id or KB-relative path whether it is indexed and searchable: a `confirm` block with one row per name (status indexed, not_indexed, not_found, malformed, duplicate or skipped; schema findings; embedding embedded, queued or unavailable) and `outcome` done or partial. An empty list confirms every entry the sync added or changed. Needs kb_name; refused with background.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "kb_name": {
             "description": "Sync specific KB (optional - syncs all if not provided)",
@@ -1941,6 +1949,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "append": {
             "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
@@ -1975,7 +1984,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -2477,6 +2486,13 @@
               "accepted"
             ],
             "type": "string"
+          },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "title": {
             "description": "ADR title",
@@ -3046,9 +3062,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",
@@ -3152,6 +3193,45 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -3160,6 +3240,17 @@
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "KB name (optional)",
             "type": "string"
@@ -3167,6 +3258,10 @@
           "parent": {
             "description": "Filter by parent task ID",
             "type": "string"
+          },
+          "parked": {
+            "description": "true: only parked tasks (parked_awaiting or retest_after set, due rechecks and person parks included); false: only unparked ones. Rows gain park_kind, retest_after and park_state (none/parked/due/person).",
+            "type": "boolean"
           },
           "status": {
             "description": "Filter by task status",
@@ -3184,6 +3279,83 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_park": {
+      "arguments": {
+        "kb_name": "example",
+        "reason": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "kind": {
+            "description": "person: a person must act, never handed back to agents; external (default): the world, back to agents on retest_after",
+            "enum": [
+              "person",
+              "external"
+            ],
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "What the task waits on",
+            "type": "string"
+          },
+          "retest_after": {
+            "description": "YYYY-MM-DD: from this date an external park is due",
+            "format": "date",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "reason"
+        ],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },
@@ -3225,6 +3397,37 @@
         },
         "required": [
           "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_unpark": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
         ],
         "type": "object"
       }
@@ -5147,6 +5350,17 @@
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "KB name (optional)",
             "type": "string"
@@ -5154,6 +5368,10 @@
           "parent": {
             "description": "Filter by parent task ID",
             "type": "string"
+          },
+          "parked": {
+            "description": "true: only parked tasks (parked_awaiting or retest_after set, due rechecks and person parks included); false: only unparked ones. Rows gain park_kind, retest_after and park_state (none/parked/due/person).",
+            "type": "boolean"
           },
           "status": {
             "description": "Filter by task status",
@@ -6198,7 +6416,7 @@
       "inputSchema": {
         "properties": {
           "allow_undeclared": {
-            "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "entries": {
@@ -6261,9 +6479,10 @@
         "title": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "allow_undeclared": {
-            "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+            "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
             "type": "boolean"
           },
           "body": {
@@ -6291,7 +6510,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -7047,6 +7266,7 @@
         "kb_name": "example"
       },
       "inputSchema": {
+        "additionalProperties": true,
         "properties": {
           "append": {
             "description": "Add one item to a list field without sending the list: {field: item}; a list value appends each item. Links: {\"links\": {\"target\": \"id\", \"relation\": \"related_to\"}}. The other items keep their bytes.",
@@ -7081,7 +7301,7 @@
             "type": "object"
           },
           "participants": {
-            "description": "Participants involved (for events)",
+            "description": "Participants involved (for events; written to the file as `actors`)",
             "items": {
               "type": "string"
             },
@@ -7583,6 +7803,13 @@
               "accepted"
             ],
             "type": "string"
+          },
+          "tags": {
+            "description": "Tags for the ADR",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "title": {
             "description": "ADR title",
@@ -8152,9 +8379,34 @@
             },
             "type": "array"
           },
+          "due_date": {
+            "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+            "type": "string"
+          },
           "kb_name": {
             "description": "KB name",
             "type": "string"
+          },
+          "links": {
+            "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "relation": {
+                  "description": "Relationship type (default: related_to)",
+                  "type": "string"
+                },
+                "target": {
+                  "description": "Target entry ID",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "target"
+              ],
+              "type": "object"
+            },
+            "type": "array"
           },
           "parent": {
             "description": "Parent task entry ID",
@@ -8258,6 +8510,45 @@
         "type": "object"
       }
     },
+    "task_finish": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "Reason for the change: set as status_reason and on each log item",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          },
+          "walk": {
+            "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
+        "type": "object"
+      }
+    },
     "task_list": {
       "arguments": {},
       "inputSchema": {
@@ -8266,6 +8557,17 @@
             "description": "Filter by assignee (e.g. agent:claude-code-7a3f)",
             "type": "string"
           },
+          "dispatchable": {
+            "description": "Only tasks a worker can take now (for a caller who may claim, each one is a task_claim accepts): open, unassigned, unparked, dependencies resolved, no children; highest priority first, then oldest. Adds `counts` (per reason) and `excluded` (each open task left out, with its reason).",
+            "type": "boolean"
+          },
+          "fields": {
+            "description": "Return only these fields per task. `id` and `kb_name` are always included.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "kb_name": {
             "description": "KB name (optional)",
             "type": "string"
@@ -8273,6 +8575,10 @@
           "parent": {
             "description": "Filter by parent task ID",
             "type": "string"
+          },
+          "parked": {
+            "description": "true: only parked tasks (parked_awaiting or retest_after set, due rechecks and person parks included); false: only unparked ones. Rows gain park_kind, retest_after and park_state (none/parked/due/person).",
+            "type": "boolean"
           },
           "status": {
             "description": "Filter by task status",
@@ -8290,6 +8596,83 @@
           }
         },
         "required": [],
+        "type": "object"
+      }
+    },
+    "task_park": {
+      "arguments": {
+        "kb_name": "example",
+        "reason": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "kind": {
+            "description": "person: a person must act, never handed back to agents; external (default): the world, back to agents on retest_after",
+            "enum": [
+              "person",
+              "external"
+            ],
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
+          },
+          "reason": {
+            "description": "What the task waits on",
+            "type": "string"
+          },
+          "retest_after": {
+            "description": "YYYY-MM-DD: from this date an external park is due",
+            "format": "date",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name",
+          "reason"
+        ],
+        "type": "object"
+      }
+    },
+    "task_start": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "assignee": {
+            "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
+        ],
         "type": "object"
       }
     },
@@ -8331,6 +8714,37 @@
         },
         "required": [
           "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    "task_unpark": {
+      "arguments": {
+        "kb_name": "example",
+        "task_id": "example"
+      },
+      "inputSchema": {
+        "properties": {
+          "by": {
+            "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+            "type": "string"
+          },
+          "kb_name": {
+            "description": "KB name",
+            "type": "string"
+          },
+          "operator_override": {
+            "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+            "type": "boolean"
+          },
+          "task_id": {
+            "description": "Task entry ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "kb_name"
         ],
         "type": "object"
       }

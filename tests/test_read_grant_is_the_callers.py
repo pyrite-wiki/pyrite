@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.config import AuthConfig, KBConfig
+from pyrite.server.mcp_server import KB_ARGUMENT_NAMES
 from pyrite.services.acting import local_process, may_read_kb
 from tests._world import build_world
 
@@ -211,7 +212,12 @@ def _arguments(name: str, tool: dict) -> dict:
     schema = tool.get("inputSchema") or {}
     properties = schema.get("properties") or {}
     entry = next((eid for prefix, (eid, *_r) in TYPED.items() if name.startswith(prefix)), "one")
-    args: dict = {"kb_name": "a"}
+    # A write tool that declares a KB argument of its own refuses another
+    # (#1758, round 1 on #1774), so kb_name goes to it only where declared
+    # (kb_link names source_kb); a read tool runs with it, as before.
+    is_read = (tool.get("description") or "").startswith("[read]")
+    own_kb = any(f in properties for f in KB_ARGUMENT_NAMES)
+    args: dict = {"kb_name": "a"} if is_read or "kb_name" in properties or not own_kb else {}
     for field in schema.get("required") or []:
         if field in args:
             continue

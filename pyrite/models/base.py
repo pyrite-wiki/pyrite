@@ -15,8 +15,10 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..exceptions import EntryTypeError, json_safe_value
-from ..schema import Link, Provenance, Source
+from ..schema import Link, Provenance, Source, validate_importance
+from ..schema.validators import importance_value
 from ..utils.frontmatter import require_frontmatter
+from ..utils.parse import safe_int
 from ..utils.yaml import load_yaml
 
 logger = logging.getLogger(__name__)
@@ -293,6 +295,17 @@ class Entry(ABC):
     kb_name: str = ""
     file_path: Path | None = None
     _schema_version: int = 0
+    # The `importance` value this entry was built from, as given (#1588): a
+    # file's node, a request's JSON value, a `-f` value. `importance` itself is
+    # the model's int of it (`safe_int`) for every reader; this is what the rule
+    # in `validation_errors` judges, so `10.7`, `true` and `high` are refused on
+    # a create as on an update instead of being judged as 10, 1 and 5. Set by
+    # `_base_kwargs`, which every `from_frontmatter` goes through (a create via
+    # `build_entry`, `pyrite add`, an update's reload of the new file), from the
+    # read view, so a file spelling `metadata: {importance: ...}` is judged too.
+    # Never serialized: nothing here reaches a file or the index. An assignment
+    # to `importance` resets it (see `__setattr__`). `_ABSENT` when not given.
+    _importance_given: Any = field(default=_ABSENT, repr=False, compare=False)
     # Top-level frontmatter keys this class did not declare, captured at load
     # and written back at save, so a load -> save through a typed class never
     # deletes what it does not understand (`milestone:`, `github_issue:`, a
@@ -333,6 +346,25 @@ class Entry(ABC):
         default=None, init=False, repr=False, compare=False
     )
 
+    def __post_init__(self) -> None:
+        """Reset `_importance_given` when it disagrees with `importance` (#1703).
+
+        Building an entry via `dataclasses.replace(entry, importance=X)` copies
+        the old `_importance_given` (an init field) along with all other fields.
+        If `_importance_given` disagrees with `importance`, clear it to `_ABSENT`
+        so `validation_errors` judges the replaced attribute `X`.
+
+        Limit: if an entry loaded an invalid value that read as int N (e.g. "high" as 5)
+        and `replace(importance=N)` sets that same int, the old `_importance_given` is
+        retained and fails safe by refusing.
+        """
+        if self._importance_given is not _ABSENT:
+            expected = importance_value(self._importance_given)
+            if expected is None:
+                expected = safe_int(self._importance_given, DEFAULT_IMPORTANCE)
+            if self.importance != expected:
+                super().__setattr__("_importance_given", _ABSENT)
+
     def __setattr__(self, name: str, value: Any) -> None:
         """Assigning a field makes it explicit, whatever value it is given.
 
@@ -355,6 +387,9 @@ class Entry(ABC):
             # Same rule for a timestamp the source carried but did not parse:
             # the assignment is the user's value and must reach the file.
             super().__setattr__("_unparsed_timestamp_keys", self._unparsed_timestamp_keys - {name})
+        if name == "importance" and self._importance_given is not _ABSENT:
+            # The value now is the one assigned, and that is what the rule judges.
+            super().__setattr__("_importance_given", _ABSENT)
         kept = self._unrepresented_keys
         if kept and name in kept:
             # #557: the file's own value is kept only while nobody sets the
@@ -478,7 +513,15 @@ class Entry(ABC):
             "title": title,
             "body": body,
             "summary": meta.get("summary", ""),
-            "importance": safe_int(meta.get("importance"), 5),
+            # The int the one rule reads the value as (`importance_value`: `5.0`
+            # and `"05"` are 5); a value the rule refuses keeps its old reading
+            # (`safe_int`) for readers, and is refused by `validation_errors`.
+            "importance": (
+                importance_value(meta.get("importance"))
+                or safe_int(meta.get("importance"), DEFAULT_IMPORTANCE)
+            ),
+            # What the rule judges (#1588): the value as given, not its int.
+            "_importance_given": meta.get("importance", _ABSENT),
             "tags": _as_list(meta.get("tags")),
             "aliases": _as_list(meta.get("aliases")),
             "sources": parse_sources(meta.get("sources")),
@@ -760,7 +803,57 @@ class Entry(ABC):
             )
         if problem := lifecycle_validation_error(self.lifecycle):
             errors.append(problem)
+
+        # `importance` is a base field, a whole number 1-10 on every type
+        # (#1537, #1588). Judged on the value as given (`_importance_given`),
+        # never on the model's int of it, so a create, an update and either
+        # spelling in a file get one answer. A blank or null `importance:` is
+        # absent, not a violation: the file is a person's, and a blank key is
+        # common in a hand-made template.
+        importance = self.rule_input("importance")
+        if importance is not None and not validate_importance(importance):
+            errors.append(
+                {
+                    "field": "importance",
+                    "rule": "range",
+                    "message": f"Importance must be 1-10, got: {importance}",
+                    "expected": "1-10",
+                }
+            )
         return errors
+
+    def file_value(self, field_name: str, value: Any) -> Any:
+        """The form an update's ``Set`` stores ``value`` in, for ``field_name``.
+
+        An accepted ``importance`` is stored as the int the one rule reads it
+        as (``importance_value``): an update writes ``5`` for ``5.0`` or
+        ``"05"``, as a create does (#1588, maintainer decision of 2026-11-17).
+        A value the rule refuses is returned as it is, for the rule to refuse
+        on the written result. Every other field: the value as sent. The
+        update's write path (``KBService._value_for_file``) asks this for
+        every field it sets, so no field's storage rule lives there. A create
+        does not call it: it stores the model's serialisation (``_base_kwargs``),
+        so an override here changes updates only.
+        """
+        if field_name == "importance":
+            accepted = importance_value(value)
+            if accepted is not None:
+                return accepted
+        return value
+
+    def rule_input(self, field_name: str) -> Any:
+        """The value :meth:`validation_errors` judges for ``field_name``.
+
+        For ``importance`` that is the value as given (``_importance_given``),
+        not the model's int of it (#1588); for every other field, the
+        attribute. The write gate (``KBService._validate_write``) asks this
+        too, to tell a violation the file already had ("kept") from a write
+        that sends a different value whose row reads the same: ``5.5`` and
+        ``"5.5"`` print alike in a message but are not the same value.
+        """
+        if field_name == "importance" and self._importance_given is not _ABSENT:
+            return self._importance_given
+        return getattr(self, field_name, None)
 
     def validate(self) -> list[str]:
         """Validate entry. Returns list of error messages."""

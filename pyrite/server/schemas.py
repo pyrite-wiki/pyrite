@@ -6,7 +6,7 @@ Extracted from api.py to reduce file size and improve organization.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # =============================================================================
 # Knowledge Bases
@@ -70,6 +70,14 @@ class KBHealthResponse(BaseModel):
     type_name_drift_total: int = 0
     type_name_drift_has_more: bool = False
     schema_errors: list[dict[str, Any]] = Field(default_factory=list)
+    # How many entry files an earlier version wrote where the index walk does
+    # not list them (#1552): a count, never the paths, over the network; a
+    # warning, `healthy` unchanged. `pyrite index health` names them locally.
+    unlisted_entry_files: int = 0
+    # How many folders the index walk could not list (#1546): a count, never
+    # the paths, over the network; `healthy` is false. `pyrite index health`
+    # names them locally.
+    unreadable_folders: int = 0
 
 
 class KBReindexResponse(BaseModel):
@@ -90,11 +98,33 @@ class KBReindexResponse(BaseModel):
     # In-KB links with nothing at the path they name, left as they are
     # (#1262): {"kb", "path", "target"}, KB-relative.
     dangling_links: list[dict[str, str]] = Field(default_factory=list)
+    #: How many folders it could not list (their rows kept, #1546): a count,
+    #: never a path, over the network. The local CLI names them.
+    unreadable_folders: int = 0
+
+    @field_validator("unreadable_folders", mode="before")
+    @classmethod
+    def _folders_as_counted(cls, value: Any) -> Any:
+        """The route builds this from the registry's dict (``**result``):
+        the folder rows are shaped by ``network_shape``, the one place that
+        decides what a network caller gets, whichever way the dict arrives."""
+        if isinstance(value, list):
+            from ..services.index_health import network_shape
+
+            return network_shape({"unreadable_folders": value})["unreadable_folders"]
+        return value
 
 
 # =============================================================================
 # Search
 # =============================================================================
+
+
+#: A column field's value as an index reader returns it: text, or the
+#: number or boolean its declared type reads it as (#1503,
+#: ``docs/json-contracts.md``, "Entry row shape"). ``bool`` before the
+#: numbers, so pydantic's smart union keeps ``True`` a boolean.
+ColumnValue = str | bool | int | float | None
 
 
 class SearchResult(BaseModel):
@@ -105,7 +135,7 @@ class SearchResult(BaseModel):
     entry_type: str
     title: str
     snippet: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
     tags: list[str] = []
     #: Cosine similarity to the query, 3 places, on a row the vector leg
@@ -115,6 +145,10 @@ class SearchResult(BaseModel):
     #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
     #: ``semantic``.
     legs: list[str] | None = None
+    #: What the entry's file holds that this row's reading does not show
+    #: faithfully (a refused ``importance``, #1761). Not the response-level
+    #: ``warnings`` (a leg was skipped). Absent on a row with nothing to say.
+    entry_warnings: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
@@ -141,6 +175,12 @@ class SearchResponse(BaseModel):
     #: search with ``["keyword"]`` here was a keyword search. Not the
     #: per-result ``legs``, which says which legs returned that result.
     legs_run: list[str]
+    #: The entry parts the legs that ran read: ``[]`` when none ran. Tags and
+    #: declared field values are not indexed, so a miss on one is not an absence.
+    searched: list[str]
+    #: With ``searched`` holding ``body_prefix`` (only the vector leg ran): how many
+    #: characters of each body its vectors were built from. Omitted otherwise.
+    body_prefix_chars: int | None = None
     #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
     #: or ``none``.
     keyword_match: str | None = None
@@ -180,9 +220,9 @@ class EntryResponse(BaseModel):
     title: str
     body: str | None = None
     summary: str | None = None
-    date: str | None = None
+    date: ColumnValue = None
     importance: int | None = None
-    status: str | None = None
+    status: ColumnValue = None
     # A list is a list: a column a file's type refused is left out of the reply
     # (ADR-0042 8a, ``get_entry``), never sent as null.
     tags: list[str] = []
@@ -442,6 +482,9 @@ class SyncResponse(BaseModel):
     skipped: list[dict[str, str]] = Field(default_factory=list)
     #: KBs whose files could not be read: not synced, rows kept (#1542).
     unreadable_kbs: list[dict[str, str]] = Field(default_factory=list)
+    #: How many folders it could not list in the KBs it synced: their rows
+    #: kept (#1546). A count, never a path; the local CLI names them.
+    unreadable_folders: int = 0
 
 
 class ErrorResponse(BaseModel):
@@ -455,6 +498,11 @@ class ErrorResponse(BaseModel):
 # =============================================================================
 # Web App Request/Response Models
 # =============================================================================
+
+
+# What `importance` accepts, for the OpenAPI document; the rule itself is
+# `validate_importance`, applied by the write gate to the value as sent.
+_IMPORTANCE_SCHEMA: dict[str, Any] = {"type": "integer", "minimum": 1, "maximum": 10}
 
 
 class CreateEntryRequest(BaseModel):
@@ -475,7 +523,10 @@ class CreateEntryRequest(BaseModel):
     title: str
     body: str = ""
     date: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] = []
     participants: list[str] = []
     role: str | None = None
@@ -492,7 +543,10 @@ class UpdateEntryRequest(BaseModel):
     kb: str
     title: str | None = None
     body: str | None = None
-    importance: int | None = Field(None, ge=1, le=10)
+    # Any JSON value reaches the one rule (`Entry.validation_errors`, #1588):
+    # a typed field let pydantic turn `true` into 1 and answer `10.7` with its
+    # own 422. The OpenAPI document still says what is accepted.
+    importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
 

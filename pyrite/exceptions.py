@@ -663,6 +663,37 @@ class EntryLoadError(FrontmatterError):
         self.loader_message = loader_message
 
 
+class UpdateWouldNotLoadError(ValidationError):
+    """The proposed update failed to load before it could be written.
+
+    The cause's loader message and field messages must already be text for
+    the caller; this constructor does not filter outside text.
+    """
+
+    def __init__(self, entry_id: str, cause: EntryLoadError):
+        # The repository already filters loader details for network callers.
+        errors = [
+            {
+                "field": field,
+                "rule": "entry_load",
+                "message": (
+                    "The entry type refused this field."
+                    if message == OUTSIDE_TEXT_WITHHELD
+                    else message
+                ),
+            }
+            for field, message in cause.fields.items()
+        ]
+        reason = cause.loader_message
+        if cause.fields:
+            reason = f"{', '.join(cause.fields)} ({reason})"
+        super().__init__(
+            f"Cannot update '{entry_id}': the result would not load ({reason}), "
+            "so nothing was written. The file is unchanged.",
+            errors=errors,
+        )
+
+
 class YamlLimitError(FrontmatterError):
     """A YAML document passes a fixed bound on aliases or expanded size.
 
@@ -1124,3 +1155,41 @@ class KBUnreadableError(PyriteError):
     """
 
     error_code = "KB_UNREADABLE"
+
+
+class KBConfigInvalidError(KBUnreadableError):
+    """A KB's ``kb.yaml`` can be read and cannot be loaded as a mapping (#1547):
+    bytes that are not UTF-8, a YAML syntax error, a duplicate key, a document
+    over the YAML limits, or a top level that is not a mapping.
+
+    Not ``KB_UNREADABLE``: the OS let Pyrite read the file, and the fix is to
+    correct the file, not its permissions. A subclass of ``KBUnreadableError``
+    so every catch site #1542 added passes it on with its own code, never
+    retryable.
+
+    One text everywhere: ``str()`` and ``public_message`` are the same fixed
+    sentence, which names no KB, no path and nothing the parser said, so any
+    print site (``pyrite-read``, an extension's own ``str(e)``) shows it; the
+    constructor takes no text. The parser's exception is ``__cause__``: only
+    the local process is shown its words, through ``outside_text``
+    (``pyrite kb list``'s ``error_detail``, index health, the load's log
+    line), since they quote the operator's file (ADR-0052 N3). A KB in this
+    state is never read as having no schema: whatever needs its schema stops
+    with this error, and the reconcile refuses before it plans, so no row is
+    removed.
+    Raised by ``pyrite.utils.yaml.read_kb_yaml``.
+    """
+
+    error_code = "KB_CONFIG_INVALID"
+    MESSAGE = (
+        "This knowledge base's kb.yaml could not be loaded (it is not valid UTF-8 "
+        "YAML holding a mapping); the operator needs to correct the file."
+    )
+    # Equal to str(): set so no reader can fall back to a text quoting the
+    # file. Nothing is masked; tests/test_public_message_logged_once.py
+    # reviews it as a fixed-text class.
+    public_message = MESSAGE
+    retryable = False
+
+    def __init__(self) -> None:
+        super().__init__(self.MESSAGE)

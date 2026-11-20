@@ -116,6 +116,12 @@ class Entry(Base):
     reviews = relationship("Review", back_populates="entry", cascade="all, delete-orphan")
     blocks = relationship("Block", cascade="all, delete-orphan")
 
+    __table_args__ = (
+        # The entry at a file: what a Markdown link row resolves to (#1723),
+        # looked up on every write, so it must not scan the KB.
+        Index("idx_entry_kb_file_path", "kb_name", "file_path"),
+    )
+
 
 class Tag(Base):
     __tablename__ = "tag"
@@ -161,6 +167,18 @@ class Link(Base):
     #: beside the KB name it resolved to; NULL when the file named no KB or
     #: the row predates v28. A row can be checked against the file (#980).
     target_prefix = Column(String)
+    #: The KB-relative path a Markdown link names (#1723), symbolic links
+    #: followed; NULL for a link that names an id. The row's identity is this
+    #: path, and ``target_id`` is the id of the entry indexed at it now, or the
+    #: path text when nothing is (a broken link). One resolver keeps it so
+    #: (``BaseBackend._resolve_path_links``).
+    target_path = Column(String)
+    #: For a Markdown link row: 1 when an entry file was at ``target_path``,
+    #: 0 when none was (a broken link). NULL for every row that names an id.
+    #: Every reader that joins ``target_id`` to an entry honours it
+    #: (``COALESCE(target_resolved, 1) = 1``): a broken row's ``target_id`` is
+    #: its path text, which a hand-set id may equal (#1723).
+    target_resolved = Column(Integer)
     relation = Column(String, nullable=False)
     inverse_relation = Column(String, nullable=False)
     note = Column(Text)
@@ -175,6 +193,7 @@ class Link(Base):
         Index("idx_link_source", "source_id", "source_kb"),
         Index("idx_link_target", "target_id", "target_kb"),
         Index("idx_link_relation", "relation"),
+        Index("idx_link_target_path", "target_kb", "target_path"),
     )
 
     source_entry = relationship("Entry", back_populates="outgoing_links")

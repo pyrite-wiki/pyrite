@@ -619,6 +619,13 @@ class KBRegistryService:
         """
         self.db.merge_registered_kbs(self.config)
 
+    @classmethod
+    def count_entry_files(cls, kb: KBConfig) -> int:
+        """Count real markdown entry files in a KB, matching the walk's rules."""
+        from ..storage.repository import KBRepository
+
+        return sum(1 for _ in KBRepository(kb).list_files())
+
     def reindex_kb(self, name: str) -> dict[str, Any]:
         """Reindex a specific KB. Works for both config and user KBs.
 
@@ -676,17 +683,17 @@ class KBRegistryService:
         kb_path = Path(kb.path)
         path_exists = kb_path.exists()
 
-        file_count = 0
-        if path_exists:
-            file_count = sum(
-                1 for f in kb_path.rglob("*.md") if not any(p.startswith(".") for p in f.parts)
-            )
+        kb_config = self.get_kb_config(name)
+        file_count = (
+            self.count_entry_files(kb_config or KBConfig(name=name, path=kb_path))
+            if path_exists
+            else 0
+        )
 
-        from .index_health import health_verdict
+        from .index_health import health_verdict, network_shape
 
         stats = self.db.get_kb_stats(name) or {}
         entry_count = stats.get("entry_count", 0)
-        kb_config = self.get_kb_config(name)
         scoped = PyriteConfig(
             knowledge_bases=[kb_config] if kb_config else [], settings=self.config.settings
         )
@@ -701,6 +708,15 @@ class KBRegistryService:
                 "schema_errors",
             )
         }
+        # The one place a network answer about index health is shaped: REST
+        # and MCP `kb health` reach the report only through here. Files an
+        # earlier version left where the walk does not list them are a count,
+        # never their paths (maintainer, 2026-11-17, #1552); the local CLI's
+        # `pyrite index health` names them.
+        drift["unlisted_entry_files"] = len(health["unlisted_entry_files"])
+        # Folders the walk could not list (#1546): as the sync and reindex
+        # results give them to a network caller, through the one function.
+        drift["unreadable_folders"] = network_shape(health)["unreadable_folders"]
 
         return {
             "name": name,

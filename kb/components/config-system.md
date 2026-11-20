@@ -46,7 +46,8 @@ Configuration for a subscribed remote KB with `url`, `local_path`, `auto_sync`, 
 
 ## Module-Level Functions
 
-- **`load_config()`** -- Reads `CONFIG_FILE`, deserializes via `PyriteConfig.from_dict()`, and loads `kb.yaml` for each KB. Creates a default `PyriteConfig` if the file does not exist.
+- **`load_config()`** -- Reads `CONFIG_FILE`, deserializes via `PyriteConfig.from_dict()`, and loads `kb.yaml` for each KB. Creates a default `PyriteConfig` if the file does not exist. One KB whose files cannot be read (`KB_UNREADABLE`, #1542) or whose `kb.yaml` does not load as a mapping (`KB_CONFIG_INVALID`, #1547) never stops the load: `KBConfig.load_kb_yaml` marks it `unreadable` and goes on.
+- **`read_kb_yaml(kb_root)`** (`pyrite/utils/yaml.py`) -- The one function that turns a `kb.yaml` into a mapping (#1547): `{}` without one, `KBConfigInvalidError` for bytes that are not UTF-8, a YAML error, a document over the YAML limits, or a top level that is not a mapping. `KBConfig.kb_schema`, `check_readable` (the reconcile's gate, so a KB in this state keeps its index rows), `load_kb_yaml`, `SchemaService` and KB discovery all go through it; `tests/test_a_kb_yaml_that_does_not_load.py` fails on a new `load_yaml_file(kb_root=...)` elsewhere.
 - **`save_config(config)`** -- Serializes `PyriteConfig.to_dict()` to `CONFIG_FILE` using `dump_yaml_file`.
 - **`auto_discover_kbs(search_paths)`** -- Recursively finds `kb.yaml` files under the given paths and returns a list of `KBConfig` objects.
 - **`ensure_config_dir()`** -- Creates `CONFIG_DIR` if missing.

@@ -160,6 +160,8 @@ SAMPLES: dict[str, Any] = {
     "assigned_at": "2026-01-01T00:00:00+00:00",
     "status_reason": "why",
     "parked_awaiting": "rfp-due",
+    "park_kind": "person",
+    "retest_after": "2026-04-05",
     "dependencies": ["d1"],
     "evidence": ["e1"],
     "agent_context": {"run": 1},
@@ -203,6 +205,8 @@ SECOND: dict[str, Any] = {
     "effort": "S",
     "url": "https://example.org/2",
     "priority": 3,
+    "park_kind": "external",
+    "retest_after": "2027-04-05",
 }
 SECOND_OVERRIDES: dict[tuple[str, str], Any] = {
     ("task", "status"): "blocked",
@@ -256,10 +260,6 @@ UNREAD: frozenset[tuple[str, str]] = frozenset(
         ("adr", "start_date"),
         ("adr", "end_date"),
         ("adr", "due_date"),
-        ("task", "date"),
-        ("task", "start_date"),
-        ("task", "end_date"),
-        ("task", "assigned_at"),
         ("backlog_item", "assigned_at"),
     }
 )

@@ -314,6 +314,8 @@ class ReadingListPlugin:
 The other keys a type's metadata may carry are `display`, `field_aliases`,
 `protocols`, `guidelines`, `goals`, `evaluation_rubric` and `settled_statuses`.
 
+If your type should be what a create of a core type stores, declare `get_type_mappings()`; subclassing maps nothing. See [Pyrite Plugin Protocol](../../kb/components/pyrite-plugin-protocol.md) for details.
+
 The registry only calls a method whose capability the plugin declares: an
 undeclared capability makes the registry ignore the method. Without the
 `capabilities` line above, `pyrite init --template reading-list` and

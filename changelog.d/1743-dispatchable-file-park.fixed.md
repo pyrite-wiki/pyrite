@@ -1,0 +1,1 @@
+- **`task list --dispatchable` leaves out a task parked in its file after the last index (#1743).** The same answer is on the CLI, MCP `task_list` and REST `GET /tasks`. An index row that still says parked keeps the task out until `pyrite index sync`, even when the file no longer does.

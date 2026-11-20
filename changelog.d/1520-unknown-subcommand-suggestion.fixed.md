@@ -1,1 +1,0 @@
-- An unknown subcommand now names the commands the group actually has — `pyrite links validate` points at `check`, `bulk-create`, `suggest` and `discover` — instead of only offering `--help` (#1520).

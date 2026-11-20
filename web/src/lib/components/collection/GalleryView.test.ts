@@ -37,6 +37,28 @@ describe('GalleryView', () => {
 		expect(screen.getByText('note')).toBeInTheDocument();
 	});
 
+	it('renders boolean dates as their original value', () => {
+		const entry = { ...sampleEntry, date: false, updated_at: undefined };
+		render(GalleryView, { props: { entries: [entry] } });
+		expect(screen.getByText('false')).toBeInTheDocument();
+	});
+
+	it('falls back to updated_at when date is an empty string', () => {
+		const entry = { ...sampleEntry, date: '', updated_at: '2025-06-15T10:00:00Z' };
+		render(GalleryView, { props: { entries: [entry] } });
+		expect(screen.getByText(new Date(entry.updated_at).toLocaleDateString(undefined, {
+			year: 'numeric', month: 'short', day: 'numeric'
+		}))).toBeInTheDocument();
+		expect(screen.queryByText('Invalid Date')).not.toBeInTheDocument();
+	});
+
+	it('hides an empty date when updated_at is also absent', () => {
+		const entry = { ...sampleEntry, date: '', updated_at: '' };
+		const { container } = render(GalleryView, { props: { entries: [entry], cardFields: ['date'] } });
+		expect(screen.queryByText('Invalid Date')).not.toBeInTheDocument();
+		expect(container.querySelector('span')).toBeNull();
+	});
+
 	it('shows body excerpt with markdown chars stripped', () => {
 		render(GalleryView, { props: { entries: [sampleEntry] } });
 		expect(screen.getByText('Hello world markdown link(url) code')).toBeInTheDocument();
