@@ -1,0 +1,1 @@
+- `task list --dispatchable` (and MCP `task_list` / REST `GET /tasks` with `dispatchable`) now resolves a `kb:id` dependency against the named registered KB, even when the listing reads only one KB: a task whose dependency is done in another registered KB is listed. An unregistered `kb:` prefix stays a missing dependency (`blocked`) (#1739).
