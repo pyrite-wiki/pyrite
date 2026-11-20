@@ -40,5 +40,7 @@ RESERVED_FIELD_NAMES: frozenset[str] = frozenset(
         "_importance_given",
         # Frontmatter-only keys
         "type",
+        # Answer key added to get and search results
+        "entry_warnings",
     }
 )
