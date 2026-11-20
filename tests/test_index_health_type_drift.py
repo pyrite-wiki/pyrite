@@ -155,7 +155,6 @@ def test_cli_surfaces_drift_as_warning_not_failure(drift, fmt):
 
 
 BROKEN_KB_YAML = {
-    "types-null": "name: one\ntypes: null\n",
     "types-list": "name: one\ntypes: [a, b]\n",
     "invalid-yaml": "name: one\ntypes: {research-note: [\n",
 }
@@ -185,10 +184,10 @@ def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surfac
     assert result.exception is None or isinstance(result.exception, SystemExit), repr(
         result.exception
     )
-    # A kb.yaml that does not parse or whose schema block is invalid leaves the KB
-    # unusable (KB_CONFIG_INVALID, #1547, #1591): index health is unhealthy and exits 1.
-    unusable = shape in BROKEN_KB_YAML
-    expected_exit = 1 if unusable and surface.startswith("index") else 0
+    # Every shape here leaves the KB unusable: a kb.yaml that does not parse
+    # (#1547) and a schema block that is not a mapping (#1591) are both
+    # KB_CONFIG_INVALID, so index health is unhealthy and exits 1.
+    expected_exit = 1 if surface.startswith("index") else 0
     assert result.exit_code == expected_exit, result.output
     if fmt == "json":
         data = json.loads(result.stdout)
@@ -199,10 +198,26 @@ def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surfac
         assert {s["type"] for s in spellings} == {"research-note", "research_note", "research note"}
         assert not any(s["declared"] for s in spellings)
         if surface.startswith("index"):
-            assert data["status"] == ("unhealthy" if unusable else "warning")
+            assert data["status"] == "unhealthy"
             assert data["checks"]["schema_errors"] == data["schema_errors"]
             # No declared types means unrestricted (#595): nothing is
             # undeclared; the failed load shows in schema_errors above.
             assert not [r for r in data["undeclared_types"] if r["kb"] == "one"]
     else:
         assert "kb.yaml failed to load" in result.stdout
+
+
+@pytest.mark.parametrize("surface", sorted(HEALTH_SURFACES))
+def test_health_reads_a_null_types_block_as_no_types(drift, surface):
+    """``types: null`` declares no types (#1591): no schema error, exit 0."""
+    _, config = drift
+    kb = config.get_kb("one")
+    kb.kb_yaml_path.write_text("name: one\ntypes: null\n", encoding="utf-8")
+    kb.invalidate_schema_cache()
+    with patch("pyrite.cli.context.load_config", return_value=config):
+        result = CliRunner().invoke(app, [*HEALTH_SURFACES[surface], "--format", "json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert not data["schema_errors"]
+    if surface.startswith("index"):
+        assert data["status"] != "unhealthy"
