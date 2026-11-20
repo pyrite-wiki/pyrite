@@ -735,6 +735,7 @@ Limits on what the setting can do:
 | `PYRITE_AUTO_EMBED` | `true` | Embed entries when they are written. `0`/`false` turns it off: keyword search only, no torch import and no model download on the write path. `pyrite index embed` backfills later. |
 | `PYRITE_PREWARM_EMBEDDINGS` | `false` | Load the embedding model at server start instead of on the first write or semantic search |
 | `PYRITE_POSTGRES_EXPERIMENTAL_ACK` | unset | `1`/`true`/`yes` silences the once-per-process notice that the Postgres backend is experimental (#718). Shown by default. |
+| `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE` | unset | `1`/`true`/`yes` lets Postgres startup create a new, empty instance in the connection's own schema although a schema later on its `search_path` already holds one. Without it that startup is refused with `POSTGRES_SCHEMA_SHADOWED` (#718). |
 
 `config.yaml` also lists `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
 downloaded on first use).
@@ -746,7 +747,17 @@ first, as the test suite and `benchmarks/run_all.py` do), so a Postgres database
 gains the tables, columns and indexes this one reads, keeping its users, grants
 and stars ([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). There is
 no separate upgrade step to run. A database no release ever stamped upgrades
-from the start of the chain, and each step skips what it already has. Nothing
+from the start of the chain, and each step skips what it already has.
+Startup refuses, before writing anything, when the connection's own schema
+(`current_schema()`) holds no Pyrite tables but a schema later on its
+`search_path` does (for example an empty `"$user"` schema in front of the
+instance in `public`): it would otherwise build a new, empty instance that
+hides the existing one. The refusal (`POSTGRES_SCHEMA_SHADOWED`, see
+[json-contracts.md](json-contracts.md#postgres-startup-refusals)) names both
+schemas. Put the existing instance's schema first on the `search_path`, or drop
+the empty schema; set `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE=1` only to create a
+new instance there on purpose. A fresh install, with no Pyrite tables anywhere
+on the `search_path`, starts as before. Nothing
 reads the `search_backend` and `database_url` keys yet: the index is always
 SQLite, and only the test suite builds a Postgres backend. If code does
 construct it, Pyrite says so once per process, on stderr and in the server log
