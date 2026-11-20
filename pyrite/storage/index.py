@@ -1012,15 +1012,18 @@ class IndexManager:
                     for role, endpoint_spec in type_schema.endpoints.items():
                         value = fm.get(endpoint_spec.field)
                         if value and isinstance(value, str):
-                            # Strip wikilink brackets if present: [[target]] -> target
-                            endpoint_id = _strip_wikilink_brackets(value)
+                            # The endpoint names its entry by the object-ref
+                            # rule: brackets stripped, and a registered
+                            # ``prefix:`` puts the endpoint in that KB (the
+                            # full name, ADR-0049), not the edge's own (#1733).
+                            endpoint_id, endpoint_kb = self._object_ref_target(value, kb_name)
                             if endpoint_id:
                                 edge_endpoints.append(
                                     {
                                         "role": role,
                                         "field_name": endpoint_spec.field,
                                         "endpoint_id": endpoint_id,
-                                        "endpoint_kb": kb_name,
+                                        "endpoint_kb": endpoint_kb,
                                         "edge_type": entry_type_name,
                                     }
                                 )
