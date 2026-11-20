@@ -2581,6 +2581,24 @@ reconciled), and `embedded` when the sync embedded any) plus `outcome`. `changed
 for each row added, updated or removed (`IndexManager.sync_incremental` and
 `reconcile_kb` return it too). The exit codes are unchanged.
 
+## Postgres startup refusals
+
+`ensure_schema` (the Postgres backend's startup step, #718) raises
+`POSTGRES_SCHEMA_SHADOWED` (`PostgresSchemaShadowedError`, a `StorageError`,
+`retryable: false`) before it writes anything when the connection's own schema
+(`current_schema()`) holds no Pyrite tables but a schema later on its
+`search_path` does. Upgrading would build a new, empty instance in the first
+schema, and every query would read it instead of the existing one. The usual
+cause is the default `"$user", public` once an empty `"$user"` schema exists.
+The message names both schemas, says how to reach the existing instance (put
+its schema first on the `search_path`, or drop the empty one), and names the
+opt-in: `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE=1` creates the new instance in the
+empty schema on purpose. A schema "holds Pyrite tables" when it has `entry` or
+`kb`. With no Pyrite tables anywhere on the `search_path` (a fresh install), or
+with an instance already in the current schema, startup is not refused.
+Nothing in the product selects the Postgres backend yet, so no CLI, MCP or REST
+response carries this code today.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"

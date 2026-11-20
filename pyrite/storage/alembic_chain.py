@@ -32,12 +32,13 @@ touch (revision 008's ``global_access`` grant is the case that matters).
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..exceptions import StorageError
+from ..exceptions import PostgresSchemaShadowedError, StorageError
 
 if TYPE_CHECKING:  # alembic is imported only when the chain runs
     from alembic.config import Config
@@ -88,7 +89,9 @@ def upgrade_to_head(connection: Any) -> None:
     back, so a crashed process leaves no lock behind. Within one process a
     thread lock does the same for alembic's global state, on every dialect.
 
-    **Refuses an unknown schema** (`own_schema`).
+    **Refuses an unknown schema** (`own_schema`), and **an empty schema in
+    front of an instance** (`refuse_a_shadowed_instance`), both before anything
+    is written.
     """
     from alembic import command
     from sqlalchemy import text
@@ -100,7 +103,62 @@ def upgrade_to_head(connection: Any) -> None:
                 text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
                 {"key": f"pyrite.alembic_chain:{schema}"},
             )
+            refuse_a_shadowed_instance(connection, str(schema))
         command.upgrade(alembic_config(connection), "head")
+
+
+#: Set to 1 (or true, yes) to start a new, empty instance in the connection's
+#: own schema although a schema later on its search_path holds one.
+ALLOW_NEW_INSTANCE_ENV = "PYRITE_POSTGRES_ALLOW_NEW_INSTANCE"
+
+#: The tables whose presence says a schema holds a Pyrite instance: the two
+#: every Pyrite database has, from the first release on.
+_INSTANCE_TABLES = ("entry", "kb")
+
+
+def _holds_an_instance(connection: Any, schema: str) -> bool:
+    from sqlalchemy import bindparam, text
+
+    query = text(
+        "SELECT 1 FROM information_schema.tables"
+        " WHERE table_schema = :schema AND table_name IN :names LIMIT 1"
+    ).bindparams(bindparam("names", expanding=True))
+    found = connection.execute(query, {"schema": schema, "names": list(_INSTANCE_TABLES)})
+    return found.first() is not None
+
+
+def refuse_a_shadowed_instance(connection: Any, schema: str) -> None:
+    """Refuse to start a new, empty instance in front of an existing one.
+
+    When ``schema`` (the connection's own, ``current_schema()``) holds no
+    Pyrite tables but a schema later on the search_path does, the upgrade
+    would build a fresh instance in ``schema`` and hide the real one behind it
+    (the default ``"$user", public`` once an empty ``"$user"`` schema exists).
+    Raises `PostgresSchemaShadowedError` naming both schemas, unless
+    ``PYRITE_POSTGRES_ALLOW_NEW_INSTANCE`` asks for the new instance. With no
+    instance anywhere on the search_path (a fresh install), or one already in
+    ``schema``, it does nothing. Maintainer decision on #1820 (L2, option b).
+    """
+    from sqlalchemy import text
+
+    if os.environ.get(ALLOW_NEW_INSTANCE_ENV, "").strip().lower() in ("1", "true", "yes"):
+        return
+    if _holds_an_instance(connection, schema):
+        return
+    # The existing schemas of the search_path, in order; implicit ones
+    # (pg_catalog, a temporary schema) left out.
+    path = list(connection.execute(text("SELECT unnest(current_schemas(false))")).scalars())
+    later = path[path.index(schema) + 1 :] if schema in path else []
+    for candidate in later:
+        if _holds_an_instance(connection, candidate):
+            raise PostgresSchemaShadowedError(
+                f'Refusing to start a new, empty Pyrite instance in schema "{schema}": '
+                f'schema "{candidate}", later on the search_path, already holds one, and '
+                f'every query would read the empty "{schema}" instead. To use the existing '
+                f'instance, put "{candidate}" first on the search_path (or drop the empty '
+                f'"{schema}" schema). To create a new instance in "{schema}" on purpose, '
+                f"set {ALLOW_NEW_INSTANCE_ENV}=1."
+            )
 
 
 # ---------------------------------------------------------------------------

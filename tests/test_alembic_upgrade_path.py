@@ -585,16 +585,21 @@ def test_running_the_upgrade_leaves_existing_loggers_enabled(tmp_path, with_ini)
 # ---------------------------------------------------------------------------
 
 
-def test_another_schemas_tables_do_not_stand_in_for_this_ones():
-    """Postgres's inspector answers for any table *visible* on the search_path.
-    With another instance at head in the schema behind this one, an upgrade of
-    this (empty) schema must still create every table here and stamp its own
-    ``alembic_version``, not take the other's for its own."""
+_ALLOW_NEW_INSTANCE = "PYRITE_POSTGRES_ALLOW_NEW_INSTANCE"
+
+
+@pytest.fixture
+def two_schemas(monkeypatch):
+    """Two fresh schemas: ``other``, and ``mine`` in front of it on a second
+    engine's search_path (``mine, other``), as an empty ``"$user"`` schema sits
+    in front of ``public`` by default. Yields (admin, mine, other, first, second):
+    ``first`` sees only ``other``; ``second`` sees ``mine`` then ``other``."""
     url = _pg_url()
     if not url:
         pytest.skip("PYRITE_TEST_PG_URL not set")
     from pyrite.storage.backends.postgres_backend import create_postgres_engine
 
+    monkeypatch.delenv(_ALLOW_NEW_INSTANCE, raising=False)
     worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
     other, mine = f"pyrite_alembic_other_{worker}", f"pyrite_alembic_mine_{worker}"
     admin = create_postgres_engine(url)
@@ -605,19 +610,7 @@ def test_another_schemas_tables_do_not_stand_in_for_this_ones():
     first = create_postgres_engine(url, connect_args={"options": f"-csearch_path={other}"})
     second = create_postgres_engine(url, connect_args={"options": f"-csearch_path={mine},{other}"})
     try:
-        _upgrade(first)
-        _upgrade(second)
-        with admin.connect() as conn:
-            here = set(
-                conn.execute(
-                    text(
-                        "SELECT table_name FROM information_schema.tables WHERE table_schema = :s"
-                    ),
-                    {"s": mine},
-                ).scalars()
-            )
-        assert {"entry", "kb", "local_user", "invite_code", "alembic_version"} <= here
-        assert _version(second) == _head()
+        yield admin, mine, other, first, second
     finally:
         first.dispose()
         second.dispose()
@@ -625,6 +618,81 @@ def test_another_schemas_tables_do_not_stand_in_for_this_ones():
             for schema in (other, mine):
                 conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         admin.dispose()
+
+
+def _tables_in(admin, schema: str) -> set[str]:
+    with admin.connect() as conn:
+        return set(
+            conn.execute(
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema = :s"),
+                {"s": schema},
+            ).scalars()
+        )
+
+
+def _start(engine) -> None:
+    """The startup path's upgrade step (the first thing ``ensure_schema`` does)."""
+    from pyrite.storage.alembic_chain import upgrade_to_head
+
+    with engine.begin() as conn:
+        upgrade_to_head(conn)
+
+
+def test_an_empty_schema_in_front_of_an_instance_is_refused(two_schemas):
+    """Maintainer decision on #1820 (L2, option b): the current schema holds no
+    Pyrite tables and a later one on the search_path does. Starting would build
+    a new, empty instance in front of the real one and hide its data, so
+    startup refuses with POSTGRES_SCHEMA_SHADOWED, naming both schemas and the
+    opt-in, and writes nothing in the current schema."""
+    from pyrite.exceptions import PostgresSchemaShadowedError
+
+    admin, mine, other, first, second = two_schemas
+    _start(first)  # the existing instance, in `other`
+    with pytest.raises(PostgresSchemaShadowedError) as refused:
+        _start(second)
+    assert refused.value.error_code == "POSTGRES_SCHEMA_SHADOWED"
+    message = str(refused.value)
+    assert mine in message and other in message
+    assert _ALLOW_NEW_INSTANCE in message
+    assert _tables_in(admin, mine) == set()
+    # The existing instance is untouched.
+    assert _version(first) == _head()
+
+
+def test_the_opt_in_creates_a_new_instance_in_the_empty_schema(two_schemas, monkeypatch):
+    """With the opt-in set, the same start creates a whole new instance in the
+    current schema, and stamps its own ``alembic_version`` there: Postgres's
+    inspector answers for any table *visible* on the search_path, so without
+    the own-schema checks the other instance's tables would stand in for this
+    one's."""
+    admin, mine, other, first, second = two_schemas
+    _start(first)
+    monkeypatch.setenv(_ALLOW_NEW_INSTANCE, "1")
+    _start(second)
+    assert {"entry", "kb", "local_user", "invite_code", "alembic_version"} <= _tables_in(
+        admin, mine
+    )
+    assert _version(second) == _head()
+
+
+def test_no_instance_anywhere_on_the_search_path_starts_fresh(two_schemas):
+    """A fresh install is not refused: with no Pyrite tables in any schema on
+    the search_path, startup creates the instance in the current schema."""
+    admin, mine, other, first, second = two_schemas
+    _start(second)
+    assert {"entry", "kb", "alembic_version"} <= _tables_in(admin, mine)
+    assert _tables_in(admin, other) == set()
+
+
+def test_an_existing_instance_in_the_current_schema_starts_whatever_is_behind_it(two_schemas):
+    """The refusal is only for an *empty* current schema: an instance already
+    in it upgrades as before, even with another instance later on the path."""
+    admin, mine, other, first, second = two_schemas
+    _start(first)
+    with second.begin() as conn:
+        command.upgrade(alembic_config(conn), "006")  # an existing, older instance in `mine`
+    _start(second)
+    assert _version(second) == _head()
 
 
 # ---------------------------------------------------------------------------
