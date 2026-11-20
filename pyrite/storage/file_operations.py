@@ -196,6 +196,7 @@ from ..exceptions import (
     outside_text,
     with_origin,
 )
+from ..schema.field_aliases import same_yaml_value
 from ..utils.frontmatter import (
     Frontmatter,
     Malformed,
@@ -1315,7 +1316,7 @@ def _model_apply(data: dict, op: Any) -> dict:
             del parent[last]
             return result
         if isinstance(op, Set):
-            if values_equal(parent[last], op.value):
+            if same_yaml_value(parent[last], op.value):
                 return data
             parent[last] = op.value
             return result
@@ -1332,7 +1333,12 @@ def _model_apply(data: dict, op: Any) -> dict:
             return data
         raise OperationRefusedError(f"{where}: {_show(segs[:-1])} is not a mapping or list", op)
     if isinstance(op, Set | AddSubkey):
-        if key is not _MISSING and values_equal(target, op.value):
+        # The one comparison for an update's no-change (#1704):
+        # same_yaml_value, so a Set that names the field with `5` over
+        # the file's `5.0` is a no-change and the file keeps `5.0`, and
+        # an AddSubkey naming a key the file holds with that number in
+        # another spelling is a no-change too, not the refusal below.
+        if key is not _MISSING and same_yaml_value(target, op.value):
             return data
         if isinstance(op, AddSubkey) and key is not _MISSING:
             raise OperationRefusedError(
@@ -1886,7 +1892,10 @@ def _unset(doc: _Doc, segs: list, op: Unset, conv: _Conv) -> list:
 
 
 def _set_node(doc: _Doc, container: Node, idx: int, node: Node, cur: Any, new: Any, conv) -> list:
-    if values_equal(cur, new):
+    # The narrow twin of the model's no-change check, and the same
+    # comparison (#1704): the two must agree, or a set the model calls a
+    # change would splice nothing and be refused as unwidenable.
+    if same_yaml_value(cur, new):
         return []
     if isinstance(new, tuple):
         new = list(new)
@@ -2093,10 +2102,10 @@ def _add_root_key(doc: _Doc, key: Any, value: Any, conv: _Conv) -> list:
 
 
 def _edit_seq(doc, container, idx, node: SequenceNode, cur: list, new: list, conv) -> list:
-    """Reduce a set of a whole list to item edits: items equal in order are
-    kept byte for byte (an LCS under decision 3 equality, after the common
-    head and tail); paired items of the same kind are set in place; the rest
-    are deleted or inserted."""
+    """Reduce a set of a whole list to item edits: items the same in order
+    are kept byte for byte (an LCS under the one comparison, #1704, after
+    the common head and tail); paired items of the same kind are set in
+    place; the rest are deleted or inserted."""
     items = node.value
     plan = _plan(cur, new)
     if plan is None:  # nothing kept: write the list afresh, in its own style
@@ -2145,10 +2154,10 @@ def _plan(old: list, new: list):
     first kept old index), or None when no old item is kept."""
     n, m = len(old), len(new)
     head = 0
-    while head < min(n, m) and values_equal(old[head], new[head]):
+    while head < min(n, m) and same_yaml_value(old[head], new[head]):
         head += 1
     tail = 0
-    while tail < min(n, m) - head and values_equal(old[n - 1 - tail], new[m - 1 - tail]):
+    while tail < min(n, m) - head and same_yaml_value(old[n - 1 - tail], new[m - 1 - tail]):
         tail += 1
     mid_old, mid_new = old[head : n - tail], new[head : m - tail]
     matches = [(i, i) for i in range(head)]
@@ -2185,14 +2194,14 @@ def _lcs(old: list, new: list) -> list[tuple[int, int]]:
     lcs = [[0] * (m + 1) for _ in range(n + 1)]
     for i in range(n - 1, -1, -1):
         for j in range(m - 1, -1, -1):
-            if values_equal(old[i], new[j]):
+            if same_yaml_value(old[i], new[j]):
                 lcs[i][j] = lcs[i + 1][j + 1] + 1
             else:
                 lcs[i][j] = max(lcs[i + 1][j], lcs[i][j + 1])
     matches = []
     i = j = 0
     while i < n and j < m:
-        if values_equal(old[i], new[j]) and lcs[i][j] == lcs[i + 1][j + 1] + 1:
+        if same_yaml_value(old[i], new[j]) and lcs[i][j] == lcs[i + 1][j + 1] + 1:
             matches.append((i, j))
             i, j = i + 1, j + 1
         elif lcs[i + 1][j] >= lcs[i][j + 1]:
