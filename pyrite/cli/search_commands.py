@@ -29,7 +29,7 @@ from ..services.read_shaping import (
     unmatched_search_fields,
 )
 from ..utils.errors import exit_unless_whole
-from .context import get_config_with_registered_kbs, require_kb
+from .context import ROW_COUNT_MAX, get_config_with_registered_kbs, require_kb
 from .output import cli_console, validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -101,7 +101,9 @@ def register_search_command(app: typer.Typer):
                 "'readiness') are NOT reachable via this flag."
             ),
         ),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+        limit: int = typer.Option(
+            20, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Max results"
+        ),
         mode: str = typer.Option(
             None, "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
         ),
