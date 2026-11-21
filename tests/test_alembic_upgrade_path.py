@@ -837,3 +837,163 @@ def test_a_search_path_naming_no_existing_schema_is_refused():
         with admin.begin() as conn:
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
         admin.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Postgres keeps no vector index on entry (#1822, option a)
+# ---------------------------------------------------------------------------
+#
+# #1821 made Postgres semantic search an exact nearest-neighbour scan whose
+# sort key no index can supply, so the HNSW index on entry.embedding served no
+# query and was still rebuilt on every write. Maintainer decision on #1822:
+# drop it. These tests read pg_indexes, the server's own catalogue, never the
+# revision or ensure_schema.
+
+# pgvector's index methods and operator classes: an index whose definition
+# names one of these, or the embedding column, serves the ``<=>`` operator.
+_VECTOR_INDEX_MARKS = ("hnsw", "ivfflat", "vector_cosine_ops", "vector_l2_ops", "vector_ip_ops")
+
+# The index as every Postgres database before #1822 had it (ensure_schema
+# created it on each start).
+_DEV_HNSW_INDEX = (
+    "CREATE INDEX IF NOT EXISTS idx_entry_embedding "
+    "ON entry USING hnsw(embedding vector_cosine_ops)"
+)
+
+
+def _vector_indexes_on_entry(admin, schema: str) -> dict[str, str]:
+    """``{indexname: indexdef}`` for every index on ``schema.entry`` that uses
+    pgvector or names the embedding column."""
+    with admin.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT indexname, indexdef FROM pg_indexes"
+                " WHERE schemaname = :s AND tablename = 'entry'"
+            ),
+            {"s": schema},
+        ).all()
+    return {
+        name: definition
+        for name, definition in rows
+        if "embedding" in definition.lower()
+        or any(mark in definition.lower() for mark in _VECTOR_INDEX_MARKS)
+    }
+
+
+@pytest.fixture
+def vector_schemas(monkeypatch):
+    """Fresh schemas ``mine`` and ``other`` with pgvector reachable (in public),
+    and a factory for engines whose search_path is ``<schemas...>, public``.
+    The new-instance opt-in is set: ``public`` may hold another suite's
+    instance in a serial run, and refusing that is not what these test."""
+    url = _pg_url()
+    if not url:
+        pytest.skip("PYRITE_TEST_PG_URL not set")
+    from pyrite.storage.backends.postgres_backend import create_postgres_engine
+
+    monkeypatch.setenv(_ALLOW_NEW_INSTANCE, "1")
+    worker = os.environ.get("PYTEST_XDIST_WORKER", "serial")
+    mine, other = f"pyrite_vec_mine_{worker}", f"pyrite_vec_other_{worker}"
+    admin = create_postgres_engine(url)
+    with admin.begin() as conn:
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public"))
+        for schema in (mine, other):
+            conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+    engines = []
+
+    def engine_for(*path: str):
+        eng = create_postgres_engine(
+            url, connect_args={"options": f"-csearch_path={','.join((*path, 'public'))}"}
+        )
+        engines.append(eng)
+        return eng
+
+    try:
+        yield admin, mine, other, engine_for
+    finally:
+        for eng in engines:
+            eng.dispose()
+        with admin.begin() as conn:
+            for schema in (mine, other):
+                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+        admin.dispose()
+
+
+def _make_pre_1822(engine) -> None:
+    """A database as dev left it before #1822: the chain at 012, then the
+    Postgres-only embedding column and its HNSW index from ensure_schema."""
+    with engine.begin() as conn:
+        command.upgrade(alembic_config(conn), "012")
+        conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS embedding vector(384)"))
+        conn.execute(text(_DEV_HNSW_INDEX))
+
+
+def test_upgrade_head_drops_the_hnsw_index_and_a_restart_does_not_rebuild_it(vector_schemas):
+    """A database from before #1822 carries idx_entry_embedding. After
+    ``alembic upgrade head`` no index on entry uses pgvector, and two full
+    ``ensure_schema`` starts after it (a restart) do not create one again."""
+    from pyrite.storage.backends.postgres_backend import ensure_schema
+
+    admin, mine, _other, engine_for = vector_schemas
+    engine = engine_for(mine)
+    _make_pre_1822(engine)
+    assert set(_vector_indexes_on_entry(admin, mine)) == {"idx_entry_embedding"}
+
+    _upgrade(engine)
+    assert _vector_indexes_on_entry(admin, mine) == {}
+
+    ensure_schema(engine)
+    ensure_schema(engine)
+    assert _vector_indexes_on_entry(admin, mine) == {}
+
+
+def test_a_fresh_database_never_gets_a_vector_index(vector_schemas):
+    """A first start (and a second) on an empty schema builds the embedding
+    column but no index on it."""
+    from pyrite.storage.backends.postgres_backend import ensure_schema
+
+    admin, mine, _other, engine_for = vector_schemas
+    engine = engine_for(mine)
+    ensure_schema(engine)
+    ensure_schema(engine)
+    with admin.connect() as conn:
+        has_embedding = conn.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns WHERE table_schema = :s"
+                " AND table_name = 'entry' AND column_name = 'embedding'"
+            ),
+            {"s": mine},
+        ).first()
+    assert has_embedding is not None
+    assert _vector_indexes_on_entry(admin, mine) == {}
+
+
+@pytest.mark.control(
+    reason="dev drops no index at all; this guards the revision's schema-qualified DROP"
+)
+def test_the_drop_touches_only_this_instances_schema(vector_schemas):
+    """Two instances share a database, ``other`` later on ``mine``'s
+    search_path. Upgrading ``mine``, which has no HNSW index of its own, must
+    not find and drop ``other``'s through the search_path: each instance's
+    schema is changed by its own upgrade only."""
+    admin, mine, other, engine_for = vector_schemas
+    _make_pre_1822(engine_for(other))
+    _upgrade(engine_for(mine, other))
+    assert set(_vector_indexes_on_entry(admin, other)) == {"idx_entry_embedding"}
+
+
+def test_downgrading_the_drop_recreates_the_index_as_dev_defined_it(vector_schemas):
+    """``alembic downgrade -1`` from head puts back idx_entry_embedding:
+    HNSW, cosine operator class, on entry.embedding."""
+    admin, mine, _other, engine_for = vector_schemas
+    engine = engine_for(mine)
+    _make_pre_1822(engine)
+    _upgrade(engine)
+    with engine.begin() as conn:
+        command.downgrade(alembic_config(conn), "-1")
+    assert _version(engine) == "012"
+    found = _vector_indexes_on_entry(admin, mine)
+    assert set(found) == {"idx_entry_embedding"}
+    definition = found["idx_entry_embedding"].lower()
+    assert "using hnsw" in definition and "embedding vector_cosine_ops" in definition
