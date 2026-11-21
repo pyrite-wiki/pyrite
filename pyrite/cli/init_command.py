@@ -81,6 +81,46 @@ BUILTIN_TEMPLATES = {
                     }
                 },
             },
+            "programmatic_validation": {
+                "description": "Automated check with verifiable pass/fail criteria",
+                "required": ["title"],
+                "optional": ["category", "check_command", "pass_criteria"],
+                "subdirectory": "validations/",
+                "fields": {
+                    "category": {
+                        "type": "select",
+                        "options": [
+                            "coding",
+                            "testing",
+                            "api",
+                            "git",
+                            "documentation",
+                            "security",
+                            "deployment",
+                        ],
+                    }
+                },
+            },
+            "development_convention": {
+                "description": "Judgment-based guidance carried as context during work",
+                "required": ["title"],
+                "optional": ["category"],
+                "subdirectory": "conventions/",
+                "fields": {
+                    "category": {
+                        "type": "select",
+                        "options": [
+                            "coding",
+                            "testing",
+                            "api",
+                            "git",
+                            "documentation",
+                            "security",
+                            "deployment",
+                        ],
+                    }
+                },
+            },
             "component": {
                 "description": "Module or service documentation",
                 "required": ["title"],
@@ -169,6 +209,24 @@ BUILTIN_TEMPLATES = {
                     }
                 },
             },
+            "work_log": {
+                "description": "Work session linked to a backlog item",
+                "required": ["title"],
+                "optional": ["item_id", "date", "decisions", "rejected", "open_questions"],
+                "subdirectory": "work-logs/",
+            },
+            "milestone": {
+                "description": "Project milestone for grouping backlog items",
+                "required": ["title"],
+                "optional": ["status"],
+                "subdirectory": "milestones/",
+                "fields": {
+                    "status": {
+                        "type": "select",
+                        "options": ["open", "closed"],
+                    }
+                },
+            },
             # #860: every template that ships task tooling must declare the
             # `task` type so `pyrite task create` works out of the box.
             "task": copy.deepcopy(TASK_KB_PRESET["types"]["task"]),
@@ -189,9 +247,13 @@ BUILTIN_TEMPLATES = {
             "adrs",
             "designs",
             "standards",
+            "validations",
+            "conventions",
             "components",
             "backlog",
             "runbooks",
+            "work-logs",
+            "milestones",
             "tasks",
         ],
     },
