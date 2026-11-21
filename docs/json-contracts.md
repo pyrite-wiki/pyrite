@@ -1926,18 +1926,19 @@ KB (`KB_NOT_FOUND`). The file write records two `status_change_log` items,
 `{date, from, to, by}`: open → claimed and claimed → in_progress, `by` the
 assignee.
 
-`task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
-dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
-"in_progress", "done"], "status_reason", "by", "override"}`, with one
-`status_change_log` item
-per edge of `path` (`comment` is the reason, when one was given).
+`task finish` (CLI), `task_finish` (MCP) and `POST /api/tasks/{id}/finish`
+(REST, query `?kb=<kb>`, JSON body `{walk?, reason?, by?, operator_override?}`)
+return `TaskService.finish_task`'s dict: `{"finished": true, "task_id",
+"status": "done", "path": ["claimed", "in_progress", "done"], "status_reason",
+"by", "override"}`, with one `status_change_log` item per edge of `path`
+(`comment` is the reason, when one was given).
 
 Finish requires the caller to hold the task; operators have an explicit
-override. The caller is `--by` (MCP: `by`, else the signed-in account) and
-must be the task's assignee; the items record it as `by`. The operator (the
-CLI, stdio MCP, an operator key) may finish a task it does not hold with
-`--operator-override` (MCP `operator_override: true`): the items record `by:
-"operator"` and `override: true`, and the result `"by": "operator",
+override. The caller is `--by` (MCP/REST: `by`, else the signed-in account)
+and must be the task's assignee; the items record it as `by`. The operator
+(the CLI, stdio MCP, an operator key) may finish a task it does not hold with
+`--operator-override` (MCP/REST `operator_override: true`): the items record
+`by: "operator"` and `override: true`, and the result `"by": "operator",
 "override": true`. The override is never implied by a missing or empty
 caller, and is refused for anyone but the operator.
 
@@ -1960,9 +1961,9 @@ A refusal writes nothing and is (CLI exit 1):
 - `ENTRY_NOT_FOUND`: no task with that id in the KB.
 - `ENTRY_UNREADABLE`: a file its type cannot load.
 
-The holder rule guards `task finish` on the CLI and MCP. REST has no finish
-route yet (see #1745); the generic `PATCH /api/entries/{id}` is unchanged and
-is not `task finish`.
+The holder rule guards `task finish` on the CLI, MCP and REST
+(`POST /api/tasks/{id}/finish`); the generic `PATCH /api/entries/{id}` is
+unchanged and is not `task finish`.
 
 ## Entry row shape
 
