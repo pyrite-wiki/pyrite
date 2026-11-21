@@ -5,4 +5,7 @@
   `kb.yaml`. A `kb.yaml` field replaces the plugin's declaration of that
   field. software-kb publishes the select options its preset already uses, so
   a `backlog_item` lists `kind`, `status`, `priority` and `effort`. A
-  plugin's fields stay on the type it named.
+  plugin's fields stay on the type it named. orient now publishes `type_fields`
+  for every declared type, including core types; a title-only create of a
+  software-kb type writes the preset's empty fields (`kind: ""`, `effort: ""`,
+  etc.).

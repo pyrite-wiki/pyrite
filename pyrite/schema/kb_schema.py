@@ -48,34 +48,33 @@ def _agent_fields(
     """The fields ``to_agent_schema`` publishes for ``entry_type`` (#232).
 
     Reads the canonical ``KBSchema.type_fields`` merge (core < plugin
-    ``get_field_schemas()`` < kb.yaml). For a non-core type (``core_fields`` is
-    None), every merged field is published as ``FieldSchema.to_dict()``. For a
-    core type, untouched ``CORE_TYPES`` spellings (e.g. ``EventStatus``,
-    ``list[str]``) stay as written, while any field added or redeclared by a
-    plugin or ``kb.yaml`` ``fields:`` is published as ``FieldSchema.to_dict()``.
+    ``get_field_schemas()`` < kb.yaml). Explicitly declared core types publish
+    every merged field as ``FieldSchema.to_dict()``; undeclared (fallback) core
+    types keep their ``CORE_TYPES`` spellings for compatibility, applying
+    ``FieldSchema.to_dict()`` only to fields added or redeclared by a plugin.
+    ``core_fields`` is retained for call-site compatibility.
     """
     if plugin_fields is None:
         from ..plugins import get_registry
 
         plugin_fields = get_registry().get_all_field_schemas()
     merged = schema.type_fields(entry_type, _plugin_fields=plugin_fields)
-    if core_fields is None:
-        return {name: fs.to_dict() for name, fs in merged.items()}
-
-    published: dict[str, Any] = dict(core_fields)
-    kb_type = schema.types.get(entry_type)
-    kb_declared = set(kb_type.fields) if kb_type is not None else set()
-    type_plugin_fields = plugin_fields.get(entry_type, {})
-    plugin_declared = (
-        {name for name, spec in type_plugin_fields.items() if isinstance(spec, dict)}
-        if isinstance(type_plugin_fields, dict)
-        else set()
-    )
-    overridden = kb_declared | plugin_declared
-    for name, field_schema in merged.items():
-        if name not in core_fields or name in overridden:
-            published[name] = field_schema.to_dict()
-    return published
+    # Fallback (undeclared) core types keep their CORE_TYPES spellings for
+    # compatibility (#232 acceptance table); explicitly declared types publish
+    # the canonical type_fields (FieldSchema.to_dict()) for every field.
+    if core_fields is not None and entry_type not in getattr(schema, "types", {}):
+        published: dict[str, Any] = dict(core_fields)
+        type_plugin_fields = plugin_fields.get(entry_type, {})
+        plugin_declared = (
+            {name for name, spec in type_plugin_fields.items() if isinstance(spec, dict)}
+            if isinstance(type_plugin_fields, dict)
+            else set()
+        )
+        for name, field_schema in merged.items():
+            if name not in core_fields or name in plugin_declared:
+                published[name] = field_schema.to_dict()
+        return published
+    return {name: fs.to_dict() for name, fs in merged.items()}
 
 
 @dataclass

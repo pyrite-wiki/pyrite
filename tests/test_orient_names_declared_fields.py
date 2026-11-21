@@ -5,8 +5,8 @@
 ``pyrite-admin schema``. Its ``fields`` come from ``KBSchema.type_fields``:
 core, then a plugin's ``get_field_schemas()``, then ``kb.yaml``. A ``kb.yaml``
 field declaration replaces the plugin's or core's declaration of that field,
-while untouched core fields keep their ``CORE_TYPES`` spellings. A plugin's
-fields for one type do not appear on another.
+and every field is published as ``FieldSchema.to_dict()`` (``type_fields`` for
+every declared type). A plugin's fields for one type do not appear on another.
 """
 
 from __future__ import annotations
@@ -70,11 +70,9 @@ def _merged(schema: KBSchema, entry_type: str) -> dict:
     return {name: field.to_dict() for name, field in schema.type_fields(entry_type).items()}
 
 
-@pytest.mark.control(
-    reason="untouched core fields keep CORE_TYPES spellings for core compatibility"
-)
+@pytest.mark.control(reason="fallback core fields keep CORE_TYPES spellings for compatibility")
 def test_untouched_core_fields_keep_core_spellings():
-    """Core fields without plugin or kb.yaml overrides keep ``CORE_TYPES`` strings."""
+    """Fallback (undeclared) core fields keep ``CORE_TYPES`` spellings."""
     schema = KBSchema.from_dict({"name": "core-only"})
     types = _published(schema)
     person = types["person"]["fields"]
@@ -85,6 +83,40 @@ def test_untouched_core_fields_keep_core_spellings():
     assert event["importance"] == CORE_TYPES["event"]["fields"]["importance"] == "int"
     assert types["collection"]["fields"]["view_config"] == "dict"
     assert types["note"]["fields"] == CORE_TYPES["note"]["fields"]
+
+
+@pytest.mark.parametrize("type_name", sorted(CORE_TYPES))
+def test_orient_fields_equal_type_fields_for_every_declared_core_type(type_name):
+    """Shape coverage: declared core types publish type_fields (as to_dict)."""
+    schema = KBSchema.from_dict(
+        {"name": "shape-coverage", "types": {type_name: {"description": "d"}}}
+    )
+    types = _published(schema)
+    assert type_name in types
+    assert types[type_name]["fields"] == _merged(schema, type_name)
+
+
+def test_orient_fields_equal_type_fields_for_declared_software_kb_shapes():
+    """Shape coverage: declared KB types (incl. prose-only empty merge) match type_fields."""
+    get_registry().discover()
+    schema = KBSchema.from_dict(
+        {
+            "name": "shape-declared",
+            "kb_type": "software",
+            "types": {
+                "note": {"description": "a note"},
+                "backlog_item": {"description": "work", "guidelines": "prose only, no fields"},
+                "widget": {"description": "prose only"},
+            },
+        }
+    )
+    types = _published(schema, kb_type="software")
+    assert set(types) == {"note", "backlog_item", "widget"}
+    assert types["note"]["fields"] == _merged(schema, "note")
+    for type_name in ("note", "backlog_item"):
+        assert types[type_name]["fields"] == _merged(schema, type_name), type_name
+    # Empty merge: a prose-only custom type with no fields omits `fields`.
+    assert "fields" not in types["widget"]
 
 
 def test_core_type_kb_yaml_override_and_addition_follow_the_merge():
@@ -105,8 +137,8 @@ def test_core_type_kb_yaml_override_and_addition_follow_the_merge():
     person = types["person"]["fields"]
     assert person["role"] == {"type": "date"}
     assert person["nickname"] == {"type": "text"}
-    assert person["affiliations"] == "list[str]"
-    assert types["organization"]["fields"] == CORE_TYPES["organization"]["fields"]
+    assert person["affiliations"] == {"type": "list"}
+    assert types["organization"]["fields"] == _merged(schema, "organization")
     assert "nickname" not in types["organization"]["fields"]
 
 
@@ -166,7 +198,7 @@ def test_a_plugin_override_of_a_core_field_does_not_reach_another_core_type(fiel
     person = _published(schema)["person"]["fields"]
     assert person["role"] == {"type": "date"}
     assert person["badge"] == {"type": "text"}
-    assert person["affiliations"] == "list[str]"
+    assert person["affiliations"] == {"type": "list"}
     assert "badge" not in schema.type_fields("organization")
     assert "badge" not in schema.type_fields("note")
 

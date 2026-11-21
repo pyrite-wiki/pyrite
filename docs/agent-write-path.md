@@ -45,8 +45,10 @@ pyrite orient -k notes
 ```
 
 A **core type** (`note`, `person`, `organization`, `event`, ...) carries a
-`fields` dict with a type per field (plus `{type, options?}` for any field a
-plugin or `kb.yaml` adds or overrides), plus `field_descriptions`.
+`fields` dict: a fallback (undeclared) type keeps its legacy spellings
+(`str`, `int`, `EventStatus`, `list[str]`, ...), while an explicitly
+declared type publishes every field as `{type, options?}` (plus any
+plugin or `kb.yaml` addition or override), plus `field_descriptions`.
 
 The KB authors' guidance for a type is read from `kb_authored.types.<type>`,
 and KB-wide guidance from `kb_authored.guidelines`, `kb_authored.goals`, or
