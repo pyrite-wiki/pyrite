@@ -1,0 +1,1 @@
+- **`pyrite collections list` on a KB with no collections prints `{"collections": [], "total": 0}` in JSON (#1577).** It used to print the sentence "No collections found." in every format, so a script parsing the default JSON output failed on a successful, empty answer; YAML, CSV and Markdown now format the same empty result. `--format rich` still prints the sentence.
