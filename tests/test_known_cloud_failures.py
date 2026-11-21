@@ -140,10 +140,27 @@ def test_a_malformed_or_missing_registry_is_a_notice_and_the_trailer_with_no_tra
     # (test_dev_process_config: test_a_broken_optional_brief_does_not_prevent_session_setup).
     assert result.returncode == 2, result.stderr
     assert "Traceback" not in result.stderr
-    assert "registry is malformed" in result.stdout
+    if content is None:
+        assert "registry is missing" in result.stdout
+    else:
+        assert "registry is malformed" in result.stdout
     assert "CI remains required" in result.stdout
     assert len(result.stdout.splitlines()) == 2  # the notice, then the trailer
     assert "just a string" not in result.stdout
+
+
+def test_a_nonexistent_registry_path_is_a_missing_notice():
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "./nope.json"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert result.returncode == 2, result.stderr
+    assert "Traceback" not in result.stderr
+    assert "registry is missing" in result.stdout
+    assert "CI remains required" in result.stdout
+    assert len(result.stdout.splitlines()) == 2
 
 
 def test_a_long_reason_is_cut(tmp_path):
