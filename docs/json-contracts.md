@@ -1532,8 +1532,12 @@ projection (`test_a_slot_equals_the_single_search` compares them). A slot that w
 query over the length cap, an unknown KB, an unknown key, a bad value) has
 `query`, `count: 0`, `results: []` and the canonical error shape
 (`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
-siblings. Text that is not valid UTF-8 (a lone surrogate) is such a refusal,
-`VALIDATION_FAILED`. Only a refusal (a `PyriteError`) fills a slot; an unexpected
+siblings. Text that is not valid UTF-8 — a lone surrogate escape in JSON
+(such as `"\ud800"`), or non-UTF-8 bytes read from stdin (`-`) under a C
+locale (`LC_ALL=C` with `surrogateescape`, where Python decodes them as
+surrogates instead of raising at read time) — is such a per-slot refusal,
+`VALIDATION_FAILED` (exit 3 when sibling slots run, exit 1 when every slot
+is refused). Only a refusal (a `PyriteError`) fills a slot; an unexpected
 fault is not caught per slot and ends the command. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
 (`partial`) when some were refused, 1 (`nothing`) when all were. A batch of
 none is `{"count": 0, "searches": []}`, exit 0.
@@ -1542,7 +1546,10 @@ The batch as a whole is refused, exit 1 with the error shape and no `searches`,
 when the file is missing (`NOT_FOUND`), is not UTF-8, cannot be read (an
 `OSError`), is not JSON, is not a list, or holds more than 50 queries
 (`VALIDATION_FAILED`; the cap `batch-read` has); stdin (`-`) is refused the
-same way, never with a traceback. Warnings and the trace go to stderr,
+same way (exit 1) when Python rejects non-UTF-8 bytes on read (a UTF-8 locale)
+or the input is not a valid JSON list, never with a traceback — whereas under
+`LC_ALL=C` (`surrogateescape`), non-UTF-8 bytes inside a query object reach
+per-slot validation above (exit 3 partial, exit 1 when all slots are refused). Warnings and the trace go to stderr,
 prefixed with the query's position. The stale-index warning appears once for
 the whole batch and covers every KB, not only the ones the queries name.
 
