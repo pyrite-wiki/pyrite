@@ -8,15 +8,17 @@ they are held together:
 - **Postgres** upgrades through the alembic chain in ``alembic/versions/``.
   ``postgres_backend.ensure_schema`` runs it to head on every startup (the
   default, automatic mode of the maintainer's 2026-10-23 decision on #718),
-  then adds only the Postgres-only objects (pgvector, ``fts_vector``,
-  ``embedding``, their indexes and the FTS trigger).
+  then adds only the Postgres-only objects (pgvector, ``fts_vector`` and its
+  GIN index, ``embedding`` with no index (#1822), and the FTS trigger).
 
 **The parity rule.** Every SQLite migration is answered once on the alembic
 side: a revision names the versions it answers in its module-level
 ``sqlite_versions``, or `NO_REVISION` says why the version needs none.
 ``tests/test_alembic_upgrade_path.py`` fails when a migration has no answer, or
 two, and checks that ``alembic upgrade head`` reaches what ``PyriteDB`` builds
-on SQLite.
+on SQLite. A revision that changes only Postgres-only objects answers no
+migration: it declares ``sqlite_versions = ()`` and does nothing on SQLite
+(revision 013, which drops the HNSW index, #1822).
 
 **Every revision is guarded.** It adds a table, column or index only when the
 database lacks it, and runs a data step only when it has just added the column

@@ -169,8 +169,10 @@ def ensure_schema(engine) -> None:
        stamped (every Postgres database built before this) upgrades from the
        base of the chain, and each guarded step skips what it already has.
     2. What only Postgres has, and so no revision mirrors: pgvector, the
-       ``fts_vector`` and ``embedding`` columns, their GIN and HNSW indexes
-       and the FTS trigger.
+       ``fts_vector`` and ``embedding`` columns, the GIN index on
+       ``fts_vector`` and the FTS trigger. ``embedding`` has no index: semantic
+       search is an exact scan (#1821), and revision 013 drops the HNSW index
+       earlier releases built (#1822).
     """
     from ..alembic_chain import upgrade_to_head
 
@@ -184,14 +186,11 @@ def ensure_schema(engine) -> None:
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")
         )
-        # IVFFlat index for vector KNN (requires rows to exist; falls back to seq scan if empty)
-        # Use HNSW for small corpora — no training needed
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_entry_embedding "
-                "ON entry USING hnsw(embedding vector_cosine_ops)"
-            )
-        )
+        # No index on ``embedding``. Semantic search is an exact scan whose
+        # sort key no index can supply (#1401, #1821), so an HNSW index served
+        # no query and cost every write. Revision 013 drops the one earlier
+        # releases built here (#1822); creating it again here would undo that
+        # drop on every start.
         # Trigger to auto-update fts_vector on INSERT/UPDATE
         conn.execute(
             text(f"""
@@ -657,20 +656,19 @@ class PostgresBackend(BaseBackend):
         sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_cosine_distance"
         params["vec3"] = vec_str
         params["max_cosine_distance"] = 1.0 - min_similarity
-        # Exact KNN, never the HNSW index (#1401). Served from
-        # idx_entry_embedding, an ORDER BY on ``<=>`` returns at most
-        # hnsw.ef_search (40) candidates before the WHERE runs, so a selective
-        # filter can empty the result without saying so. Whether the planner
-        # takes that path follows table statistics, which autoanalyze
-        # refreshes on its own schedule.
+        # Exact KNN, the only path (#1401, #1822). An approximate index would
+        # return at most its candidate window (hnsw.ef_search, 40) before the
+        # WHERE runs, so a selective filter could empty the result without
+        # saying so; that is why earlier releases' HNSW index on embedding was
+        # dropped (revision 013) and nothing creates one now.
         #
-        # ``(... <=> ...) + 0`` is a different expression from the indexed
-        # operator, so no index can supply this sort key, on any Postgres
-        # version and as any key position (PG17 lets an index supply the first
-        # key and an Incremental Sort the rest; a tiebreaker alone kept the
-        # index out only up to PG16). The rows are therefore every row the
-        # WHERE admits, sorted, and the LIMIT applies after filtering, as the
-        # docstring promises. (kb_name, id), the primary key, makes the order
+        # ``(... <=> ...) + 0`` is a different expression from the ``<=>``
+        # operator, so no index could supply this sort key even if one were
+        # added by hand, on any Postgres version and as any key position (PG17
+        # lets an index supply the first key and an Incremental Sort the rest;
+        # a tiebreaker alone kept the index out only up to PG16). The rows are
+        # therefore every row the WHERE admits, sorted, and the LIMIT applies
+        # after filtering, as the docstring promises. (kb_name, id), the primary key, makes the order
         # total: equal distances keep the same rows on every run.
         sql += " ORDER BY (e.embedding <=> CAST(:vec2 AS vector)) + 0, e.kb_name, e.id LIMIT :limit"
         params["vec2"] = vec_str
