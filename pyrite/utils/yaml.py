@@ -521,7 +521,33 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
         raise KBConfigInvalidError() from TypeError(
             f"the top level of kb.yaml is a {type(data).__name__}, not a mapping"
         )
+    _validate_kb_yaml_shape(data)
     return data
+
+
+def _validate_kb_yaml_shape(data: Any) -> None:
+    """Refuse a kb.yaml whose schema blocks are not mappings (#1591).
+
+    A null block means the block is absent: ``types: null`` declares no types,
+    ``types: {memo: }`` a type with defaults, and a bare ``fields:`` or
+    ``endpoints:`` none of them."""
+    types = data.get("types")
+    _require_mapping_or_null(types, "'types'")
+    for type_name, type_def in (types or {}).items():
+        _require_mapping_or_null(type_def, f"type {type_name!r}")
+        for block in ("fields", "endpoints"):
+            _require_mapping_or_null(
+                (type_def or {}).get(block), f"{block!r} of type {type_name!r}"
+            )
+
+
+def _require_mapping_or_null(value: Any, what: str) -> None:
+    from ..exceptions import KBConfigInvalidError
+
+    if value is not None and not isinstance(value, Mapping):
+        raise KBConfigInvalidError() from TypeError(
+            f"{what} is a {type(value).__name__}, not a mapping"
+        )
 
 
 def dump_yaml_text(data: Any) -> str:
