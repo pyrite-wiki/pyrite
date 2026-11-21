@@ -10,7 +10,7 @@ import typer
 from rich.table import Table
 
 from ..exceptions import PyriteError, ValidationError
-from ..schema import filter_updated_since, parse_since
+from ..schema import parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import ROW_COUNT_MAX, cli_context, require_kb
@@ -413,14 +413,18 @@ def register_browse_commands(app: typer.Typer) -> None:
     def recent_entries(
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by entry type"),
-        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries"),
+        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries (max 200)"),
+        offset: int = typer.Option(
+            0, "--offset", min=0, max=ROW_COUNT_MAX, help="Pagination offset"
+        ),
         since: str = typer.Option(
             None,
             "--since",
             help=(
                 "Entries updated at or after this instant (inclusive): a date "
                 "(2026-10-22, read as midnight UTC) or an ISO datetime with or "
-                "without an offset"
+                "without an offset. Applied before --limit, so --offset pages "
+                "through everything it matches"
             ),
         ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
@@ -444,24 +448,32 @@ def register_browse_commands(app: typer.Typer) -> None:
                 # exception to it is a mypy error once the block ends (#1268).
                 cli_error_from(exc, output_format)
 
-            entries = svc.list_entries(
+            # `since` is applied before the limit in the service, so the page
+            # holds up to `limit` entries updated at or after it and
+            # `has_more` counts the filtered set, not the page (#1859).
+            limit = min(limit, 200)
+            entries, total = svc.recent(
                 kb_name=kb_name,
                 entry_type=entry_type,
-                sort_by="updated_at",
-                sort_order="desc",
-                limit=min(limit, 200),
+                since=since_instant,
+                limit=limit,
+                offset=offset,
                 include_warnings=True,
             )
-
-            if since_instant is not None:
-                entries = filter_updated_since(entries, since_instant)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
             if fields_list:
                 entries = [project_fields(record, fields_list) for record in entries]
 
-            resp_data = {"entries": entries, "count": len(entries)}
+            resp_data = {
+                "entries": entries,
+                "count": len(entries),
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total,
+            }
 
             formatted = _format_output(resp_data, output_format, fields=fields_list)
             if formatted is not None:

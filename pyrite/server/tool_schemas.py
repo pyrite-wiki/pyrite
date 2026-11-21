@@ -437,13 +437,27 @@ READ_TOOLS = {
         },
     },
     "kb_recent": {
-        "description": "Get recently changed entries. Use to see what's new or changed in a KB. Thin wrapper over list-entries sorted by updated_at desc.",
+        "description": (
+            "Get recently changed entries, newest first, with list pagination. "
+            "`since` bounds updated_at (inclusive) before `limit` applies: the answer "
+            "holds up to `limit` entries updated at or after it, `has_more` says whether "
+            "more of them exist, and `offset` fetches the next page. Deleted entries are "
+            "not reported. `updated_at` is the time Pyrite last indexed the entry until "
+            "#670 lands."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kb_name": {"type": "string", "description": "KB to query (optional)"},
                 "entry_type": {"type": "string", "description": "Filter by entry type"},
-                "limit": {"type": "integer", "description": "Max entries to return (default 20)"},
+                "limit": {
+                    "type": "integer",
+                    "description": "Max entries to return (default 20, max 200)",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Pagination offset into the entries matching the filters (default 0)",
+                },
                 "since": {
                     "type": "string",
                     "description": (
