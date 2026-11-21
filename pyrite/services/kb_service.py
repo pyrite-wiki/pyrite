@@ -41,6 +41,7 @@ from ..exceptions import (
     UndeclaredTypeError,
     UpdateWouldNotLoadError,
     ValidationError,
+    json_safe_value,
     kb_origin,
     outside_text,
     public_attribute,
@@ -542,16 +543,21 @@ def _safe_message(exc: Exception) -> str:
 def _validation_suggestion(errors: list[dict[str, Any]]) -> str | None:
     """The one fix hint a field refusal carries (#1284), or ``None``.
 
-    Built from the first row whose fix is mechanical: a missing field names the
-    field, a format or a range names the accepted value. A row that carries
-    only a message (a plugin's own rule) has no mechanical fix and adds none.
+    Built from the first row that carries a ``suggestion`` or whose fix is
+    mechanical: a missing field names the field, a format or a range names
+    the accepted value. A row that carries only a message (a plugin's own
+    rule) has no mechanical fix and adds none.
     """
     for error in errors:
+        if error.get("suggestion"):
+            return str(error["suggestion"])
         field = error.get("field") or "the field"
         expected = error.get("expected")
         rule = error.get("rule")
         if rule == "required":
             return f"set {field}" + (f" ({expected})" if expected else "")
+        if rule == "range" and field == "importance":
+            return "use a whole number 1-10 for importance (e.g. 5)"
         if rule in {"format", "range"} and expected:
             return f"use {expected} for {field}"
     return None
@@ -848,9 +854,11 @@ class KBService:
                 # validator's own message beats "(expected None, got None)".
                 parts.append(f"{field}: {message}" if field != "?" else message)
             else:
-                parts.append(f"{field}: {rule} (expected {expected}, got {got!r})")
+                parts.append(f"{field}: {rule} (expected {expected}, got {json_safe_value(got)!r})")
         raise SchemaViolationError(
-            f"Invalid {entry.entry_type} for KB '{kb_name}': " + "; ".join(parts), errors
+            f"Invalid {entry.entry_type} for KB '{kb_name}': " + "; ".join(parts),
+            errors,
+            suggestion=_validation_suggestion(errors),
         )
 
     def _validate_write(
@@ -943,42 +951,8 @@ class KBService:
             warnings.extend(excepted)
         if not errors:
             return warnings
-        parts = []
-        for e in errors:
-            field = e.get("field", "?")
-            rule = e.get("rule", "")
-            got = e.get("got")
-            expected = e.get("expected")
-            message = e.get("message")
-            if is_off_list(e) and isinstance(expected, list):
-                # Every declared-enum refusal reads the same way, naming the
-                # field, the value and the allowed list (#555); the rule
-                # identifiers themselves are unchanged.
-                rendered = f"{field}: {got!r} is not one of {expected}"
-                # A validator's `message` can say more than the generic
-                # "Invalid <field>: <got>" (e.g. explaining why an enum only
-                # applies conditionally) -- append it when it does, same
-                # spirit as the `required` case below.
-                generic = f"Invalid {field}: {got}"
-                if message and message != generic:
-                    rendered += f" ({message})"
-                parts.append(rendered)
-            elif rule == "required":
-                # A conditional `required` rule (e.g. journalism's "amount is
-                # required when transaction_type is payment") sets `message`
-                # to explain *why*; dropping it for the bare "field: required"
-                # loses the only useful part of the refusal (#429).
-                parts.append(f"{field}: {message or 'required'}")
-            elif message:
-                # A rule this renderer does not know, or none at all (e.g.
-                # journalism-investigation's "Importance must be 1-10, got: 99"): the
-                # validator's own message beats "(expected None, got None)".
-                parts.append(f"{field}: {message}" if field != "?" else message)
-            else:
-                parts.append(f"{field}: {rule} (expected {expected}, got {got!r})")
-        raise SchemaViolationError(
-            f"Invalid {entry.entry_type} for KB '{kb_name}': " + "; ".join(parts), errors
-        )
+        self._raise_schema_violation(entry, kb_name, errors)
+        return warnings  # unreachable; _raise_schema_violation always raises
 
     def _get_embedding_worker(self):
         """Lazy `EmbeddingWorker` over this service's index DB.
@@ -1850,7 +1824,7 @@ class KBService:
         kb_config: KBConfig,
         *,
         allow_undeclared: bool = False,
-        importance: int | None = None,
+        importance: int | str | None = None,
     ) -> dict[str, Any]:
         """The fields a create of this type in this KB would write, with their values (#1598).
 

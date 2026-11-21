@@ -368,10 +368,6 @@ UNCLASSIFIED: dict[tuple[str, str], str] = {
 #: except ``timeline``: a second copy in read_cli.py.
 NOT_YET: set[tuple[str, str]] = {
     #
-    # pyrite/cli/entry_commands.py (see also #1537)
-    ("pyrite create", "importance"),
-    ("pyrite update", "importance"),
-    #
     # pyrite/cli/browse_commands.py
     ("pyrite orient", "recent"),
     #
