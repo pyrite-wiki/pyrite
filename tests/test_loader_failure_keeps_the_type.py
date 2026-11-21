@@ -11,8 +11,8 @@ one #777 states for files that cannot be read: the load raises
 it, and no row of any type holds its id.
 
 The failing loader is injected, not found in the tree: the in-tree triggers
-(``int()`` on ``rank``, ``adr_number``, ``reputation``) are being fixed one by
-one (#1247, #1263), and the rule must hold for the next one too. Each shape is
+(``int()`` on ``rank``, ``adr_number``, ``reputation``) are fixed (#1247: they
+read through ``safe_int``), and the rule must hold for the next one too. Each shape is
 a real call that raises the way a loader does, run inside the type's own
 ``from_frontmatter`` for files that carry ``probe: bad``; every other file of
 the type loads as before. Types come from the registries, core and plugin, so
@@ -331,18 +331,34 @@ def test_an_update_whose_result_would_not_load_is_refused_not_written(
 
 _BODY = "Zebra marker body.\n"
 
+
+@pytest.fixture(autouse=True)
+def _backlog_loader_that_raises(monkeypatch):
+    """``rank`` no longer raises (#1247), so a backlog item that carries
+    ``probe: int`` or ``probe: overflow`` raises the way ``int(rank)`` did."""
+    cls = TYPES["backlog_item"][1]
+    original = cls.from_frontmatter.__func__
+
+    def from_frontmatter(klass, meta, body=""):
+        if meta.get("probe") in ("int", "overflow"):
+            SHAPES[meta["probe"]][0](klass)
+        return original(klass, meta, body)
+
+    monkeypatch.setattr(cls, "from_frontmatter", classmethod(from_frontmatter))
+
+
 #: shape -> (file text, id, loads). `loads`: the loader gives a typed entry.
 FILES = {
     "empty": (f"---\n---\n\n{_BODY}", "entry-da39a3ee", True),
     "foo-bar": (f"---\nfoo: bar\n---\n\n{_BODY}", "entry-da39a3ee", True),
     "tags": (f"---\ntags: [a]\n---\n\n{_BODY}", "entry-da39a3ee", True),
     "bad-int": (
-        f"---\ntype: backlog_item\nid: bad\ntitle: Bad\nrank: abc\n---\n\n{_BODY}",
+        f"---\ntype: backlog_item\nid: bad\ntitle: Bad\nprobe: int\n---\n\n{_BODY}",
         "bad",
         False,
     ),
     "inf": (
-        f"---\ntype: backlog_item\nid: bad\ntitle: Bad\nrank: .inf\n---\n\n{_BODY}",
+        f"---\ntype: backlog_item\nid: bad\ntitle: Bad\nprobe: overflow\n---\n\n{_BODY}",
         "bad",
         False,
     ),
@@ -421,7 +437,7 @@ def test_get_returns_the_file_never_not_found(cli_world, tmp_path, name):
         assert data["entry_type"] == "backlog_item"
         problems = data["load_problems"]
         assert len(problems) == 1, problems
-        assert problems[0]["field"] == "rank"
+        assert problems[0]["field"] == "probe"
         assert problems[0]["message"]
 
 
