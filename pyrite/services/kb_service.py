@@ -55,6 +55,7 @@ from ..plugins.context import PluginContext
 from ..schema import Link, Source
 from ..schema.enum_check import is_off_list, is_per_element
 from ..schema.reserved import RESERVED_FIELD_NAMES
+from ..schema.validators import metadata_shape_warning
 from ..storage import entry_paths
 from ..storage.database import PyriteDB
 from ..storage.document_manager import DocumentManager
@@ -927,6 +928,9 @@ class KBService:
             )
 
         fields = self._validated_fields(entry)
+        source = entry._source_frontmatter if entry._source_frontmatter is not None else fields
+        if warning := metadata_shape_warning(source.get("metadata")):
+            model_warnings.append(warning)
         result = self._schema_result(entry, fields, kb_name, kb_config, existing_entry)
         if result is None:  # a broken validator must not make every write fail
             return model_warnings

@@ -1,10 +1,23 @@
 """Validation utilities for KB schema fields."""
 
 import re
+from collections.abc import Mapping
 from datetime import UTC, date, datetime
 from typing import Any
 
 from ..exceptions import EntryTypeError, ValidationError
+
+
+def metadata_shape_warning(value: Any) -> dict[str, str] | None:
+    """Report non-mapping frontmatter metadata without rewriting the file."""
+    if value is None or isinstance(value, Mapping):
+        return None
+    return {
+        "field": "metadata",
+        "rule": "metadata_shape",
+        "severity": "warning",
+        "message": "metadata must be a mapping; the original value was kept",
+    }
 
 
 def validate_date(date_str: Any) -> bool:
