@@ -3148,7 +3148,9 @@ class KBService:
             spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
             if _same_instant_as_file(file_values, spelled, value):
                 return Set(path, file_values[spelled])  # the same instant: no change
-            if _same_number_spelling_as_file(file_values, spelled, value, declared=declared):
+            if isinstance(spelled, str) and _same_number_spelling_as_file(
+                file_values, spelled, value, declared=declared
+            ):
                 return Set(path, file_values[spelled])  # the same number spelling: no change
             return Set(path, value)
         if isinstance(op, Append | Remove):
