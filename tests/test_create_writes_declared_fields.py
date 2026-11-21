@@ -9,11 +9,12 @@ a second spelling of one field. A file-based create (``pyrite add``) writes the
 file's keys and nothing else.
 
 Oracles: the declared fields and their empty spellings are written out by hand
-below, from the declarations (the kb.yaml this test writes, ``CORE_TYPES``), not
-from the merge under test. "Exactly" is checked against what the type's own
-class writes for the same request (``_frontmatter_for_file`` of an entry built
-in memory), which this change does not touch: the file holds those keys plus
-the declared ones, and nothing else.
+below, from the declarations (the kb.yaml this test writes, ``CORE_TYPES``, and
+the software preset fields the class does not already emit), not from the merge
+under test. "Exactly" is checked against what the type's own class writes for
+the same request (``_frontmatter_for_file`` of an entry built in memory), which
+this change does not touch: the file holds those keys plus the declared ones,
+and nothing else.
 """
 
 from __future__ import annotations
@@ -91,6 +92,21 @@ CORE_EMPTIES: dict[str, dict[str, Any]] = {
         "view_config": None,
         "folder_path": "",
     },
+}
+
+#: software-kb's preset fields whose class omits the default (`if self.kind:`).
+#: A create writes the attribute it already holds: ``""`` for an empty string,
+#: ``design_doc``'s ``status`` ``draft``. Fields the class already emits
+#: (``adr.status``, ``backlog_item.status`` / ``priority``, ``milestone.status``)
+#: stay in the class oracle. Written from the preset, not from ``type_fields``.
+PLUGIN_EMPTIES: dict[str, dict[str, Any]] = {
+    "backlog_item": {"kind": "", "effort": ""},
+    "component": {"kind": ""},
+    "design_doc": {"status": "draft"},
+    "development_convention": {"category": ""},
+    "programmatic_validation": {"category": ""},
+    "runbook": {"runbook_kind": ""},
+    "standard": {"category": ""},
 }
 
 
@@ -199,7 +215,11 @@ def test_a_title_only_create_writes_exactly_the_declared_fields(tmp_path: Path, 
     # What the type's own class writes for this request (unchanged by #86).
     built = build_entry(entry_type, title="Probe", body="b", **needs)
     class_keys = set(built._frontmatter_for_file())
-    declared = {**CORE_EMPTIES.get(entry_type, {}), **KB_YAML_EMPTIES}
+    declared = {
+        **CORE_EMPTIES.get(entry_type, {}),
+        **PLUGIN_EMPTIES.get(entry_type, {}),
+        **KB_YAML_EMPTIES,
+    }
 
     # A field is spelled at its name or under `metadata:` (ADR-0051); a typed
     # class writes one it has no attribute for under `metadata:`, sent or not.
@@ -427,8 +447,11 @@ def test_an_empty_select_is_accepted_under_enforcement(tmp_path: Path):
 
 
 class _FieldsPlugin:
-    """A plugin that declares fields through `get_field_schemas()` (no shipped
-    plugin does yet; #232 theme 2 makes them)."""
+    """A plugin that declares fields through `get_field_schemas()`.
+
+    software-kb does this for its own types (#232). This stand-in covers a
+    type that plugin does not name.
+    """
 
     name = "declares_fields_86"
 

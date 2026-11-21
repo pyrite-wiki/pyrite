@@ -859,18 +859,44 @@ class PluginRegistry:
         return self._aggregate_dict("get_collection_types", "collection type")
 
     def get_all_field_schemas(self) -> dict[str, dict[str, dict]]:
-        """Get all rich field schemas from all plugins (merged per type)."""
+        """Rich field schemas from all plugins, merged per type name.
+
+        A plugin's fields apply to that type name wherever the plugin is
+        installed, as ``resolve_type_metadata`` does, and not to any other
+        type. Two plugins that name one type both contribute: a warning names
+        them, and the later plugin's declaration of a field replaces the
+        earlier one. A field only one of them declares is kept.
+        """
         self.discover()
         schemas: dict[str, dict[str, dict]] = {}
+        owners: dict[str, str] = {}
         for plugin in self._plugins.values():
-            if hasattr(plugin, "get_field_schemas"):
-                try:
-                    plugin_schemas = plugin.get_field_schemas()
-                    if plugin_schemas:
-                        for type_name, fields in plugin_schemas.items():
-                            schemas.setdefault(type_name, {}).update(fields)
-                except Exception as e:
-                    logger.warning("Plugin %s get_field_schemas failed: %s", plugin.name, e)
+            if not hasattr(plugin, "get_field_schemas"):
+                continue
+            try:
+                plugin_schemas = plugin.get_field_schemas()
+            except Exception as e:
+                logger.warning("Plugin %s get_field_schemas failed: %s", plugin.name, e)
+                continue
+            if not isinstance(plugin_schemas, dict) or not plugin_schemas:
+                continue
+            for type_name, fields in plugin_schemas.items():
+                if not isinstance(type_name, str) or not isinstance(fields, dict):
+                    continue
+                if type_name in owners:
+                    logger.warning(
+                        "Plugin '%s' registers field schema '%s' which conflicts with "
+                        "plugin '%s'; last writer wins for fields they both name",
+                        plugin.name,
+                        type_name,
+                        owners[type_name],
+                    )
+                else:
+                    owners[type_name] = plugin.name
+                bucket = schemas.setdefault(type_name, {})
+                for field_name, spec in fields.items():
+                    if isinstance(field_name, str) and isinstance(spec, dict):
+                        bucket[field_name] = spec
         return schemas
 
     def get_all_rubric_checkers(self) -> dict[str, Any]:

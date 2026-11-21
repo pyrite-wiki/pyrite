@@ -280,6 +280,12 @@ class PyritePlugin(Protocol):
         """
         Return rich field schema definitions for plugin entry types.
 
+        Core reads this through ``KBSchema.type_fields`` (core < plugin <
+        kb.yaml), which ``orient`` publishes (#232). The fields apply to that
+        type name in every KB, as ``resolve_type_metadata`` does, and not to
+        any other type. Two plugins that name one type: a warning, and the
+        later plugin's declaration of a field replaces the earlier one.
+
         Returns:
             Dict mapping type name to dict of field definitions.
             Each field definition matches the FieldSchema.from_dict() format.
