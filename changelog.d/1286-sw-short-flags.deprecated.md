@@ -1,0 +1,1 @@
+- Deprecated short flags `-f` (`--format`) across `sw` commands and `-l` (`--limit`) on `sw backlog` (#1286). Both short flags continue to work with a deprecation warning on stderr until removal in 0.27, avoiding collisions with `pyrite create -f` (`--field`) and `-l` (`--link`).

@@ -4007,6 +4007,63 @@ class TestTransition:
             finally:
                 db.close()
 
+    def test_transition_done_to_done_includes_helpful_hint(self):
+        """Transitioning from done to done should mention that 'sw review -o approved' closes items directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(
+                tmpdir,
+                entries=[
+                    {
+                        "id": "item-done",
+                        "title": "Done Feature",
+                        "entry_type": "backlog_item",
+                        "status": "done",
+                        "meta": {"kind": "feature", "status": "done"},
+                    },
+                ],
+            )
+            try:
+                plugin = _make_plugin_with_db(db)
+                result = plugin._mcp_transition(
+                    {
+                        "item_id": "item-done",
+                        "kb_name": "test",
+                        "to_status": "done",
+                    }
+                )
+                assert result["transitioned"] is False
+                assert "sw review -o approved" in result["error"]
+                assert "sw_review" in result["error"]
+                assert "already done" in result["error"]
+            finally:
+                db.close()
+
+    def test_cli_transition_done_to_done_hint(self, tmp_path):
+        import yaml
+
+        from pyrite.config import KBConfig
+        from tests._world import build_world
+
+        world = build_world(
+            tmp_path,
+            kbs=[KBConfig(name="proj", path=tmp_path / "kb", kb_type="software")],
+            rest=False,
+        )
+        try:
+            front = {
+                "id": "item-done",
+                "type": "backlog_item",
+                "title": "Done Feature",
+                "status": "done",
+            }
+            world.add_entry("proj", "---\n" + yaml.safe_dump(front) + "---\nBody.\n")
+            result = world.cli("sw", "transition", "item-done", "done", "-k", "proj")
+            assert result.exit_code != 0
+            assert "sw review -o approved" in result.output
+            assert "already done" in result.output
+        finally:
+            world.close()
+
 
 # =========================================================================
 # Workflow normalization
@@ -4936,6 +4993,91 @@ class TestBacklogCliPaginationFlags:
         call_args = mock_plugin._mcp_backlog.call_args[0][0]
         assert call_args["limit"] == 5
         assert call_args["offset"] == 10
+
+    def test_sw_deprecated_short_flags(self, tmp_path):
+        """sw -f and -l are hidden and emit deprecation warnings on stderr (#1286)."""
+        from pyrite.config import KBConfig
+        from tests._world import build_world
+
+        world = build_world(
+            tmp_path,
+            kbs=[KBConfig(name="proj", path=tmp_path / "kb", kb_type="software")],
+            rest=False,
+        )
+        try:
+            # -l and -f are not shown in sw backlog --help
+            help_res = world.cli("sw", "backlog", "--help")
+            assert "-l," not in help_res.output
+            assert "-l " not in help_res.output
+            assert "-f," not in help_res.output
+            assert "-f " not in help_res.output
+
+            # -f is not shown in sw check-ready --help
+            check_help = world.cli("sw", "check-ready", "--help")
+            assert "-f," not in check_help.output
+            assert "-f " not in check_help.output
+
+            # -l works with deprecation warning on stderr
+            res_l = world.cli("sw", "backlog", "-l", "5", "-k", "proj")
+            assert res_l.exit_code == 0, res_l.output
+            assert "Warning: -l is deprecated" in res_l.stderr
+            assert "will stop meaning --limit in 0.27" in res_l.stderr
+
+            # -f works with deprecation warning on stderr
+            res_f = world.cli("sw", "backlog", "-f", "rich", "-k", "proj")
+            assert res_f.exit_code == 0, res_f.output
+            assert "Warning: -f is deprecated" in res_f.stderr
+            assert "will stop meaning --format in 0.27" in res_f.stderr
+
+            # Both -l and --limit together refuse as usage error
+            res_both_l = world.cli("sw", "backlog", "-l", "5", "--limit", "10", "-k", "proj")
+            assert res_both_l.exit_code == 2
+            assert "-l and --limit were both given; use --limit only." in res_both_l.output
+
+            # Both -f and --format together refuse as usage error
+            res_both_f = world.cli("sw", "backlog", "-f", "rich", "--format", "json", "-k", "proj")
+            assert res_both_f.exit_code == 2
+            assert "-f and --format were both given; use --format only." in res_both_f.output
+        finally:
+            world.close()
+
+
+class TestSoftwareKbHelpTexts:
+    def test_sw_help_mentions_review_closes_done(self):
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["--help"])
+        assert result.exit_code == 0
+        norm_output = " ".join(result.output.split())
+        assert "sw review -o approved" in norm_output
+        assert "closes items directly to 'done'" in norm_output
+
+    def test_sw_transition_help_lists_statuses_and_note(self):
+        from pyrite_software_kb.cli import sw_app
+        from pyrite_software_kb.workflows import BACKLOG_WORKFLOW
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["transition", "--help"])
+        assert result.exit_code == 0
+        assert "Allowed statuses:" in result.output
+        for state in BACKLOG_WORKFLOW["states"]:
+            assert state in result.output
+        norm_output = " ".join(result.output.split())
+        assert "sw review -o approved" in norm_output
+
+    def test_sw_review_help_mentions_approved_closes_done(self):
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["review", "--help"])
+        assert result.exit_code == 0
+        norm_output = " ".join(result.output.split())
+        assert "closes item as 'done'" in norm_output
+        assert "sw transition" in norm_output
 
 
 # =========================================================================

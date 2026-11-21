@@ -6,6 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+import click
 import typer
 from rich.table import Table
 
@@ -20,13 +21,105 @@ from .adr_listing import (
     next_adr_number,
     resolve_adr_kb,
 )
+from .workflows import BACKLOG_WORKFLOW
 
 if TYPE_CHECKING:
     from pyrite.storage.database import PyriteDB
 
-sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
+sw_app = typer.Typer(
+    help="Software KB commands (ADRs, backlog, standards, components). Note: 'sw review -o approved' closes items directly to 'done'."
+)
 console = cli_console()
 logger = logging.getLogger(__name__)
+
+_SW_LEGACY_FORMAT_KEY = "sw.format.legacy"
+_SW_EXPLICIT_FORMAT_KEY = "sw.format.explicit"
+_SW_LEGACY_LIMIT_KEY = "sw.limit.legacy"
+_SW_EXPLICIT_LIMIT_KEY = "sw.limit.explicit"
+
+
+def _record_sw_short_format(
+    ctx: typer.Context, param: typer.CallbackParam, value: str | None
+) -> str | None:
+    if value is None:
+        return None
+    source = ctx.get_parameter_source(param.name)
+    if getattr(source, "name", None) == "COMMANDLINE":
+        if ctx.meta.get(_SW_EXPLICIT_FORMAT_KEY):
+            raise typer.BadParameter("-f and --format were both given; use --format only.")
+        value = output_format_choice("json", "rich")(value)
+        typer.echo(
+            f"Warning: -f is deprecated and will stop meaning --format in 0.27; use --format {value}.",
+            err=True,
+        )
+        ctx.meta[_SW_LEGACY_FORMAT_KEY] = value
+    return value
+
+
+def _sw_format_callback(ctx: typer.Context, param: typer.CallbackParam, value: str) -> str:
+    value = output_format_choice("json", "rich")(value)
+    source = ctx.get_parameter_source(param.name)
+    if getattr(source, "name", None) == "COMMANDLINE":
+        if _SW_LEGACY_FORMAT_KEY in ctx.meta:
+            raise typer.BadParameter("-f and --format were both given; use --format only.")
+        ctx.meta[_SW_EXPLICIT_FORMAT_KEY] = True
+    return value
+
+
+SW_LEGACY_FORMAT_SHORT = typer.Option(None, "-f", hidden=True, callback=_record_sw_short_format)
+
+
+def _record_sw_short_limit(
+    ctx: typer.Context, param: typer.CallbackParam, value: int | None
+) -> int | None:
+    if value is None:
+        return None
+    source = ctx.get_parameter_source(param.name)
+    if getattr(source, "name", None) == "COMMANDLINE":
+        if ctx.meta.get(_SW_EXPLICIT_LIMIT_KEY):
+            raise typer.BadParameter("-l and --limit were both given; use --limit only.")
+        if value < 0:
+            raise typer.BadParameter(f"{value} is smaller than minimum 0.")
+        typer.echo(
+            f"Warning: -l is deprecated and will stop meaning --limit in 0.27; use --limit {value}.",
+            err=True,
+        )
+        ctx.meta[_SW_LEGACY_LIMIT_KEY] = value
+    return value
+
+
+def _sw_limit_callback(
+    ctx: typer.Context, param: typer.CallbackParam, value: int | None
+) -> int | None:
+    source = ctx.get_parameter_source(param.name)
+    if getattr(source, "name", None) == "COMMANDLINE":
+        if _SW_LEGACY_LIMIT_KEY in ctx.meta:
+            raise typer.BadParameter("-l and --limit were both given; use --limit only.")
+        ctx.meta[_SW_EXPLICIT_LIMIT_KEY] = True
+    return value
+
+
+SW_LEGACY_LIMIT_SHORT = typer.Option(
+    None, "-l", min=0, hidden=True, callback=_record_sw_short_limit
+)
+
+
+def _sw_effective_format(fmt: str, legacy_format: Any = None) -> str:
+    ctx = click.get_current_context(silent=True)
+    if ctx and _SW_LEGACY_FORMAT_KEY in ctx.meta:
+        return ctx.meta[_SW_LEGACY_FORMAT_KEY]
+    if isinstance(legacy_format, str):
+        return legacy_format
+    return fmt
+
+
+def _sw_effective_limit(limit: int | None, legacy_limit: Any = None) -> int | None:
+    ctx = click.get_current_context(silent=True)
+    if ctx and _SW_LEGACY_LIMIT_KEY in ctx.meta:
+        return ctx.meta[_SW_LEGACY_LIMIT_KEY]
+    if isinstance(legacy_limit, int):
+        return legacy_limit
+    return limit
 
 
 def _query_entries(db: PyriteDB, entry_type: str, kb_name: str | None = None) -> list[dict]:
@@ -95,16 +188,17 @@ def sw_adrs(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List Architecture Decision Records.
 
     Bounded by default like `sw backlog`: 50 ADRs, with --limit/--offset to
     page through the rest and --limit 0 for the full, unbounded list.
     """
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -287,25 +381,28 @@ def sw_backlog(
     limit: int | None = typer.Option(
         None,
         "--limit",
-        "-l",
         min=0,
+        callback=_sw_limit_callback,
         help="Max items to return (default 50; pass 0 for no limit)",
     ),
+    legacy_limit: int | None = SW_LEGACY_LIMIT_SHORT,
     offset: int = typer.Option(0, "--offset", min=0, help="Skip this many items before returning"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List backlog items with sorting, filtering, and grouping.
 
     Defaults to the 50 highest-sorted items; pass --limit/--offset to page
     through the rest, or --limit 0 for the full, unbounded list.
     """
+    limit = _sw_effective_limit(limit, legacy_limit)
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import DEFAULT_LIST_LIMIT, SoftwareKBPlugin
 
@@ -403,12 +500,13 @@ def sw_epics(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List epics with subtask progress."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -455,12 +553,13 @@ def sw_epic_detail(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Show an epic's subtasks grouped by status."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -550,12 +649,13 @@ def sw_standards(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.27.0: use validations/conventions]"""
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -620,12 +720,13 @@ def sw_validations(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List programmatic validations (automated checks)."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     config = load_config()
@@ -680,12 +781,13 @@ def sw_conventions(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List development conventions (judgment-based guidance)."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     config = load_config()
@@ -929,12 +1031,13 @@ def sw_milestones(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List milestones with completion progress."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.services.access_policy import UNSCOPED
     from pyrite.storage.database import PyriteDB
 
@@ -1055,12 +1158,13 @@ def sw_board_cmd(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """View kanban board with backlog items grouped by lane."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.services.access_policy import UNSCOPED
     from pyrite.storage.database import PyriteDB
 
@@ -1141,12 +1245,13 @@ def sw_review_queue(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """View items in review status, sorted by wait time."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     config = load_config()
@@ -1322,13 +1427,25 @@ def sw_submit(
 @sw_app.command("transition")
 def sw_transition(
     item_id: str = typer.Argument(..., help="Backlog item ID"),
-    to_status: str = typer.Argument(..., help="Target status"),
+    to_status: str = typer.Argument(
+        ...,
+        help=f"Target status: {', '.join(BACKLOG_WORKFLOW['states'])}",
+    ),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     reason: str | None = typer.Option(
         None, "--reason", "-r", help="Reason (required for some transitions)"
     ),
 ):
-    """Transition a backlog item to a new status (validates workflow rules)."""
+    """Transition a backlog item to a new status (validates workflow rules).
+
+    Allowed statuses:
+      proposed, planned, accepted, in_progress, review, done, retired,
+      deferred, wont_do.
+
+    Note:
+      `sw review -o approved` automatically marks an item 'done', closing it.
+      Do not call `sw transition <id> done` after an approved review.
+    """
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
 
@@ -1359,9 +1476,14 @@ def sw_transition(
         if not can_transition(BACKLOG_WORKFLOW, current_status, to_status, "write"):
             allowed = get_allowed_transitions(BACKLOG_WORKFLOW, current_status, "write")
             targets = [t["to"] for t in allowed]
+            hint = ""
+            if current_status == "done" and to_status == "done":
+                hint = " (item is already done; 'sw review -o approved' closes items directly)"
+            elif current_status == to_status:
+                hint = f" (item is already in '{current_status}' status)"
             console.print(
                 f"[red]Error:[/red] Cannot transition from '{current_status}' to '{to_status}'. "
-                f"Allowed: {', '.join(targets) or 'none'}"
+                f"Allowed: {', '.join(targets) or 'none'}{hint}"
             )
             raise typer.Exit(1)
 
@@ -1400,12 +1522,13 @@ def sw_pull_next(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Recommend the next work item based on priority and WIP limits."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -1445,15 +1568,16 @@ def sw_review_cmd(
         ...,
         "--outcome",
         "-o",
-        help="Review outcome: approved (moves item to done) or changes_requested (moves item back to in_progress)",
+        help="Review outcome: approved (moves item to done, closing it) or changes_requested (moves item back to in_progress)",
     ),
     reviewer: str = typer.Option(..., "--reviewer", help="Who is reviewing"),
     feedback: str | None = typer.Option(None, "--feedback", help="Review notes/feedback"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
 ):
-    """Record a review outcome for an item in review status.
+    """Record a review outcome for an item in review status ('approved' closes item as 'done').
 
-    Outcome 'approved' moves the item to 'done'. Outcome 'changes_requested'
+    Outcome 'approved' moves the item to 'done' (closing it; do not run
+    'sw transition <id> done' afterwards). Outcome 'changes_requested'
     moves the item back to 'in_progress' and requires feedback.
     """
     require_kb(load_config(), kb_name, output_format="rich")
@@ -1532,16 +1656,17 @@ def sw_components(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """List component documentation.
 
     Bounded by default like `sw backlog`: 50 components, with --limit/--offset
     to page and --limit 0 for the full list.
     """
+    fmt = _sw_effective_format(fmt, legacy_format)
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
@@ -1612,12 +1737,13 @@ def sw_check_ready(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Check Definition of Ready for a backlog item without claiming it."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -1658,12 +1784,13 @@ def sw_refine_cmd(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Scan backlog for DoR gaps, sorted by priority."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
@@ -1720,12 +1847,13 @@ def sw_context_for_item(
     fmt: str = typer.Option(
         "json",
         "--format",
-        "-f",
-        callback=output_format_choice("json", "rich"),
+        callback=_sw_format_callback,
         help="Output format: json, rich",
     ),
+    legacy_format: str | None = SW_LEGACY_FORMAT_SHORT,
 ):
     """Assemble full context bundle for a backlog item: linked ADRs, components, validations, conventions, reviews, work logs, dependencies."""
+    fmt = _sw_effective_format(fmt, legacy_format)
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
