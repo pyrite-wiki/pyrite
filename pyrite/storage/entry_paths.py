@@ -51,6 +51,8 @@ from __future__ import annotations
 
 import os
 import unicodedata
+from collections.abc import Callable, Sequence
+from pathlib import Path
 
 from ..exceptions import ValidationError
 
@@ -127,6 +129,64 @@ def folded_path_key(root: str | os.PathLike[str], path: str | os.PathLike[str]) 
     if parts is not None:
         return fold_parts(parts)
     return fold_parts(tuple(p for p in os.fspath(path).replace("\\", "/").split("/") if p))
+
+
+def resolve_existing_folder_casing(
+    root: str | os.PathLike[str],
+    subdir: str | None,
+    *,
+    is_dir: Callable[[Path], bool] | None = None,
+    iter_dir: Callable[[Path], Sequence[str]] | None = None,
+) -> str | None:
+    """Resolve ``subdir`` against existing directories under ``root``, preserving
+    the folder spelling the disk already holds on case-insensitive filesystems (#1624).
+
+    When a directory along the path already exists under a different letter case
+    (or another case-folded spelling), its on-disk spelling is reused so the reported
+    path and index row match what the filesystem holds. On a case-sensitive disk
+    where the differently-cased folder does not exist, ``subdir`` keeps its requested
+    spelling.
+
+    ``is_dir`` and ``iter_dir`` can be supplied to simulate a case-insensitive
+    filesystem on case-sensitive platforms in unit tests.
+    """
+    if subdir is None:
+        return None
+    raw = os.fspath(subdir).replace("\\", "/").strip()
+    if not raw:
+        return ""
+    parts = tuple(p for p in raw.split("/") if p)
+    if not parts:
+        return subdir
+
+    current = Path(root)
+    resolved_parts: list[str] = []
+    _is_dir = is_dir if is_dir is not None else (lambda p: p.is_dir())
+
+    for part in parts:
+        probe = current / part
+        if _is_dir(probe):
+            if iter_dir is not None:
+                names = iter_dir(current)
+            else:
+                try:
+                    names = [e.name for e in os.scandir(current) if e.is_dir()]
+                except (OSError, ValueError):
+                    names = []
+
+            if part in names:
+                chosen = part
+            else:
+                folded_target = fold(part)
+                match = next((name for name in names if fold(name) == folded_target), None)
+                chosen = match if match is not None else part
+        else:
+            chosen = part
+
+        resolved_parts.append(chosen)
+        current = current / chosen
+
+    return "/".join(resolved_parts)
 
 
 def reason_for_folders(parts: tuple[str, ...]) -> str | None:
