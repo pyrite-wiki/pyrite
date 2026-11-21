@@ -91,7 +91,7 @@ from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
-from .importance_reading import refused_importance_message
+from .importance_reading import attach_importance_warnings, refused_importance_message
 from .read_shaping import ENTRY_WARNINGS_KEY
 from .wikilink_service import WikilinkService
 
@@ -3701,9 +3701,15 @@ class KBService:
     # Query Operations (read-only, delegate to db)
     # =========================================================================
 
-    def get_entries(self, ids: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    def get_entries(
+        self,
+        ids: list[tuple[str, str]],
+        *,
+        include_warnings: bool = False,
+    ) -> list[dict[str, Any]]:
         """Batch-get multiple entries by (entry_id, kb_name) pairs."""
-        return self.db.get_entries(ids)
+        rows = self.db.get_entries(ids)
+        return attach_importance_warnings(self.db, rows) if include_warnings else rows
 
     def list_entries(
         self,
@@ -3717,9 +3723,11 @@ class KBService:
         offset: int = 0,
         status: str | None = None,
         min_importance: int | None = None,
+        *,
+        include_warnings: bool = False,
     ) -> list[dict[str, Any]]:
         """List entries with pagination."""
-        return self.db.list_entries(
+        rows = self.db.list_entries(
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
@@ -3731,6 +3739,7 @@ class KBService:
             status=status,
             min_importance=min_importance,
         )
+        return attach_importance_warnings(self.db, rows) if include_warnings else rows
 
     def list_collections(
         self,

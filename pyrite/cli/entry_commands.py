@@ -52,7 +52,7 @@ from ..utils.frontmatter import (
 )
 from .context import cli_context, read_input_file, require_input_file
 from .outcome import Outcome
-from .output import OUTPUT_FORMAT, cli_console, validate_output_format
+from .output import OUTPUT_FORMAT, cli_console, print_rich_entry_warnings, validate_output_format
 from .task_commands import _BodySourceCommand
 
 logger = logging.getLogger(__name__)
@@ -356,6 +356,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table([result], fields_list, "Entry"))
+                print_rich_entry_warnings(console, result)
                 return
 
             console.print(f"\n[bold cyan]{result.get('title', '')}[/bold cyan]")
@@ -379,6 +380,8 @@ def register_entry_commands(app: typer.Typer) -> None:
                         console.print(f"  • {src.get('title', '')}: {src.get('url', '')}")
                     else:
                         console.print(f"  • {src.title}: {src.url}")
+
+            print_rich_entry_warnings(console, result)
 
     @app.command("create", cls=_EntryBodySourceCommand)
     def create_entry(

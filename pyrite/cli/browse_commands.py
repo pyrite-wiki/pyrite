@@ -14,7 +14,12 @@ from ..schema import filter_updated_since, parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
 from .context import ROW_COUNT_MAX, cli_context, require_kb
-from .output import cli_console, output_format_choice, validate_output_format
+from .output import (
+    cli_console,
+    output_format_choice,
+    print_rich_entry_warnings,
+    validate_output_format,
+)
 
 console = cli_console()
 
@@ -100,6 +105,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 sort_order=sort_order,
                 limit=limit,
                 offset=offset,
+                include_warnings=True,
             )
             total = svc.count_entries(kb_name=kb_name, entry_type=entry_type, tag=tag)
 
@@ -129,6 +135,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(entries, fields_list, "Entries"))
+                print_rich_entry_warnings(console, resp_data)
                 return
 
             table = Table(title=f"Entries ({total} total)")
@@ -146,6 +153,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 )
 
             console.print(table)
+            print_rich_entry_warnings(console, resp_data)
 
     @app.command("batch-read")
     def batch_read(
@@ -178,7 +186,7 @@ def register_browse_commands(app: typer.Typer) -> None:
             # `not_found`. A spec with no KB (":id") is left to the read.
             for _eid, kb in parsed_ids:
                 require_kb(config, kb, db=db, output_format=output_format)
-            results = svc.get_entries(parsed_ids)
+            results = svc.get_entries(parsed_ids, include_warnings=True)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
@@ -220,6 +228,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 for r in results:
                     console.print(f"\n[bold cyan]{r.get('title', '')}[/bold cyan]")
                     console.print(f"[dim]KB: {r.get('kb_name', '')} | ID: {r.get('id', '')}[/dim]")
+            print_rich_entry_warnings(console, resp_data)
 
             if not_found:
                 console.print(f"\n[yellow]Not found: {len(not_found)} entries[/yellow]")
@@ -441,6 +450,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 sort_by="updated_at",
                 sort_order="desc",
                 limit=min(limit, 200),
+                include_warnings=True,
             )
 
             if since_instant is not None:
@@ -466,6 +476,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(entries, fields_list, "Recent Entries"))
+                print_rich_entry_warnings(console, resp_data)
                 return
 
             table = Table(title=f"Recent Entries ({len(entries)})")
@@ -483,6 +494,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 )
 
             console.print(table)
+            print_rich_entry_warnings(console, resp_data)
 
     @app.command("timeline")
     def timeline(
