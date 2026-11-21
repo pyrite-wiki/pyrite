@@ -30,7 +30,7 @@ from ..services.read_shaping import (
 )
 from ..utils.errors import exit_unless_whole
 from .context import ROW_COUNT_MAX, get_config_with_registered_kbs, require_kb
-from .output import cli_console, validate_output_format
+from .output import cli_console, print_rich_entry_warnings, validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -391,6 +391,7 @@ def register_search_command(app: typer.Typer):
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(results, fields_list, "Search Results"))
+                print_rich_entry_warnings(console, {"results": results})
                 return
 
             table = Table(title=f"Search Results ({len(results)})")
@@ -424,6 +425,7 @@ def register_search_command(app: typer.Typer):
                 table.add_row(*cells, *([date] if show_date else []), snippet)
 
             console.print(table)
+            print_rich_entry_warnings(console, {"results": results})
 
         except QuerySyntaxError as e:
             # Deterministic, not retryable — falling back to file search
@@ -814,6 +816,7 @@ def _print_batch(data: dict, output_format: str) -> None:
             rid = _safe_rich(r.get("id", ""))
             title = _safe_rich(r.get("title", ""))
             console.print(f"  [cyan]{escape(kb)}[/cyan] [dim]{escape(rid)}[/dim] {escape(title)}")
+        print_rich_entry_warnings(console, slot)
 
 
 def _warn_fields_not_applied(fields):

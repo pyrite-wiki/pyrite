@@ -180,6 +180,7 @@ class OverlaySearchBackend:
         self,
         query: str,
         kb_name: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         entry_types: list[str] | None = None,
         exclude_types: list[str] | None = None,
@@ -198,6 +199,7 @@ class OverlaySearchBackend:
         main_results = self._main.search(
             query,
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             entry_types=entry_types or None,
             exclude_types=exclude_types or None,
@@ -216,6 +218,7 @@ class OverlaySearchBackend:
         diff_results = self._diff.search(
             query,
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             entry_types=entry_types or None,
             exclude_types=exclude_types or None,

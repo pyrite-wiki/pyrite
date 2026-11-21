@@ -12,7 +12,15 @@ import typer
 from rich.table import Table
 
 from .cli.context import ROW_COUNT_MAX, open_index_db, require_kb
-from .cli.output import cli_console, path_line, validate_output_format
+from .cli.output import (
+    cli_console,
+    path_line,
+    print_rich_entry_warnings,
+    validate_output_format,
+)
+from .cli.output import (
+    format_output as _shared_format_output,
+)
 from .cli.search_commands import register_search_command
 from .config import current_config_file, load_config
 from .exceptions import PyriteError, refusal_fields
@@ -84,14 +92,9 @@ def _get_svc(*kbs: object, output_format: str = "rich"):
     return KBService(config, db), db
 
 
-def _format_output(data: dict, fmt: str) -> str | None:
+def _format_output(data: dict, fmt: str, **kwargs) -> str | None:
     """Format data using the format registry. Returns None for default (rich) output."""
-    if fmt == "rich":
-        return None
-    from .formats import format_response
-
-    content, _ = format_response(data, fmt)
-    return content
+    return _shared_format_output(data, fmt, **kwargs)
 
 
 # =============================================================================
@@ -121,9 +124,9 @@ def get_entry(
             _emit_error(f"Entry '{entry_id}' not found", output_format, error_code="NOT_FOUND")
             raise typer.Exit(1)
 
-        formatted = _format_output(result, output_format)
+        formatted = _format_output(result, output_format, single_entry=True)
         if formatted is not None:
-            typer.echo(formatted)
+            typer.echo(formatted, nl=not formatted.endswith("\n"))
             return
 
         console.print(f"\n[bold cyan]{result.get('title', '')}[/bold cyan]")
@@ -147,6 +150,8 @@ def get_entry(
                     console.print(f"  • {src.get('title', '')}: {src.get('url', '')}")
                 else:
                     console.print(f"  • {src.title}: {src.url}")
+
+        print_rich_entry_warnings(console, result)
     except (PyriteError, ValueError) as e:
         _emit_error(
             str(e),

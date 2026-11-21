@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from ..services.read_shaping import ENTRY_WARNINGS_KEY
 from .tabular import projected_markdown, projected_rows
 
 
@@ -54,7 +55,12 @@ def _entry_to_markdown(entry: dict) -> str:
                 value.fa.set_flow_style()
             header[key] = value
     body = entry.get("body") or ""
-    return "---\n" + dump_yaml(header) + "\n---\n\n" + body
+    text = f"---\n{dump_yaml(header)}\n---\n\n{body}"
+    warnings = entry.get(ENTRY_WARNINGS_KEY) or ()
+    if warnings:
+        notes = "\n".join(f"> Warning: {w}" for w in warnings)
+        text = text.rstrip("\n") + "\n\n" + notes
+    return text
 
 
 def _entry_list_to_markdown(data: dict) -> str:
@@ -68,6 +74,8 @@ def _entry_list_to_markdown(data: dict) -> str:
             if e.get("tags"):
                 tags = e["tags"] if isinstance(e["tags"], list) else [e["tags"]]
                 lines.append(f"Tags: {', '.join(tags)}")
+            for warning in e.get(ENTRY_WARNINGS_KEY) or ():
+                lines.append(f"Warning: {warning}")
             lines.append("")
     return "\n".join(lines)
 
@@ -83,6 +91,8 @@ def _search_results_to_markdown(data: dict) -> str:
             lines.append(f"- **{r.get('title', r.get('id', ''))}** ({r.get('kb_name', '')})")
             if r.get("snippet"):
                 lines.append(f"  {r['snippet']}")
+            for warning in r.get(ENTRY_WARNINGS_KEY) or ():
+                lines.append(f"  Warning: {warning}")
     return "\n".join(lines)
 
 

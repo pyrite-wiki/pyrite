@@ -559,7 +559,9 @@ def export_entries(
 
     svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
-    entries = svc.list_entries(kb_name=kb, entry_type=entry_type, limit=limit, offset=0)
+    entries = svc.list_entries(
+        kb_name=kb, entry_type=entry_type, limit=limit, offset=0, include_warnings=False
+    )
 
     # For full export, load bodies from disk
     full_entries = []
