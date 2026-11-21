@@ -819,6 +819,27 @@ class IndexSchemaRefusedError(StorageError):
     public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
 
 
+class PostgresSchemaShadowedError(StorageError):
+    """A Postgres startup that would hide an existing instance is refused (#718).
+
+    The connection's own schema (``current_schema()``) holds no Pyrite tables,
+    but a schema later on its ``search_path`` does: the default ``"$user",
+    public`` with a newly created, empty ``"$user"`` schema in front of an
+    instance in ``public`` is the usual way to get here. Upgrading would build
+    a new, empty instance in the first schema, and every query would then read
+    it instead of the real one: nothing deleted, but the data no longer
+    visible. So `alembic_chain.upgrade_to_head` refuses before anything is
+    written, unless ``PYRITE_POSTGRES_ALLOW_NEW_INSTANCE`` asks for a new
+    instance there on purpose (maintainer decision on #1820, option b).
+
+    The message names only schema names (operator configuration, never a path
+    or the driver's text), so it is shown as is, like `IndexSchemaRefusedError`.
+    """
+
+    error_code = "POSTGRES_SCHEMA_SHADOWED"
+    public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
+
+
 class StorageBusyError(StorageError):
     """A transient storage fault: the database was locked or busy (#431).
 

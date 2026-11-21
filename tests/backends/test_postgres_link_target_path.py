@@ -46,6 +46,8 @@ def pre_1723_engine():
     ensure_schema(engine)
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE link DROP COLUMN target_path"))
+        # A database from before #718 was never stamped: nothing ran alembic.
+        conn.execute(text("DROP TABLE alembic_version"))
         conn.execute(
             text(
                 "INSERT INTO kb (name, kb_type, path, description) "
