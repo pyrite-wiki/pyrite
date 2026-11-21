@@ -438,12 +438,13 @@ def test_all_six_field_branches_carry_plain_words_and_suggestions(
     exc = caught.value
     assert exc.errors and exc.errors[0]["rule"] == expected_rule
     assert exc.errors[0]["expected"] == expected_form
-    assert exc.suggestion and expected_form.split()[0] in exc.suggestion or exc.suggestion
+    assert exc.suggestion
     _assert_no_internal_type_names(str(exc))
     _assert_no_internal_type_names(exc.suggestion or "")
 
-    if field_name not in ("categories", "items_list", "labels"):
-        assert suggestion_needle in (exc.suggestion or ""), exc.suggestion
+    assert suggestion_needle in (exc.suggestion or ""), exc.suggestion
+    if field_name in ("categories", "items_list", "labels"):
+        assert "[" in (exc.suggestion or ""), exc.suggestion
 
     # QA validation of an on-disk entry with `bad_value` carries the same clear message & suggestion.
     entry_id = f"qa-{field_name}"
