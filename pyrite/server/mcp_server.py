@@ -837,12 +837,26 @@ class PyriteMCPServer:
         whatever its plugin's schema says (#1310): the SDK validates a call
         against `inputSchema` before `_dispatch_tool` runs, so a required
         `kb_name` would refuse the call the lookup exists to answer. Derived
-        here from the declaration, so no plugin can get it wrong."""
+        here from the declaration, so no plugin can get it wrong.
+
+        The published schema also says whether the tool is closed (#1779):
+        the dispatcher refuses (write) or reports (read) an undeclared
+        argument key for every tool whose schema does not take any
+        top-level key (#1758), and a missing `additionalProperties` reads
+        as open to a client, so a closed tool publishes
+        `"additionalProperties": false`. A free-form tool (anything but
+        false declared, `kb_create` and `kb_update` today) keeps its own
+        declaration. Derived here, at the one registration chokepoint, so
+        a new tool, core or plugin, publishes the truth by being
+        registered."""
         self._tool_tiers[name] = tier
+        input_schema = schema.get("inputSchema") or {}
         if schema.get("locates_entry"):
-            input_schema = schema.get("inputSchema") or {}
             required = [r for r in input_schema.get("required", []) if r != "kb_name"]
-            schema = {**schema, "inputSchema": {**input_schema, "required": required}}
+            input_schema = {**input_schema, "required": required}
+        if input_schema.get("additionalProperties") in (None, False):
+            input_schema = {**input_schema, "additionalProperties": False}
+        schema = {**schema, "inputSchema": input_schema}
         self.tools[name] = {
             **schema,
             "description": f"[{tier}] {schema.get('description') or ''}",
@@ -3717,9 +3731,11 @@ class PyriteMCPServer:
             default, and what `run_stdio()` passes -- is no session identity.
         """
         import anyio.to_thread
+        import jsonschema
         from mcp.server import Server
         from mcp.server.lowlevel.helper_types import ReadResourceContents
         from mcp.types import (
+            CallToolResult,
             GetPromptResult,
             Prompt,
             PromptArgument,
@@ -3753,8 +3769,36 @@ class PyriteMCPServer:
                 for name, meta in mcp_server.tools.items()
             ]
 
-        @sdk.call_tool()
+        @sdk.call_tool(validate_input=False)
         async def _call_tool(name: str, arguments: dict):
+            # Input validation is this closure's, not the SDK's, for one
+            # reason (#1779): a closed tool's published schema says
+            # `"additionalProperties": false`, and whether a top-level key
+            # is declared is the dispatcher's question to answer, with
+            # #1758's refusal on a write tool and `ignored_arguments` on a
+            # read tool. The SDK's generic check would pre-empt both with
+            # one plain message, and would refuse the keys the dispatcher
+            # reads itself (the KB argument names, the ADR-0034 markers),
+            # which are deliberately not in `properties`. Everything else
+            # the SDK checked is checked here the same way, against the
+            # published schema minus its top-level `additionalProperties`:
+            # required keys, types, ranges, enums and nested shapes.
+            meta = mcp_server.tools.get(name)
+            if meta is not None:
+                schema = {
+                    key: value
+                    for key, value in (meta.get("inputSchema") or {}).items()
+                    if key != "additionalProperties"
+                }
+                try:
+                    jsonschema.validate(instance=arguments or {}, schema=schema)
+                except jsonschema.ValidationError as exc:
+                    return CallToolResult(
+                        content=[
+                            TextContent(type="text", text=f"Input validation error: {exc.message}")
+                        ],
+                        isError=True,
+                    )
             # A handler is synchronous and can run for seconds (a search, an
             # index pass, a git call). On the event loop it held up every
             # other session in the process, so it runs in a worker thread.
