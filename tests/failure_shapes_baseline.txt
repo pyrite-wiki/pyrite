@@ -239,7 +239,6 @@ broad_except | pyrite/services/task_service.py | TaskService.list_tasks | swallo
 broad_except | pyrite/services/url_checker.py | URLChecker.check_url | boundary-backstop | 1 | returns a failure value the caller reports
 broad_except | pyrite/services/user_service.py | UserService.get_current_user | swallow-to-default | 1 |
 broad_except | pyrite/services/version_service.py | VersionService.get_entry_at_version | swallow-to-default | 1 |
-broad_except | pyrite/storage/alembic/versions/002_collaboration_tables.py | upgrade | swallow-to-default | 4 |
 broad_except | pyrite/storage/backends/base_backend.py | DeclaredFieldTypes._kb_path | swallow-to-default | 1 |
 broad_except | pyrite/storage/backends/base_backend.py | DeclaredFieldTypes._schema | swallow-to-default | 2 |
 broad_except | pyrite/storage/backends/postgres_backend.py | _announce_experimental | swallow-to-default | 4 |
