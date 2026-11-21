@@ -2561,11 +2561,14 @@ read is not named:
 - **`confirmed`**: `status` is `indexed` and, for a NAMED entry, no finding
   has severity `error`. With no names the findings are reported only.
 
-**Exit and outcome.** `done`, exit `0`, when every row is confirmed (and the
-sync itself was whole); `partial`, exit `3`, when any row is not. The block's
-own `outcome`, for an MCP or REST caller, covers the rows only: a folder or
-file the sync could not reach, and that no name pointed at, makes the CLI
-exit `3` without changing the block's `outcome` (follow-up #1747). A sync that did not run
+**Exit and outcome.** `done`, exit `0`, when every row is confirmed and the
+sync reached every folder and file of the KB; `partial`, exit `3`, when any
+row is not confirmed, or when a folder or file the sync could not reach, and
+that no name pointed at, kept part of the KB unexamined (#1747). The block's
+`outcome` is that one value, computed once in
+`pyrite/services/index_confirm.py` from the rows and the sync's unreadable
+folders and files for the KB: the CLI exit code and the MCP/REST `outcome`
+come from it alike. A sync that did not run
 (a KB whose files cannot be read, `KB_UNREADABLE`; a `kb.yaml` that does not
 load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
 
@@ -2573,7 +2576,10 @@ load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
 `--confirm` without `-k` are usage errors (exit `2`); names without
 `--confirm` too. MCP refuses `confirm` with `background: true` or without
 `kb_name`, REST `confirm` without `wait=true` or `kb`, as `VALIDATION_FAILED`
-(REST 422).
+(REST 422). A blank or whitespace KB name with a confirm is refused before
+any sync on every surface, as `VALIDATION_FAILED` too (REST 422), the one
+code decided in `pyrite/services/index_confirm.py` (#1747); an unknown KB
+name is still `KB_NOT_FOUND`.
 
 **Plain `index sync`** is on the outcome contract too (maintainer, 2026-11-17):
 its `--format` is the shared option with no default, so with no format asked
