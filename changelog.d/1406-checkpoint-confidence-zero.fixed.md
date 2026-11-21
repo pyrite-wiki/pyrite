@@ -1,0 +1,1 @@
+- **`task checkpoint --confidence 0` is now recorded (#1406).** `--confidence 0` (and MCP `confidence: 0`) was reported in the response but not written, so the task kept the previous checkpoint's confidence. An omitted confidence now returns `null` instead of `0.0` and adds no Confidence line; the task's earlier confidence is left untouched.

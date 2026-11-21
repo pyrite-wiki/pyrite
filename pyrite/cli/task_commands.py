@@ -968,8 +968,8 @@ def task_checkpoint(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     message: str = typer.Option(..., "--message", "-m", help="Checkpoint message"),
-    confidence: float = typer.Option(
-        0.0, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
+    confidence: float | None = typer.Option(
+        None, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
     ),
     evidence: list[str] | None = typer.Option(
         None, "--evidence", "-e", help="Evidence entry IDs (repeatable)"
@@ -993,7 +993,7 @@ def task_checkpoint(
     def rich(console, _result):
         console.print(f"[green]Checkpoint logged:[/green] {task_id}")
         console.print(f"  {message}")
-        if confidence > 0:
+        if confidence is not None:
             console.print(f"  Confidence: {int(confidence * 100)}%")
 
     return Outcome.done(result, rich=rich)
