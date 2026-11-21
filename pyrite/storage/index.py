@@ -253,6 +253,10 @@ def _as_text(value: Any) -> Any:
         return value
     if isinstance(value, bool):
         return str(int(value))
+    if isinstance(value, float):
+        from .crud import float_text
+
+        return float_text(value)
     return str(value)
 
 

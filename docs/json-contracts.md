@@ -1962,9 +1962,14 @@ the task model's integer (`coerce_task_priority`: a word on the 1 to 10
 scale, any other non-integer the default 5), so every spelling of it reads
 as that integer and `task_list` and `kb_get` agree. A field declared a
 `checkbox` reads the stored `1`, `0`, `true` or `false` as a boolean. Every
-other field, and one the type does not declare, reads as text. A
-whole-valued decimal (`7.0`) reads as `7.0` on SQLite and as `7` on
-Postgres.
+other field, and one the type does not declare, reads as text. Every backend
+stores a float in an indexed TEXT column using the spelling the author wrote
+(or Python's `repr` for a plain float), so a whole-valued decimal (`7.0`) reads
+as `7.0` on both SQLite and Postgres, and a decimal or exponent float whose
+spelling Python's `repr` does not reproduce (`0.00001`, `1e-05`, `1.5e10`,
+`7.50`) reads as that exact author-written string on every reader and backend.
+Writing that read value back leaves the file's bytes unchanged (no canonical
+respelling, #1697).
 
 What a caller reads, sent back as that one field (MCP `kb_update`,
 `pyrite update -f`, REST PATCH), leaves the file as it was, except in
@@ -1989,13 +1994,6 @@ writes anything.
 - A YAML boolean in a field declared a number: `priority: true` reads 1
   (and `false` reads 0), and writing that back stores the number
   (`priority: 1`; earlier releases stored the quoted text `"1"`).
-- A number the index spells with an exponent, in a field declared a number:
-  `priority: 0.00001` reads as the index's text for it, which the strict
-  rule keeps as text, and writing that back stores that text quoted. The
-  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
-  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
-  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
-  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
 
 `kb_timeline` returns `date` and `location` as stored text: its rows carry
 no `entry_type`, so no declaration applies. The type-specific tools

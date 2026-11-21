@@ -5,6 +5,7 @@ Mixin class for insert, update, delete, and get operations on entries.
 Delegates to the SearchBackend instance at ``self._backend``.
 """
 
+import math
 from datetime import date, datetime
 from typing import Any
 
@@ -54,20 +55,62 @@ def query_tag_text(tag: str) -> str:
     return tag
 
 
-def bindable(value: Any) -> Any:
-    """``value`` with every date or datetime, at any depth, as its column text.
+_FLOAT_REPRESENTER: Any = None
 
-    The one place a row's values are made bindable (#951): a bare YAML
+
+def float_text(value: Any) -> Any:
+    """A float as the text the author wrote (ruamel's ``ScalarFloat``) or
+    Python's ``repr`` for a plain float; anything else as is.
+
+    SQLite and Postgres format a bound Python ``float`` differently when
+    storing it in a TEXT column (SQLite spells ``1e-05`` as ``"1.0e-05"`` and
+    keeps ``"7.0"``; Postgres spells ``7.0`` as ``"7"`` and ``1e-05`` as
+    ``"1e-05"``), and both lose the author's spelling of ``0.00001`` or
+    ``1.5e10`` (#1697, maintainer decision (a)). Binding the author's text
+    stores one spelling on every backend, matching ``index._as_text``.
+    """
+    global _FLOAT_REPRESENTER
+    if not isinstance(value, float):
+        return value
+    if type(value).__name__ == "ScalarFloat" and math.isfinite(value):
+        if _FLOAT_REPRESENTER is None:
+            from ruamel.yaml.representer import RoundTripRepresenter
+
+            _FLOAT_REPRESENTER = RoundTripRepresenter()
+        return _FLOAT_REPRESENTER.represent_scalar_float(value).value
+    return repr(value)
+
+
+def bindable(value: Any) -> Any:
+    """``value`` with every date or datetime, at any depth, as its column text,
+    and every float in an indexed TEXT field column as its author-spelled text.
+
+    The one place a row's values are made bindable (#951, #1697): a bare YAML
     timestamp loads as ruamel's ``TimeStamp``, which sqlite3's adapters do not
     match (they match the exact type, and ``TimeStamp`` subclasses
     ``datetime``), so an entry carrying one in its ``date``, a source's
     ``date`` or a tag could not be bound and was never indexed, with a log
-    line as the only signal. Walked here, before the backend sees the row,
-    rather than column by column. ``metadata`` is left to the backend's JSON
-    encoder, which already spells a date (``SafeEncoder``).
+    line as the only signal. A float (including ruamel's ``ScalarFloat``) in
+    a ``TEXT_FIELD_COLUMNS`` column is bound as its author-spelled text so
+    SQLite and Postgres store the same spelling in TEXT columns without
+    altering numeric or nested values elsewhere. Walked here, before the
+    backend sees the row, rather than column by column. ``metadata`` is left
+    to the backend's JSON encoder, which already spells a date
+    (``SafeEncoder``).
     """
     if isinstance(value, dict):
-        return {k: (v if k == "metadata" else bindable(v)) for k, v in value.items()}
+        from .backends.base_backend import TEXT_FIELD_COLUMNS
+
+        return {
+            k: (
+                v
+                if k == "metadata"
+                else float_text(temporal_text(v))
+                if k in TEXT_FIELD_COLUMNS
+                else bindable(v)
+            )
+            for k, v in value.items()
+        }
     if isinstance(value, list | tuple):
         return [bindable(v) for v in value]
     return temporal_text(value)
