@@ -1,0 +1,1 @@
+- Creating, moving, or reconciling an entry into a folder that exists on disk under another letter case preserves the existing on-disk spelling (#1624).

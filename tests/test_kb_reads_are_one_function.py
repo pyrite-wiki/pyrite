@@ -186,6 +186,14 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.present": 1},
         "KBFiles.present, then read_bytes",
     ),
+    ("pyrite/storage/entry_paths.py", "_default_samefile"): (
+        {"os.path.samefile": 1},
+        "samefile fallback comparing directory identity for case-insensitive folder preservation (#1624)",
+    ),
+    ("pyrite/storage/entry_paths.py", "resolve_existing_folder_casing"): (
+        {"os.scandir": 1, "path.is_dir": 2},
+        "scandir and is_dir check existing directory spelling on case-insensitive filesystems (#1624)",
+    ),
     ("pyrite/storage/index.py", "IndexManager._load_schemas"): (
         {"KBConfig.kb_yaml_present": 1},
         "kb_yaml_present",
@@ -731,7 +739,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 59,
+    "DECIDED_INSIDE": 61,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,

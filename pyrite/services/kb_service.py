@@ -3234,6 +3234,8 @@ class KBService:
         # folder that is a link out of the KB is refused by ``_contained``.
         try:
             subdir = repo._infer_subdir(entry)
+            if subdir:
+                subdir = repo._resolve_existing_folder_casing(subdir)
             target = repo._contained(
                 kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
             )
@@ -4808,6 +4810,8 @@ class KBService:
                 if not DocumentManager._uses_templated_subdir(repo, entry):
                     continue
                 inferred_subdir = repo._infer_subdir(entry)
+                if inferred_subdir:
+                    inferred_subdir = repo._resolve_existing_folder_casing(inferred_subdir)
                 expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
                 target_path = repo._contained(expected_dir / current_path.name)
                 if current_path.parent.resolve() != expected_dir.resolve():

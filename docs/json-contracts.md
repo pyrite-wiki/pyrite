@@ -2676,6 +2676,11 @@ retained `file_path` relative to the KB. Its JSON result has `dry_run: true`
 and `renamed: false`, and its rich output shows the retained path.
 Updates preserve deliberate placement, including the KB root; a schema with
 a templated subdirectory may still move the file when its folder fields change.
+The `file_path` reported by writes (in create replies, index rows, and update
+move targets) is the path the file has on disk, spelled as the disk spells it (#1624).
+On a case-insensitive filesystem (such as APFS on macOS or NTFS on Windows),
+creating, templated moving, or reconciling an entry into a folder that already exists
+under another letter case preserves and reports the folder's existing on-disk spelling.
 
 ## QA results: only what ran
 
