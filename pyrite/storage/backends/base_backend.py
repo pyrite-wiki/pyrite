@@ -941,6 +941,10 @@ class BaseBackend(ABC):
             query = query.order_by(sort_col.desc())
         if col != "updated_at":
             query = query.order_by(Entry.updated_at.desc())
+        # Ties broken by the primary key, so offset-paged reads (recent's
+        # since-filtered pages, list_entries) never repeat or skip a row that
+        # shares its sort value with a page boundary (#1859).
+        query = query.order_by(Entry.id.asc(), Entry.kb_name.asc())
 
         query = query.limit(limit).offset(offset)
         rows = query.all()

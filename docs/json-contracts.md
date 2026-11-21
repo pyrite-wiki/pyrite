@@ -1685,14 +1685,18 @@ REST `GET`):
 |---|---|---|---|
 | `search` | neither | `has_more` (no `total`) | neither |
 | `list_entries` | `has_more` + `total` | `has_more` + `total` | `total`, no `has_more` |
-| `recent` | neither | neither | no REST route |
+| `recent` | `has_more` + `total` | `has_more` + `total` | no REST route |
 | `tags` | neither | `has_more` (no `total`) | neither |
 | `backlinks` | `total`, no `has_more` | `has_more` (no `total`) | no REST route |
 
 Where present, `has_more` means the page was full (`len(page) == limit`
-for CLI/MCP `tags`/`recent`, or `offset + limit < total` where a total is
+for CLI/MCP `tags`, or `offset + limit < total` where a total is
 computed) — a signal to fetch the next page, not an exact remaining
-count. Don't assume either key exists; check for it.
+count. For `recent` (CLI and MCP) the `total` is counted over the entries
+the filters admit — `since` included — before `limit` applies, so with
+`since` every entry updated at or after it is reachable by `offset`
+paging and `has_more` is true exactly when more of them exist (#1859).
+Don't assume either key exists; check for it.
 
 The result array's key also differs by transport for the same logical
 call: CLI `backlinks` → `entries`, MCP `kb_backlinks` → `backlinks`; CLI

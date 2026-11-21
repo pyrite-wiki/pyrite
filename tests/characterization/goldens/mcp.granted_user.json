@@ -2164,7 +2164,11 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_recent | granted_user | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2173,7 +2177,11 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_schema | granted_user | missing-kb": {
     "did_you_mean": [],

@@ -51,7 +51,7 @@ from ..plugins.identity import (
     person_key,
     resolve_person_arguments,
 )
-from ..schema import filter_updated_since, parse_since
+from ..schema import parse_since
 from ..services.access_policy import ROLES, Principal, named_kb
 from ..services.acting import (
     OPERATOR,
@@ -1531,29 +1531,32 @@ class PyriteMCPServer:
     def _kb_recent(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
-        """Get recently changed entries."""
+        """Get recently changed entries, newest first, with list pagination.
+
+        `since` is applied before `limit` (in `KBService.recent`), so the page
+        holds up to `limit` entries updated at or after it and `has_more` is
+        counted over that filtered set — a partial answer never looks whole
+        (#1859).
+        """
         kb_name = args.get("kb_name")
         entry_type = args.get("entry_type")
         limit = min(args.get("limit", 20), 200)
+        offset = args.get("offset", 0)
         # A value that cannot be read is refused, never compared as a string
         # and answered with an empty list (#1268). `since` is parsed here so
         # the refusal names the parameter before any entries are fetched.
         since = parse_since(args.get("since"))
         fields = args.get("fields")
 
-        entries = self.svc.list_entries(
+        entries, total = self.svc.recent(
             kb_name=kb_name,
             kb_names=None if kb_name else readable_kbs,
             entry_type=entry_type,
-            sort_by="updated_at",
-            sort_order="desc",
+            since=since,
             limit=limit,
+            offset=offset,
             include_warnings=True,
         )
-
-        # Filter by the instant `since` names, the same way the CLI does.
-        if since is not None:
-            entries = filter_updated_since(entries, since)
 
         # Same unbounded-browse shape as kb_list_entries (ADR-0034 rule 3).
         entries = self.body_bounds.fill_budget(entries)
@@ -1563,6 +1566,10 @@ class PyriteMCPServer:
         return {
             "entries": entries,
             "count": len(entries),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total,
         }
 
     def _kb_qa_assess(
