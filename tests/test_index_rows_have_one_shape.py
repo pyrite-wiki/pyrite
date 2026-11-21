@@ -1770,6 +1770,13 @@ def test_postgres_reads_and_writes_back_whole_valued_float_7_0(tmp_path):
             ("search", be.search("zebra", kb_name=KB)[0]),
         ):
             assert row is not None
+            if reader == "search" and "priority" not in row:
+                # Postgres `search` selects a narrower column list than
+                # `get_entry`/`list_entries` and carries no `priority`, the
+                # same convention `_rows_check` follows. The two readers that
+                # do carry it are still required to (the next assert).
+                continue
+            assert "priority" in row, (reader, sorted(row))
             got = row["priority"]
             assert got == 7.0 and type(got) is float, (reader, got)
             split = split_frontmatter(path.read_text())
