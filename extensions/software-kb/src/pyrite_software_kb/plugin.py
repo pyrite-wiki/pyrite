@@ -112,6 +112,23 @@ class SoftwareKBPlugin:
 
         return load_config()
 
+    def get_field_schemas(self) -> dict[str, dict[str, dict]]:
+        """The preset's typed fields (#232).
+
+        The same dicts ``SOFTWARE_KB_PRESET`` writes, so the hook and the
+        template cannot drift. Core reads them through ``KBSchema.type_fields``
+        by type name: a ``backlog_item`` gains ``kind``, ``status``,
+        ``priority`` and ``effort``; a ``note`` does not.
+        """
+        import copy
+
+        out: dict[str, dict[str, dict]] = {}
+        for name, spec in SOFTWARE_KB_PRESET["types"].items():
+            fields = spec.get("fields") if isinstance(spec, dict) else None
+            if isinstance(fields, dict) and fields:
+                out[name] = copy.deepcopy(fields)
+        return out
+
     def get_entry_types(self) -> dict[str, type]:
         return {
             "adr": ADREntry,

@@ -2,7 +2,6 @@
 
 What 0.26 ("your files, exactly", the release `arch/2026-10` lands in) ships with open.
 
-- **`pyrite orient` lists no fields for plugin-declared types** (#232). It returns the schema for core types only; for a type an extension declares, read the extension's documentation.
 - **Journalism-investigation tools are experimental and unsupported** until the alpha plugin contract (#644). Multi-user (accounts, per-KB permissions) and the REST API are experimental too; [the alpha's supported surface](kb/designs/alpha-supported-surface.md) says what is supported and what is not.
 - **A release-tag install has no web UI.** The built frontend is not packaged yet. Clone the repository and run `cd web && npm install && npm run build` (see [Launch the Web UI](docs/getting-started.md#launch-the-web-ui)).
 - **Search matches an entry's title and body, not its tags.** An entry that is only tagged `mathematics` is not found by `pyrite search mathematics`.

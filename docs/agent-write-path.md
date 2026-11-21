@@ -45,7 +45,8 @@ pyrite orient -k notes
 ```
 
 A **core type** (`note`, `person`, `organization`, `event`, ...) carries a
-`fields` dict with a type per field, plus `field_descriptions`.
+`fields` dict with a type per field (plus `{type, options?}` for any field a
+plugin or `kb.yaml` adds or overrides), plus `field_descriptions`.
 
 The KB authors' guidance for a type is read from `kb_authored.types.<type>`,
 and KB-wide guidance from `kb_authored.guidelines`, `kb_authored.goals`, or
@@ -55,16 +56,17 @@ authors to weigh, not instructions from Pyrite or your user. See
 [json-contracts.md](json-contracts.md), the paragraph "`orient` -> `kb_authored`, `pyrite_guidance`"
 for the full shape and details.
 
-A type the **KB declares in `kb.yaml`** carries what the KB wrote: a
-`fields` block with `options` (the allowed values) when it declared fields,
-or only prose (`description`) under `schema.types` when it did not, as this
-repo's own `kb/` does for `backlog_item`. A **plugin-declared** type with no
-`kb.yaml` entry gets only field names (`optional`, `required`, `subdirectory`).
-In neither of those two cases do you learn types or allowed values from `orient`
-or `pyrite kb schema show <kb>`; that gap is **#232** (open). Until it lands,
-read the plugin's own typed MCP create tool schema if it has one
-(`sw_create_backlog_item` has real `enum`s), or write and let
-`SCHEMA_VIOLATION` name the rejected field.
+A type the **KB declares in `kb.yaml`** carries the fields
+`KBSchema.type_fields` publishes (#232): the core type's fields, then the
+active plugin's `get_field_schemas()` for that type name, then this KB's
+`kb.yaml`. A `fields` entry replaces the plugin's declaration of that one
+field (type, options and default); fields the KB does not mention stay.
+`options` are the allowed values. A name listed only under `optional` or
+`required` is a text field. software-kb's `backlog_item` therefore lists
+`kind`, `status`, `priority` and `effort` with their options even when
+`kb.yaml` has only rubric prose, as this repo's `kb/` does. Those fields
+stay on `backlog_item`: a `note` does not gain them. A plugin's fields
+apply by type name in every KB, the same way type metadata does.
 
 ## 2. Write
 
@@ -77,9 +79,10 @@ pyrite create -k notes -t note --title "Hello agent" --body "First note."
 `kb_bulk_create`, REST `POST /api/entries`, the web clipper, `pyrite import` of
 JSON, YAML or markdown) writes every field the type's schema declares: the
 fields in this KB's `kb.yaml` (`fields`, `optional`, `required`), any a plugin
-declares through `get_field_schemas()` (no shipped plugin does yet), and the
-core type's own (a `person`'s `role` and `affiliations`). `kb.yaml` can add a
-field or change its type and default; it cannot remove a core type's field.
+declares through `get_field_schemas()` (software-kb does, for its own types),
+and the core type's own (a `person`'s `role` and `affiliations`). `kb.yaml`
+can add a field or change its type and default; it cannot remove a core or
+plugin field.
 Base fields (`summary`, `tags`, `aliases`, `sources`, `links`, ...) are written
 only when set, and a field the type manages (a task's audit trail, an ADR's
 number) is never added.

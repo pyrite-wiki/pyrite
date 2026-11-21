@@ -35,6 +35,7 @@ The single extension point for all domain-specific capabilities. A `@runtime_che
 **Configuration**
 
 - `get_kb_presets()` — preset configs, used by `pyrite init --template <name>`
+- `get_field_schemas()`: field definitions per type name (`FieldSchema` dicts). `KBSchema.type_fields` reads them under the core fields and under `kb.yaml` (#232), and `orient` publishes that merge. They apply to that type name in every KB, as `resolve_type_metadata` does, and not to any other type. Two plugins that name one type log a warning; the later plugin's declaration of a field replaces the earlier one.
 - `set_context(ctx)` — receive shared config/db from the plugin registry at startup
 
 ## Core calls a plugin command makes
