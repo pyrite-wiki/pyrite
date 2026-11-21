@@ -30,6 +30,7 @@ from ..exceptions import (
     KBUnreadableError,
     PyriteError,
     ValidationError,
+    json_safe_value,
     public_attribute,
     public_text,
 )
@@ -1556,38 +1557,10 @@ class QAService:
         )
 
         for err in result.get("errors", []):
-            issues.append(
-                {
-                    "entry_id": entry["id"],
-                    "kb_name": kb_name,
-                    "rule": "schema_violation",
-                    "severity": "error",
-                    "field": err.get("field", ""),
-                    **_schema_rule(err),
-                    "message": (
-                        f"Schema error on '{entry['id']}': "
-                        f"field '{err.get('field', '')}' — {err.get('rule', '')} "
-                        f"(expected {err.get('expected', '')}, got {err.get('got', '')})"
-                    ),
-                }
-            )
+            issues.append(_schema_violation_issue(entry["id"], kb_name, "error", err))
 
         for warn in result.get("warnings", []):
-            issues.append(
-                {
-                    "entry_id": entry["id"],
-                    "kb_name": kb_name,
-                    "rule": "schema_violation",
-                    "severity": "warning",
-                    "field": warn.get("field", ""),
-                    **_schema_rule(warn),
-                    "message": (
-                        f"Schema warning on '{entry['id']}': "
-                        f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
-                        f"(expected {warn.get('expected', '')}, got {warn.get('got', '')})"
-                    ),
-                }
-            )
+            issues.append(_schema_violation_issue(entry["id"], kb_name, "warning", warn))
 
     # =========================================================================
     # Reserved-key pass (reads the files)
@@ -2133,38 +2106,10 @@ class QAService:
             )
 
             for err in result.get("errors", []):
-                issues.append(
-                    {
-                        "entry_id": entry["id"],
-                        "kb_name": kb_name,
-                        "rule": "schema_violation",
-                        "severity": "error",
-                        "field": err.get("field", ""),
-                        **_schema_rule(err),
-                        "message": (
-                            f"Schema error on '{entry['id']}': "
-                            f"field '{err.get('field', '')}' — {err.get('rule', '')} "
-                            f"(expected {err.get('expected', '')}, got {err.get('got', '')})"
-                        ),
-                    }
-                )
+                issues.append(_schema_violation_issue(entry["id"], kb_name, "error", err))
 
             for warn in result.get("warnings", []):
-                issues.append(
-                    {
-                        "entry_id": entry["id"],
-                        "kb_name": kb_name,
-                        "rule": "schema_violation",
-                        "severity": "warning",
-                        "field": warn.get("field", ""),
-                        **_schema_rule(warn),
-                        "message": (
-                            f"Schema warning on '{entry['id']}': "
-                            f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
-                            f"(expected {warn.get('expected', '')}, got {warn.get('got', '')})"
-                        ),
-                    }
-                )
+                issues.append(_schema_violation_issue(entry["id"], kb_name, "warning", warn))
 
     # =========================================================================
     # Rubric evaluation
@@ -2825,6 +2770,40 @@ def _schema_rule(item: dict[str, Any]) -> dict[str, str]:
     validator that gives no rule adds no key."""
     rule = item.get("rule")
     return {"schema_rule": rule} if rule else {}
+
+
+def _schema_violation_issue(
+    entry_id: str, kb_name: str, severity: str, item: dict[str, Any]
+) -> dict[str, Any]:
+    """Build one QA ``schema_violation`` issue using the validator's message and suggestion."""
+    field = item.get("field", "")
+    prefix = "Schema error" if severity == "error" else "Schema warning"
+    item_msg = item.get("message")
+    if item_msg:
+        message = (
+            f"{prefix} on '{entry_id}': field '{field}' — {item_msg}"
+            if field
+            else f"{prefix} on '{entry_id}': {item_msg}"
+        )
+    else:
+        got = json_safe_value(item.get("got", ""))
+        message = (
+            f"{prefix} on '{entry_id}': "
+            f"field '{field}' — {item.get('rule', '')} "
+            f"(expected {item.get('expected', '')}, got {got})"
+        )
+    issue: dict[str, Any] = {
+        "entry_id": entry_id,
+        "kb_name": kb_name,
+        "rule": "schema_violation",
+        "severity": severity,
+        "field": field,
+        **_schema_rule(item),
+        "message": message,
+    }
+    if item.get("suggestion"):
+        issue["suggestion"] = item["suggestion"]
+    return issue
 
 
 def _validation_fields(

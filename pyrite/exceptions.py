@@ -544,10 +544,16 @@ class SchemaViolationError(ValidationError):
 
     error_code = "SCHEMA_VIOLATION"
 
-    def __init__(self, message: str, errors: list[dict] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[dict] | None = None,
+        *,
+        suggestion: str | None = None,
+    ):
         # Positional, because `services/kb_service.py` raises it that way; the
         # base class keeps ``None`` for "not about a field".
-        super().__init__(message, errors=errors)
+        super().__init__(message, errors=errors, suggestion=suggestion)
 
 
 class TruncatedBodyError(ValidationError):
