@@ -308,7 +308,7 @@ def export_site(
         # A QA record is not content: `qa assess` must not change the site (#1752).
         raw_entries = [
             row
-            for row in svc.list_entries(kb_name=kb, limit=100000, include_warnings=False)
+            for row in svc.list_entries(kb_name=kb, limit=100000)
             if not is_qa_record(row.get("entry_type") or row.get("type"))
         ]
         if not raw_entries:

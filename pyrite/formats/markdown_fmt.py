@@ -54,13 +54,13 @@ def _entry_to_markdown(entry: dict) -> str:
                 value = CommentedSeq(value)
                 value.fa.set_flow_style()
             header[key] = value
-    body = entry.get("body") or ""
-    text = f"---\n{dump_yaml(header)}\n---\n\n{body}"
+    yaml_block = dump_yaml(header)
     warnings = entry.get(ENTRY_WARNINGS_KEY) or ()
     if warnings:
-        notes = "\n".join(f"> Warning: {w}" for w in warnings)
-        text = text.rstrip("\n") + "\n\n" + notes
-    return text
+        comments = "\n".join(f"# Warning: {' '.join(str(w).splitlines())}" for w in warnings)
+        yaml_block = f"{yaml_block}\n{comments}" if yaml_block else comments
+    body = entry.get("body") or ""
+    return f"---\n{yaml_block}\n---\n\n{body}"
 
 
 def _entry_list_to_markdown(data: dict) -> str:

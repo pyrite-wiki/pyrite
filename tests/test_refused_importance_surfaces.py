@@ -7,15 +7,20 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
+from starlette.testclient import TestClient
 
-from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.config import AuthConfig, KBConfig, PyriteConfig, Settings
 from pyrite.read_cli import app as read_app
+from pyrite.server.api import create_app
 from pyrite.server.worktree_resolver import WorktreeResolver
+from pyrite.services.auth_service import AuthService
 from pyrite.services.kb_service import KBService
 from pyrite.services.search_service import SearchService
 from pyrite.services.write_target import change_set_target
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
+from pyrite.utils.frontmatter import load_frontmatter
 from tests._world import build_world
 from tests.test_refused_importance_never_silent import _note
 from tests.test_worktree_service import _clean_git_env, _init_git_repo
@@ -168,6 +173,12 @@ def test_mcp_kb_list_entries_and_recent_carry_importance_warning(make_surface_wo
         assert len(projected["entries"]) == 1, (tool, projected)
         _assert_warning(projected["entries"][0], value)
 
+    resource = mcp._read_resource(f"pyrite://kbs/{KB}/entries")
+    assert "error_code" not in resource, resource
+    resource_entries = json.loads(resource["contents"][0]["text"])
+    assert len(resource_entries) == 1, resource_entries
+    _assert_warning(resource_entries[0], value)
+
 
 @pytest.mark.parametrize("value", VALUES)
 def test_rest_list_and_batch_entries_carry_importance_warning(make_surface_world, value):
@@ -184,6 +195,10 @@ def test_rest_list_and_batch_entries_carry_importance_warning(make_surface_world
     )
     assert list_md.status_code == 200, list_md.text
     _assert_text_warning(list_md.text, value, "GET /api/entries Accept: text/markdown")
+
+    list_yaml = world.client.get("/api/entries", params={"kb": KB}, headers={"Accept": "text/yaml"})
+    assert list_yaml.status_code == 200, list_yaml.text
+    _assert_warning(yaml.safe_load(list_yaml.text)["entries"][0], value)
 
     batch_resp = world.client.post(
         "/api/entries/batch",
@@ -231,12 +246,27 @@ def test_cli_search_rich_and_markdown_print_importance_warning(make_surface_worl
         assert projected.exit_code == 0, projected.output
         _assert_text_warning(projected.stdout, value, ("search --fields", fmt))
 
+    batch_rich = world.cli(
+        "search",
+        "--batch",
+        "-",
+        "--format",
+        "rich",
+        input=json.dumps([{"query": "zebra", "kb": KB}]),
+    )
+    assert batch_rich.exit_code == 0, batch_rich.output
+    _assert_text_warning(batch_rich.stdout, value, ("search --batch", "rich"))
+
 
 @pytest.mark.parametrize("value", VALUES)
-def test_cli_list_entries_and_batch_read_carry_importance_warning(make_surface_world, value):
+def test_cli_list_entries_batch_read_and_recent_carry_importance_warning(make_surface_world, value):
     world = make_surface_world(value)
 
-    for base_args in (("list-entries", "-k", KB), ("batch-read", f"{KB}:{ENTRY}")):
+    for base_args in (
+        ("list-entries", "-k", KB),
+        ("batch-read", f"{KB}:{ENTRY}"),
+        ("recent", "-k", KB),
+    ):
         whole_json = world.cli(*base_args, "--format", "json")
         assert whole_json.exit_code == 0, whole_json.output
         _assert_warning(json.loads(whole_json.stdout)["entries"][0], value)
@@ -244,6 +274,10 @@ def test_cli_list_entries_and_batch_read_carry_importance_warning(make_surface_w
         proj_json = world.cli(*base_args, "--fields", "title", "--format", "json")
         assert proj_json.exit_code == 0, proj_json.output
         _assert_warning(json.loads(proj_json.stdout)["entries"][0], value)
+
+        whole_yaml = world.cli(*base_args, "--format", "yaml")
+        assert whole_yaml.exit_code == 0, whole_yaml.output
+        _assert_warning(yaml.safe_load(whole_yaml.stdout)["entries"][0], value)
 
         for fmt in ("rich", "markdown"):
             whole = world.cli(*base_args, "--format", fmt)
@@ -369,8 +403,8 @@ def test_overlay_row_warns_through_owning_kb_files_and_symlink_outside_root_stay
         search_res = SearchService(ann_read_db, settings=config.settings).search_response(
             "zebra", kb_name=KB, mode="keyword"
         )
-        list_res = ann_svc.list_entries(kb_name=KB)
-        batch_res = ann_svc.get_entries([(ENTRY, KB)])
+        list_res = ann_svc.list_entries(kb_name=KB, include_warnings=True)
+        batch_res = ann_svc.get_entries([(ENTRY, KB)], include_warnings=True)
 
         assert get_res is not None
         expected = get_res["entry_warnings"]
@@ -378,6 +412,15 @@ def test_overlay_row_warns_through_owning_kb_files_and_symlink_outside_root_stay
         assert search_res["results"][0].get("entry_warnings") == expected
         assert list_res[0].get("entry_warnings") == expected
         assert batch_res[0].get("entry_warnings") == expected
+
+        # Direct change-set handle from change_set_target also grants the
+        # user's working copy root so list/search warn for working-copy rows.
+        wt_list = KBService(wt_cfg, wt_db).list_entries(kb_name=KB, include_warnings=True)
+        wt_search = SearchService(wt_db, settings=wt_cfg.settings).search_response(
+            "zebra", kb_name=KB, mode="keyword"
+        )
+        assert wt_list[0].get("entry_warnings") == expected
+        assert wt_search["results"][0].get("entry_warnings") == expected
 
         # Bob has no worktree and sees main's valid importance: 5 -> silent.
         bob_read_db = resolver.get_read_db(KB, bob)
@@ -397,8 +440,8 @@ def test_overlay_row_warns_through_owning_kb_files_and_symlink_outside_root_stay
             "zebra", kb_name=KB, mode="keyword"
         )
         assert "entry_warnings" not in escaped_search["results"][0]
-        assert "entry_warnings" not in ann_svc.list_entries(kb_name=KB)[0]
-        assert "entry_warnings" not in ann_svc.get_entries([(ENTRY, KB)])[0]
+        assert "entry_warnings" not in ann_svc.list_entries(kb_name=KB, include_warnings=True)[0]
+        assert "entry_warnings" not in ann_svc.get_entries([(ENTRY, KB)], include_warnings=True)[0]
     finally:
         for d in cache.values():
             d.close()
@@ -444,7 +487,6 @@ def test_empty_root_and_sibling_prefix_paths_are_rejected(tmp_path, monkeypatch)
     # Empty or whitespace-only roots (from DB or pre-populated cache) must not read CWD.
     assert row_importance_warning(_FakeDB(""), KB, cwd_entry) is None
     assert row_importance_warning(_FakeDB("   "), KB, cwd_entry) is None
-    assert row_importance_warning(_FakeDB(None), KB, cwd_entry, roots={KB: ""}) is None
     assert row_importance_warning(_FakeDB(None), KB, cwd_entry, roots={KB: ("", "  ")}) is None
 
     # Sibling prefix `/kb2/n.md` must not be treated as inside `/kb`.
@@ -455,3 +497,137 @@ def test_empty_root_and_sibling_prefix_paths_are_rejected(tmp_path, monkeypatch)
     sibling_entry = kb2 / "n.md"
     sibling_entry.write_text(_note("7.5"))
     assert row_importance_warning(_FakeDB(str(kb1)), KB, sibling_entry) is None
+
+
+def test_service_list_and_batch_default_silent_without_opt_in(make_surface_world):
+    """Internal callers of KBService.list_entries/get_entries do not attach warnings by default."""
+    world = make_surface_world("7.5")
+    svc = KBService(world.config, world.db)
+
+    default_list = svc.list_entries(kb_name=KB)
+    default_batch = svc.get_entries([(ENTRY, KB)])
+    assert len(default_list) == 1 and "entry_warnings" not in default_list[0]
+    assert len(default_batch) == 1 and "entry_warnings" not in default_batch[0]
+
+    opted_list = svc.list_entries(kb_name=KB, include_warnings=True)
+    opted_batch = svc.get_entries([(ENTRY, KB)], include_warnings=True)
+    _assert_warning(opted_list[0], "7.5")
+    _assert_warning(opted_batch[0], "7.5")
+
+
+def test_single_entry_markdown_puts_warning_in_frontmatter_comment_for_roundtrip(
+    make_surface_world,
+):
+    """Single-entry Markdown puts warnings in frontmatter YAML comments so import round-trips cleanly."""
+    world = make_surface_world("7.5")
+
+    cli_md = world.cli("get", ENTRY, "-k", KB, "--format", "markdown")
+    assert cli_md.exit_code == 0, cli_md.output
+    rest_md = world.client.get(
+        f"/api/entries/{ENTRY}", params={"kb": KB}, headers={"Accept": "text/markdown"}
+    )
+    assert rest_md.status_code == 200, rest_md.text
+
+    for label, text in (
+        ("cli get --format markdown", cli_md.stdout),
+        ("rest markdown", rest_md.text),
+    ):
+        assert "# Warning:" in text and "whole number 1-10" in text, (label, text)
+        loaded = load_frontmatter(text)
+        assert loaded is not None, (label, text)
+        meta, body = loaded
+        assert meta["id"] == ENTRY, (label, meta)
+        assert "Warning:" not in body and "> Warning:" not in body, (label, body)
+        assert "whole number 1-10" not in body, (label, body)
+
+
+def test_overlay_keyword_search_accepts_kb_names_without_type_error(tmp_path):
+    """Keyword search through WorktreeDB accepts kb_names and returns overlay rows cleanly."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    kb_path = repo / "kb"
+    (kb_path / "notes").mkdir(parents=True)
+    (kb_path / "notes" / f"{ENTRY}.md").write_text(_note("5"))
+    for cmd in (["git", "add", "."], ["git", "commit", "-qm", "seed"]):
+        subprocess.run(
+            cmd, cwd=repo, env=_clean_git_env(), check=True, capture_output=True, timeout=120
+        )
+
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB, path=kb_path, kb_type="generic")],
+        settings=Settings(index_path=tmp_path / "index.db", auto_embed=False),
+    )
+    db = PyriteDB(config.settings.index_path)
+    cache: dict = {}
+    ann = {"id": 7, "username": "ann"}
+    try:
+        IndexManager(db, config).index_kb(KB)
+        resolver = WorktreeResolver(config, db, cache)
+        wt_cfg, wt_db = change_set_target(config, db, 7, KB, diff_cache=cache, username="ann")
+        KBService(wt_cfg, wt_db).update(ENTRY, KB, {"body": "zebra overlay search fix."})
+
+        ann_read_db = resolver.get_read_db(KB, ann)
+        search_res = SearchService(ann_read_db, settings=config.settings).search_response(
+            "zebra", kb_name=KB, mode="keyword"
+        )
+        assert len(search_res["results"]) == 1, search_res
+        assert search_res["results"][0]["id"] == ENTRY
+    finally:
+        for d in cache.values():
+            d.close()
+        db.close()
+
+
+def test_rest_list_entries_endpoint_warns_for_overlay_row(tmp_path):
+    """GET /api/entries through the REST endpoint surfaces warnings for an overlay row."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_git_repo(repo)
+    kb_path = repo / "kb"
+    (kb_path / "notes").mkdir(parents=True)
+    (kb_path / "notes" / f"{ENTRY}.md").write_text(_note("5"))
+    for cmd in (["git", "add", "."], ["git", "commit", "-qm", "seed"]):
+        subprocess.run(
+            cmd, cwd=repo, env=_clean_git_env(), check=True, capture_output=True, timeout=120
+        )
+
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name=KB, path=kb_path, kb_type="generic", landing="review")],
+        settings=Settings(
+            index_path=tmp_path / "index.db",
+            auto_embed=False,
+            auth=AuthConfig(enabled=True, max_sessions_per_user=10),
+            rate_limit_read="10000/minute",
+            rate_limit_write="10000/minute",
+        ),
+    )
+    with PyriteDB(config.settings.index_path) as seed_db:
+        IndexManager(seed_db, config).index_kb(KB)
+
+    app = create_app(config=config)
+    with TestClient(app) as client:
+        db = app.state.pyrite_db
+        auth_svc = AuthService(db, config.settings.auth)
+        user = auth_svc.create_user("ann", "password123", role="write")
+        _, token = auth_svc.login("ann", "password123")
+
+        cache: dict = {}
+        try:
+            wt_cfg, wt_db = change_set_target(
+                config, db, user["id"], KB, diff_cache=cache, username="ann"
+            )
+            KBService(wt_cfg, wt_db).update(ENTRY, KB, {"body": "zebra rest overlay edit."})
+            ann_entry = KBService(wt_cfg, wt_db).get_entry(ENTRY, KB, readable_kbs=None)
+            assert ann_entry is not None
+            Path(ann_entry["file_path"]).write_text(_note("7.5"))
+        finally:
+            for d in cache.values():
+                d.close()
+
+        client.cookies.set("pyrite_session", token)
+        resp = client.get("/api/entries", params={"kb": KB})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body["entries"]) == 1, body
+        _assert_warning(body["entries"][0], "7.5")

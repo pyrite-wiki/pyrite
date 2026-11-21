@@ -108,9 +108,6 @@ def _kb_roots(db: Any, kb_name: str, roots: dict[str, Any]) -> tuple[Path, ...]:
     cached = roots[kb_name]
     if not cached:
         return ()
-    if isinstance(cached, (str, Path)):
-        root_path = _non_empty_root(cached)
-        return (root_path,) if root_path is not None else ()
     return tuple(p for r in cached if (p := _non_empty_root(r)) is not None)
 
 

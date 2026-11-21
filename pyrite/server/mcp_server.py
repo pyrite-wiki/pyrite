@@ -1422,7 +1422,7 @@ class PyriteMCPServer:
         if readable_kbs is not None:
             # Items in KBs the caller may not read are reported as not found.
             ids = [(eid, kb) for eid, kb in ids if kb in readable_kbs]
-        results = self.svc.get_entries(ids)
+        results = self.svc.get_entries(ids, include_warnings=True)
 
         # The per-body ceiling does not bound a response: 50 entries at the
         # ceiling is a megabyte. fill_budget spends PYRITE_BODY_RESPONSE_BUDGET
@@ -1477,6 +1477,7 @@ class PyriteMCPServer:
             sort_order=sort_order,
             limit=limit,
             offset=offset,
+            include_warnings=True,
         )
         total = self.svc.count_entries(
             kb_name=kb_name, kb_names=kb_names, entry_type=entry_type, tag=tag
@@ -1547,6 +1548,7 @@ class PyriteMCPServer:
             sort_by="updated_at",
             sort_order="desc",
             limit=limit,
+            include_warnings=True,
         )
 
         # Filter by the instant `since` names, the same way the CLI does.
@@ -3000,7 +3002,9 @@ class PyriteMCPServer:
             refusal = _kb_refusal(self.svc, kb_name, readable_kbs)
             if refusal is not None:
                 return refusal
-            entries = self.svc.list_entries(kb_name=kb_name, limit=MAX_RESOURCE_LIST_ENTRIES)
+            entries = self.svc.list_entries(
+                kb_name=kb_name, limit=MAX_RESOURCE_LIST_ENTRIES, include_warnings=True
+            )
             return {
                 "contents": [
                     {

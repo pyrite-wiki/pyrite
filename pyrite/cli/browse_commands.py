@@ -105,6 +105,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 sort_order=sort_order,
                 limit=limit,
                 offset=offset,
+                include_warnings=True,
             )
             total = svc.count_entries(kb_name=kb_name, entry_type=entry_type, tag=tag)
 
@@ -185,7 +186,7 @@ def register_browse_commands(app: typer.Typer) -> None:
             # `not_found`. A spec with no KB (":id") is left to the read.
             for _eid, kb in parsed_ids:
                 require_kb(config, kb, db=db, output_format=output_format)
-            results = svc.get_entries(parsed_ids)
+            results = svc.get_entries(parsed_ids, include_warnings=True)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
@@ -449,6 +450,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 sort_by="updated_at",
                 sort_order="desc",
                 limit=min(limit, 200),
+                include_warnings=True,
             )
 
             if since_instant is not None:

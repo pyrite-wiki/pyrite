@@ -1461,9 +1461,9 @@ per-result `legs`. `distance` is not in the default. The page-level keys below
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
 
-**`entry_warnings`** (#1761, #1805). Every entry reader whose file holds a
-value its reading does not show faithfully carries `entry_warnings`, a list of
-sentences:
+**`entry_warnings`** (#1761, #1805). These entry readers carry `entry_warnings`,
+a list of sentences, when the entry's file holds a value its reading does not
+show faithfully:
 
 - **CLI** (JSON/YAML, with and without `--fields`): `get`, `search` (including
   `search --batch`), `list-entries`, `batch-read`, `recent`, and
@@ -1475,6 +1475,10 @@ sentences:
   `GET /api/entries/{id}`, `POST /api/entries/batch`, and `GET /api/search`
   (with and without `fields`).
 
+Other surfaces stay silent: `timeline` (REST, CLI, MCP), export commands and
+routes, `orient`, `generate_readme`, and internal service callers default to
+not reading entry files for warnings unless they opt in.
+
 Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
 `11`, `"high"`, `.nan`): readers keep showing the legacy whole number, and the
 sentence names the file's value. An accepted spelling (`5.0`, `"05"`), a missing
@@ -1484,10 +1488,13 @@ leg was skipped"): that key is on the response, this one is on the entry. It is
 absent when there is nothing to say. Worktree overlay rows are read through the
 owning KB's `KBFiles` (never outside a root granted by the caller's checkout).
 Human formats print the same sentence: Rich prints a `Warning:` line after the
-rendered output, Markdown includes a `Warning:` line (or `> Warning:` blockquote
-on single entries and projected tables), and CSV has no place for it and writes
-one `warning: <id>: <sentence>` line per entry to stderr. A list, batch, or
-search page of N rows opens N entry files to look (a stated limit, not a bound).
+rendered output, single-entry Markdown writes `# Warning:` YAML comments in the
+frontmatter (so `pyrite import` round-trips cleanly without adding warning text
+to the body), list and search Markdown include `Warning:` lines, projected
+Markdown tables append `> Warning:` blockquotes after the table, and CSV has no
+place for it and writes one `warning: <id>: <sentence>` line per entry to
+stderr. A list, batch, or search page of N rows opens N entry files to look (a
+stated limit, not a bound).
 
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
 as before #54 (`body` still needs `--include-body`), a named list

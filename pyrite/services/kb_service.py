@@ -3701,9 +3701,15 @@ class KBService:
     # Query Operations (read-only, delegate to db)
     # =========================================================================
 
-    def get_entries(self, ids: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    def get_entries(
+        self,
+        ids: list[tuple[str, str]],
+        *,
+        include_warnings: bool = False,
+    ) -> list[dict[str, Any]]:
         """Batch-get multiple entries by (entry_id, kb_name) pairs."""
-        return attach_importance_warnings(self.db, self.db.get_entries(ids))
+        rows = self.db.get_entries(ids)
+        return attach_importance_warnings(self.db, rows) if include_warnings else rows
 
     def list_entries(
         self,
@@ -3718,7 +3724,7 @@ class KBService:
         status: str | None = None,
         min_importance: int | None = None,
         *,
-        include_warnings: bool = True,
+        include_warnings: bool = False,
     ) -> list[dict[str, Any]]:
         """List entries with pagination."""
         rows = self.db.list_entries(
@@ -4236,7 +4242,6 @@ class KBService:
             sort_by="updated_at",
             sort_order="desc",
             limit=recent_limit,
-            include_warnings=False,
         )
         recent_slim = [
             {

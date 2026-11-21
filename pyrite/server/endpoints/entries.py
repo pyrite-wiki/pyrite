@@ -105,6 +105,7 @@ def list_entries(
         offset=offset,
         status=status,
         min_importance=min_importance,
+        include_warnings=True,
     )
     total = svc.count_entries(
         kb_name=kb,
@@ -424,7 +425,7 @@ def batch_read_entries(
     if not scope.unscoped:
         # Items in KBs the caller may not read are reported as not found.
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
-    results = svc.get_entries(ids)
+    results = svc.get_entries(ids, include_warnings=True)
 
     # `[]` is no projection. A non-empty list that cleans to nothing (`[""]`,
     # `[" "]`) is still a projection, as it was before the list went through
@@ -559,9 +560,7 @@ def export_entries(
 
     svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
-    entries = svc.list_entries(
-        kb_name=kb, entry_type=entry_type, limit=limit, offset=0, include_warnings=False
-    )
+    entries = svc.list_entries(kb_name=kb, entry_type=entry_type, limit=limit, offset=0)
 
     # For full export, load bodies from disk
     full_entries = []
