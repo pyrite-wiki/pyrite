@@ -10,6 +10,7 @@ suite at pre-push, CI as the authority.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -142,13 +143,44 @@ class TestCIWorkflow:
     def test_no_duplicate_full_suite_job(self, ci):
         assert "test-optional-deps" not in ci["jobs"]
 
-    def test_matrix_is_one_interpreter_on_pull_requests_and_all_on_pushes(self, ci):
-        # `test (3.12)` is the required check for PRs; dev and main pushes run
-        # the whole matrix (ADR-0032 §3 value chain).
-        matrix = str(ci["jobs"]["test"]["strategy"]["matrix"]["python-version"])
-        assert "github.event_name == 'pull_request'" in matrix
-        assert '["3.12"]' in matrix
-        assert '["3.11", "3.12", "3.13"]' in matrix
+    @pytest.mark.parametrize(
+        ("case", "branch", "documented"),
+        [
+            ("pull_request", 0, r"one interpreter \(Python ([\d.]+)\)"),
+            ("pull_request_infra", 3, r"all three Pythons \(([\d., ]+)\) when"),
+            ("merge_group", 1, r"merge queue runs the backend suite on Python ([\d.]+) on"),
+            ("push_after_queue", 2, r"after a verified queue run covers Python ([\d. and]+) on"),
+            (
+                "push_without_queue",
+                3,
+                r"without a verified queue run covers Python ([\d., and]+)\)",
+            ),
+        ],
+    )
+    def test_documented_interpreters_match_every_matrix_case(self, ci, case, branch, documented):
+        """The five event/classifier cases in #672, without evaluating GitHub expressions."""
+        matrix = ci["jobs"]["test"]["strategy"]["matrix"]["python-version"]
+        assert matrix == ci["jobs"]["collect"]["strategy"]["matrix"]["python-version"]
+        prefix, suffix = "${{ fromJSON(", ") }}"
+        assert matrix.startswith(prefix) and matrix.endswith(suffix), matrix
+        branches = [
+            part.rsplit(" && ", 1) for part in matrix[len(prefix) : -len(suffix)].split(" || ")
+        ]
+        assert [parts[0] if len(parts) == 2 else None for parts in branches] == [
+            "(github.event_name == 'pull_request' && needs.changes.outputs.infra != 'true')",
+            "github.event_name == 'merge_group'",
+            "needs.changes.outputs.queue_passed == 'true'",
+            None,
+        ]
+        versions = json.loads(branches[branch][-1].strip("'"))
+        row = next(
+            line
+            for line in (REPO / "CONTRIBUTING.md").read_text(encoding="utf-8").splitlines()
+            if line.startswith("| On the pull request |")
+        )
+        match = re.search(documented, row)
+        assert match, f"{case}: the contributor table does not name the interpreters: {row}"
+        assert re.findall(r"\d+\.\d+", match.group(1)) == versions, case
 
 
 class TestExtensionsLintParity:
