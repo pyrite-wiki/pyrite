@@ -1688,6 +1688,23 @@ def test_bindable_binds_floats_as_text_so_every_backend_keeps_spelling():
     assert bound["score"] == 2.5 and type(bound["score"]) is float
 
 
+def test_loader_text_replaces_a_spelling_the_yaml_parser_does_not_round_trip():
+    """docs/json-contracts.md: indexed float text is the current YAML loader's
+    round-trip, not every source spelling. ``1_000.5`` loads as a finite
+    ``ScalarFloat`` and comes back ``01000.5``, including through the declared
+    number read. Pinned so the contract cannot claim the file's spelling
+    always survives."""
+    from pyrite.storage.backends.base_backend import read_declared_number
+    from pyrite.storage.crud import float_text
+    from pyrite.utils.yaml import load_yaml
+
+    loaded = load_yaml("priority: 1_000.5\n")
+    rendered = float_text(loaded["priority"])
+    assert rendered == "01000.5"
+    assert rendered != "1_000.5"
+    assert read_declared_number(rendered) == "01000.5"
+
+
 @pytest.mark.control(
     reason="plain integers and repr-round-tripping floats already read as numbers on dev; "
     "pinned so author-spelling preservation never turns normal numbers into strings"
@@ -1784,5 +1801,69 @@ def test_postgres_reads_and_writes_back_whole_valued_float_7_0(tmp_path):
             span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
             new_text, _ = apply(path.read_text(), [Set(("priority",), got)], span)
             assert new_text.encode("utf-8") == before
+    finally:
+        _teardown_postgres(engine, session)
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize("spelling", ["7.50", "0.00001", "1e-05"])
+@pytest.mark.parametrize("surface", SURFACES)
+def test_postgres_keeps_author_spelled_float_text_and_writes_back_unchanged(
+    rt_world, surface, spelling
+):
+    """#1697 (decision (a)): a float whose spelling ``repr`` does not
+    reproduce is bound as the author's text, so Postgres reads it back as that
+    exact string (a raw float binding stores ``7.50`` as ``7.5``, ``1e-05`` as
+    ``0.00001``), and sending the value read back through the service leaves
+    the file byte-identical. Unlike the ``7.0`` case, this fails when
+    ``bindable`` binds the raw float."""
+    from tests.backends.conftest import _require_pg, _setup_pg_backend, _teardown_postgres
+
+    _require_pg()
+    from pyrite.storage.crud import bindable
+    from pyrite.utils.yaml import load_yaml
+
+    w, emp = rt_world
+    path = emp / "chores/c-spelled.md"
+    content = (
+        "---\nid: c-spelled\ntype: chore\ntitle: Spelled\nstatus: open\n"
+        f"priority: {spelling}\n---\nzebra\n"
+    )
+    path.write_text(content)
+    w.index(KB)
+    before = path.read_bytes()
+    fm = load_yaml(content.split("---\n")[1])
+    be, engine, session = _setup_pg_backend((KB, "generic", str(emp), ""))
+    try:
+        be.upsert_entry(
+            bindable(
+                {
+                    "id": "c-spelled",
+                    "kb_name": KB,
+                    "entry_type": "chore",
+                    "title": "Spelled",
+                    "body": "zebra",
+                    "summary": "",
+                    "date": "2020-06-01",
+                    "priority": fm["priority"],
+                    "tags": [],
+                    "sources": [],
+                    "links": [],
+                    "metadata": {},
+                }
+            )
+        )
+        rows = {
+            "get_entry": be.get_entry("c-spelled", KB),
+            "list_entries": next(
+                r for r in be.list_entries(kb_name=KB, entry_type="chore") if r["id"] == "c-spelled"
+            ),
+        }
+        for reader, row in rows.items():
+            assert row is not None
+            got = row["priority"]
+            assert got == spelling and type(got) is str, (reader, spelling, got)
+        _write_priority(w, surface, "c-spelled", rows["list_entries"]["priority"])
+        assert path.read_bytes() == before, (surface, spelling, path.read_text())
     finally:
         _teardown_postgres(engine, session)
