@@ -269,6 +269,75 @@ class TestALimitOfZeroEmbedsNoBody:
         assert "body_prefix_chars" not in resp
 
 
+class _WordTokenizer:
+    """Stands in for the bundled model's tokenizer: a word is a token, and
+    `input_ids` is the whole text, as a real tokenizer returns it before the
+    model truncates it to its window."""
+
+    def __call__(self, text):
+        return {"input_ids": text.split()}
+
+
+class _WindowedModel(FakeModel):
+    """A recording model with a token window, as the bundled local model
+    has: a `max_seq_length` the service can read through its tokenizer.
+    `seen` keeps every text it was handed."""
+
+    def __init__(self, window):
+        self.max_seq_length = window
+        self.tokenizer = _WordTokenizer()
+        self.seen = []
+
+    def encode(self, text, **kwargs):
+        self.seen.extend(text if isinstance(text, list) else [text])
+        return super().encode(text, **kwargs)
+
+
+class TestSemanticSaysWhenTheModelWindowCutTheBody:
+    """#1785: `body_prefix_chars` is only an upper bound when the model's
+    token window cuts a body before the character cut; the response says so
+    when embedding in this process measured the window doing it."""
+
+    @pytest.fixture(autouse=True)
+    def _no_measured_truncation(self, monkeypatch):
+        monkeypatch.setattr(es, "_BODY_TRUNCATED_BY_MODEL", set())
+
+    def _embed_long_entry(self, db, monkeypatch, window):
+        install_fake_model(monkeypatch, _WindowedModel(window))
+        body = " ".join(f"word{i}" for i in range(120))
+        add_entry(db, "long", title="the title", summary="the summary", body=body)
+        assert es.EmbeddingService(db).embed_entry("long", "t")
+
+    def test_a_small_window_marks_the_number_as_an_upper_bound(self, db, monkeypatch):
+        self._embed_long_entry(db, monkeypatch, window=8)
+        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        resp = SearchService(db).search_response("x", mode="semantic")
+        assert resp["legs_run"] == ["semantic"]
+        assert resp["body_prefix_chars"] == 500
+        assert resp["body_truncated_by_model"] is True
+
+    def test_a_window_that_fits_the_text_marks_nothing(self, db, monkeypatch):
+        self._embed_long_entry(db, monkeypatch, window=1000)
+        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        resp = SearchService(db).search_response("x", mode="semantic")
+        assert resp["body_prefix_chars"] == 500
+        assert "body_truncated_by_model" not in resp
+
+    def test_a_model_that_cannot_say_marks_nothing(self, db, svc):
+        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        resp = svc.search_response("x", mode="semantic")
+        assert resp["body_prefix_chars"] == 500
+        assert "body_truncated_by_model" not in resp
+
+    def test_keyword_and_hybrid_are_unchanged(self, db, monkeypatch):
+        self._embed_long_entry(db, monkeypatch, window=8)
+        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        for mode in ("keyword", "hybrid"):
+            resp = SearchService(db).search_response("x", mode=mode)
+            assert "body_prefix_chars" not in resp
+            assert "body_truncated_by_model" not in resp
+
+
 class TestPostgresReportsItsOwnColumns:
     def test_the_postgres_vector_is_title_summary_body(self):
         from pyrite.storage.backends.postgres_backend import PostgresBackend

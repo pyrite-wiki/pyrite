@@ -207,6 +207,31 @@ def max_body_chars_for_model(model_name: str) -> int:
     return _MODEL_MAX_BODY_CHARS.get(model_name, _DEFAULT_MAX_BODY_CHARS)
 
 
+#: (model name, max_body_chars) pairs where the model's token window was
+#: measured, while embedding in this process, cutting an entry's body before
+#: the character cut was reached (#1785). `EmbeddingService` records a pair
+#: in `_note_token_truncation`; the search response reads it through
+#: `body_truncated_by_model`. A pair absent here is not a claim the window
+#: never cuts, only that this process has not measured it cutting: the
+#: response understates rather than overstates, as `searched` does (#1772).
+_BODY_TRUNCATED_BY_MODEL: set[tuple[str, int]] = set()
+
+
+def _model_token_window(model: Any) -> tuple[Any, int] | None:
+    """``(tokenizer, window)`` for a loaded model, or None when it cannot say.
+
+    A sentence-transformers model carries both: ``max_seq_length`` is the
+    token window its tokenizer truncates to. A model without them (a test
+    double, another embedding backend) cannot say, and nothing is claimed
+    for it.
+    """
+    window = getattr(model, "max_seq_length", None)
+    tokenizer = getattr(model, "tokenizer", None)
+    if not isinstance(window, int) or isinstance(window, bool) or window < 1 or tokenizer is None:
+        return None
+    return tokenizer, window
+
+
 def _entry_text(entry: dict[str, Any], max_body_chars: int = 500) -> str:
     """Combine entry fields into text for embedding.
 
@@ -516,6 +541,44 @@ class EmbeddingService:
         embedding = model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
 
+    def _note_token_truncation(self, entry: dict[str, Any], text: str) -> None:
+        """Record when the model's token window cuts an entry's body short.
+
+        ``text`` is what `_entry_text` built for ``entry``: title, summary,
+        then the body cut to `max_body_chars`. The body is the tail of the
+        text, so when the whole text tokenizes past the model's window the
+        model never read the body's end: it truncated by tokens before the
+        character cut was reached (#1785). Measured with the model's own
+        tokenizer, so the record is exact for the bundled local model; a
+        model that cannot say (no window, no tokenizer) records nothing.
+        """
+        key = (self.model_name, self.max_body_chars)
+        if key in _BODY_TRUNCATED_BY_MODEL or not self.max_body_chars:
+            return
+        if not (entry.get("body") or "") or self._model is None:
+            return
+        pair = _model_token_window(self._model)
+        if pair is None:
+            return
+        tokenizer, window = pair
+        try:
+            token_ids = tokenizer(text)["input_ids"]
+        except Exception:
+            return
+        if len(token_ids) > window:
+            _BODY_TRUNCATED_BY_MODEL.add(key)
+
+    def body_truncated_by_model(self) -> bool:
+        """Whether this process has measured this model's token window
+        cutting an entry's body before the character cut (#1785).
+
+        The search response reports it as ``body_truncated_by_model``, which
+        marks ``body_prefix_chars`` as an upper bound. False is not a claim
+        the window never cuts, only that it has not been measured cutting
+        here.
+        """
+        return (self.model_name, self.max_body_chars) in _BODY_TRUNCATED_BY_MODEL
+
     def embed_entry(self, entry_id: str, kb_name: str) -> bool:
         """Embed a single entry and store via backend. Returns True on success."""
         backend = self.db.backend
@@ -541,6 +604,7 @@ class EmbeddingService:
             return False
 
         embedding = self.embed_text(text)
+        self._note_token_truncation(entry, text)
         return backend.upsert_embedding(entry_id, kb_name, embedding)
 
     def embed_all(
@@ -604,6 +668,7 @@ class EmbeddingService:
                     continue
 
                 embedding = self.embed_text(text)
+                self._note_token_truncation(row, text)
                 backend.upsert_embedding(row["id"], row["kb_name"], embedding)
                 stats["embedded"] += 1
             except EmbeddingModelUnavailableError:
