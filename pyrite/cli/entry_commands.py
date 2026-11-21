@@ -455,7 +455,13 @@ def register_entry_commands(app: typer.Typer) -> None:
                     fm["title"] = title or "Your Title Here"
                     fm["tags"] = []
                     fm["importance"] = importance
+                    # The result's entry_type is the stored (mapped) type too,
+                    # as a real create's is (#1657): `event` -> `investigation_event`.
+                    entry_type = fm["type"]
             else:
+                # Without -k the skeleton is the core types' (CORE_TYPES). The two
+                # branches are deliberately separate: the KB branch asks the KB
+                # service, this one has no KB to ask.
                 # Add type-specific fields as empty values
                 type_info = CORE_TYPES.get(entry_type, {})
                 for field_name, field_type in type_info.get("fields", {}).items():
