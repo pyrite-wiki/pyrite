@@ -1,6 +1,7 @@
 """Task entry type and workflow definitions."""
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -579,6 +580,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
     _shadowed_nested: dict[str, Any] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
+    # A non-mapping value read from the file, kept outside the modeled bag.
+    _raw_metadata: Any = field(default=None, init=False, repr=False, compare=False)
 
     #: Written by TaskService (claim, checkpoint, transitions), never by a
     #: caller's field update: the audit trail must say what really happened.
@@ -641,6 +644,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             # A key the source spelled twice: its nested value stays nested
             # beside the promoted top-level one (decision 4: lose nothing).
             meta["metadata"] = dict(self._shadowed_nested)
+        elif self._raw_metadata is not None:
+            meta["metadata"] = self._raw_metadata
         return meta
 
     @classmethod
@@ -654,7 +659,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
         # A), so on a collision the field's own name wins, as it does for a
         # declared field; the double spelling is reported by `index health`
         # and `qa validate`, and an update of that field is refused.
-        explicit_metadata = meta.get("metadata", {}) or {}
+        raw_metadata = meta.get("metadata")
+        explicit_metadata = raw_metadata if isinstance(raw_metadata, Mapping) else {}
         extra_metadata = {k: v for k, v in meta.items() if k not in _TASK_KNOWN_KEYS}
         kwargs["metadata"] = {**explicit_metadata, **extra_metadata}
         # The nested value of a key spelled twice is kept, so a save loses
@@ -681,4 +687,6 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             status_change_log=meta.get("status_change_log", []) or [],
         )
         entry._shadowed_nested = shadowed
+        if not isinstance(raw_metadata, Mapping):
+            entry._raw_metadata = raw_metadata
         return entry

@@ -1,0 +1,1 @@
+- Tasks with non-mapping frontmatter metadata now load and stay editable. QA and unrelated writes report a warning without changing the authored value ([#1332](https://github.com/pyrite-wiki/pyrite/issues/1332)).

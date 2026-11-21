@@ -529,9 +529,9 @@ class KBRepository:
         # Preserve references in metadata if present in frontmatter
         # (typed entries drop unknown fields during from_frontmatter)
         if "references" in fm and fm["references"]:
-            if not hasattr(entry, "metadata") or not entry.metadata:
+            if entry.metadata is None:
                 entry.metadata = {}
-            if "references" not in entry.metadata:
+            if isinstance(entry.metadata, dict) and "references" not in entry.metadata:
                 entry.metadata["references"] = fm["references"]
         return entry
 
