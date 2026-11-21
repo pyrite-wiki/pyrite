@@ -217,6 +217,7 @@ When adding or modifying a CLI command or option, several tests walk every regis
 - `tests/test_cli_numeric_options_declare_a_range.py`
 - `tests/test_cli_outcome.py`
 - `tests/test_cli_usage_error_plain.py`
+- `tests/test_doc_kb_lifecycle_skill.py`
 - `tests/test_help_texts_render.py`
 - `tests/test_kb_walk_cli.py`
 - `tests/test_outcome_boundaries.py`
