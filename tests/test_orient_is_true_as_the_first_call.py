@@ -623,6 +623,42 @@ class TestDetail:
         assert read == sw.mcp("kb_orient", args, tier="write")
 
 
+class TestANegativeRecentIsRefused:
+    """A negative --recent is a usage error, not "no limit" (#1409).
+
+    SQLite reads LIMIT -1 as "no limit", so an unguarded -1 listed every
+    entry in the KB. The CLI refuses it the way --offset -1 already is
+    refused (exit 2); the service refuses it for REST and MCP too, the
+    way orient_overview refuses a negative offset."""
+
+    def test_a_negative_recent_is_a_usage_error_on_the_cli(self, sw, monkeypatch):
+        result = sw.cli(monkeypatch, "orient", "-k", "sw", "--recent", "-1")
+        assert result.exit_code == 2, result.output
+        assert "-1 is not in the range x>=0" in result.output
+        # CliRunner mixes the Click usage error with the JSON error envelope;
+        # the envelope is the last line.
+        envelope = json.loads(result.output.strip().splitlines()[-1])
+        assert envelope["error_code"] == "USAGE_ERROR"
+
+    def test_a_negative_recent_limit_is_a_validation_error_over_mcp(self, sw):
+        out = sw.dispatch("kb_orient", {"kb_name": "sw", "recent_limit": -1})
+        assert out.get("error_code") == "VALIDATION_FAILED", out
+        assert out["retryable"] is False
+        assert "recent_limit" in out["error"]
+
+    def test_a_negative_recent_is_a_validation_error_over_rest(self, sw):
+        r = sw.rest().get("/api/kbs/sw/orient", params={"recent": -1})
+        assert r.status_code == 422
+        assert "VALIDATION_FAILED" in r.text
+
+    @pytest.mark.control(reason="zero is a real bound (an empty recent list), not a refusal")
+    def test_zero_recent_is_still_accepted(self, sw, monkeypatch):
+        assert sw.svc.orient("sw", recent_limit=0)["recent"] == []
+        cli = sw.cli(monkeypatch, "orient", "-k", "sw", "--recent", "0")
+        assert cli.exit_code == 0, cli.output
+        assert json.loads(cli.output)["recent"] == []
+
+
 class TestAPluginSupplementSurvivesBothDetails:
     def test_the_supplement_is_whole_under_brief(self, sw, monkeypatch):
         from pyrite.plugins.registry import PluginRegistry

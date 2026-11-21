@@ -1,0 +1,1 @@
+- **`pyrite orient --recent` refuses a negative value** instead of listing every entry in the KB (SQLite reads `LIMIT -1` as "no limit"). A negative `--recent` is now a usage error (exit 2), the way `--offset -1` already is; the same refusal reaches REST (`422`) and MCP (`VALIDATION_FAILED`).
