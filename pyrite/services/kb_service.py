@@ -3136,6 +3136,7 @@ class KBService:
         path: tuple[Any, ...] = (*head, *rest)
         if isinstance(op, Set):
             sent = op.value
+            declared = None
             if not rest:
                 # A value set on a declared list field is stored as a list
                 # (#1502): the same coercion a create makes, on the resolved
@@ -3147,6 +3148,10 @@ class KBService:
             spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
             if _same_instant_as_file(file_values, spelled, value):
                 return Set(path, file_values[spelled])  # the same instant: no change
+            if isinstance(spelled, str) and _same_number_spelling_as_file(
+                file_values, spelled, value, declared=declared
+            ):
+                return Set(path, file_values[spelled])  # the same number spelling: no change
             return Set(path, value)
         if isinstance(op, Append | Remove):
             value = _plain_value(op.value)
@@ -5395,6 +5400,31 @@ def _plain_value(value: Any) -> Any:
 #: too, #955 P4); kept under its old name for this module's callers.
 _updated_at_stamp = updated_at_stamp
 _raw_scalar = raw_scalar
+
+
+def _same_number_spelling_as_file(
+    file_values: dict[str, Any], path: Any, value: Any, *, declared: Any = None
+) -> bool:
+    """Is ``value`` the author's spelling of the float the file already holds
+    at a declared ``number`` key ``path``?
+
+    An author-spelled float that Python's ``repr`` does not reproduce
+    (``0.00001``, ``1e-05``, ``1.5e10``, ``7.50``) is stored and read back as
+    the author's text (#1697, maintainer decision (a)). Echoing that string
+    back on update is a no-change: the file keeps its unquoted bytes and
+    ``updated_at`` is not stamped for it.
+    """
+    if declared is None or getattr(declared, "field_type", None) != "number":
+        return False
+    key = path[0] if isinstance(path, tuple) and len(path) == 1 else path
+    if not isinstance(key, str) or key not in file_values or not isinstance(value, str):
+        return False
+    old = file_values[key]
+    if not isinstance(old, float):
+        return False
+    from ..storage.crud import float_text
+
+    return bool(float_text(old) == value)
 
 
 def _same_instant_as_file(file_values: dict[str, Any], path: Any, value: Any) -> bool:
