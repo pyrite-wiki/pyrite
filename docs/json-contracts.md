@@ -70,9 +70,10 @@ comply, name one of the KBs: `-k`, `kb`, `kb_name`, `kb_a`/`kb_b`
 
 **MCP prompts and resources** (`prompts/get`, `resources/read`) have no result
 shape for a refusal, so theirs is a JSON-RPC error: `message` is the
-envelope's `error`, `code` is `-32602` (invalid params), and `data` is the
-whole envelope above (`error_code`, `suggestion`, `retryable`, and
-`candidate_kbs` for `AMBIGUOUS`). Match on `data.error_code`. This holds for
+envelope's `error`, `code` is `-32602` (invalid params) for a refusal and
+`-32603` (internal error) for `INTERNAL`, a fault on the server's side, and
+`data` is the whole envelope above (`error_code`, `suggestion`, `retryable`,
+and `candidate_kbs` for `AMBIGUOUS`). Match on `data.error_code`. This holds for
 every refusal from a prompt or resource, `KB_NOT_FOUND` included; a KB in
 `pyrite://kbs/<kb>/entries/<id>` that does not exist answers `KB_NOT_FOUND`,
 as one the caller cannot read does.
@@ -114,6 +115,7 @@ inventing a release date for older class-level transitions.
 | KB resolver (including `kb_orient`) | Unknown or unreadable KB | `KB_NOT_FOUND` | `NOT_FOUND` | false | 0.25.7 (#66), unified by #952 | 0.27 |
 | Domain refusal | Read-only KB | `KB_READ_ONLY` | `READ_ONLY` | false | ADR-0037 theme 2 | 0.27 |
 | Domain refusal | Invalid frontmatter | `INVALID_FRONTMATTER` | `VALIDATION_FAILED` | false | ADR-0037 theme 2 | 0.27 |
+| Domain refusal | A file its declared type cannot load: every write, and a read the refusal cannot be isolated for | `ENTRY_UNREADABLE` | `VALIDATION_FAILED` | false | ADR-0042 8a (#1261) | 0.27 |
 | Domain refusal | Conflicting / refused config save | `CONFIG_CONFLICT` / `CONFIG_SAVE_REFUSED` | `CONFIG_ERROR` | false | ADR-0037 theme 2 | 0.27 |
 | Domain refusal | Storage / plugin fault | `STORAGE_ERROR` / `PLUGIN_ERROR` | `REQUEST_REFUSED` | only busy storage is retryable | ADR-0037 theme 2 | 0.27 |
 
@@ -139,6 +141,7 @@ blank means no name. These details apply equally to CLI and REST resolution.
 - `task status`: use `task get`. Leaves in 0.27.
 - `db.conn`: use `db.session` for writes or `db.execute_sql()` for reads. Leaves in 0.27.
 - `FRONTMATTER_ALIASES`: declare `field_aliases` in the type's schema. Leaves in 0.27.
+- orient's `schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, `schema.types.<type>.ai_instructions` (and the type's `guidelines`, `goals`, `evaluation_rubric`) and top-level `guidelines`: read `kb_authored` and `pyrite_guidance`. Leaves in 0.27.
 
 The compatibility warnings also name 0.27, following the maintainer decision.
 
@@ -168,6 +171,67 @@ Source of truth: `pyrite/exceptions.py` (the codes), `pyrite/utils/errors.py`
 (REST's central handler), `pyrite/server/mcp_server.py` (`_refusal`). The CLI
 root's own codes, `USAGE_ERROR` and `ERROR`, are in `pyrite/utils/errors.py`.
 
+## Unknown MCP arguments
+
+An MCP call never succeeds with an argument key the tool does not read
+(#1758, maintainer decision 2026-11-18). A key is unknown when it is not in the
+tool's `inputSchema.properties` (the `tools/list` schema), apart from the keys
+the dispatcher reads itself, listed below. Only top-level keys are checked. A
+nested map such as `kb_create`'s `metadata` or an investigation tool's
+`fields` takes any key, as before.
+
+- **Write tool** (any tool above the read tier, core or plugin): every argument
+  the caller sent either decides the call or is refused. A refusal comes before
+  any lookup or write, with `VALIDATION_FAILED`, `retryable: false`. `error`
+  names every unknown key. `errors` has one row per key, REST's
+  `refuses_undeclared_keys` rows (`{"field": "<key>", "rule": "unknown_field",
+  "message": "..."}`) plus `"did_you_mean": ["<accepted key>"]`. That field
+  appears only when there is a guess: a near miss (`due` -> `due_date`) or,
+  failing that, the tool's one map of the caller's own keys (an investigation
+  tool's `fields`). `suggestion` lists the declared keys. Besides its declared
+  keys, a write tool accepts:
+  - the ADR-0034 markers (`body_truncated`, `body_length`, `body_offset`,
+    `body_chunk_size`), which the truncation guard reads;
+  - `kb_name` on a tool that locates an entry by id or is a plugin write tool,
+    where the dispatcher makes it the handler's KB;
+  - any KB argument name (`kb_name`, `kb`, `source_kb`, `target_kb`,
+    `center_kb`, `kb_names`, `kb_a`, `kb_b`), but only on a tool that declares
+    no KB argument of its own: the `kb_registry_*` tools, whose write check
+    for a scoped caller needs one named. On every other write tool a KB
+    argument it does not declare is refused: it would be access-checked and
+    then dropped, because the write goes to the tool's own KB argument.
+- **Read tool**: the call runs with its arguments as sent, and the result
+  (success or refusal) carries `"ignored_arguments": ["<key>", ...]`, sorted:
+  the keys the schema does not declare. The key is absent when there are none.
+  It is not `kb_update`'s `ignored`, which lists keys no update writes. Every
+  KB argument name is accepted on a read tool, since the resolver and the read
+  check run on each KB a call names. Known gap: `task_status` honours
+  `body_limit`/`body_offset` although its schema omits them, so they are
+  listed there even though they take effect.
+- **Free-form tool**: a tool whose `inputSchema` sets `additionalProperties`
+  (anything but `false`) takes any top-level key. Today those tools are
+  `kb_create`, where a type's own fields are top-level arguments (`metadata.k`
+  is only a second spelling of `k`, #994 decision A), and `kb_update`, where an
+  undeclared field is stored as a custom field, as on the CLI and REST.
+  Refusing a key the entry *type* does not declare (#1522) belongs to the
+  write pipeline, not to this check.
+
+```json
+{
+  "error": "Unknown argument(s) for task_create: due. Nothing was written.",
+  "error_code": "VALIDATION_FAILED",
+  "retryable": false,
+  "suggestion": "Did you mean due_date for due? task_create accepts: assignee, body, ...",
+  "errors": [{"field": "due", "rule": "unknown_field",
+              "message": "'due' is not an argument of task_create",
+              "did_you_mean": ["due_date"]}]
+}
+```
+
+Source of truth: `pyrite/server/mcp_server.py` (`_unknown_arguments`,
+`_declared_arguments`, `_dispatch_tool`); tests in
+`tests/test_mcp_unknown_arguments.py`.
+
 ## Server and account codes
 
 These are the central REST mappings (`pyrite/server/errors.py`); an endpoint
@@ -179,13 +243,17 @@ CLI and MCP report the code without an HTTP status.
 | `KB_DEFINED_IN_CONFIG` | REST KB metadata changes: 409 | Edit the KB in `config.yaml`, then restart; requests cannot replace file-owned metadata. |
 | `KB_PROTECTED` | REST protected KB operation: 403 | Choose an unprotected KB or ask the operator to change its protection. |
 | `LAST_ADMIN` | REST account role change: 409 | Keep at least one administrator; promote another account first. |
+| `KB_PATH_NOT_ALLOWED` | REST `POST /api/kbs` and MCP `kb_registry_add` from a network caller: 403. The message names the configured `kb_roots`. | Register the KB in a folder under one of the named roots, or ask the operator to add a root (`settings.kb_roots`) or register it locally (`pyrite kb add`). |
 | `FORBIDDEN` | REST authorization: 403; MCP refusal. A known tool above the connection's tier includes `required_tier`. | For local MCP, start `pyrite mcp --tier <required_tier>`. For HTTP, ask the operator for the required role or grant. |
 | `UNAUTHENTICATED` | REST authentication: 401; MCP refusal | Supply valid credentials before retrying. |
 | `QUERY_TOO_LONG` | Search, REST 422; CLI/MCP | Shorten the query; it is not silently truncated. |
 | `INVALID_REF` | Git-ref validation, REST 422; CLI/MCP | Use a valid git reference. |
 | `CLIPPER_BLOCKED_HOST` | Clipper, central REST mapping 500 | Choose an allowed URL; ask the operator about the host policy. |
+| `CLIP_TOO_LARGE` | Clipper, central REST mapping 413 | The page is larger than the clipper's 5 MiB cap, counted after decompression; clip a smaller page. |
 | `BRANDING_INVALID` | Branding configuration, REST 500 | Ask the operator to repair `branding.yaml`; repeating the request will not fix configuration. |
 | `INTERNAL_ERROR` | Unclassified domain failure, REST 500 | Consult the server log; do not assume retrying is safe. |
+| `KB_CONFIG_INVALID` | A KB whose `kb.yaml` Pyrite can read but cannot load as a mapping: bytes that are not UTF-8, a YAML syntax error, a duplicate key, a document over the YAML limits, or a top level that is neither a mapping nor null (a list, a string, a number, a boolean) (#1547). A null document (empty, `~`, `null`, only comments) is a KB with no schema, not this code. Every operation that needs that KB's schema, on every verb (get, create, update, delete, schema show/add/remove/set, sync, rebuild or reindex of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message; it names no KB, no path and nothing the parser said. The KB's index rows are kept, `kb.yaml` is never rewritten, and every other KB still works. `pyrite kb list` and `pyrite index health` on the local CLI show the parser's words; a network caller does not get them. | Correct `kb.yaml` by hand (`pyrite kb list` or `pyrite index health` says what is wrong), then `pyrite index sync`. |
+| `KB_UNREADABLE` | A KB whose files Pyrite cannot read (its folder cannot be listed or searched, its `kb.yaml` cannot be opened): every operation that needs that KB's files, on every verb (get, create, update, delete, schema, sync of that KB). CLI exit 1, MCP refusal, central REST mapping 500. Always `retryable: false`, always the same message, whatever the operating system refused; it names no path. The KB's index rows are kept, and every other KB still works. | Fix the folder's or `kb.yaml`'s permissions, then `pyrite index sync`. |
 
 ## MCP operation codes
 
@@ -209,7 +277,56 @@ spellings remain part of the contract until their callers are migrated.
 | `DELETE_FAILED` | The requested deletion failed. | Check whether the entry still exists and inspect the server log. |
 | `LINK_FAILED` | The requested link could not be added. | Check both entries and whether the link already exists. |
 | `OPERATION_FAILED` | A schema or git operation failed without a more specific code. | Follow the error's advice and inspect the server log. |
-| `INTERNAL` | An unexpected handler failure occurred. | Ask the operator to inspect the server log. |
+| `INTERNAL` | An unexpected handler failure occurred. The message is always `Internal error; the server log has the details.` (`INTERNAL_PUBLIC_MESSAGE`, below). | Ask the operator to inspect the server log. |
+
+**A fault's own text is never sent to a network caller.** When an exception
+that is not one of Pyrite's reaches a REST response, an MCP result or a
+stream event -- an operating-system error naming a path, a model provider's
+error, git's error output -- the message is the fixed
+`Internal error; the server log has the details.` (`pyrite.exceptions.INTERNAL_PUBLIC_MESSAGE`)
+under the route's error code (`AI_ERROR`, `EXPORT_FAILED`, `CREATE_FAILED`,
+`UPDATE_FAILED`, a QA issue's message, ...), and the text goes to the server
+log. The local process (the CLI, `pyrite mcp` over stdio) sees the text
+itself. A Pyrite refusal always shows its own message, validation that used
+to be a built-in `TypeError`/`ValueError` included (`title must be a string,
+got a list`, `cannot derive an id: title is a list`, a value the index cannot
+store, a value the file cannot hold): those are `VALIDATION_FAILED`.
+
+**Detail that is the caller's own is shown to that caller (0.26.3).** Two
+kinds of outside text are the caller's, each marked where the text is made
+(`pyrite.exceptions.caller_owned` / `kb_owned`), never at a distant catch:
+
+- *Detail about the caller's own request*: a parser's message about bytes the
+  caller sent -- the JSON, CSV, YAML or markdown of an import (REST
+  `POST /api/entries/import` answers `PARSE_ERROR` with `The file could not be
+  read as json: <the parser's words>. ...`), a field path, and a search
+  query's syntax error (`QUERY_SYNTAX`: `Query could not be parsed: <the FTS
+  parser's words>. ...`) when the parser's message is one of its fixed
+  templates quoting nothing but the query as the caller wrote it (REST
+  `/api/search`, MCP `kb_search`). A query Pyrite builds is not the caller's
+  -- one expanded with a provider's terms, or one derived from an entry's
+  title and tags (suggest-links) or a chat message's words: a message quoting
+  it, or any other driver text, reads `the server log has the details`. The parser is given only the bytes, never a file name.
+- *Bytes of a KB the caller holds a read grant on*: the YAML parser's quote of
+  an entry file in that KB that does not parse (a QA issue, a load refusal),
+  and of the file an update edits (`Cannot update ...: the frontmatter does
+  not parse: ...`), before or after the caller's edit is applied. For a
+  signed-in caller the grant is the routes' own rule, access through a KB's
+  `default_role` included; an anonymous REST caller is never shown text
+  quoted from a KB file, whatever its `default_role` allows (MCP over HTTP
+  refuses an anonymous caller before any tool runs). With authentication
+  disabled, every network caller is the operator, and this rule does not
+  narrow what it is shown.
+  A call with no grant bound (a job, an embedded MCP caller with no
+  principal) is not shown it either.
+
+Anything else outside stays the operator's: a fault that is not the parser's
+(an import that fails for another reason still reads `the server log has the
+details`), an operating-system error, a library's or a provider's message,
+git's output, and the bytes of a KB the caller cannot read. An OS error is
+named by the C library's text for its code (`Permission denied`), never by the
+exception's own `strerror`. The search `warnings` name a sqlite-vec load
+failure by its class and the remedy; its text reaches the local process only.
 
 ## Write refusals (create, import, update)
 
@@ -220,6 +337,61 @@ the relation written by the source. Only readable KBs contribute rows or
 counts. Self-links are excluded. With no inbound links the list and warnings
 are empty and the count is zero. These are index snapshots, so a hand edit
 made since the last sync may not appear. Deletion does not edit the linkers.
+
+The same three surfaces return `links_left`: the symbolic links inside the KB
+that the walk lists and that pointed at the removed file, `[{path, target}]`,
+KB-relative (`[]` when there are none). A delete removes the entry's real file
+only and never removes a link, which is the user's file; `warnings` names
+every link the walk lists, and the next `index sync` / `index health` lists
+them under `dangling_links` (#1262). The delete's candidates come from the
+files: the index row's path is a candidate only where the walk would list it,
+so a row naming an in-KB link (dev's sync wrote one when the link sorted
+before its real file; any row can be stale) does not make the link the
+entry, and `links_left` lists only links still on disk that point at nothing.
+
+Limit: a link in a folder the walk skips (a dot-prefixed folder such as
+`.hidden/`, or `_templates/`) is not walked. A delete keeps it but does not
+name it, and the next sync does not report it as dangling; a templated move
+(below) does not see it and moves the file, leaving it dangling, unreported.
+
+What the walk lists is one rule (`pyrite/storage/entry_paths.py`, #1552): a
+`*.md` name (lower-case suffix) below the KB root, with no dot-prefixed part,
+no part spelled `_templates` and no file named `README.md`. The last two are
+matched the way a filesystem may match a name: in any case, after Unicode
+case folding and normalisation, and without trailing dots or spaces, so a
+folder spelled `memos/_TeMpLaTeS/` counts as `_templates` on every disk: the
+walk skips it and a write into it is refused (on APFS or NTFS it may be the
+very folder `memos/_templates/`). The four calls that place a new entry file (a create, the templated move,
+software-kb's `migrate-standards`, `index reconcile --apply`) ask this rule
+before they write. One test fails when any of them stops asking, asks only
+after it writes, or asks about another path; a scan of the code fails when a
+new call of a placing shape it knows appears (`create_entry_text`,
+`move_entry_text`, a `move`, `move_bytes` or `rename`), and names shapes
+it is known to miss; that list is not complete (`tests/test_one_predicate_decides_what_the_walk_lists.py`). So an entry a
+write placed is one the next sync lists, and a delete, update or read by id
+finds it before and after that sync. One spelling no rule on the name can see
+is an NTFS 8.3 short name (`_TEMPL~1`). Where Pyrite chose the file name it
+chooses a listed one: an id whose default name the walk skips (`readme`,
+`README`) is written as `readme-2.md` by the existing `-N` rule, and the id
+stays `readme`. Where `kb.yaml` (a `subdirectory`, a `file_pattern`) or a
+field value (a templated `subdirectory`) chose a path the walk skips, the
+create is refused with `VALIDATION_FAILED` and nothing is written; the message
+says what the caller can change. A templated move or `index reconcile` toward
+such a folder keeps the file in place and says why. A file an earlier version
+wrote at such a path is not indexed and not found by id.
+
+A write that would move a file such a link names (a link the walk lists),
+whether a templated-subdirectory move on update or `pyrite index reconcile`,
+leaves the file in place and says why, naming the link. On update it is
+`not_moved`. On reconcile every such file gets a "Kept in place <id>: ..."
+line. When no move is planned at all, a summary follows ("No moves planned;
+N misplaced file(s) stay where they are because an in-KB link names each",
+never "could not be checked"); when other files are movable, the table of
+moves follows instead, with no summary. The exit code: with no move planned,
+or on a dry run, a kept file exits 3. With `--apply` and moves planned, it is
+`exit_unless_whole` over kept files plus failed moves: 3 when at least one
+move succeeded, 1 when none did (for example a kept file beside a move that
+failed), 0 when nothing was kept or failed. A read-only KB with moves planned exits 1 under `--apply` before any move.
 
 CLI deletion keeps its default rich output and supports `--format json`.
 Without a terminal it refuses an unconfirmed deletion with `USAGE_ERROR`
@@ -270,23 +442,91 @@ is reproduced by a command in "Reproduce the codes" below, which CI runs.
 | `KB_NOT_FOUND` | the KB name is not registered, or, for a scoped caller, not readable (the same answer, byte for byte), or it is a KB's **shortname**: a shortname is link syntax only (`[[short:id]]`), and `-k`, REST `kb` and MCP `kb_name` take the full name (#952). One resolver answers every surface; the refusal carries `did_you_mean` (near matches drawn only from the KBs you can read; for a readable KB's shortname, its full name) and a `suggestion`/`hint`. A blank name names no KB and is never this code: a command that needs one answers `VALIDATION_FAILED`. The one exception is a blank REST path segment (`/api/kbs/%20/permissions`): a path that must name a KB and names none is `KB_NOT_FOUND`. Every CLI write command (`create`, `update`, `delete`, `link`) reports it. | Use a name from `did_you_mean`, or `pyrite orient` (`kb_orient`) with no KB to list the KBs you can read. |
 | `NOT_FOUND` | the entry id does not exist: CLI `get`, `update`, `delete`, `link`. Also a path you named as input (`--body-file`, `--schema-file`, `--alias-file`, `--file`, `import`'s and `add`'s file) that does not exist; an empty path or a non-regular file (directory, FIFO or device) is `VALIDATION_FAILED` before command work (#923, #1165). `pyrite backlinks` and `pyrite-read backlinks` on an id that no entry has and nothing links to answer `ENTRY_NOT_FOUND` (the class's code, today; #610 settles the spelling). An id that is only linked to (`[[ghost-page]]`) is answered with its linking entries. For MCP spellings and legacy codes, see [MCP code transitions](#mcp-code-transitions); `ENTRY_NOT_FOUND` is also the REST class code. | `pyrite search <term> -k <kb>` to find the id. |
 | `AMBIGUOUS` | the id was given without a KB (or with a blank `-k`) and more than one KB you can read holds it (see "`AMBIGUOUS`" above). The error lists them in `candidate_kbs`; REST answers `409`. | Repeat the command with `-k <kb>` (`kb` on REST, `kb_name` on MCP), one of `candidate_kbs`. |
-| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>`), or pass the override. |
+| `UNDECLARED_TYPE` | the KB's `kb.yaml` declares types and this is not one of them. Core types (`note`, `person`, …) are **not** exempt. Only the type a create would store is checked (#1526). A declared mapping (`type_mappings` in `kb_schema`/`orient`, e.g. `event` → `investigation_event`) applies when the KB declares its target, or declares no types; the named type need not be declared. So in a KB made from the journalism-investigation preset, which declares `investigation_event` but not `event`, `create -t event` stores `investigation_event`. When no mapping applies, the named type is checked: a KB that declares neither `event` nor its target refuses `create -t event`. `allow_undeclared` never changes which mapping applies; it only lets an undeclared named type with no applicable mapping be stored as named. The write path also has a check that refuses, naming it, a mapped type the KB does not declare; no create reaches it today (the resolver never offers such a pair), and it guards a later `kb.yaml` `type_map:` override (#468). Override with `allow_undeclared` (MCP, REST body or import query) / `--allow-undeclared` (CLI). The error carries `declared_types` on MCP and REST. | Use a declared type (`pyrite kb schema show <kb>` prints the KB's `kb.yaml`; the types and the `type_mappings` a create applies are in `pyrite orient -k <kb> --format json` under `schema`), or pass the override. |
 | `ENTRY_EXISTS` | the id (given, or derived from the title) already exists. Create never replaces; use update. REST answers `409`. | `update` it, or choose another title or id. |
 | `SCHEMA_VIOLATION` | the KB schema or a plugin validator rejected a field: enum, required, range, format. A kb.yaml enum (`options:`/`values:`, list `items:`, rule `enum:`) is refused when `validation.enforce_enums` is on (the default); every other kb.yaml finding when `validation.enforce` is on. The message names the field, the value and the allowed list (`kind: 'chore' is not one of [...]`). An update that leaves an off-list value as it was is not refused (see **Warnings**). | Re-read the message: it names the field and the allowed values. |
-| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), and the ADR-0034 truncated-body refusal below. Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
+| `VALIDATION_FAILED` | anything else the entry model refuses (an event without a date, a missing title), a `managed_fields` key in an update, a field Pyrite or the type manages on a create at any spelling (`status_change_log`, `adr_number`, `file_path`, ...: top level, dotted `metadata.k`, under `metadata`, or an alias of the field; REST `POST` refuses only the `metadata` spelling, see above; #1010), an `entry` key holding a whole `kb_get` envelope sent to `kb_update` or REST `PUT` (send `result["entry"]`'s fields at the top level; the file is left untouched; #1024), the ADR-0034 truncated-body refusal below, and a create whose path, chosen by `kb.yaml` (a static `subdirectory`, a `file_pattern`) or by a field value (a templated `subdirectory`), is one the index walk does not list: a dot-prefixed folder or file, a folder named `_templates` in any letter case, a file named `README.md` in any case, or a name not ending in `.md` (#1552; a field value adds an `errors` row `{field, rule: "entry_path", got, message}`; nothing is written; a dry run, `validate_only` and bulk validate answer the same, counting the paths earlier items of the batch would take; the answer, not the path: no dry run reports the file name the write will use; batch taken paths are compared ignoring letter case and Unicode normalisation on every disk, so two such paths that differ only in case step the second to `-2` or refuse a colliding `file_pattern`; #1623). Unchanged by ADR-0037 theme 2 (2026-09-25): REST, MCP and the CLI already agreed on this code, so no `legacy_error_code`. | Fix the named field. For a truncated body, reassemble it with `kb_read_body` and retry without the marker. |
 | `CONFLICT` | the file kept changing between the update's read and its replace, five tries in a row; nothing was written. REST answers `409`; MCP and the CLI use the shape above. | Re-read the entry, then repeat the update. |
 | `STORAGE_ERROR` | a storage fault on the write (REST `500`). The message is fixed text; the cause is in the server log. One exception: an index Pyrite cannot bring to its schema when it opens it (a column that cannot be added in place, a migration that failed) is refused with a message naming only schema versions and `table.column`, plus a `suggestion` (#1260); a lock met while opening, upgrading or writing the index is the retryable one. | Read `retryable`: `true` only for a locked database, so wait and repeat; `false` needs an administrator. |
-| `OUTSIDE_KB_ROOT` | a write to a KB entry whose path leaves the KB root: the entry file, or a folder on its path, is a symbolic link to somewhere outside the KB's folder, or a configured path (a type's `subdirectory`, a `file_pattern`) leads outside it. The writer opens each folder beneath the KB root without following a link, so a folder swapped for a link while the write runs is refused the same way. Every write refuses it before anything is written: `create`, `update` (including `qa fix`'s), `rename`, `delete`, `schema migrate`, the reconcile move, software-kb's `migrate-standards`. An update used to write through such a link to its target. A link whose target is inside the KB is still written through, and stays a link. The message names no path; the server log does. Two neighbours keep their codes: a write to a file with more than one hard link is `STORAGE_ERROR` (its other name may be outside the KB; the message names the KB-relative path only), in a KB under git or not, and `migrate-standards`, which moves the file, refuses an entry whose file is a symbolic link with `VALIDATION_FAILED` and the reason (the link's target is never removed). A `rename` moves nothing, so it is written through a link whose target is inside the KB, as an update is. | Replace the link with the file or folder it points to, inside the KB, then retry. |
+| `OUTSIDE_KB_ROOT` | a write to a KB entry whose path leaves the KB root: the entry file, or a folder on its path, is a symbolic link to somewhere outside the KB's folder, or a configured path (a type's `subdirectory`, a `file_pattern`) leads outside it. The writer opens each folder beneath the KB root without following a link, so a folder swapped for a link while the write runs is refused the same way. Every write refuses it before anything is written: `create`, `update` (including `qa fix`'s), `rename`, `delete`, `schema migrate`, the reconcile move, software-kb's `migrate-standards`. A write **by id** (`update`, `rename`, `delete`) never reaches such a file: a file that is a link out of the KB, or has a second hard link, is not the KB's, so an id it holds matches nothing and the answer is `NOT_FOUND`, the same as for an id nothing holds, whatever that file holds. `OUTSIDE_KB_ROOT` is the answer where the path itself is the KB's name for the file (a `create` at that path, a folder on the way swapped for a link while the write runs). An update used to write through such a link to its target. A link whose target is inside the KB is still written through, and stays a link. The message names no path; the server log does. One neighbour keeps its code: a write whose own path is a file with more than one hard link (a write that does not look the file up by id) is `STORAGE_ERROR` (its other name may be outside the KB; the message names the KB-relative path only), in a KB under git or not; and `migrate-standards`, which moves the file, refuses an entry whose file is a symbolic link with `VALIDATION_FAILED` and the reason (the link's target is never removed). A `rename` moves nothing, so it is written through a link whose target is inside the KB, as an update is. | Replace the link with the file or folder it points to, inside the KB, then retry. |
 | `LANDING_REFUSED` | a write with no place to land under the KB's `landing` (ADR-0044 §1): the KB is `landing: review` and the writer's change set cannot be made (no git repository, no user to own it), a write that names several KBs one of which lands in a change set, or a database-only record asked of a change set (a review verdict: `sw_review`, `POST`/`DELETE /api/reviews` on a `landing: review` KB), which the change set could not carry through its merge; that one is available to the operator, or after the merge. Nothing is written to the KB's files or its index, and a write never falls back to them. The refusals above come before the working copy is made, so none leaves a worktree or branch behind. Two refusals after it is made are possible in principle (its config or its index cannot be opened); they leave the new working copy, unused, at main's commit. | Write to one KB at a time, or ask the operator about the KB's landing. |
+| `UNSAFE_DESTINATION` | export to a repository: a directory or file the export would create or write in its temporary clone does not resolve inside that clone (a link in the cloned repository, or a name leading out of it). Nothing is committed or pushed. | Remove the link from the target repository, or export to another one. |
 | `QUERY_SYNTAX` | (`search`, not a write, but what an agent hits right after a failed write) a token containing `-`, `:` or `.` used beside `AND`/`OR`/`NOT` or a quote, unquoted. | Quote the token yourself: `"bar-baz"`. |
 
 All are `retryable: false` except `CONFLICT` (always `true`) and `STORAGE_ERROR`
 (`true` only for a locked database). REST reports a refusal as
 `{"detail": {"code", "message", "retryable": false, "hint"?, "declared_types"?}}`
-with status `400` (`409` for `ENTRY_EXISTS`). REST `CONFLICT` is `409` with
+with status `400` (`409` for `ENTRY_EXISTS`).
+An update whose candidate entry raises `EntryLoadError` returns `422` with
+`VALIDATION_FAILED` and, when fields are isolated, one `errors` row with
+`rule: "entry_load"` per refused field.
+REST `CONFLICT` is `409` with
 `{"detail": {"code", "message"}}`, no `retryable` key; treat it as retryable.
 `STORAGE_ERROR` is `500` and carries `retryable`. MCP and the CLI use the error
 shape above.
+
+**A field refusal names the field.** `VALIDATION_FAILED` and `SCHEMA_VIOLATION`
+carry `errors`, one row per refused field, in the same shape on REST, MCP and
+the CLI:
+
+```json
+{
+  "error": "Event must have a date",
+  "error_code": "VALIDATION_FAILED",
+  "retryable": false,
+  "suggestion": "set date (YYYY-MM-DD)",
+  "errors": [
+    {"field": "date", "rule": "required", "message": "Event must have a date", "expected": "YYYY-MM-DD"}
+  ]
+}
+```
+
+Every row carries `field`; a row Pyrite itself builds also carries `rule`, on
+`SCHEMA_VIOLATION` too: the schema path's own rows name the check that refused
+(`field_select`, `field_range`, `required`, ...). A plugin validator's rows are
+copied as the plugin wrote them, so a plugin that sends only `{field, message}`
+contributes a row without `rule`. A row from the entry model also carries
+`message` — the sentence that reaches `error`, so a caller never has to parse
+it — and `expected` when the fix is mechanical; a row from the KB schema or a
+plugin validator carries `expected` and, where the rule knows it, `got`: the
+allowed-list/value pair a `SCHEMA_VIOLATION` row has always carried.
+`importance` has one rule on every type, write and surface (#1588): a whole
+number from 1 to 10, sent as a number (a whole float such as `5.0` counts) or as
+plain ASCII digits (`"05"`), and every create and update stores it as that number
+(`5.0` and `"05"` are written as `5`; `pyrite add` leaves a file's own `'05'` as
+written, and every reader sees `5`); anything else (`5.5`, `true`, `" 5 "`,
+`"+5"`, `"１０"`, `high`) is refused with the model row `{"field": "importance",
+"rule": "range", ...}` (over REST, HTTP 400 `VALIDATION_FAILED`, where `99` and
+`10.7` used to get pydantic's 422; the OpenAPI schema names the integer to send).
+A value already in a file, at the top level or under `metadata:`, is never
+rewritten by a write that does not set it, and is kept with a warning carrying
+that `rule` only while the write leaves it as it is or sends that same value in
+the same YAML type (`"10.7"` over `10.7` is a new value, judged and refused). A row from
+the KB schema's enum pass also names `origin` (`field` for a field's own
+`options:`/`values:` list, `rule` for a `validation.rules` entry), `severity`
+(`error`, or `warning` when the field has `allow_other: true`), and
+`allow_other: true` on such a field. `got` and `expected` are
+always JSON-safe: a date written without quotes in frontmatter arrives as its
+ISO string (`"2026-01-01"`), and a non-finite float as its text (`"inf"`), so
+an unquoted value cannot turn the refusal into an unrenderable answer. A
+refusal that names one field carries one row — a frontmatter key the entry type
+does not declare, the first managed spelling a create finds, a bulk link spec
+missing `source` or `target`, a required frontmatter key that is absent. Several
+rows come back when one pass refuses several fields — the entry model's own
+validation, or a plugin validator that reports a list — in the order that pass
+reports them. A
+refusal that is not about a field carries no `errors` key at all: the key is
+absent, never empty. In a bulk answer the rows travel on the record they
+refused, not at the top: `results[i].errors` for `kb_bulk_create` and
+`links bulk-create`, `error_details[i].errors` for an import, and an
+`entity_errors[i].errors` row for the journalism-investigation setup tools that
+create several entities at once, or an `entries[i].errors` row for the edges
+`investigation_bulk_edges` creates. A refused edge always carries rows there,
+the shape checks included: an edge that is not an object answers
+`{"field": "edge", "rule": "type", "expected": "object"}`, `fields` that are
+not an object `{"field": "fields", "rule": "type", ...}`, and a key that
+belongs to the entry itself (`title`, `id`, `body`, ...) `{"field": <key>,
+"rule": "reserved"}`.
 
 **Whole-request refusals (REST).** Two refusals stop an import, or any
 request, before a record is read:
@@ -379,15 +619,20 @@ a row here (a test compares this table with the command's output).
 | `subdirectory_mismatches` | Entries whose file is outside the type's declared `subdirectory:`. | Warning | `pyrite index reconcile <kb> --apply`. |
 | `malformed_frontmatter` | Files that read but whose frontmatter does not parse. | Warning | Hand edit the YAML, then `pyrite index sync`. |
 | `unreadable_files` | Files that exist but whose bytes cannot be read or decoded. | Failure | Fix permissions or encoding, then `pyrite index sync`. |
+| `unreadable_kbs` | KBs whose `kb.yaml` Pyrite could not check or read (for example, a KB folder it may not search), as `{kb, error}`; every other KB is still checked. | Failure | Fix the folder's permissions, then `pyrite index sync`. |
+| `unreadable_folders` | Folders below a KB's root that the index walk could not list (for example, mode `000` or `100`), as `{kb, path, error}`: `path` KB-relative, `error` the fixed `KB_UNREADABLE` message, never the OS's words. The index rows of the entries under such a folder are kept as they are (#1546). Only the outermost of nested folders is named; a folder under a dot-prefixed folder or `_templates/` is never named (the walk lists nothing there). A symbolic link the OS reports as one is never named, whatever its target. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and `pyrite kb health` carry it as a count. See "A folder or file Pyrite cannot reach". | Failure | Fix the folder's permissions, then `pyrite index sync`. |
 | `orphaned_entries` | Indexed IDs absent from the readable files although the recorded path exists. | Failure | `pyrite index sync` (or hand edit the ID). |
 | `invalid_statuses` | Entries whose `status` a plugin validator's enum rejects. | Warning | `pyrite update <id> -f status=<allowed>`. |
 | `off_list_values` | Off-list values of declared enums, with their `origin` and `severity`. | Failure for `severity: error`; warning for `warning`; `info` changes nothing | `pyrite update <id> -f <field>=<allowed>`. |
 | `duplicates` | IDs held by more than one file; `winner` names the indexed copy. | Failure | Keep one file, then `pyrite index sync`. |
-| `removed_extensions` | KBs whose type belonged to an extension that is no longer installed. | Warning | Reinstall the extension, or change `kb_type` in `kb.yaml`. |
+| `aliases` | In-KB symbolic links to another walked entry file, `{kb, path, target}`. The link is never indexed or read itself, and is left as it is; `target` is read by the walk's own rules (indexed once, unless it is skipped, as a file with a second hard link is). The same list is returned by `IndexManager.sync_incremental`/`reconcile_kb`, CLI `index sync` (text) and `kb reindex` (JSON and text), REST `POST /api/kbs/{name}/reindex` and MCP `kb_registry_reindex`; MCP `kb_index_sync` and REST `POST /api/index/sync` return neither key. | Information, not a finding | Nothing to do; remove the link only if it is not wanted. |
+| `dangling_links` | In-KB symbolic links with nothing at the path they name, `{kb, path, target}` (`target` KB-relative): hand-made, or left by a delete, which keeps the user's link. They hold no entry, so they are not `unreadable_files` and not `malformed`. A `__collection.yaml` that is such a link is reported here too. Only links the walk lists are reported: one in a dot-prefixed folder or `_templates/` is not. The same surfaces as `aliases` return it. A link that leads out of the KB, or a link loop, is reported as before. | Warning | Restore the file the link names, or remove the link. |
+| `unlisted_entry_files` | `*.md` files the index walk meets and skips whose frontmatter states an `id:`, `{kb, path, reason}` with `reason` `readme` (named `README.md` in any case), `hidden` (a dot-prefixed folder or file) or `templates` (under a folder named `_templates` in any letter case). An earlier version could write one (a create titled README wrote `readme.md`, #1552); it is not indexed, so its id is not found. Only skipped files are read, through the KB's contained read: a link, a file with a second hard link, or one that cannot be decoded is not listed here. A README, dot-folder or `_templates/` file with no `id:` line is the user's and is not listed. On the local CLI's `pyrite index health` the key carries these rows. REST `GET /api/kbs/{name}/health`, MCP `kb_registry_health` and the CLI's `pyrite kb health`, which all answer through `KBRegistryService.health_kb`, carry it as a count (an integer) and name no file (maintainer, 2026-11-17); the text form of `pyrite kb health` prints a line pointing to `pyrite index health` when the count is above zero; `healthy` is unchanged. | Warning | Rename the file to a name the walk lists, keep its `id:` line, then `pyrite index sync`. |
+| `removed_extensions` | KBs whose type belonged to an extension that is no longer installed. | Warning | If the KB's `kb_type` is a `cascade-*` one, change it in `kb.yaml` (to `generic`, or to `journalism-investigation` with that extension installed). If the KB holds entries of a removed extension's types, declare the types you keep under `types:` in `kb.yaml`. A KB may need both. |
 | `type_name_drift` | Groups of one type spelled more than one way after case, `_` and spaces are folded to `-`. | Warning | Hand edit the `type:` spellings, then `pyrite index sync`. |
 | `type_name_drift_total` | Number of drift groups before the report's cap. | Metadata, not a finding | Fix the groups listed there. |
 | `type_name_drift_has_more` | Whether more drift groups exist beyond the 100-group cap. | Metadata, not a finding | Narrow with `-k <kb>`; fix the groups listed. |
-| `schema_errors` | KBs whose `kb.yaml` failed to load. | Warning | Hand edit `kb.yaml`, then `pyrite index sync`. |
+| `schema_errors` | KBs whose `kb.yaml` failed to load. A row with `error_code: KB_CONFIG_INVALID` (the file does not load as a mapping, #1547) is Unhealthy; a row with no `error_code` (a key with the wrong shape, such as `types: null`) is a Warning. | Unhealthy / Warning | Hand edit `kb.yaml`, then `pyrite index sync`. |
 | `unmodellable_frontmatter` | Files whose frontmatter Pyrite cannot model (a non-string key, a set, a duplicate key). | Warning | Hand edit the unsupported frontmatter, then `pyrite index sync`. |
 | `double_spellings` | Fields one file spells twice (`k:` and `metadata.k`, or a field and its alias). | Warning | `pyrite qa fix <kb>` when both values are identical; otherwise hand edit both spellings. |
 | `checks` | The detailed arrays behind the counts above, under the same key names. | Not a finding | Fix the rows above; this key repeats them for callers that want paths and ids. |
@@ -441,8 +686,14 @@ group. Read-only: nothing is renamed. Any group makes the status
 `kb.yaml` failed to load (invalid YAML, `types: null`, `types` a list).
 Health still answers for that KB: it counts as declaring no types, so its
 non-core types appear in `undeclared_types` and no spelling is `declared`.
-Any row makes the status `warning`. The same field is on `kb health`, REST
-and MCP `kb_registry_health`.
+A row for a `kb.yaml` that does not load as a mapping carries
+`error_code: KB_CONFIG_INVALID` (the file is not UTF-8, not valid YAML, over the YAML limits, or not a
+mapping, #1547) makes the status `unhealthy`; its `error` is the parser's
+words on the local CLI and stdio MCP and `the server log has the details` for
+a network caller, and that KB's files are not compared with the index (each
+would read as malformed against no schema). Any other row makes the status
+`warning`. The same field is on `kb health`, REST and MCP
+`kb_registry_health`.
 
 **`index health` → `double_spellings`; `qa validate` →
 `field_spelled_twice`.** `metadata` is not a field: `metadata.k` is a
@@ -555,16 +806,99 @@ every file and clears it.
 **`orient` → `notices`; `index health` → `removed_extensions`.** A KB
 registered with a `kb_type` that a deleted extension owned (`cascade-research`,
 `cascade-timeline`, `cascade-solidarity`), or holding entries of one of that
-extension's types (`actor`, `timeline_event`, ...), is still a KB: its files
+extension's types (`actor`, `timeline_event`, ...) that its `kb.yaml` does not
+declare (#1468), is still a KB: its files
 read and write as generic entries. Instead of leaving its types silently
 undeclared, `pyrite orient -k <kb>` (MCP `kb_orient`) carries one sentence
 for such a KB under `notices`, and `index health` lists it under
 `removed_extensions`: `{kb, kb_type, extension, entry_types, message}`, where
 `message` is the same sentence and `entry_types` are the removed extension's
-types the KB holds. The status is `warning`. `pyrite extension list` keeps
+types the KB holds and its `kb.yaml` does not declare (empty for a `cascade-*`
+KB that declares them all). The status is `warning`. `pyrite extension list` keeps
 naming the plugin until `pip uninstall pyrite-cascade` is run in the
 environment that had it. The removed extensions are listed in
 `pyrite/plugins/removed.py`.
+
+**`kb_schema` / `orient` → `type_mappings`.** These six surfaces carry
+`type_mappings`, an object `{core type: stored type}`, always present and
+`{}` when nothing maps (#468): MCP `kb_schema`, MCP `kb_orient` (under
+`schema`), `GET /api/kbs/{kb}/schema`, `GET /api/kbs/{kb}/orient` (under
+`schema`), `pyrite orient --format json` (under `schema`) and
+`pyrite-admin schema`. `pyrite kb schema show` does not: it prints the KB's
+`kb.yaml` as written. It is exactly what a create in
+that KB applies: a create that names a key stores its value, with or without
+`allow_undeclared`; any other accepted name is stored as named. The pairs are
+the plugins' declared mappings for the KB's registered `kb_type`
+(journalism-investigation: `{"event": "investigation_event", "document":
+"document_source"}`), less any pair whose value (the target) the KB's
+`kb.yaml` leaves out when it declares types, through the one resolver the
+write path reads (#1526). The key need not be declared. So a KB made from the
+journalism-investigation preset, which declares `investigation_event` and
+`document_source` but not `event` or `document`, shows both pairs, and
+`create -t event` there stores `investigation_event`. A KB that declares
+`event` but not `investigation_event` shows no `event` pair and stores
+`event` as named. A KB made from the known-entities preset declares neither
+and shows `{}`. Subclassing a core class maps nothing.
+
+**`orient` -> `kb_authored`, `pyrite_guidance`.** A KB's `kb.yaml` carries
+free text an agent reads (`guidelines`, `goals`, `evaluation_rubric`, a type's
+`ai_instructions`), and whoever controls the KB wrote it. `pyrite orient -k
+<kb>` (MCP `kb_orient`, REST orient) keeps it apart from Pyrite's own
+guidance (#1369). Both keys are in `detail=full` only; `detail=brief` omits
+them with the other write-side blocks.
+
+- `kb_authored`: `{notice, source, read_only, guidelines?, goals?,
+  evaluation_rubric?, types?, malformed?}`. `source` is `own`, `subscribed`
+  (a clone under the workspace) or `fork`; `read_only` is the KB's flag.
+  Each text key is present when the KB's own `kb.yaml` sets it to a
+  non-null, non-empty value, and carries that value as written, in whatever
+  shape the author gave it (a string `guidelines` stays a string; a key left
+  blank inside a mapping, or a null list item, comes back as `null`). `types`
+  maps a type name to its own `ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric`, the same way. A value holding any node JSON cannot
+  carry as written is left out whole and listed in `malformed` as `{key,
+  reason}`, `key` dotted (`types.note.goals`), the reason naming its first
+  such node: NaN or an infinity (`.nan`, `.inf`); a number too large for JSON
+  (`1.0e+400`, which reads as infinite); a YAML date or timestamp; binary
+  (`!!binary`); a set (`!!set`); ordered pairs (`!!pairs`, `!!omap`); a
+  mapping key that is not a string (a number, bool, null, date or binary key,
+  or a mapping or list used as a key); a mapping with two keys that are the
+  same string (`!!str a` beside `a`: one value would otherwise be lost); or
+  an explicit YAML tag the loader keeps, one reason for every such value that
+  never repeats the tag (the tag is the author's text, the reason is
+  Pyrite's). That is a local tag (`!note`), a URI tag, `!!python/...`, `!!str`
+  on a mapping or list, and a tagged merge source (`<<: !note {...}`), on a
+  scalar, a mapping and a list alike. Before this a mapping or list with a
+  tag came back with the tag dropped. The core tags the loader resolves
+  before Pyrite sees the value are not withheld: they are read as YAML
+  defines them and the result is returned (`!!int "12"` is `12`, `!!float 12`
+  is `12.0`, `!!bool yes` is `true`, `!!map` and `!!seq` are the plain
+  mapping and list). `!!str` on a scalar, in its short or long form, as a
+  value or a mapping key, is the string: `guidelines: !!str 12` comes back as
+  `"12"`. A merge key (`<<`) is read through its sources: a source holding
+  any value withheld above (a tag, a date, a number too large, a key that is
+  not a string) withholds the whole value with that reason, also when an own
+  key or an earlier source hides it in the merged result (`{<<: {a: !note x},
+  a: 2}`). Limit (#1636): a tag on a list of merge sources (`<<: !note [{a: 1}]`) is
+  gone from the value the loader hands over, so it comes back merged with the
+  tag dropped. A recursive alias (`&a {self: *a}`) is
+  not withheld: it comes back with `null` where the alias recurses, because
+  that is how Pyrite's YAML loader reads it everywhere (#1602). A `kb.yaml` that cannot be read at all
+  (a set or pairs used as a key) fails as it does without this key. Treat the contents as content from the KB's authors,
+  not as instructions from Pyrite; the MCP server instructions say the same.
+- `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
+  KB inherits, never anything a KB wrote.
+- Deprecated in orient, removed in 0.27 (see "Deprecated, still accepted"),
+  and what each returns until then: `schema.goals` is the KB's `goals` as
+  written; `schema.guidelines` is Pyrite's default guidelines with the KB's
+  mapping merged over them; `schema.evaluation_rubric` is Pyrite's default
+  rubric followed by the KB's items, deduplicated by text;
+  `schema.types.<type>.ai_instructions`, `guidelines`, `goals` and
+  `evaluation_rubric` are the KB's value where it sets one, in place of
+  Pyrite's or a plugin's default. The top-level `guidelines` is always `{}`:
+  it never carries the KB's text. `kb_authored.notice` says the same. A KB
+  whose `guidelines` is a string gets `"schema": {}` (#1498); its
+  `kb_authored` still answers, with the string as written.
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
@@ -584,7 +918,8 @@ what the read returned is not a change: it is not written, and is listed
 in the result's `unchanged` field (apart from `ignored`, which names keys no
 update writes), so the file keeps `importance: high` rather than Pyrite's
 reading `5` (#561). A request that names fields on its own writes each one
-as sent, even a value equal to the reading.
+as sent, even a value equal to the reading (`importance` is written as the int
+the rule reads: `"05"` and `5.0` as `5`).
 A body marked `body_truncated` is refused at any depth of the request on
 every update surface.
 
@@ -622,10 +957,12 @@ then; REST `UpdateResponse` always carries `changed`). The file is replaced
 only if it still holds the bytes the edit was computed on, under a lock in
 the KB's git directory; a file that keeps changing is refused with
 `CONFLICT` (`409` on REST, `retryable: true`). A KB outside git is written
-without a lock and the result says `"locked": false`. On a server that gives
-each user a worktree (auth on), a non-admin user's write to a KB outside
-git is refused: there is no worktree to isolate it in (ADR-0042 A1; today
-`VALIDATION_FAILED`). Not every route follows this rule yet; #1043 tracks the
+without a lock and the result says `"locked": false`. On a KB whose
+`landing` is `review` (the default is `canonical`), a non-operator user's
+write to a KB outside git is refused with `LANDING_REFUSED` (ADR-0044 §1;
+see [the LANDING_REFUSED row](#write-refusals-create-import-update)): there
+is no worktree to isolate the change set in. Not every route follows this rule
+yet; #1043 tracks the
 rest. An item operation
 (`append`, `remove`) touches the one item it names: the other items keep
 their bytes, and `links`/`sources` take item operations on every surface
@@ -775,7 +1112,7 @@ pyrite create -k typed -t ticket --title "T1" -f kind=chore
 pyrite create -k notes -t event --title "An event"
 ```
 
-`OUTSIDE_KB_ROOT`, from an entry file that is a link to a file outside the KB; the file it points to keeps its bytes:
+An entry file that is a link to a file outside the KB is not the KB's: an update by id answers `NOT_FOUND`, as for an id nothing holds, and the file it points to keeps its bytes:
 
 <!-- expect-exit: 0 -->
 ```bash
@@ -785,7 +1122,7 @@ pyrite index sync
 ```
 
 <!-- expect-exit: 1 -->
-<!-- expect-text: "error_code": "OUTSIDE_KB_ROOT" -->
+<!-- expect-text: "error_code": "NOT_FOUND" -->
 ```bash
 pyrite update away -k notes --title x
 ```
@@ -852,7 +1189,7 @@ paragraph above; how it writes, and the `changed`, `locked` and
 |---|---|---|
 | CLI | `pyrite import <file> -k <kb>` | Rich text: one `Created: <id>` / `Failed [CODE]: <title>: <message>` line per record, then `Imported N entries` (or `Imported N entries (M failed)`). Exit `3` if some records were written and some failed, `1` if none was written. Its `--format` selects the *input* file format. |
 | MCP | `kb_bulk_create` | the block below, results in input order. |
-| REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code"}, ...]}`. |
+| REST (not run) | `POST /api/entries/import` (multipart) | `{"imported": N, "errors": M, "entries": [{"id", "title"}, ...], "error_details": [{"title", "error", "error_code", "errors?"}, ...]}`. The top-level `errors` is a count, so a record's rows ride on its `error_details` item. |
 
 `--format` selects JSON, YAML or Markdown input. Without it, `.json`, `.yaml`/`.yml` and `.md` file extensions are detected; `--stream` applies only to Markdown imports.
 
@@ -861,12 +1198,22 @@ paragraph above; how it writes, and the `changed`, `locked` and
 {"total": 2, "created": 1, "failed": 1, "results": [{"created": false, "error": "...", "error_code": "ENTRY_EXISTS"}, {"created": true, "entry_id": "two"}]}
 ```
 
+A failed record carries `errors` beside `error_code` when the refusal named a
+field, in the row shape above.
+
 ### `task create` and `link`
 
 `pyrite task create` takes `--field key=value` (repeatable) for fields a
 KB's task schema allows. It has no short flag: `-f` was `--format` on the
 `task` commands and is deprecated there (see "`--format` defaults"), and is
 **not** `--field` as on `create`/`update`.
+
+`pyrite task create` also takes `--due-date <YYYY-MM-DD>` (`-d`) and
+`--link <target[:relation]>` (`-l`, repeatable). With `--link`, the JSON
+document carries `"linked"` and `"failed_links"` (each failed link carries its
+`finish_up` command); a link that did not resolve makes the outcome `partial`
+and the exit `3`, while the created task itself is kept. MCP `task_create`
+accepts optional `due_date` and `links` (`[{"target": ..., "relation": ...}]`).
 
 `pyrite link <source> <target> -k <kb> -r <relation>` answers
 `{"links": [{"created": true, "source", "relation", "target", "target_kb", "resolved"}], "outcome": "done"}`
@@ -876,13 +1223,126 @@ with `"outcome": "partial"` and exit `3`); under
 `--format rich` it prints
 `Linked: <src> --[<relation>]--> <tgt> (in <kb>)` for a new link, or
 `Already linked: ...` when that `(target, kb, relation)` already exists
-(`"created": false`).
+(`"created": false`). When the target does not exist yet (`"resolved": false`),
+the line ends with `— unresolved: the target does not exist yet`.
 Another relation between the same two entries is a new link.
 
 `pyrite links check` is a check (ADR-0046): it exits `0` with `"outcome": "done"`
 when no link is broken, and `1` with `"outcome": "nothing"` when any is, with
 the findings still in the document (`missing_targets`, `total_references`,
 `targets`, each target with its `references`).
+
+## Task list: `task list`, `task_list`, `GET /tasks`
+
+The three return one body, built by `TaskService.task_listing`:
+`{"count", "tasks"}` (the CLI adds `outcome`), newest task first. A zero-row
+list is `done` (ADR-0046). Three optional arguments, each absent by default, and
+without them the body is unchanged:
+
+- **`--fields a,b`** (MCP `fields: ["a","b"]`, REST `?fields=a,b`) projects
+  each `tasks` row through `project_fields`: the named keys plus `id` and
+  `kb_name`, never a key the row lacks. CLI `*` means every field.
+- **`--dispatchable`** (MCP `dispatchable: true`, REST `?dispatchable=true`)
+  keeps only the tasks a worker can take now, and orders them by priority
+  highest first, then oldest `created_at`, then KB, then id. One classifier
+  decides it (`pyrite/models/task_queue.py`), over the effective status
+  (ADR-0045 decision 7), and it writes nothing. The body gains:
+
+  ```json
+  {"count": 2, "tasks": [...],
+   "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
+              "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
+              "unreadable": 0},
+   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}],
+   "due_rechecks": [{"id": "await-ruling", "kb_name": "test-kb", "status": "in_progress",
+                     "priority": 7, "assignee": "agent:x", "parked_awaiting": "ruling",
+                     "park_kind": "", "retest_after": "2026-12-10"}]}
+  ```
+
+  `counts` has every key, even at zero, and sums to the tasks the other
+  filters matched. `excluded` lists each **open** task that was left out,
+  with its one reason, in the same order; tasks that are not open are only
+  counted. For a caller who may claim, every listed task is one `task claim`
+  accepts now: a row the claim would refuse is left out with its reason. A
+  task gets the first reason that applies:
+
+  | Reason | The task |
+  |---|---|
+  | `not_open` | effective status is not `open` (a parent done by its children is `not_open`) |
+  | `empty_status` | its file says `status: ""`: read as open, but the claim takes only `open` or an unset status |
+  | `orphaned` | its index row's file is gone |
+  | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
+  | `assigned` | names any assignee |
+  | `parked` | its park state (`parked_state`, #1688) is `parked` or `person`: `parked_awaiting` gives a reason or `retest_after` is set, and the park is not yet due (a `person` park never is). Empty, whitespace, `''` and `null` reasons do not park, and the body is never read. For a row every other check would list, the claim's loader reads the file, so a park written after the last `index sync` still excludes it, judged by the same rule on the file's `parked_awaiting`, `park_kind` and `retest_after` (a file park whose `retest_after` has come is due, not parked). An index row that already says parked stays parked until the next sync, even when the file no longer does |
+  | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
+  | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
+
+  A listed task whose park has come due (an external park whose
+  `retest_after` is today or earlier) carries `recheck: true`, `park_kind`
+  and `retest_after`. `due_rechecks` lists every other live task (effective
+  status not `done`, `cancelled` or `failed`) whose park is due -- in
+  progress, claimed, blocked, or open but excluded for another reason --
+  ordered by priority (highest first), then `retest_after`, then KB and id.
+  A `person` park is never in it. Today is read once per call; the
+  predicate itself never reads the clock.
+
+  With `--fields`, the CLI names on stderr any field no task carries (as
+  `search` does); nothing is refused.
+- **`--parked` / `--unparked`** (MCP `parked: true|false`, REST
+  `?parked=true|false`, #1688) keeps the tasks whose park state is anything
+  but `none` (due rechecks and person parks included), or exactly `none`.
+  Each row gains `park_kind` (as written, `""` when absent), `retest_after`
+  (a date as `YYYY-MM-DD`, other text as written, `""` when absent) and
+  `park_state`: `none`, `parked`, `due` or `person`. A `park_kind` absent or
+  empty counts as `external`; any value but `person`/`external` is read as
+  `person`.
+
+## Task park: `task park`, `task unpark`, `task_park`, `task_unpark`
+
+`task park <id> -k <kb> --reason R [--kind person|external] [--retest-after
+YYYY-MM-DD] [--by WHO] [--operator-override]` (MCP `task_park {task_id,
+kb_name, reason, kind?, retest_after?, by?, operator_override?}`, write tier) sets `parked_awaiting` and sets or removes
+`park_kind` and `retest_after` in one write: a park replaces the previous
+one whole. The status never changes. The result, the same on both surfaces
+(the CLI adds `outcome: done`):
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "parked_awaiting": "foia-response", "park_kind": "", "retest_after": "2099-01-01",
+ "park_state": "parked"}
+```
+
+Refusals write nothing and answer `VALIDATION_FAILED`: a reason that is empty,
+whitespace or quote marks; a kind other than `person` or `external`; a
+`retest_after` that is not exactly `YYYY-MM-DD` and a real date; an entry that
+is not a task; a task whose status is `done` or `cancelled` (the operator
+override does not change that).
+
+Park and unpark follow the holder rule `task finish` follows: a task another
+caller holds is refused with `FORBIDDEN` and nothing is written. The caller is
+`--by` (MCP: `by`, else the signed-in account) and must be the task's
+assignee; the operator (the CLI, stdio MCP, an operator key) may act on a task
+it does not hold with `--operator-override` (MCP `operator_override: true`),
+which is refused for anyone else. A task no one holds may be parked or
+unparked by anyone. REST has no park or unpark route.
+
+A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND` on MCP.
+
+`task unpark <id> -k <kb> [--by WHO] [--operator-override]` (MCP `task_unpark
+{task_id, kb_name, by?, operator_override?}`) removes the
+three keys, never leaving an empty value, in one write (keys spelled under
+`metadata:` too: a block that held only park keys goes with them); a task with none of
+them is left byte-for-byte as it was, and the outcome is still `done`. A `done`
+or `cancelled` task may be unparked, which clears a stale park:
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "removed": ["parked_awaiting", "park_kind", "retest_after"]}
+```
+
+`qa validate` reports (rule `task_park`, severity `warning`, never a rewrite)
+a `park_kind` other than `person`/`external`, a `retest_after` that names no
+date, and a `retest_after` with no `parked_awaiting`.
 
 ## Link discovery: what is left out
 
@@ -923,7 +1383,9 @@ replaced by the endpoint's default rather than echoed to the caller:
 | `PATH_EXISTS` | that `owner/repo` is already present in the workspace |
 | `CLONE_TIMEOUT` | the clone exceeded its deadline |
 | `CLONE_FAILED` | an unrecognised clone failure; git's stderr is in the operator's log |
-| `INVALID_REQUEST` | the URL or branch was rejected before git ran |
+| `INVALID_REQUEST` | the URL or branch was rejected before git ran, or the clone path would not resolve inside the workspace root |
+| `REMOTE_NOT_ALLOWED` | the URL git would contact is not `https://` on a host in the `git_allowed_hosts` setting (also when a git `insteadOf` rule rewrites it to one); refused before git ran, and the message names the setting |
+| `REMOTE_REDIRECTED` | the remote answered with an HTTP redirect, which Pyrite does not follow; use the repository's current URL |
 | `SUBSCRIBE_FAILED`, `FORK_FAILED`, `SYNC_FAILED`, `UNSUBSCRIBE_FAILED`, `PR_FAILED` | per-endpoint defaults when nothing more specific applies |
 | `GITHUB_NOT_CONNECTED` | `/repos/fork` with no GitHub account connected |
 | `KB_NAME_CONFLICT` | a KB in the repository has the name of an already-registered KB, or two KBs in it share a name; nothing was subscribed and the clone was removed |
@@ -983,6 +1445,7 @@ Choose a supported mode rather than retrying the same request.
   "match": "weak",
   "match_basis": "keyword: nothing matched; semantic: best similarity 0.41, below 0.50 but 0.19 above the next 9 results",
   "legs_run": ["keyword", "semantic"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
   "keyword_match": "none"
 }
 ```
@@ -994,9 +1457,21 @@ Choose a supported mode rather than retrying the same request.
 (keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
 (hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
 per-result `legs`. `distance` is not in the default. The page-level keys below
-(`match`, `match_basis`, `legs_run`, `keyword_match`, `warnings`) are in every
+(`match`, `match_basis`, `legs_run`, `searched`, `keyword_match`, `warnings`) are in every
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
+
+**`entry_warnings`** (#1761). A row, and a `get` result, whose file holds a
+value its reading does not show faithfully carries `entry_warnings`, a list of
+sentences. Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
+`11`, `"high"`, `.nan`): readers keep showing the legacy whole number, and the
+sentence names the file's value. An accepted spelling (`5.0`, `"05"`), a missing
+key, and a mapping or list value (which `qa validate` reports as
+`reserved_key_collision`) add nothing. It is not the page-level `warnings` ("a
+leg was skipped"): that key is on the response, this one is on the entry. It is
+absent when there is nothing to say. CSV has no place for it and writes one
+`warning: <id>: <sentence>` line per entry to stderr. A search page of N rows
+opens N entry files to look (a stated limit, not a bound).
 
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
 as before #54 (`body` still needs `--include-body`), a named list
@@ -1014,7 +1489,62 @@ is not special. `search --files` ignores both and says so on stderr.
 `--include-body` adds `body` to the default row. In CSV the
 columns are the default row's keys that the page has; Markdown keeps its list.
 MCP `kb_search` and REST `GET /api/search` are unchanged: they return the
-whole row.
+whole row, `entry_warnings` included.
+
+### `search --batch`: many searches in one process (CLI only)
+
+`pyrite search --batch queries.json` (`-` reads stdin) takes the place of
+`QUERY` and runs a JSON list of query objects in one process: one config load,
+one index, one embedding-model load. `QUERY` and `--batch` together, `--files`
+or `--expand` with `--batch`, and `--format csv|markdown` with `--batch` are
+usage errors (exit 2). MCP clients issue parallel `kb_search` calls instead;
+there is no MCP or REST batch search.
+
+```json
+[
+  {"query": "falcon", "kb": "birds"},
+  {"query": "marsh", "kb": "birds", "type": ["note"], "mode": "semantic", "limit": 5, "fields": "id,title"}
+]
+```
+
+A query object has `query` (required) and may have `kb`, `type` (a list, as
+`--type` repeats), `mode`, `limit`, `fields` (a string, or a list joined by
+commas), `status` and `tag`. The command-line options are the defaults for
+every query and a key in the object overrides them; options with no key
+(`--exclude-type`, `--from`, `--to`, `--fips`, `--state`, `--include-archived`,
+`--include-body`) apply to all of them. Any other key, `expand` included, is
+refused in its slot.
+
+```json
+{
+  "count": 2,
+  "searches": [
+    {"query": "falcon", "count": 1, "results": [{"id": "kestrel", "kb_name": "birds", "entry_type": "note", "title": "Kestrel notes", "snippet": "...", "rank": -1.2}], "match": "strong", "match_basis": "...", "legs_run": ["keyword"], "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"], "keyword_match": "strong"},
+    {"query": "falcon AND", "count": 0, "results": [], "error": "...", "error_code": "QUERY_SYNTAX", "retryable": false, "suggestion": "..."}
+  ]
+}
+```
+
+`searches` has one slot per query, in input order. A slot that ran is the
+document a single `pyrite search` prints for the same arguments: same rows,
+same `match`, `match_basis`, `legs_run` and `warnings`, same `--fields`
+projection (`test_a_slot_equals_the_single_search` compares them). A slot that was refused (a syntax error, a
+query over the length cap, an unknown KB, an unknown key, a bad value) has
+`query`, `count: 0`, `results: []` and the canonical error shape
+(`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
+siblings. Text that is not valid UTF-8 (a lone surrogate) is such a refusal,
+`VALIDATION_FAILED`. Only a refusal (a `PyriteError`) fills a slot; an unexpected
+fault is not caught per slot and ends the command. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
+(`partial`) when some were refused, 1 (`nothing`) when all were. A batch of
+none is `{"count": 0, "searches": []}`, exit 0.
+
+The batch as a whole is refused, exit 1 with the error shape and no `searches`,
+when the file is missing (`NOT_FOUND`), is not UTF-8, cannot be read (an
+`OSError`), is not JSON, is not a list, or holds more than 50 queries
+(`VALIDATION_FAILED`; the cap `batch-read` has); stdin (`-`) is refused the
+same way, never with a traceback. Warnings and the trace go to stderr,
+prefixed with the query's position. The stale-index warning appears once for
+the whole batch and covers every KB, not only the ones the queries name.
 
 ### What the page is worth: `match`, `match_basis`, `keyword_match`, `similarity`
 
@@ -1028,6 +1558,8 @@ so they are the same keys, with the same values, in the same words.
 | `match` | top level, always | `strong`, `weak` or `none` |
 | `match_basis` | top level, always | the reason, in words; for a person or a log, not for parsing |
 | `legs_run` | top level, always | the legs that ran: `["keyword"]`, `["semantic"]`, both, or `[]`. A `hybrid` search with `["keyword"]` here was a keyword search. Not the per-result `legs` |
+| `searched` | top level, always | the entry parts the legs that ran read; a miss on anything not listed is not an absence. `[]` when no leg ran (`legs_run` is `[]`). With a keyword leg (`keyword`, `hybrid`): what the backend's keyword index reads for this query, the whole body included: on SQLite every `entry_fts` column, `["id", "kb_name", "entry_type", "title", "body", "summary", "location"]`, narrowed when the query carries an FTS5 column filter (`title:`, `"title":`, `{a b}:`, `- title:`) that reaches MATCH: a filter binds to the one phrase, group or `NEAR(...)` that follows it, filters nest by intersection, and the list is the union, over every term, of the columns that term is read in (`title: hawk OR falcon` reads `falcon` in every column, so lists all; `title: (hawk OR falcon)` gives `["title"]`; `{title body}: ({body summary}: hawk)` gives `["body"]`). A query whose filter structure is not understood lists `[]`, never more than was read. A bare `title: hawk` is quoted by sanitizing and is no filter; on Postgres `["title", "summary", "body"]`. With only the vector leg (`semantic`): `["title", "summary", "body_prefix"]`, because the vectors are built from a cut-down body and a word past the cut is not searched. Declared field values and tags are in no index, so they are never listed: a keyword search does not find a word that appears only in one yet (#1776) |
+| `body_prefix_chars` | top level, only when `searched` holds `body_prefix` | the character cut applied to each body before it is embedded (500 for the default model). It is a character count: the embedding model's token window can cut sooner (a long title and summary push the body past it), so it is an upper bound on what the vectors saw. A limit of 0 embeds no body: `searched` is then `["title", "summary"]` and this key is absent |
 | `keyword_match` | top level, when a keyword leg ran (`keyword` and `hybrid` modes) | `all_terms`, `some_terms` or `none` |
 | `warnings` | top level, only when there are any | a leg that was skipped or dropped. Now in the CLI's JSON too; it was on stderr only |
 | `similarity` | each result the vector leg returned | cosine similarity to the query, 3 decimal places, the same number on SQLite and Postgres |
@@ -1048,6 +1580,7 @@ pyrite search "zzznosuchterm" -k notes --mode keyword
   "match": "none",
   "match_basis": "keyword: nothing matched",
   "legs_run": ["keyword"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
   "keyword_match": "none"
 }
 ```
@@ -1149,6 +1682,19 @@ A single entry (`kb_get`, `pyrite get`) returns the entry dict directly
 — not wrapped in an `{"entry": ...}` key. `outlinks` and `backlinks` are
 included when resolvable.
 
+The entry's `links` list holds one item per link row,
+`{"target_id", "target_kb", "relation", "note"}`. An item for a Markdown
+link to an entry file (#1723) also carries `target_path`, the KB-relative
+path the link names, and `broken`: `true` when no entry file is at that
+path, `false` when one is. A broken item's `target_id` is its path text,
+which an unrelated entry's hand-set id may equal, so `broken` is the
+signal to read; an item for a link that names an id carries neither field
+(#1765).
+
+A single task (`pyrite task get`, MCP `task_status`) returns the task
+detail dictionary with `body` included directly from the file. Over the
+MCP chunk default, MCP returns ADR-0034 truncation markers as `kb_get` does.
+
 A single entry is read from its file as the file is now, so an edit made
 since the last `index sync` is in it; `content_hash` is the SHA-256 of the
 bytes that read. Lists and search are index reads and may lag.
@@ -1159,6 +1705,75 @@ hash was not computed: `GET /api/entries`, `GET /api/collections/{id}/entries`,
 `POST /api/collections/query-preview` and the daily-note routes when they
 answer from the index build their entries from index rows, which carry no
 hash. Read the entry by id for its hash.
+
+### `load_problems` and `ENTRY_UNREADABLE`: a file its type cannot load
+
+A file *does not load as its type* when its frontmatter parses to a mapping
+and the declared type's loader refuses it: a value it will not convert (a
+`backlog_item` with `rank: .inf`), a shape it will not hold (a `task` whose
+`metadata:` is not a mapping), or a plugin loader's own check (ADR-0042
+decision 8a). Pyrite reads such a file partially and writes it not at all.
+
+**Reads.** `kb_get` (the entry dict), `pyrite get`, `pyrite-read get` and REST
+`GET /api/entries/{id}` return the entry as the type it declares, with a
+`load_problems` list. The key is present only then.
+
+```json
+{
+  "id": "x", "entry_type": "backlog_item", "title": "T",
+  "load_problems": [
+    {"field": "rank", "rule": "load", "severity": "warning",
+     "message": "rank: cannot convert float infinity to integer"}
+  ]
+}
+```
+
+- **A refused field is absent, never a default.** `rank` is not in the reply
+  (not `0`), and a refused `status` is not `open`. REST leaves a refused
+  column out of the reply too (`metadata` is absent, not `{}` or `null`, when
+  the whole `metadata:` was refused; likewise `tags`, `participants` and
+  `sources`). GET and POST `/api/daily/{date}` follow the same rule for an
+  existing note (#1490). A list is never `null`: `tags`, `participants`, `sources`,
+  `outlinks` and `backlinks` are lists when present, and the ones `load_problems`
+  does not name keep the value the read gave them or the empty list, so a
+  client may read `.length` of any of them and must treat an absent one as
+  "refused". `field` is the file's key; a
+  value under `metadata:` is `metadata.rank`, and the field is then absent from
+  the top level and from `metadata`.
+- **A refusal no field explains** (a `title` that is a list, a key the loader
+  requires) answers `ENTRY_UNREADABLE`, never "not found".
+- Lists, search and counts have no row for the file; `pyrite index sync` and
+  `pyrite index health` list it as malformed, with its path and the loader's
+  message.
+
+**Writes.** Every write to the file is refused with `ENTRY_UNREADABLE` (CLI
+exit 1, REST 422, MCP `error_code`), and nothing is written: an update (REST
+`PUT`/`PATCH`, MCP `kb_update`, CLI `update`), an echo of a read (it carries
+`load_problems`, which is set aside, and is refused like any other update), a
+delete, a link from it, a rename of it, a task claim, start, finish, update,
+checkpoint or reset, and a plugin's write through `ctx.kb_service`. A request that would
+change nothing is refused the same way. No validator or hook is run, so none
+judges a value the file does not hold. The message names the file by its path
+relative to the KB, the declared type, the refused fields and the loader's
+message. The loader's message is shown to the local process (the CLI, stdio
+MCP); a network caller (REST, MCP over HTTP) gets `the server log has the
+details` in its place unless the loader raised a Pyrite error, as for any text
+Pyrite did not write (ADR-0052 N3): a type's loader is code (a plugin's, a
+library's), not a parser given only the file's bytes. The same holds for each
+`load_problems[].message`. Over the CLI:
+
+```text
+items/x.md does not load as its type `backlog_item` (refused: rank; cannot
+convert float infinity to integer). Pyrite reads it but writes nothing to it
+until the file is fixed by hand.
+```
+
+Repair is by hand (or by an explicit repair command, ADR-0042 decision 7);
+there is no ordinary update that repairs. A rename of *another* entry leaves
+such a file's `[[links]]` as they were and lists it under `files_skipped` with
+this reason. `qa fix` records the file's fixes as failed and goes on; a bulk
+link fails that source's items and goes on; `export site` names the ids it
+left out.
 
 ### Backlink rows
 
@@ -1248,6 +1863,144 @@ holding the id in either. A row's `title` is null exactly when `resolved` is
 `false`. A target that a change set created and then deleted is unresolved
 again; a target held by main and deleted in a change set still resolves, as
 `get_entry` still finds it (the overlay has no tombstones yet).
+
+## Task start and finish
+
+`task start` (CLI), `task_start` (MCP) and `POST /api/tasks/{id}/start` (REST)
+return one dict, `TaskService.start_task`'s (#1685). A start that won:
+
+```json
+{
+  "claimed": true,
+  "task_id": "fix-typo",
+  "assignee": "alice",
+  "status": "in_progress",
+  "task": {"id": "fix-typo", "title": "Fix typo", "body": "...", "...": "the single-entry read"},
+  "parent": {"id": "docs", "title": "Docs", "body": "..."}
+}
+```
+
+`parent` is `null` for a task with none. The two bodies share one response
+budget and are bounded as in [Body truncation](#body-truncation). A lost start
+is a lost claim's dict unchanged: `{"claimed": false, "error": "...",
+"current_status": "in_progress"}`, CLI outcome `nothing` and exit 1, MCP and
+REST a result (not an error); an id the index does not hold is answered the
+same way (`claimed: false`, `error`, no `current_status`), as claim answers it.
+A retry of a task the caller holds as `claimed` moves it on only while the
+caller still holds it: a claim someone else took meanwhile is a lost start
+whose `error` names the current holder, and nothing is written.
+Refusals that are errors, not results: an entry that is not a task
+(`VALIDATION_FAILED`), a task held by another account (`FORBIDDEN`, claim's
+holder rule), a file its type cannot load (`ENTRY_UNREADABLE`) and an unknown
+KB (`KB_NOT_FOUND`). The file write records two `status_change_log` items,
+`{date, from, to, by}`: open → claimed and claimed → in_progress, `by` the
+assignee.
+
+`task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
+dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
+"in_progress", "done"], "status_reason", "by", "override"}`, with one
+`status_change_log` item
+per edge of `path` (`comment` is the reason, when one was given).
+
+Finish requires the caller to hold the task; operators have an explicit
+override. The caller is `--by` (MCP: `by`, else the signed-in account) and
+must be the task's assignee; the items record it as `by`. The operator (the
+CLI, stdio MCP, an operator key) may finish a task it does not hold with
+`--operator-override` (MCP `operator_override: true`): the items record `by:
+"operator"` and `override: true`, and the result `"by": "operator",
+"override": true`. The override is never implied by a missing or empty
+caller, and is refused for anyone but the operator.
+
+A refusal writes nothing and is (CLI exit 1):
+
+- `FORBIDDEN`: the caller does not hold the task (another caller, or none),
+  or asked for the operator override without being the operator. The message
+  names the holder rule and who holds the task. The write also rechecks the
+  holder in the file it replaces, so a task that changed hands meanwhile is
+  refused (`VALIDATION_FAILED`, naming the holder).
+
+- `VALIDATION_FAILED`: the task is already `done`; a status with no path to
+  `done`; a task nothing holds (`open`, or a path through it, as from
+  `failed`); a path of more than one edge without `--walk` (`walk: true`; the
+  message names the path); an edge the workflow refuses (the KB's declared
+  `state_machine` where it has one, else the core table); an entry that is
+  not a task; and a stale read: the task's status changed between the read and
+  the write ("the file's status is ...; read the task again and retry").
+  Retry after a stale read; the others need a different request.
+- `ENTRY_NOT_FOUND`: no task with that id in the KB.
+- `ENTRY_UNREADABLE`: a file its type cannot load.
+
+The holder rule guards `task finish` on the CLI and MCP. REST has no finish
+route yet (see #1745); the generic `PATCH /api/entries/{id}` is unchanged and
+is not `task finish`.
+
+## Entry row shape
+
+These readers return entry rows from the index in one shape, whatever the
+surface (MCP, `--format json`, REST) and the backend (SQLite, Postgres): the
+list and find tools (`kb_list_entries`, `kb_recent`, `kb_batch_read`,
+`kb_find_by_status`, `kb_find_by_assignee`, `kb_find_overdue`,
+`kb_find_by_location`), search (`kb_search`, keyword and semantic legs),
+folder collections, and the single read (`kb_get`). Each reader keeps its
+own set of keys: shaping adds none. Where a row carries one of these, it has
+this type:
+
+| Key | JSON type |
+|---|---|
+| `metadata` | an object; `{}` when the entry has none |
+| `aliases` | a list; `[]` when the entry has none |
+| `importance` | an integer (or `null`) |
+| a field the type declares, held in the `metadata` bag (a backlog item's `rank`) | at its own name too on the list readers (`kb_list_entries`, `kb_recent`, `kb_batch_read`) and the single read; search and the finds return only the columns they select, so there it is in `metadata` alone (the keyword search row's `rank` is its score) |
+| a column field (`priority`, `status`, `assignee`, `due_date` ...) | by the type's declaration (`KBSchema.type_fields`: kb.yaml, plugins, and a task's own `priority`, a number); see below |
+
+How a column field reads. A field declared a `number` reads as a number when
+the stored text is a plain ASCII whole number or decimal, with an optional
+leading minus (`7`, `2.5`, `-7`, `-1.5`): no plus sign, no surrounding space,
+no leading zero, no exponent, no digits from other scripts. Any other text
+(`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
+the task model's integer (`coerce_task_priority`: a word on the 1 to 10
+scale, any other non-integer the default 5), so every spelling of it reads
+as that integer and `task_list` and `kb_get` agree. A field declared a
+`checkbox` reads the stored `1`, `0`, `true` or `false` as a boolean. Every
+other field, and one the type does not declare, reads as text. A
+whole-valued decimal (`7.0`) reads as `7.0` on SQLite and as `7` on
+Postgres.
+
+What a caller reads, sent back as that one field (MCP `kb_update`,
+`pyrite update -f`, REST PATCH), leaves the file as it was, except in
+these cases. REST PUT takes no column field, so it has none. A read never
+writes anything.
+
+- A quoted plain number in a field declared a number: `priority: "7"`
+  reads 7 (and `"-7"` reads -7), and writing that number back stores it
+  without the quotes (`priority: 7`). `qa validate` reports the text (`number_as_text`), saying what
+  Pyrite reads it as.
+- A task's `priority` spelled as anything but a plain whole number
+  (`high`, `P1`, `"007"`, `"+7"`, `"1e1"`): it reads as the model's integer
+  (7, 5, 7, 7, 10), and writing that back stores the integer in place of
+  the file's spelling. `qa validate` reports the file's value
+  (`task_priority`, or `number_as_text` for numeric text).
+- A quoted `"true"`, `"false"`, `"1"` or `"0"` in a field declared a
+  checkbox: it reads as a boolean, and writing that back stores `true` or
+  `false`.
+- An unquoted `1` or `0` in a field declared a checkbox: it reads as a
+  boolean, and writing that back stores `true` or `false` (on earlier
+  releases it was stored as the quoted text `"1"` or `"0"`).
+- A YAML boolean in a field declared a number: `priority: true` reads 1
+  (and `false` reads 0), and writing that back stores the number
+  (`priority: 1`; earlier releases stored the quoted text `"1"`).
+- A number the index spells with an exponent, in a field declared a number:
+  `priority: 0.00001` reads as the index's text for it, which the strict
+  rule keeps as text, and writing that back stores that text quoted. The
+  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
+  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
+  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
+  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
+
+`kb_timeline` returns `date` and `location` as stored text: its rows carry
+no `entry_type`, so no declaration applies. The type-specific tools
+(`task_*`, `sw_*` and the other plugin tools) return their own dicts, not
+index rows. (#1503)
 
 ## Body truncation
 
@@ -1417,10 +2170,19 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
     `pyrite-admin index embed` (`Errors: N`; the entries stay owed and a rerun
     retries them, so offline with nothing embedded is `1`), `schema migrate`,
     `index reconcile`, `import`, `links bulk-create`, `export collection`,
-    `search --files`, `repo sync`, `batch-read` (an id not found), `task decompose`
+    `export site` (done = entries exported, a row that could not be loaded is
+    named and counted as left out), `search --files`, `repo sync`, `batch-read`
+    (an id not found), `task decompose`
     (every child refused is `1`, `"outcome": "nothing"`),
     `sw prioritize`, `sw migrate-standards`, `investigation bulk-edges` and
     `ftm-import`;
+  - `pyrite qa duplicates` that left a KB out of the scan and named it in
+    `unreadable_kbs` (#1547);
+  - `pyrite index sync`, `pyrite index build` and `pyrite kb reindex`
+    count each KB, folder and file they could not reach as failed (done =
+    KBs synced): a KB with one folder it could not list exits `3`, and so
+    does `kb reindex` of that KB (#1546; see "A folder or file Pyrite cannot
+    reach");
   - `pyrite init` that created the KB but could not index it, and
     `pyrite extension install --verify` that installed a plugin that would not
     load (always `3`: the install happened);
@@ -1430,7 +2192,7 @@ migrates; until then `kb validate` drift exits `2` and `ids missing` `3`.
 
   Single-effect commands that fail answer `1`: `kb commit` when the commit was
   rejected (a hook, a staging error; "No changes to commit" is `0`), `task claim`
-  when the claim is lost (in `--format json` too), `social reputation` when it
+  and `task start` when the claim is lost (in `--format json` too), `social reputation` when it
   cannot compute the reputation, `investigation network` and `evidence-chain`
   when the answer is an error.
 
@@ -1498,6 +2260,13 @@ checked against each command's Typer signature by
 | `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
 | `task create` | yes (shared; `-f` deprecated) | `json` |
+| `task get` | yes (shared; `-f` deprecated) | `json` |
+
+`index sync` takes the shared option with no default (#1691): asked for
+nothing (no `--format`, no `PYRITE_FORMAT`), it answers as it did before it
+joined the contract: its result as text, a refusal as one `ERROR [CODE]` line,
+and a storage fault (`STORAGE_ERROR`) as the JSON error shape. An asked-for
+format applies to the whole answer.
 
 A command with no `--format` prints its refusals as Rich text too, so branch
 on the exit code, not on JSON, until its module takes the shared option.
@@ -1524,6 +2293,9 @@ classified):
 The identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
+The one key a projection adds is `entry_warnings`, when the record has it, on
+every surface above: a projection never hides that the reading is not the
+file's.
 
 CSV, Markdown, and Rich retain every requested column, even when all records
 lack that field; absent and null values are empty cells. A single entry
@@ -1566,6 +2338,249 @@ returns the columns `id,kb_name,status,title`, including an empty `status`
 cell if a hit has no status. A requested field does not make search acquire
 data its result records do not otherwise carry.
 
+## A KB whose files cannot be read
+
+When a registered KB's folder cannot be listed or searched, or its `kb.yaml`
+cannot be opened, every command on every other KB still works, and that KB is
+named rather than dropped:
+
+- `pyrite kb list --format json` gives its row an `unreadable` key holding
+  the fixed `KB_UNREADABLE` message, and `error_code`; a readable KB's row
+  has neither key.
+  REST `GET /api/kbs` and MCP `kb_list` do not carry it.
+- `pyrite index health` lists it in `unreadable_kbs` (`{kb, error}`), and the
+  status is `unhealthy`.
+- `pyrite index sync` (every KB) does not sync it and keeps its index rows;
+  it prints `Not synced: <kb>: <message>` and exits 3 when other KBs synced
+  (1 when none did). A sync that runs in the foreground (REST
+  `POST /api/index/sync` with `wait=true`, MCP `kb_index_sync` without
+  `background`) names it the same way, in the result's `unreadable_kbs` list.
+  A background sync job keeps the rows too, and its job result does not yet
+  name the KB; `pyrite index health` does. A sync, rebuild or reindex of that
+  one KB answers `KB_UNREADABLE` and changes nothing. `pyrite index build`
+  skips it, names it, and exits 3 or 1 the same way.
+- Every operation that needs its files answers `KB_UNREADABLE`.
+
+A registered KB whose `kb.yaml` can be read but cannot be loaded as a mapping
+(not UTF-8, a YAML syntax error, a duplicate key, over the YAML limits, a top
+level that is neither a mapping nor null; #1547) is handled the same way, whether it is in
+`config.yaml` or was added with `pyrite kb add`, with its own code,
+`KB_CONFIG_INVALID`, and three differences: the fix is to correct the file, not
+its permissions; `pyrite kb list` gives its row `error_code` and `error_detail`
+(the parser's words: `kb list` is the local CLI only) beside `unreadable`; and
+`pyrite index health` names it in `schema_errors` with `error_code`, not in
+`unreadable_kbs`, and is `unhealthy`. Each `unreadable_kbs` row of a sync
+result, and each `kb list` row with `unreadable`, carries `error_code`
+(`KB_UNREADABLE` or `KB_CONFIG_INVALID`). Pyrite never rewrites the file:
+`pyrite kb schema add-type`, `remove-type` and `set` answer
+`KB_CONFIG_INVALID` before they write.
+
+What `kb.yaml` is decides, at the moment of the read, in every process:
+
+- **A running server.** A process that loaded its config while `kb.yaml` was
+  good answers `KB_CONFIG_INVALID` as soon as the file breaks, and answers
+  normally as soon as it is repaired: the schema is cached only while
+  `kb.yaml` is the file it was read from (its inode, size and times). Index
+  health, `unreadable`, sync and every operation on the KB read the file as
+  it is then. An atomic replace (a new inode) is always seen. Two in-place
+  writes of the same size within one step of the filesystem's timestamp
+  clock (on Linux that step can be a few milliseconds) leave the same
+  identity, so the second is not seen until the next change.
+- **Kinds of path.** A directory, a FIFO, nesting deeper than the
+  interpreter's recursion limit (flow or block style), or anything else the
+  parser raises on, answers `KB_CONFIG_INVALID`. A socket answers
+  `KB_UNREADABLE` (the operating system refuses to open it). A link out of
+  the KB (to another KB's `kb.yaml` or anywhere else) or a `kb.yaml` with a
+  second hard link answers `OUTSIDE_KB_ROOT`, and is handled like the other
+  two codes: index sync, build and reindex keep its rows, `kb list` marks it,
+  index health names it in `schema_errors` and is unhealthy. A dangling link
+  or a link loop is no `kb.yaml` (a KB with no schema), and so is a null
+  document. Every other KB still works in each case.
+- **Commands that span KBs.** For any of the three codes, `pyrite qa
+  duplicates` (with or without `--status`) leaves the KB out, names it in
+  `unreadable_kbs` (`{kb, error, error_code}`, present only when a KB was
+  left out) and exits 3. MCP `list_edge_types` without `kb_name` names it the
+  same way; with `kb_name` naming it, it answers that KB's refusal. Index
+  sync and build, index health, `kb list`, `qa validate` and MCP
+  `kb_qa_validate` name it and go on; MCP `kb_qa_status` counts it under
+  `kb_unreadable`.
+- **One message.** `KB_CONFIG_INVALID`'s message is fixed wherever it is
+  printed, `pyrite-read` and `pyrite-admin` included. The parser's words are
+  in that process's own log. For a KB registered in `config.yaml`, `pyrite`,
+  `pyrite-read`, `pyrite-admin` and `pyrite-server` each write one record at
+  config load, at their default log level, holding the fixed text and the
+  parser's words (one record; the parser's message runs over several
+  lines). A KB added with `pyrite kb add` is not logged at config load: the
+  record is written when a command reads that KB's schema, so a command that
+  does not read it logs nothing about it, and `pyrite kb list` logs the fixed
+  text alone. A process whose
+  `kb.yaml` breaks after it loaded logs the same record once, at the first
+  read that finds it broken. On the local CLI the parser's words are also in
+  `pyrite kb list`'s `error_detail` and in `pyrite index health`. No REST or
+  MCP response carries them.
+- **Limit: a `kb.yaml` that loads but is not a schema** (`types: 3.5`,
+  `types: [memo, 2]`): its own KB answers an untyped error, and `qa
+  duplicates` and MCP `list_edge_types` stop for every KB. Since #1547 that
+  includes `qa duplicates --status`, which did not read schemas before and so
+  still answered beside such a file. Filed as #1591.
+- **Limit: a very large `kb.yaml`.** There is no size bound: every command
+  loads every `kb.yaml`, so a file of tens of megabytes slows every command
+  (measured: 64 MB of one scalar takes about 24 seconds to load; two million
+  short keys, more than a minute).
+
+## A folder or file Pyrite cannot reach
+
+The same rule one level down (#1546): a folder below a KB's root that the
+index walk could not list, and a file it could not stat or read (an `OSError`
+other than "absent"), say nothing about the entries in them, so nothing is
+retired or called missing on their evidence. A file that was read and does
+not parse still loses its row, as before.
+
+- **The rows are kept.** Every reconcile (`pyrite index sync`, `index build`,
+  `index build --with-attribution`, `kb reindex`, `pyrite init`, the
+  background jobs, REST and MCP sync and reindex) keeps the row of every
+  path under such a folder and of every such file, neither rewritten nor
+  removed. Every row kept this way is named in that reconcile's own
+  result (its folder under `unreadable_folders`, or the file under
+  `unreadable_files`) and counts for its exit code. A row kept this way
+  never wins its id over a file read now: the file read now takes the id's
+  row, and the kept path is not a duplicate (its folder or file is still
+  named). When the folder or file can be read again, the next sync reports
+  `added`, `updated` and `removed` as `0` for them.
+- **The rows are retired exactly when the files say so.** A file missing
+  from a folder whose listing worked (a mode-`600` folder can be listed) is
+  gone, and its row is retired, as before. So is a path that
+  `KBFiles.present` answers absent: a link loop, or a file removed while the
+  walk ran; a loop stays reported under `malformed` and in health's
+  `unreadable_files`, as before, and does not count for the exit code.
+- **What counts as a folder it could not list.** Only a folder the walk
+  tried to list and could not (its listing failed, or failed part way), and
+  a name whose own type the operating system will not give (in a folder
+  Pyrite may not search, on a filesystem that does not say a name's type),
+  whatever its name; when that name is really a file (`*.md`,
+  `__collection.yaml`), the file's own stat also names it under
+  `unreadable_files`. A symbolic link the OS reports as one is never one: the walk
+  never enters a link, so a link whose target cannot be reached (a link to
+  itself, a link into a folder Pyrite may not search, a link through a
+  file) is not named, and a sync that meets one still exits `0` and health
+  stays healthy, as before.
+- **What a reconcile reports.** Its result carries `unreadable_folders`,
+  `{kb, path, error}` (`path` KB-relative, `error` the fixed `KB_UNREADABLE`
+  message), and `unreadable_files`, `{kb, path, error}` (the absolute path
+  and the exception, as in `index health`); each such file is also under
+  `malformed`, as before. `pyrite index sync` prints `Unreadable folders: N`
+  with each folder and lists the files under `Malformed`; `pyrite index
+  build` prints both lists; `pyrite kb reindex --format json` carries both
+  keys. Each counts as failed for `exit_unless_whole`: `3` when a KB synced,
+  `1` when none did.
+- **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
+  /api/kbs/{name}/reindex`, MCP `kb_index_sync` and MCP `kb_registry_reindex`
+  carry `unreadable_folders` and `unreadable_files` as integer counts. Neither
+  count exposes paths or operating-system error text. Reindex omits unreadable
+  files from its `malformed` list. The shared formatter for these fields is
+  `pyrite.services.index_health.network_shape`.
+  REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
+  `unreadable_folders` only, omitting `unreadable_files`. Network health's
+  `healthy` is `false`.
+- **Health.** `pyrite index health` names each folder in
+  `unreadable_folders` and each file in `unreadable_files`, and is
+  `unhealthy`, exit `1`.
+- **An in-KB link into such a folder** is reported as an unreadable file
+  (under `malformed` and `unreadable_files`), never as a dangling link to a
+  missing file.
+- **Not reported:** a folder under a dot-prefixed folder or `_templates/` (the
+  walk lists nothing there), and the KB's root, which is "A KB whose files
+  cannot be read".
+- **Limit:** only the outermost of nested folders it could not list can be
+  named. A background sync job keeps the rows but does not yet name the
+  folders in its job result (#1548); `pyrite index health` does.
+
+## `index sync --confirm`: is each named entry indexed and searchable?
+
+After writing entry files directly, an agent can ask the sync to confirm its
+entries (#1691): `pyrite index sync -k KB --confirm NAME...`, MCP
+`kb_index_sync` with `confirm: [names]`, REST `POST /api/index/sync?wait=true&kb=KB&confirm=a&confirm=b`
+(admin tier, unchanged). A name is an entry id, or a path relative to the KB's
+folder (`notes/a.md`), so a file with no `id:` can be confirmed too. With no
+names (`--confirm` alone, `confirm: []`, a single empty `confirm=`) it confirms
+every entry this sync added or changed; a blank name names nothing, on every
+surface. One place decides the block (`pyrite/services/index_confirm.py`), and
+a KB the process has not loaded is refused (`KB_NOT_FOUND`), never answered
+`done`. The local CLI gets the rows whole; MCP and REST get them as index
+health shapes answers for network callers (#1552; `network_shape` in
+`pyrite/services/index_health.py`): a `skipped` name reads `not_found` with no
+path or reason, a `duplicate` row has no `paths`, and a file that could not be
+read is not named:
+
+```json
+{
+  "kb": "notes",
+  "named": true,
+  "entries": [
+    {"name": "a", "id": "a", "path": "a.md", "status": "indexed", "reason": null,
+     "searchable": true, "findings": [], "embedding": "queued", "confirmed": true},
+    {"name": "b", "id": "b", "path": "b.md", "status": "indexed", "reason": null,
+     "searchable": true,
+     "findings": [{"rule": "schema_violation", "severity": "error", "field": "severity",
+                   "message": "Schema error on 'b': ..."}],
+     "embedding": "queued", "confirmed": false},
+    {"name": "missing", "id": "missing", "path": null, "status": "not_found",
+     "reason": null, "searchable": null, "findings": [], "embedding": null,
+     "confirmed": false}
+  ],
+  "confirmed": 1,
+  "not_confirmed": 2,
+  "outcome": "partial"
+}
+```
+
+| `status` | Meaning |
+|---|---|
+| `indexed` | One parseable file holds the id, its index row points at that file with the file's content hash, and a keyword search returns it. |
+| `not_indexed` | A file holds the id, but the row is missing, points at another file, has another hash, was kept unread (a file it could not read, #1546), or a keyword search does not return it; `reason` says which. Run `pyrite index sync` again, then `pyrite index health`. **Limit:** the keyword lookup reads the first 1,000 results for the id, then for the title; past that, a real entry with a common id and a common title in a large KB reads `not_indexed` (the confirm fails safe: exit 3, never a false `indexed`). |
+| `not_found` | No file holds the id, or nothing is at the path. |
+| `malformed` | The file does not parse, or could not be read (`reason`, fixed words; the local sync's own list names the parser's error). A malformed file named by id is matched on its file name (`b.md` for the id `b`); name it by its path otherwise. |
+| `duplicate` | More than one file claims the id; `paths` lists them, the indexed one first (ADR-0038). Local CLI only; a network row has no `paths`. |
+| `skipped` | The walk passes the file by: a dot-prefixed folder, `_templates/`, a README, a file that is not a regular file, an in-KB link (`reason`). Local CLI only; a network caller gets `not_found`. |
+
+- **`searchable`**: whether the keyword lookup returned the entry (by its id,
+  then by its title), or `null` when there is no row to look for.
+- **`findings`**: the schema findings `qa validate` reports for the entry
+  (`schema_violation`, `frontmatter_unmodellable`; the same validator `qa
+  validate` and `index health` share), `{rule, severity, field, message}`.
+- **`embedding`**: `embedded`, `queued` (owed: not embedded yet, or changed
+  since it was; ADR-0035, never waited on) or `unavailable` (no embedding
+  provider here); `null` for a name with no row. It never decides `confirmed`.
+- **`confirmed`**: `status` is `indexed` and, for a NAMED entry, no finding
+  has severity `error`. With no names the findings are reported only.
+
+**Exit and outcome.** `done`, exit `0`, when every row is confirmed (and the
+sync itself was whole); `partial`, exit `3`, when any row is not. The block's
+own `outcome`, for an MCP or REST caller, covers the rows only: a folder or
+file the sync could not reach, and that no name pointed at, makes the CLI
+exit `3` without changing the block's `outcome` (follow-up #1747). A sync that did not run
+(a KB whose files cannot be read, `KB_UNREADABLE`; a `kb.yaml` that does not
+load, `KB_CONFIG_INVALID`) is a refusal, exit `1`, with no `confirm` block.
+
+**Refused before anything runs.** `--confirm` with `--background` and
+`--confirm` without `-k` are usage errors (exit `2`); names without
+`--confirm` too. MCP refuses `confirm` with `background: true` or without
+`kb_name`, REST `confirm` without `wait=true` or `kb`, as `VALIDATION_FAILED`
+(REST 422).
+
+**Plain `index sync`** is on the outcome contract too (maintainer, 2026-11-17):
+its `--format` is the shared option with no default, so with no format asked
+for it answers exactly as before: the text a person always saw, a refusal as
+one `ERROR [CODE]` line, a storage fault as the JSON error shape (plus the
+`outcome` key every refusal on the contract carries). `--format rich` prints
+every refusal as the one line;
+`PYRITE_FORMAT=json` or `--format json` prints the sync result (`added`, `updated`, `removed`, `malformed`,
+`skipped`, `duplicates`, `aliases`, `dangling_links`, `unreadable_kbs`,
+`unreadable_folders`, `unreadable_files`, `changed`, `synced_kbs` (the KBs it
+reconciled), and `embedded` when the sync embedded any) plus `outcome`. `changed` lists `{kb, id, path, change}`
+for each row added, updated or removed (`IndexManager.sync_incremental` and
+`reconcile_kb` return it too). The exit codes are unchanged.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"
@@ -1577,12 +2592,13 @@ is the error shape above in one line.
 <!-- orient-operational-contracts -->
 ```json
 {
-  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+  "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
   "error_contract": {
-    "shape": "{error, error_code, suggestion?, retryable}",
+    "shape": "{error, error_code, suggestion?, errors?, retryable}",
     "error": "human-readable message",
     "error_code": "machine-readable code, e.g. QUERY_SYNTAX, KB_NOT_FOUND",
     "suggestion": "optional fix hint, omitted when not applicable",
+    "errors": "optional list, one row per refused field ({field, rule, message, ...}); absent when the refusal is not about a field",
     "retryable": "bool -- whether retrying the same request could succeed"
   },
   "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
@@ -1594,6 +2610,9 @@ is the error shape above in one line.
 
 Renaming an entry changes its id while preserving its filename and folder.
 A subsequent update or delete resolves the new id in the existing file.
+A `pyrite rename --dry-run` preview reports the requested `new_id` and the
+retained `file_path` relative to the KB. Its JSON result has `dry_run: true`
+and `renamed: false`, and its rich output shows the retained path.
 Updates preserve deliberate placement, including the KB root; a schema with
 a templated subdirectory may still move the file when its folder fields change.
 
@@ -1605,21 +2624,26 @@ that write returned (#795). This applies to `pyrite qa assess`, `pyrite ci`,
 
 **Tiers.** QA runs tier 1 (structural and deterministic rubric checks) and
 tier 2 (tier 1 plus the judgment-only rubric items, judged by the configured
-model). Any other tier is refused with `INVALID_TIER`. Tier 2 with no model
+model). Any other tier is refused with `INVALID_TIER` (on CLI `ci` and `qa assess`,
+Typer refuses out-of-range values as `USAGE_ERROR`, exit 2). Tier 2 with no model
 configured is refused with `AI_NOT_CONFIGURED`. Both refusals come before
 anything is checked or written, on every surface. `ci` refuses them even when
 no KB is configured.
 
 The codes:
 
-- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2. `pyrite mcp --tier` uses
-  the same code for an unknown server tier. Use 1 or 2.
+- `INVALID_TIER`: `--tier` / `tier` is not 1 or 2 (on the CLI's `ci` and `qa assess`
+  an out-of-range `--tier` is a usage error (`USAGE_ERROR`, exit 2) before this
+  check runs). `pyrite mcp --tier` uses the same code for an unknown server tier.
+  Use 1 or 2.
 - `AI_NOT_CONFIGURED`: tier 2 was asked for and no model is configured. REST's
   AI routes use the same code. Configure `ai_provider`, `ai_api_key` and
   `ai_model`, or use tier 1.
 - `KB_UNREADABLE`: `qa assess` / `kb_qa_assess` on a KB whose folder is
   missing or cannot be read. The message names the KB and the reason, not
-  the path. Restore the folder, or its permissions.
+  the path. Restore the folder, or its permissions. (The same code answers
+  every other operation on a KB whose files cannot be read; see "Server and
+  account codes".)
 - `EVALUATION_FAILED`: `qa assess --entry`, or `kb_qa_assess` with `entry_id`,
   and the model did not answer. The call raised, or the reply was empty, not
   JSON, not a JSON list, or did not judge every rubric item with a boolean
@@ -1728,3 +2752,55 @@ key. `qa fix` offers no fix for a schema issue: a required field is reported
 in `manual` with `reason: "no_safe_default"`, any other schema issue with
 `not_auto_fixable`; `--fix-rule schema_violation` still selects them and
 writes nothing.
+
+## QA duplicate candidates
+
+`pyrite qa duplicates -t <type>` reports live entries that may describe the
+same thing, scanning every KB the caller may read. It is a **report**, not a
+merge: finding candidates is not a failure, so the exit code is `0` when the scan covered every readable KB and `3` when a KB was left out and named in `unreadable_kbs`; an unknown
+`--format` or an out-of-range `--threshold` is a usage error (`2`). Empty
+`--type` or empty/comma-only `--status` values are structured
+`VALIDATION_FAILED` refusals (`1`).
+
+The command is CLI-only: there is no REST or MCP surface for it.
+
+Scores are word-overlap (Jaccard) over the id slug, after removing the first
+matching `--strip-prefix`, and over the title. A word is a run of Unicode word characters, compared after casefolding and accent folding (NFKD, then the marks with a non-zero combining class removed: accents and the kana voicing marks; then NFC), so `Élection` matches `election`, and Cyrillic and CJK titles compare as runs of letters (`选举日` is one word). Scripts whose words are runs of letters are supported. A script that writes vowels or voicing as combining marks (Devanagari, Thai, the kana voicing marks) is compared badly: the marks are dropped or split the word, so two different words can fold alike. Kana voicing marks have a non-zero combining class and are removed (`が` folds to `か`); some Devanagari and Thai marks have class 0 and are kept (DEVANAGARI VOWEL SIGN AA, THAI SARA I) and split the word at the tokeniser, while others have a non-zero class and are removed (DEVANAGARI VIRAMA and NUKTA, THAI SARA U and the tone marks). Tokenising those scripts is not built. A title match means the two titles' word sets overlap at or above the threshold; it says nothing about the entries' bodies. A pair is a candidate when either
+score is at or above `--threshold` (default `0.62`; a number from 0 to 1, `nan` and `inf` included in what is refused, as the usage error `2` / `USAGE_ERROR`; the service function refuses anything but an `int` or `float` from 0 to 1, with `ValidationError`: a `bool`, `None`, a string, a `Decimal` or a `Fraction` is refused); `score` is the
+higher one and `signal` names every signal that matched (`id`, `title`,
+or `id+title`). Within each pair, `a` sorts before `b` by `(kb_name, id)`.
+Without `--status`, an entry is live while its lifecycle is `active` and its
+status is not one the **type declares settled**: a `task`'s `done` and `cancelled`; a software-kb `backlog_item`'s `done`, `retired`, `superseded` and
+`wont_do`; an `adr`'s `rejected`, `deprecated` and `superseded`; a `milestone`'s `closed`; a `design_doc`'s `obsolete` and `implemented`. `deferred` backlog items stay live. A type whose status lives in a field other than `status` (`review_status`, `research_status`, `case_status`, `claim_status`) has no status the scan reads. A plugin
+declares them as `settled_statuses` in `get_type_metadata()`; a type declared only in `kb.yaml` declares them with the same key (`types.<name>.settled_statuses`), read per KB. The value is a list of status names. `kb.yaml` overrides a plugin, which overrides core, and an empty list in `kb.yaml` is a declaration: this KB's type has no settled statuses (a plugin's empty list is the same as not declaring). An absent or `null` key is not declared. Any other shape (a bare string, which is not read as one status; a number; a boolean; a mapping; a list holding a non-string or blank item) is treated as not declared, never stops another command, and `qa validate` reports it as a `config_error` issue (severity `error`, `field` `types.<name>.settled_statuses`, `entry_id` empty): `kb.yaml types.<name>.settled_statuses must be a list of status names; got <value>`. A name that is not in the type's own `status` options, where `kb.yaml` declares them, is reported as a `config_error` with severity `warning`, and the list is still used: it replaces the lower layer's set. A wrong shape (not a list of status names) is ignored and leaves the lower layer's set in force (core `task`: `done`, `cancelled`; software-kb `backlog_item`: its four), never an empty set. Declaring `types.task.settled_statuses` in a `kb.yaml` that declares no other type makes that the KB's whole type list, and `create -t note` is then refused with `UNDECLARED_TYPE`; declare the other types too (`note: {description: notes}`), or leave the key to a plugin. Core `task` is `done` and `cancelled`: a `failed` task can be reopened, so it stays in the scan. A type that
+declares none, or has no status field at all (a `note`), has every entry live
+and is scanned. Task status is effective: a task completed by its children
+counts as `done` even while its file still says `open`. This applies both to
+`--status` and the default live-entry scan; the scan does not rewrite files.
+
+```json
+{
+  "entry_type": "task",
+  "threshold": 0.62,
+  "skipped_tokens": 0,
+  "count": 1,
+  "pairs": [
+    {
+      "a": {"id": "2026-11-03", "kb_name": "notes", "title": "Election Day"},
+      "b": {"id": "election-day", "kb_name": "notes", "title": "Election Day"},
+      "score": 1.0,
+      "signal": "title"
+    }
+  ]
+}
+```
+
+`--format rich` prints one line per pair (`score kb/id ~ kb/id [signal]`) and
+discloses skipped common-token expansion when coverage is incomplete.
+
+To bound common-word expansion, tokens occurring in more than
+`max(64, entries // 25)` scanned entries are not broadly expanded.
+`skipped_tokens` reports how many tokens hit this bound; when nonzero, near-match
+coverage is incomplete. Identical nonempty id or title token sets are still
+paired, even in large clusters. Producing all pairs in a large identical cluster
+necessarily takes time proportional to that output.

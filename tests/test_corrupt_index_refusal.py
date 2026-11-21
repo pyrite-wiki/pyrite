@@ -412,6 +412,10 @@ ALLOWED_INDEX_OPENERS = {
     "pyrite/storage/migrations.py::ensure_migrated": (
         "standalone migration helper in storage/migrations.py"
     ),
+    "pyrite/storage/backends/overlay_backend.py::run_read_only": (
+        "a change set's execute_sql: a read-only second connection to the index "
+        "main already opened through _init_connection"
+    ),
 }
 
 

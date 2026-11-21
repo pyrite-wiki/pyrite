@@ -1,1 +1,0 @@
-- `sw log` and MCP `sw_create_adr` now save and index their records before reporting success. New software KBs declare the `work_log` type. Existing enforced schemas that lack it receive an explanation without being changed (#1266).

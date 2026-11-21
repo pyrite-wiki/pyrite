@@ -8,6 +8,7 @@ real process are `tests/test_requested_effect_exit_code.py::TestTasks`.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -16,6 +17,78 @@ from pyrite.cli import app
 from tests.test_task_cli_get import task_cli_env  # noqa: F401  (fixture)
 
 runner = CliRunner()
+
+
+def _snapshot_kb_files(kb_path):
+    """File bytes under a KB path, for proving a refused command wrote nothing."""
+    root = Path(kb_path)
+    return {str(p): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+
+@pytest.mark.cli
+def test_checkpoint_confidence_above_one_is_a_usage_error(task_cli_env):  # noqa: F811
+    before = _snapshot_kb_files(task_cli_env["config"].knowledge_bases[0].path)
+    out = runner.invoke(
+        app,
+        [
+            "task",
+            "checkpoint",
+            task_cli_env["task_id"],
+            "-k",
+            "test-tasks",
+            "-m",
+            "done",
+            "--confidence",
+            "1.5",
+        ],
+    )
+    assert out.exit_code == 2, out.output
+    assert "Invalid value for '--confidence'" in out.output
+    after = _snapshot_kb_files(task_cli_env["config"].knowledge_bases[0].path)
+    assert after == before
+
+
+@pytest.mark.cli
+def test_checkpoint_confidence_below_zero_is_a_usage_error(task_cli_env):  # noqa: F811
+    before = _snapshot_kb_files(task_cli_env["config"].knowledge_bases[0].path)
+    out = runner.invoke(
+        app,
+        [
+            "task",
+            "checkpoint",
+            task_cli_env["task_id"],
+            "-k",
+            "test-tasks",
+            "-m",
+            "done",
+            "--confidence",
+            "-0.1",
+        ],
+    )
+    assert out.exit_code == 2, out.output
+    assert "Invalid value for '--confidence'" in out.output
+    after = _snapshot_kb_files(task_cli_env["config"].knowledge_bases[0].path)
+    assert after == before
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize("value", ["0", "0.5", "1.0"])
+def test_checkpoint_confidence_in_range_is_accepted(task_cli_env, value):  # noqa: F811
+    out = runner.invoke(
+        app,
+        [
+            "task",
+            "checkpoint",
+            task_cli_env["task_id"],
+            "-k",
+            "test-tasks",
+            "-m",
+            "done",
+            "--confidence",
+            value,
+        ],
+    )
+    assert out.exit_code == 0, out.output
 
 
 @pytest.mark.cli

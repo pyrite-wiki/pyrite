@@ -19,7 +19,6 @@ from ..schema import (
     generate_entry_id,
     generate_event_id,
     validate_date,
-    validate_importance,
 )
 from ..utils.frontmatter import load_frontmatter, yaml_start
 from ..utils.parse import safe_int
@@ -195,20 +194,34 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
             kw["status"] = EventStatus.CONFIRMED
         return cls(**kw)
 
-    def validate(self) -> list[str]:
-        """Validate event entry."""
-        errors = super().validate()
+    def validation_errors(self) -> list[dict[str, Any]]:
+        """Event rules as structured rows (#1284), each naming its field."""
+        errors = super().validation_errors()
+        date_rows: list[dict[str, Any]] = []
 
         if not self.date:
-            errors.append("Event must have a date")
+            date_rows.append(
+                {
+                    "field": "date",
+                    "rule": "required",
+                    "message": "Event must have a date",
+                    "expected": "YYYY-MM-DD",
+                }
+            )
         elif not validate_date(self.date):
-            errors.append(f"Invalid date format: {self.date} (expected YYYY-MM-DD)")
+            date_rows.append(
+                {
+                    "field": "date",
+                    "rule": "format",
+                    "message": f"Invalid date format: {self.date} (expected YYYY-MM-DD)",
+                    "expected": "YYYY-MM-DD",
+                }
+            )
 
-        # Validate the file's value when loading fell back to a default.
-        importance = self.unrepresented_frontmatter().get("importance", self.importance)
-        if not validate_importance(importance):
-            errors.append(f"Importance must be 1-10, got: {importance}")
-
+        # The date row sits before the base class's importance row (#1537), the
+        # order an event's refusal has always had.
+        at = next((i for i, e in enumerate(errors) if e.get("field") == "importance"), len(errors))
+        errors[at:at] = date_rows
         return errors
 
     @classmethod

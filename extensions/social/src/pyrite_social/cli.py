@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import typer
 from rich.table import Table
 
-from pyrite.cli.context import require_entry_kb, require_kb
+from pyrite.cli.context import ROW_COUNT_MAX, require_entry_kb, require_kb
 from pyrite.cli.output import cli_console
 from pyrite.config import load_config
 
@@ -97,7 +97,9 @@ def social_reputation(
 @social_app.command("newest")
 def social_newest(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
+    limit: int = typer.Option(
+        10, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Number of results"
+    ),
 ):
     """List most recent writeups."""
     from pyrite.storage.database import PyriteDB
@@ -154,7 +156,9 @@ def social_newest(
 def social_top(
     period: str = typer.Option("all", "--period", "-p", help="Time period: week, month, all"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
-    limit: int = typer.Option(10, "--limit", "-n", help="Number of results"),
+    limit: int = typer.Option(
+        10, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Number of results"
+    ),
 ):
     """Show highest-voted writeups."""
     from pyrite.storage.database import PyriteDB

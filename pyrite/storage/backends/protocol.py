@@ -116,6 +116,12 @@ class SearchBackend(Protocol):
 
     # ── full-text search ─────────────────────────────────────────────
 
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads: what
+        ``search_response`` reports as ``searched`` (#1757). Declared field
+        values and tags are not among them until they are indexed."""
+        ...
+
     def search(
         self,
         query: str,

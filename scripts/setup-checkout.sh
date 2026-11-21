@@ -37,24 +37,31 @@ cd "$wt_dir"
 #
 # The cost that IS real is worktree *count*. Remove a worktree
 # once its PR merges (`git worktree remove`).
-# What an install is made from. cksum is POSIX, so it exists on a laptop and a VM.
+# What an install is made from (uv.lock pins every version, #1357). cksum is POSIX, so it exists on a laptop and a VM.
 stamp="$( { cat pyproject.toml extensions/*/pyproject.toml uv.lock 2>/dev/null; echo "$extras"; } | cksum)"
 if [ "$if_changed" = 1 ] && [ -x .venv/bin/python ] \
    && [ "$(cat .venv/.pyrite-install-stamp 2>/dev/null)" = "$stamp" ] \
    && .venv/bin/python scripts/check_checkout_imports.py --root "$wt_dir"; then
   echo "setup-checkout: .venv matches pyproject/lock/extras; skipping installs"
   stamp=""
-elif command -v uv >/dev/null 2>&1; then
-  [ -x .venv/bin/python ] || uv venv -q .venv
-  uv pip install -q --python .venv/bin/python -e ".[$extras]"
-  for ext in extensions/*/; do
-    [ -f "$ext/pyproject.toml" ] && uv pip install -q --python .venv/bin/python -e "$ext"
-  done
 else
-  [ -x .venv/bin/python ] || python3 -m venv .venv
-  .venv/bin/pip install -q -e ".[$extras]"
+  # uv.lock is read by uv only. With uv on PATH the venv comes from it; without,
+  # a plain venv gets a private uv from pip, so contributors without uv are
+  # locked too and the `pip install` below is the only pip step.
+  if command -v uv >/dev/null 2>&1; then
+    UV=uv
+    [ -x .venv/bin/python ] || uv venv -q .venv
+  else
+    [ -x .venv/bin/python ] || python3 -m venv .venv
+    .venv/bin/pip install -q uv
+    UV="$wt_dir/.venv/bin/uv"
+  fi
+  export UV
+  constraints="$(scripts/lock-constraints.sh)"
+  trap 'rm -f "$constraints"' EXIT
+  "$UV" pip install -q --python .venv/bin/python -c "$constraints" -e ".[$extras]"
   for ext in extensions/*/; do
-    [ -f "$ext/pyproject.toml" ] && .venv/bin/pip install -q -e "$ext"
+    [ -f "$ext/pyproject.toml" ] && "$UV" pip install -q --python .venv/bin/python -c "$constraints" -e "$ext"
   done
 fi
 .venv/bin/python scripts/check_checkout_imports.py --root "$wt_dir"

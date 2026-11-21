@@ -26,6 +26,7 @@ import pytest
 
 import pyrite.models  # noqa: F401  (registers core types)
 from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.acting import local_process
 from pyrite.models.core_types import ENTRY_TYPE_REGISTRY, get_entry_class
 from pyrite.models.factory import build_entry
 from pyrite.schema.field_schema import FieldSchema
@@ -326,7 +327,8 @@ def test_a_file_based_create_adds_no_key(tmp_path: Path):
     config = _config(tmp_path, _kb_yaml_declaring("person"))
     src = tmp_path / "incoming.md"
     src.write_text("---\nid: hand\ntitle: Hand\ntype: person\n---\n\nMine.\n", encoding="utf-8")
-    _with_service(config, lambda svc: svc.add_entry_from_file(KB, src))
+    with local_process():  # the CLI's `pyrite add`, the local process only
+        _with_service(config, lambda svc: svc.add_entry_from_file(KB, src))
     _path, got = _file_values(config, "hand")
     assert not (set(got) & (set(KB_YAML_EMPTIES) | set(CORE_EMPTIES["person"]))), got
 

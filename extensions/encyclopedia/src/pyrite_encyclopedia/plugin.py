@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any, ClassVar
 
 from pyrite.plugins.capabilities import Capability
+from pyrite.plugins.identity import CALLER, PERSON_ARGUMENTS
 from pyrite.plugins.scoping import kb_scope_clause
 
 from .entry_types import ArticleEntry, TalkPageEntry
@@ -111,7 +112,10 @@ class EncyclopediaPlugin:
                     "properties": {
                         "entry_id": {"type": "string", "description": "Article entry ID"},
                         "kb_name": {"type": "string", "description": "KB name"},
-                        "reviewer_id": {"type": "string", "description": "Reviewer user ID"},
+                        "reviewer_id": {
+                            "type": "string",
+                            "description": "Reviewer: the signed-in user over a session (leave it out; any other value is refused); required with no signed-in user",
+                        },
                         "action": {
                             "type": "string",
                             "enum": ["approve", "reject", "comment"],
@@ -119,10 +123,11 @@ class EncyclopediaPlugin:
                         },
                         "comments": {"type": "string", "description": "Review comments"},
                     },
-                    "required": ["entry_id", "kb_name", "reviewer_id", "action"],
+                    "required": ["entry_id", "kb_name", "action"],
                 },
                 "locates_entry": {"id_args": ["entry_id"], "entry_type": "article"},
                 "handler": self._mcp_submit_review,
+                PERSON_ARGUMENTS: {"reviewer_id": CALLER},
             }
             tools["wiki_assess_quality"] = {
                 "description": "Assess or change an article's quality level",
@@ -327,7 +332,8 @@ class EncyclopediaPlugin:
                 db.close()
 
     def _mcp_submit_review(self, args: dict[str, Any]) -> dict[str, Any]:
-        """Submit a review."""
+        """Submit a review. `reviewer_id` is a person argument the dispatcher
+        has set from the session (`PERSON_ARGUMENTS`)."""
         from pyrite.exceptions import ValidationError
         from pyrite.services.access_policy import named_kb
 
@@ -337,6 +343,7 @@ class EncyclopediaPlugin:
             raise ValidationError("kb_name is required: a row names the KB that holds the entry")
         from datetime import UTC, datetime
 
+        reviewer = args["reviewer_id"]
         db, should_close = self._get_db()
 
         try:
@@ -348,7 +355,7 @@ class EncyclopediaPlugin:
                 (
                     args["entry_id"],
                     args["kb_name"],
-                    args["reviewer_id"],
+                    reviewer,
                     args["action"],
                     args.get("comments", ""),
                     now,

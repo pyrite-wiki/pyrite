@@ -190,7 +190,7 @@ Trace backward from the bad output:
 
 | Pattern | Likely Cause | Fix |
 |---------|-------------|-----|
-| Wrong entry type | Agent used core type name, plugin subtype expected | Improve MCP tool description to list valid types |
+| Wrong entry type | Agent used core type name, plugin type expected | Improve MCP tool description to list valid types |
 | Missing field | Agent didn't know the field existed | Add field to schema, surface in MCP inputSchema |
 | Bad link target | Agent guessed an entry ID that doesn't exist | Add link target validation in schema.py |
 | Vocabulary mismatch | Agent used free text where controlled vocabulary exists | Add select/multi-select field with options |

@@ -175,6 +175,8 @@ def checkout(tmp_path: Path) -> Path:
         shutil.copy(REPO / "scripts" / name, root / "scripts" / name)
     _git(root, "init", "-q", "-b", "dev")
     _git(root, "remote", "add", "origin", str(origin))
+    # The private fixes repository, its dev here equal to dev: nothing stranded.
+    _git(root, "remote", "add", "security", str(origin))
     _git(root, "add", ".")
     _git(root, "commit", "-qm", "the last release")
     (root / "pyrite" / "b.py").write_text("def func():\n    return 2\n")

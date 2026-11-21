@@ -16,43 +16,46 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..exceptions import RefusedValueError
+
 
 def parse_field_path(path: str) -> list[str | int]:
     """Segments of a dotted path with ``[i]`` indexes; strings name keys,
-    ints index lists. Raises ``ValueError`` when the path cannot be read:
-    an empty segment (``a..b``), a bracket that is not an index, a segment
-    that is neither, a path that starts with a list index."""
+    ints index lists. Raises ``RefusedValueError`` (a ``ValueError``) when
+    the path cannot be read: an empty segment (``a..b``), a bracket that is
+    not an index, a segment that is neither, a path that starts with a list
+    index."""
     segs: list[str | int] = []
     for part in path.split("."):
         name, bracket, rest = part.partition("[")
         if not name and not (bracket and segs):
-            raise ValueError(f"the path {path!r} has an empty segment")
+            raise RefusedValueError(f"the path {path!r} has an empty segment")
         if "]" in name:
-            raise ValueError(f"cannot read the path {path!r}")
+            raise RefusedValueError(f"cannot read the path {path!r}")
         if name:
             segs.append(name)
         rest = bracket + rest
         while rest:
             index, closed, rest = rest[1:].partition("]")
             if not rest.startswith("[") and rest:
-                raise ValueError(f"cannot read the path {path!r}")
+                raise RefusedValueError(f"cannot read the path {path!r}")
             try:
                 number = int(index)
             except ValueError as e:
-                raise ValueError(f"cannot read the path {path!r}") from e
+                raise RefusedValueError(f"cannot read the path {path!r}") from e
             if not closed:
-                raise ValueError(f"cannot read the path {path!r}")
+                raise RefusedValueError(f"cannot read the path {path!r}")
             segs.append(number)
     if segs and isinstance(segs[0], int):
-        raise ValueError(f"the path {path!r} starts with a list index")
+        raise RefusedValueError(f"the path {path!r} starts with a list index")
     return segs
 
 
 def check_segments(segs: Any) -> list[str | int]:
     """An already-parsed path (a tuple or list): every segment a string or
-    an int (never a bool), returned as a list. Raises ``ValueError``."""
+    an int (never a bool), returned as a list. Raises ``RefusedValueError``."""
     out = list(segs)
     for seg in out:
         if isinstance(seg, bool) or not isinstance(seg, str | int):
-            raise ValueError(f"a path segment is a string or an int, not {seg!r}")
+            raise RefusedValueError(f"a path segment is a string or an int, not {seg!r}")
     return out

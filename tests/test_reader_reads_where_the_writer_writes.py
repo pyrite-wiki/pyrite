@@ -160,6 +160,8 @@ SAMPLES: dict[str, Any] = {
     "assigned_at": "2026-01-01T00:00:00+00:00",
     "status_reason": "why",
     "parked_awaiting": "rfp-due",
+    "park_kind": "person",
+    "retest_after": "2026-04-05",
     "dependencies": ["d1"],
     "evidence": ["e1"],
     "agent_context": {"run": 1},
@@ -203,6 +205,8 @@ SECOND: dict[str, Any] = {
     "effort": "S",
     "url": "https://example.org/2",
     "priority": 3,
+    "park_kind": "external",
+    "retest_after": "2027-04-05",
 }
 SECOND_OVERRIDES: dict[tuple[str, str], Any] = {
     ("task", "status"): "blocked",
@@ -256,10 +260,6 @@ UNREAD: frozenset[tuple[str, str]] = frozenset(
         ("adr", "start_date"),
         ("adr", "end_date"),
         ("adr", "due_date"),
-        ("task", "date"),
-        ("task", "start_date"),
-        ("task", "end_date"),
-        ("task", "assigned_at"),
         ("backlog_item", "assigned_at"),
     }
 )
@@ -1427,5 +1427,10 @@ def test_migrations_run_on_the_files_own_spellings_before_the_lift():
     source = (ROOT / "pyrite/storage/repository.py").read_text(encoding="utf-8")
     node = next(n for n in _functions(source) if n.name == "_load_entry")
     calls = _calls(node)
-    assert calls.index("_maybe_migrate") < calls.index("entry_from_frontmatter")
+    # The parse and the migration are `_frontmatter_of`, which the strict load
+    # and the partial read share (ADR-0042 8a).
+    helper = next(n for n in _functions(source) if n.name == "_frontmatter_of")
+    assert "_maybe_migrate" in _calls(helper)
+    assert "entry_from_frontmatter" not in _calls(helper)
+    assert calls.index("_frontmatter_of") < calls.index("entry_from_frontmatter")
     assert "read_view" not in calls, "the lift belongs to the loader, not the repository"

@@ -1,7 +1,1 @@
-[
-  {
-    "test": "tests/test_test_process_memory_is_bounded.py::test_apps_a_test_builds_are_freed_after_its_teardown",
-    "issue": "https://github.com/pyrite-wiki/pyrite/issues/1110",
-    "reason": "The memory canary differs between CI/container workers and isolated local replay; compare the exact node and head before spending time on a baseline replay."
-  }
-]
+[]

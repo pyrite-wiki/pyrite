@@ -253,6 +253,10 @@ OPS = {
 }
 
 REFUSED_OUTSIDE = ("refused", OUTSIDE_CODE)
+#: A file that is a link out of the KB, or has a second hard link, is not the
+#: KB's: an id it holds matches nothing, so a by-id update, rename or delete
+#: answers not-found whatever it holds (maintainer decision 2026-11-10).
+_NOT_THE_KBS = "a by-id lookup never matches a file the KB would not read"
 REFUSED_HARD = ("refused", "STORAGE_ERROR")  # the existing hard-link refusal's code
 DONE = ("done", None)
 NOT_DONE = ("not-done", None)  # a batch operation reports the file and leaves it
@@ -270,30 +274,22 @@ EXPECTED: dict[tuple[str, str], tuple[tuple[str, str | None], str | None, set[st
     ("create", "dir-out"): (REFUSED_OUTSIDE, None, set()),
     ("create", "dir-in"): (DONE, _SAME_KB, {"git", "plain"}),
     # update
-    ("update", "file-out"): (REFUSED_OUTSIDE, None, set()),
+    ("update", "file-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
     ("update", "file-in"): (DONE, _SAME_KB, {"git", "plain"}),
-    ("update", "file-hard"): (
-        REFUSED_HARD,
-        "under git the compare-and-replace already refuses a hard-linked file",
-        {"git"},
-    ),
+    ("update", "file-hard"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
     ("update", "dir-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_FOUND, {"git", "plain"}),
     ("update", "dir-in"): (DONE, _REAL_FOLDER, {"git", "plain"}),
     # rename
-    ("rename", "file-out"): (REFUSED_OUTSIDE, None, set()),
+    ("rename", "file-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
     ("rename", "file-in"): (DONE, None, set()),  # in place, as an update; not a control
-    ("rename", "file-hard"): (REFUSED_HARD, None, set()),
+    ("rename", "file-hard"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
     ("rename", "dir-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_FOUND, {"git", "plain"}),
     ("rename", "dir-in"): (DONE, _REAL_FOLDER, {"git", "plain"}),
     # delete
-    ("delete", "file-out"): (REFUSED_OUTSIDE, None, set()),
+    ("delete", "file-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
     ("delete", "file-in"): (DONE, "removing a link removes the link only", {"git", "plain"}),
-    ("delete", "file-hard"): (
-        DONE,
-        "removing a name of a hard-linked file leaves its other names as they are",
-        {"git", "plain"},
-    ),
-    ("delete", "dir-out"): (REFUSED_OUTSIDE, None, set()),
+    ("delete", "file-hard"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
+    ("delete", "dir-out"): (("refused", "ENTRY_NOT_FOUND"), _NOT_THE_KBS, set()),
     ("delete", "dir-in"): (DONE, _SAME_KB, {"git", "plain"}),
     # ids pin: its own no-follow writer already refuses links and hard links
     ("ids-pin", "file-out"): (NOT_DONE, "ids pin refuses a link", {"git", "plain"}),
@@ -376,9 +372,10 @@ def test_a_rename_of_a_link_inside_the_kb_is_written_through_it(tmp_path: Path):
 
 def test_an_outside_refusal_names_no_path(tmp_path: Path):
     """The refusal reaches API callers: it names neither the root nor the
-    path the link resolves to."""
+    path the link resolves to. (A create: the path is the KB's own name for
+    the file, not found by what an outside file holds.)"""
     cell = _cell(tmp_path, git=False, rel="notes/s.md", text=NOTE, placement="file-out")
-    outcome = op_update(cell)
+    outcome = op_create(cell)
     assert outcome.code == OUTSIDE_CODE, outcome
     assert str(tmp_path) not in outcome.message and "outside/" not in outcome.message
 
@@ -455,8 +452,10 @@ def test_a_root_reached_through_a_link_still_writes(tmp_path: Path):
 # --------------------------------------------------------------------------
 
 
-def test_the_cli_answers_the_outside_code(tmp_path: Path):
-    """``pyrite update --format json`` carries ``OUTSIDE_KB_ROOT``."""
+def test_the_cli_answers_not_found_for_a_file_outside_the_kb(tmp_path: Path):
+    """``pyrite update --format json`` of an id only a file outside the KB
+    holds answers not-found, as for any id nothing holds, and the outside
+    file keeps its bytes."""
     import json
 
     cell = _cell(tmp_path, git=False, rel="notes/s.md", text=NOTE, placement="file-out")
@@ -465,7 +464,7 @@ def test_the_cli_answers_the_outside_code(tmp_path: Path):
         app, ["update", "s", "-k", KB, "--title", "Changed", "--format", "json"]
     )
     assert result.exit_code != 0, result.output
-    assert json.loads(result.output)["error_code"] == OUTSIDE_CODE, result.output
+    assert json.loads(result.output)["error_code"] == "NOT_FOUND", result.output
     assert (cell.outside / "s.md").read_text() == NOTE
 
 
@@ -561,9 +560,11 @@ def test_an_update_does_not_move_a_linked_file_as_its_link(tmp_path: Path):
 
 
 def test_the_reconcile_does_not_move_a_link_out_of_the_kb(tmp_path: Path):
-    """``reconcile_templated_subdirectories(apply=True)`` names a misplaced
-    file that is a link to outside as an error and leaves both trees as they
-    were (it used to hard-link the outside file into the KB)."""
+    """``reconcile_templated_subdirectories(apply=True)`` moves no misplaced
+    file that is a link to outside and leaves both trees as they were (it
+    used to hard-link the outside file into the KB). The file is not read at
+    all: every entry load reads only inside the KB, so the link is never an
+    entry to move (tests/test_indexed_bytes_stay_inside_the_kb.py)."""
     from pyrite.services.kb_service import KBService
 
     cell = _tasks_kb(tmp_path)
@@ -580,22 +581,26 @@ def test_the_reconcile_does_not_move_a_link_out_of_the_kb(tmp_path: Path):
     finally:
         db.close()
 
-    assert result.moved == 0 and [e for e, _ in result.errors] == ["t"], result
+    assert result.moved == 0 and not result.moves, result
     assert _tree(cell.outside) == outside_before
     assert _tree(cell.root) == kb_before
 
 
-def test_a_delete_that_would_leave_the_root_removes_no_file(tmp_path: Path):
-    """Every removal is decided before the first: when one of the files that
-    hold the id resolves outside, none is removed."""
+def test_a_delete_never_touches_a_file_outside_the_root(tmp_path: Path):
+    """A link out of the KB holding the id is not the KB's, so it is not a
+    holder (maintainer decision 2026-11-10): the delete removes the KB's own
+    file holding the id, leaves the link where it is, and the outside file
+    keeps its bytes."""
     cell = _cell(tmp_path, git=False, rel="notes/s.md", text=NOTE, placement="file-out")
-    (cell.root / "a.md").write_text(NOTE)  # a second holder, inside
-    kb_before, outside_before = _tree(cell.root), _tree(cell.outside)
+    (cell.root / "a.md").write_text(NOTE)  # the KB's own holder
+    outside_before = _tree(cell.outside)
 
     outcome = op_delete(cell)
 
-    assert outcome.code == OUTSIDE_CODE, outcome
-    assert _tree(cell.root) == kb_before and _tree(cell.outside) == outside_before
+    assert outcome.done, outcome
+    assert not (cell.root / "a.md").exists()
+    assert (cell.root / "notes" / "s.md").is_symlink()
+    assert _tree(cell.outside) == outside_before
 
 
 # --------------------------------------------------------------------------
@@ -610,6 +615,15 @@ RACE_OPS = {
         cell, lambda svc: svc.create_entry(KB, "fresh", "Fresh", "note", "body")
     ),
 }
+
+
+def _frames():
+    import sys
+
+    frame = sys._getframe(1)
+    while frame is not None:
+        yield frame
+        frame = frame.f_back
 
 
 @pytest.mark.parametrize("git", [True, False], ids=["git", "plain"])
@@ -635,7 +649,10 @@ def test_a_folder_swapped_for_a_link_after_the_decision_is_not_written_into(
     swapped = {}
 
     def swap_then_open(self, parts, **kw):
-        if not swapped:
+        # Not at a by-id lookup's read (``read_bytes``): the race is with the
+        # write, after the lookup and every check have approved the path.
+        reading = any(f.f_code.co_name == "read_bytes" for f in _frames())
+        if not swapped and not reading:
             away = cell.outside / "notes"
             shutil.move(str(cell.root / "notes"), str(away))
             os.symlink(away, cell.root / "notes")
@@ -670,11 +687,11 @@ def _in_place_cell(tmp_path: Path, monkeypatch, git: bool, swap) -> tuple[Cell, 
     real = kb_files.Folder.write_in_place
     seen: dict = {}
 
-    def swap_then_write(self, name, data, why, checked):
+    def swap_then_write(self, name, data, why, checked, **kw):
         if not seen:
             swap(cell)
             seen["outside"] = _tree(cell.outside)
-        return real(self, name, data, why, checked)
+        return real(self, name, data, why, checked, **kw)
 
     monkeypatch.setattr(kb_files.Folder, "write_in_place", swap_then_write)
     return cell, op_update(cell), seen
@@ -764,3 +781,211 @@ def test_a_file_replaced_before_an_in_place_write_is_read_again_not_overwritten(
     assert seen and outcome.done, outcome
     text = (cell.root / "notes" / "s.md").read_text()
     assert "added by hand" in text and "title: Changed" in text, text
+
+
+# --------------------------------------------------------------------------
+# any name the filesystem holds; the file compared is the file written
+# --------------------------------------------------------------------------
+
+#: A name that is not valid UTF-8: Python holds it surrogate-escaped.
+NON_UTF8 = os.fsdecode(b"caf\xe9-" + b"x" * 70 + b".md")
+
+
+def test_a_temp_name_is_made_for_a_name_that_is_not_utf8(tmp_path: Path):
+    """The temp name keeps a prefix of the entry's; cutting a surrogate-escaped
+    name must not raise (it used to: ``UnicodeEncodeError``), and the prefix
+    is itself a name every filesystem takes (valid UTF-8)."""
+    from pyrite.utils.kb_files import Folder
+
+    folder = Folder(None, tmp_path, ())
+    tmp = folder.write_temp(NON_UTF8, b"z", None)
+    assert tmp is not None and tmp.endswith(".tmp")
+    tmp.encode("utf-8")  # no surrogate: valid on APFS as well as ext4
+    assert (tmp_path / tmp).read_bytes() == b"z"
+
+
+def _non_utf8_entry(root: Path) -> Path | None:
+    """A file named with bytes that are not UTF-8, or None where the
+    filesystem refuses such a name (APFS)."""
+    raw = os.fsencode(root / "notes") + b"/" + os.fsencode(NON_UTF8)
+    try:
+        with open(raw, "wb") as f:
+            f.write(NOTE.encode())
+    except OSError:
+        return None
+    return Path(os.fsdecode(raw))
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "plain"])
+def test_a_name_that_is_not_utf8_is_written_or_refused_with_a_pyrite_error(
+    tmp_path: Path, git: bool
+):
+    """Any name the filesystem holds: the writer either writes it or refuses
+    with a Pyrite error, never any other exception."""
+    from pyrite.exceptions import PyriteError
+    from pyrite.storage.entry_writer import publish_entry_text
+
+    cell = _cell(tmp_path, git=git, rel="notes/s.md", text=NOTE, placement="file-in")
+    entry = _non_utf8_entry(cell.root)
+    if entry is None:
+        pytest.skip("this filesystem holds no name that is not UTF-8")
+    try:
+        publish_entry_text(entry, "changed\n", expect=NOTE.encode(), root=cell.root)
+    except PyriteError:
+        assert entry.read_bytes() == NOTE.encode()
+    else:
+        assert entry.read_bytes() == b"changed\n"
+    assert not [p for p in entry.parent.iterdir() if p.name.endswith(".tmp")]
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "plain"])
+def test_the_file_compared_in_place_is_the_file_written(tmp_path: Path, monkeypatch, git: bool):
+    """In the in-place path the expected bytes are compared and the new bytes
+    written in one file. Here another file holding the expected bytes stands
+    at the name only while the writer opens it to compare, and the file the
+    check saw (holding a hand edit) is back before the write. The update must
+    not take the stand-in's bytes as the hand-edited file's: the hand edit
+    is kept (the write is refused as a change and the update reads again)."""
+    from pyrite.utils import kb_files
+
+    cell = _cell(tmp_path, git=git, rel="notes/s.md", text=NOTE, placement="file-in")
+    entry = cell.root / "notes" / "s.md"
+    entry.unlink()
+    entry.write_text(NOTE)
+    cell.sync()
+    edited = NOTE.replace("body\n", "body\nHAND EDIT\n")
+    monkeypatch.setattr(kb_files.Folder, "write_temp", lambda self, name, data, like, **kw: None)
+    real_open = os.open
+    state = {"swapped": False}
+
+    def stand_in_while_opened(path, flags, *args, **kwargs):
+        reading = (flags & (os.O_WRONLY | os.O_RDWR)) != os.O_WRONLY
+        if not state["swapped"] and path == "s.md" and reading:
+            state["swapped"] = True
+            aside = entry.with_name("s.md.aside")
+            entry.write_text(edited)  # the hand edit lands in the checked file
+            os.rename(entry, aside)
+            entry.write_text(NOTE)  # a stand-in holding what the writer expects
+            try:
+                return real_open(path, flags, *args, **kwargs)
+            finally:
+                os.replace(aside, entry)  # the checked file is back
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(kb_files.os, "open", stand_in_while_opened)
+
+    outcome = op_update(cell)
+
+    assert state["swapped"], "the writer never opened the file to compare"
+    text = entry.read_text()
+    assert "HAND EDIT" in text, (outcome, text)
+
+
+def _plain_kb(tmp_path: Path, git: bool, text: str) -> tuple[Path, Path]:
+    root = tmp_path / "kb"
+    (root / "notes").mkdir(parents=True)
+    if git:
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True, timeout=30)
+    entry = root / "notes" / "s.md"
+    entry.write_text(text)
+    return root, entry
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "plain"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        pytest.param(
+            bytes,
+            id="bytes",
+            marks=pytest.mark.control(reason="bytes was always compared; the other two were not"),
+        ),
+        pytest.param(
+            bytearray,
+            id="bytearray",
+            marks=pytest.mark.control(
+                reason="a regression guard: the base held this; this PR's first head (d96a691c) broke it"
+            ),
+        ),
+        pytest.param(
+            memoryview,
+            id="memoryview",
+            marks=pytest.mark.control(
+                reason="a regression guard: the base held this; this PR's first head (d96a691c) broke it"
+            ),
+        ),
+    ],
+)
+def test_an_in_place_write_compares_every_kind_of_expected_bytes(
+    tmp_path: Path, monkeypatch, git: bool, kind
+):
+    """``expect`` that is not None is always compared, whatever bytes-like
+    type it is: stale expected bytes leave the file as it is."""
+    from pyrite.utils import kb_files
+    from pyrite.utils.atomic_write import FileChanged
+
+    original = "the long original\n" * 20
+    root, entry = _plain_kb(tmp_path, git, original)
+    monkeypatch.setattr(kb_files.Folder, "write_temp", lambda self, name, data, like, **kw: None)
+    with pytest.raises(FileChanged):
+        kb_files.KBFiles(root).write_bytes(entry, b"new\n", expect=kind(b"stale"))
+    assert entry.read_text() == original
+
+
+@pytest.mark.control(
+    reason="a regression guard: the base held this; this PR's first head (d96a691c) broke it"
+)
+@pytest.mark.parametrize("git", [True, False], ids=["git", "plain"])
+def test_a_write_only_file_in_a_folder_that_takes_no_new_file_is_written(tmp_path: Path, git: bool):
+    """With no compare, the in-place write needs only write access: a 0o200
+    file in a 0o500 folder is written (the base wrote it), not refused."""
+    from pyrite.utils import kb_files
+
+    if os.geteuid() == 0:
+        pytest.skip("root reads and writes whatever the mode says")
+    root, entry = _plain_kb(tmp_path, git, "old\n")
+    folder = entry.parent
+    os.chmod(entry, 0o200)
+    os.chmod(folder, 0o500)
+    try:
+        kb_files.KBFiles(root).write_bytes(entry, b"new\n")
+    finally:
+        os.chmod(folder, 0o700)
+        os.chmod(entry, 0o600)
+    assert entry.read_bytes() == b"new\n"
+
+
+@pytest.mark.parametrize("git", [True, False], ids=["git", "plain"])
+def test_an_editor_save_by_rename_during_an_in_place_write_is_a_change(
+    tmp_path: Path, monkeypatch, git: bool
+):
+    """An editor saves by renaming a new file over the name while Pyrite
+    writes in place: Pyrite's bytes went to the unlinked old file, so the
+    write is reported as a change (``FileChanged``), not as done, and the
+    editor's save is what the name holds."""
+    from pyrite.utils import kb_files
+    from pyrite.utils.atomic_write import FileChanged
+
+    root, entry = _plain_kb(tmp_path, git, NOTE)
+    monkeypatch.setattr(kb_files.Folder, "write_temp", lambda self, name, data, like, **kw: None)
+    real_fsync = os.fsync
+    state = {"saved": False}
+
+    def editor_saves_then_fsync(fd):
+        if not state["saved"] and stat_is_regular(fd):
+            state["saved"] = True
+            saved = entry.with_name("s.md.editor")
+            saved.write_text("the editor's save\n")
+            os.replace(saved, entry)
+        return real_fsync(fd)
+
+    def stat_is_regular(fd) -> bool:
+        import stat as st
+
+        return st.S_ISREG(os.fstat(fd).st_mode)
+
+    monkeypatch.setattr(kb_files.os, "fsync", editor_saves_then_fsync)
+    with pytest.raises(FileChanged):
+        kb_files.KBFiles(root).write_bytes(entry, b"pyrite\n", expect=NOTE.encode())
+    assert state["saved"]
+    assert entry.read_text() == "the editor's save\n"

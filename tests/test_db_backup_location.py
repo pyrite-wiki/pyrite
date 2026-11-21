@@ -95,3 +95,30 @@ class TestExplicitOutputStillWins:
 
         assert result.exit_code == 0, result.output
         assert (cwd / "here.db").exists()
+
+
+class TestBackupFoldersAreOwnerOnly:
+    """A folder `pyrite db backup` creates for its file is its owner's alone
+    (0700), as the changelog says of every folder Pyrite creates for its
+    private files; a folder that already exists keeps its mode."""
+
+    def test_a_folder_it_creates_is_0700(self, db_env, monkeypatch):
+        target = db_env["workdir"] / "made" / "here" / "b.db"
+        result, _ = _run(db_env, monkeypatch, "--output", str(target))
+        assert result.exit_code == 0, result.output
+        for folder in (target.parent, target.parent.parent):
+            assert folder.stat().st_mode & 0o777 == 0o700, folder
+
+    def test_the_default_backups_folder_is_0700(self, db_env, monkeypatch):
+        result, _ = _run(db_env, monkeypatch)
+        assert result.exit_code == 0, result.output
+        assert (db_env["data_dir"] / "backups").stat().st_mode & 0o777 == 0o700
+
+    @pytest.mark.control(reason="an existing folder is not Pyrite's to change")
+    def test_an_existing_folder_keeps_its_mode(self, db_env, monkeypatch):
+        folder = db_env["workdir"] / "mine"
+        folder.mkdir(mode=0o755)
+        folder.chmod(0o755)
+        result, _ = _run(db_env, monkeypatch, "--output", str(folder / "b.db"))
+        assert result.exit_code == 0, result.output
+        assert folder.stat().st_mode & 0o777 == 0o755

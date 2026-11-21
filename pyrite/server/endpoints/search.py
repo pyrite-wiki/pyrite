@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from ...exceptions import ValidationError
+from ...exceptions import ValidationError, public_text
 from ...services.access_policy import KB, Action, ReadScope
 from ...services.kb_service import KBService
 from ...services.read_shaping import parse_fields_param, project_fields
@@ -99,6 +99,7 @@ def search(
         response = search_svc.search_response(
             kb_names=None if kb else scope.as_set(),
             query=q,
+            caller_wrote_query=True,  # the caller's own words, as written
             kb_name=kb,
             entry_type=type,
             tags=tag_list,
@@ -173,4 +174,8 @@ def search(
         # StorageError (mapped to a logged 500). Catching the raw
         # OperationalError here too would undo that distinction the moment
         # it (incorrectly) reached this far (#414 round 2).
-        raise HTTPException(status_code=400, detail={"code": "SEARCH_FAILED", "message": str(e)})
+        # The service's own refusals are RefusedValueError (shown); any other
+        # ValueError's text is withheld and logged (ADR-0052 N3).
+        raise HTTPException(
+            status_code=400, detail={"code": "SEARCH_FAILED", "message": public_text(e)}
+        )

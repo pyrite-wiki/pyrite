@@ -284,6 +284,26 @@ class TestEmbed:
 # --------------------------------------------------------------------------
 
 
+class TestUnreadableKB:
+    """A KB whose kb.yaml the process cannot read is not synced or rebuilt
+    (its rows are kept, #1542); the command names it and does not exit 0."""
+
+    def test_sync_and_build_of_an_unreadable_kb_are_refused(self, cli):
+        kb_yaml = cli.kb / "kb.yaml"
+        text = kb_yaml.read_text()
+        kb_yaml.unlink()
+        _unreadable(kb_yaml, text)
+        try:
+            sync = cli.pyrite("index", "sync", "--no-embed")
+            assert "Not synced: demo" in sync.stdout, sync.stdout + sync.stderr
+            assert sync.returncode == REFUSED, sync.stdout + sync.stderr
+            build = cli.pyrite("index", "build", "--no-embed")
+            assert "demo" in build.stdout, build.stdout + build.stderr
+            assert build.returncode == REFUSED, build.stdout + build.stderr
+        finally:
+            kb_yaml.chmod(0o644)
+
+
 class TestSchemaMigrate:
     def test_a_file_that_cannot_be_migrated_exits_partial(self, cli):
         _create(cli, "Fine")
@@ -679,6 +699,30 @@ class TestTasks:
             is False
         )
 
+    def test_a_lost_start_exits_one_in_json_as_in_rich(self, cli):
+        cli.pyrite("task", "create", "S1", "-k", "demo")
+        first = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "me", "--format", "json")
+        assert first.returncode == 0, first.stdout + first.stderr
+        for fmt in ("json", "rich"):
+            again = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", fmt)
+            assert again.returncode == REFUSED, (fmt, again.stdout + again.stderr)
+        lost = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", "json")
+        assert json.loads(lost.stdout)["claimed"] is False
+
+    def test_a_refused_finish_exits_one_in_json_as_in_rich(self, cli):
+        cli.pyrite("task", "create", "F1", "-k", "demo")
+        cli.pyrite("task", "claim", "f1", "-k", "demo", "-a", "me")
+        # claimed -> done is two edges: without --walk it is refused, writing nothing.
+        for fmt in ("json", "rich"):
+            out = cli.pyrite("task", "finish", "f1", "-k", "demo", "--by", "me", "--format", fmt)
+            assert out.returncode == REFUSED, (fmt, out.stdout + out.stderr)
+        refused = cli.pyrite("task", "finish", "f1", "-k", "demo", "--by", "me", "--format", "json")
+        assert json.loads(refused.stdout)["error_code"] == "VALIDATION_FAILED"
+        walked = cli.pyrite(
+            "task", "finish", "f1", "-k", "demo", "--walk", "--by", "me", "--format", "json"
+        )
+        assert walked.returncode == 0, walked.stdout + walked.stderr
+
     def test_children_that_failed_to_create_are_partial(self, cli):
         cli.pyrite("task", "create", "Parent", "-k", "demo")
         # The second child has the first one's title, hence its id: refused.
@@ -925,10 +969,13 @@ GUARDED = {
     "pyrite batch-read": "TestBatchRead",
     "pyrite create": "TestCreateWithFailedLink",
     "pyrite export collection": "TestExportCollection",
+    "pyrite export site": "TestExportSite",
     "pyrite extension install": "TestExtensionVerify",
     "pyrite import": "TestImportAndBulkLinks",
+    "pyrite index build": "TestUnreadableKB",
     "pyrite index embed": "TestEmbed",
     "pyrite index reconcile": "TestReconcile",
+    "pyrite index sync": "TestUnreadableKB",
     "pyrite init": "TestInitIndexing",
     "pyrite investigation bulk-edges": "TestJournalismAndSoftwareResults",
     "pyrite investigation evidence-chain": "TestJournalismAndSoftwareResults",
@@ -944,6 +991,8 @@ GUARDED = {
     "pyrite sw migrate-standards": "TestJournalismAndSoftwareResults",
     "pyrite sw prioritize": "TestJournalismAndSoftwareResults",
     "pyrite task claim": "TestTasks",
+    "pyrite task finish": "TestTasks",
+    "pyrite task start": "TestTasks",
     "pyrite task decompose": "TestTasks",
     "pyrite-admin index embed": "TestEmbed",
     "pyrite-admin index health": "TestAdminRepo",
@@ -962,15 +1011,11 @@ SAFE = {
     "pyrite db backup": "one file copy; failure raises",
     "pyrite db restore": "one file copy; failure raises",
     "pyrite delete": "one entry; a missing id exits 1",
-    "pyrite export site": "one build; a failure raises",
     "pyrite extension init": "scaffold; failure raises",
     "pyrite extension uninstall": "one pip call; failure exits 1 (cli_error)",
     "pyrite ids missing": "exits 3 when files are left (ids_commands.OUTSIDE_CONTRACT)",
     "pyrite ids pin": "exits 3 when files are left (ids_commands.OUTSIDE_CONTRACT)",
-    "pyrite index build": "embedding is owed, not failed (ADR-0035); indexing errors raise",
     "pyrite index health": "exits 1 when unhealthy",
-    "pyrite index sync": "malformed files are reported, not a failed sync (groom, principle 2); "
-    "embedding is owed (ADR-0035)",
     "pyrite investigation dedup": "--link writes same_as links; no per-item failure is reported or "
     "swallowed",
     "pyrite investigation export": "one file",
@@ -1015,6 +1060,8 @@ SAFE = {
     "pyrite sw transition": "one transition; failure exits 1",
     "pyrite task checkpoint": "one write",
     "pyrite task create": "one entry",
+    "pyrite task park": "one write; a refusal (no reason, bad kind or date) exits 1",
+    "pyrite task unpark": "one write, or none when nothing is parked; a refusal exits 1",
     "pyrite task migrate-relaxed-mode": "idempotent backfill; 'skipped' means not applicable, not "
     "failed",
     "pyrite task reset": "one transition",
@@ -1073,6 +1120,7 @@ READ_ONLY = [
     "pyrite orient",
     "pyrite protocol list",
     "pyrite qa assess",
+    "pyrite qa duplicates",
     "pyrite qa check-urls",
     "pyrite qa checkers",
     "pyrite qa coverage",
@@ -1242,7 +1290,7 @@ LEGACY_DIR = Path(__file__).resolve().parent / "legacy_commands"
 # unnoticed. The files are the exact list, so a slice may leave this alone; a
 # reviewer lowers it when a slice migrates commands. Nothing enforces "only
 # goes down" but review.
-LEGACY_COMMANDS_CEILING = 173
+LEGACY_COMMANDS_CEILING = 167
 
 
 def _on_the_contract(cmd) -> bool:
@@ -1629,6 +1677,10 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "safe",
         "documented fallback to YAML config",
     ),
+    ("pyrite/cli/entry_commands.py", "_field_flag"): (
+        "safe",
+        "a key no parser can read is not tags, and the service refuses it later as VALIDATION_FAILED (#1725)",
+    ),
     ("pyrite/cli/entry_commands.py", "_parse_field_value"): ("safe", "tries the next parser"),
     ("pyrite/cli/entry_commands.py", "create_entry"): ("fixed", "TestCreateWithFailedLink"),
     (
@@ -1639,7 +1691,18 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "a failed --bidi inverse is returned as Outcome.partial (exit 3): "
         "tests/test_cli_outcome_write_path.py",
     ),
-    ("pyrite/cli/export_commands.py", "_load_entry_from_result"): ("fixed", "TestExportCollection"),
+    ("pyrite/cli/entry_commands.py", "parse"): (
+        "safe",
+        "a key no parser can read is not tags, and the service refuses it later as VALIDATION_FAILED (#1725)",
+    ),
+    # A linked entry that cannot be loaded is returned as left out; the command
+    # names it and exits through exit_unless_whole.
+    ("pyrite/cli/export_commands.py", "_follow_links"): ("fixed", "TestExportCollection"),
+    ("pyrite/cli/export_commands.py", "_load_entry_with_reason"): (
+        "safe",
+        "an unloadable row is returned with its reason; the command prints it and "
+        "the caller exits through exit_unless_whole (#1325)",
+    ),
     ("pyrite/cli/export_commands.py", "export_collection"): ("fixed", "TestExportCollection"),
     ("pyrite/cli/extension_commands.py", "_verify_distribution"): ("fixed", "TestExtensionVerify"),
     ("pyrite/cli/extension_commands.py", "extension_install"): ("fixed", "TestExtensionVerify"),
@@ -1652,11 +1715,23 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
         "embedding is owed, not failed (ADR-0035)",
     ),
     ("pyrite/cli/index_commands.py", "index_reconcile"): ("safe", "path display fallback"),
+    ("pyrite/cli/kb_commands.py", "kb_list"): (
+        "safe",
+        "a listing: a KB whose files or kb.yaml cannot be read or loaded is a row (#1542, #1547), not a lost effect",
+    ),
     ("pyrite/cli/index_commands.py", "index_sync"): (
         "safe",
         "embedding is owed, not failed (ADR-0035)",
     ),
+    ("pyrite/cli/init_command.py", "available_templates"): (
+        "safe",
+        "optional plugin preset discovery: built-in templates still resolve if plugin loading fails",
+    ),
     ("pyrite/cli/init_command.py", "init_kb"): ("fixed", "TestInitIndexing"),
+    ("pyrite/cli/init_command.py", "resolve_template"): (
+        "safe",
+        "optional plugin preset resolution: falls back to built-in templates if plugin loading fails",
+    ),
     ("pyrite/cli/kb_commands.py", "kb_discover"): ("safe", "already registered is not a failure"),
     ("pyrite/cli/mcp_setup_command.py", "_restore_unavailable_reason"): (
         "safe",
@@ -1730,10 +1805,17 @@ HANDLERS: dict[tuple[str, str], tuple[str, str]] = {
     ),
     ("pyrite/services/file_search.py", "search_kb_files"): ("fixed", "TestSearchFiles"),
     ("pyrite/cli/search_commands.py", "_warn_if_stale"): ("safe", "a probe for a warning"),
-    ("pyrite/cli/task_commands.py", "_task_get_impl"): ("safe", "bad metadata reads as empty"),
+    ("pyrite/cli/search_commands.py", "_run_batch"): (
+        "safe",
+        "a refused query fills its own slot; exit_unless_whole exits 3 or 1 on any slot",
+    ),
 }
 
 PRINTS: dict[tuple[str, str], tuple[str, str]] = {
+    ("pyrite/cli/browse_commands.py", "orient_kb"): (
+        "safe",
+        "orient answers; a plugin's board_error in red is part of the report (#1538)",
+    ),
     (
         "extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py",
         "evidence_chain",
@@ -1766,9 +1848,19 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/admin_cli.py", "kb_validate"): ("safe", "exits 1 after listing the errors"),
     ("pyrite/admin_cli.py", "repo_sync"): ("fixed", "TestAdminRepo"),
     ("pyrite/cli/__init__.py", "import_entries"): ("fixed", "TestImportAndBulkLinks"),
+    ("pyrite/cli/index_commands.py", "index_build"): ("fixed", "TestUnreadableKB"),
+    # The text `index sync` prints moved into its renderer when the command
+    # moved onto the outcome contract (#1691); the exit is the Outcome's.
+    ("pyrite/cli/index_commands.py", "render_sync"): ("fixed", "TestUnreadableKB"),
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
         "index health exits 1 when unhealthy, in its caller",
+    ),
+    ("pyrite/cli/index_commands.py", "_print_unreadable_folders"): (
+        "safe",
+        "its callers (index sync, index build, kb reindex) count each folder as failed "
+        "through _could_not_reach and exit 3, or 1 when nothing synced (#1546; "
+        "tests/test_an_unlisted_folder_keeps_its_rows.py)",
     ),
     ("pyrite/cli/kb_commands.py", "kb_gc"): ("safe", "'red' is colour: each removal is reported"),
     ("pyrite/cli/kb_commands.py", "kb_health"): (
@@ -1798,6 +1890,10 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/cli/repo_commands.py", "repo_sync"): ("fixed", "TestRepoSync"),
     ("pyrite/cli/schema_commands.py", "schema_migrate"): ("fixed", "TestSchemaMigrate"),
     ("pyrite/cli/search_commands.py", "search"): ("fixed", "TestSearchFiles"),
+    ("pyrite/cli/search_commands.py", "_print_batch"): (
+        "safe",
+        "renders slots already counted by _run_batch, which exits 3 or 1 on a refused slot",
+    ),
     ("pyrite/read_cli.py", "_emit_error"): (
         "safe",
         "the helper that prints the error; its callers raise Exit(1)",
@@ -1908,5 +2004,87 @@ class TestExportCollection:
         cli.pyrite("index", "sync", "--no-embed")
         out = cli.pyrite("export", "collection", "stuff", "-k", "demo", "-o", str(cli.root / "out"))
         text = out.stdout + out.stderr
-        assert "Exported 1 entries" in text, text
+        assert "Exported 1 entry" in text, text
+        assert out.returncode == PARTIAL, text
+
+    # `--depth` follows links: a linked entry that cannot be loaded is left
+    # out like any other, named with its reason, and the exit is partial
+    # (ADR-0046). A link to an id no file holds is a dangling link, not a
+    # left-out entry.
+    def _linking_collection(self, cli, linked_text: str | None, *, before_sync: bool) -> None:
+        folder = cli.kb / "stuff"
+        folder.mkdir()
+        (folder / "ok.md").write_text(
+            "---\nid: ok\ntitle: Ok\ntype: note\n"
+            "links:\n- target: linked\n  relation: related_to\n---\nbody\n"
+        )
+        (cli.kb / "stuff.md").write_text(
+            "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: folder\n"
+            "folder_path: stuff\n---\n"
+        )
+        good = "---\nid: linked\ntitle: Linked\ntype: note\n---\nbody\n"
+        (cli.kb / "linked.md").write_text(linked_text if before_sync else good)
+        cli.pyrite("index", "sync", "--no-embed")
+        if not before_sync:
+            (cli.kb / "linked.md").write_text(linked_text)
+
+    def _export_following(self, cli):
+        out = cli.pyrite(
+            "export", "collection", "stuff", "-k", "demo", "--depth", "1",
+            "-o", str(cli.root / "out"),
+        )  # fmt: skip
+        return out, out.stdout + out.stderr
+
+    def test_a_linked_entry_whose_file_broke_after_the_sync_exits_partial(self, cli):
+        # Indexed, then hand-edited into YAML that does not parse.
+        self._linking_collection(
+            cli, "---\nid: linked\ntitle: [unclosed\ntype: note\n---\nbody\n", before_sync=False
+        )
+        out, text = self._export_following(cli)
+        assert "Exported 1 entry" in text, text
+        assert "1 entry left out" in text, text
+        assert "  linked: " in text, text
+        assert out.returncode == PARTIAL, text
+
+    def test_a_linked_entry_its_type_cannot_load_exits_partial(self, cli):
+        # Parses, but the type refuses it, so the sync indexes no row for it
+        # (ADR-0042 8a): the link is not dangling, a file holds its id.
+        self._linking_collection(
+            cli, "---\nid: linked\ntitle: [a, b]\ntype: note\n---\nbody\n", before_sync=True
+        )
+        out, text = self._export_following(cli)
+        assert "Exported 1 entry" in text, text
+        assert "1 entry left out" in text, text
+        assert "  linked: " in text and "title must be a string" in text, text
+        assert out.returncode == PARTIAL, text
+
+    @pytest.mark.control(reason="a dangling link was never a left-out entry")
+    def test_a_dangling_link_is_not_an_entry_left_out(self, cli):
+        folder = cli.kb / "stuff"
+        folder.mkdir()
+        (folder / "ok.md").write_text(
+            "---\nid: ok\ntitle: Ok\ntype: note\n"
+            "links:\n- target: nowhere\n  relation: related_to\n---\nbody\n"
+        )
+        (cli.kb / "stuff.md").write_text(
+            "---\nid: stuff\ntitle: Stuff\ntype: collection\nsource_type: folder\n"
+            "folder_path: stuff\n---\n"
+        )
+        cli.pyrite("index", "sync", "--no-embed")
+        out, text = self._export_following(cli)
+        assert "Exported 1 entry" in text, text
+        assert "left out" not in text, text
+        assert out.returncode == 0, text
+
+
+class TestExportSite:
+    def test_an_entry_that_could_not_be_loaded_exits_partial(self, cli):
+        (cli.kb / "good.md").write_text("---\nid: good\ntitle: Good\ntype: note\n---\nbody\n")
+        (cli.kb / "other.md").write_text("---\nid: other\ntitle: Other\ntype: note\n---\nbody\n")
+        cli.pyrite("index", "sync", "--no-embed")
+        (cli.kb / "good.md").write_text("---\nid: good\ntitle: [unclosed\ntype: note\n---\nbody\n")
+        out = cli.pyrite("export", "site", "-k", "demo", "-o", str(cli.root / "site"))
+        text = out.stdout + out.stderr
+        assert "1 entry left out" in text, text
+        assert "good" in text, text
         assert out.returncode == PARTIAL, text

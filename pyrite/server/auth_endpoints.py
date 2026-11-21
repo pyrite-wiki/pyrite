@@ -12,7 +12,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from ..config import PyriteConfig
-from ..exceptions import LastAdminError
+from ..exceptions import LastAdminError, public_text
 from ..services.access_policy import ROLES
 from ..services.auth_service import AuthService, RegistrationClosedError
 from ..services.oauth_providers import GitHubOAuthProvider
@@ -151,7 +151,9 @@ async def set_user_role(
     try:
         found = auth_service.set_role(user_id, role, global_access=global_access)
     except LastAdminError as e:
-        raise HTTPException(status_code=409, detail={"code": "LAST_ADMIN", "message": str(e)})
+        raise HTTPException(
+            status_code=409, detail={"code": "LAST_ADMIN", "message": public_text(e)}
+        )
     if not found:
         raise HTTPException(status_code=404, detail="User not found")
     return {"updated": True, "user_id": user_id, "role": role}
@@ -219,9 +221,11 @@ async def register(
     try:
         user = await run_in_threadpool(_register)
     except RegistrationClosedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+        raise HTTPException(status_code=403, detail=public_text(e))
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # The service's own refusals are RefusedValueError (shown); any other
+        # ValueError's text is withheld and logged (ADR-0052 N3).
+        raise HTTPException(status_code=400, detail=public_text(e))
 
     # Auto-login after registration. Deliberately outside the try/except
     # above: a ValueError here is not a registration failure -- the account
@@ -329,7 +333,9 @@ def github_oauth_start(
     if not gh_config or not gh_config.client_id:
         raise HTTPException(status_code=404, detail="GitHub OAuth is not configured")
 
-    provider = GitHubOAuthProvider(gh_config.client_id, gh_config.client_secret)
+    provider = GitHubOAuthProvider(
+        gh_config.client_id, gh_config.client_secret, proxy=config.settings.git_proxy
+    )
     state, binding = auth_service.create_oauth_state()
 
     # Build callback URL from request
@@ -407,7 +413,9 @@ async def _github_oauth_callback(
             logger.warning("GitHub connect callback without the initiating user's session")
             return RedirectResponse(url="/settings/kbs?error=connect_failed", status_code=302)
 
-    provider = GitHubOAuthProvider(gh_config.client_id, gh_config.client_secret)
+    provider = GitHubOAuthProvider(
+        gh_config.client_id, gh_config.client_secret, proxy=config.settings.git_proxy
+    )
     callback_url = str(request.url_for("github_oauth_callback"))
 
     try:
@@ -473,7 +481,9 @@ def github_connect_start(
     if not user:
         raise HTTPException(status_code=401, detail="Session expired")
 
-    provider = GitHubOAuthProvider(gh_config.client_id, gh_config.client_secret)
+    provider = GitHubOAuthProvider(
+        gh_config.client_id, gh_config.client_secret, proxy=config.settings.git_proxy
+    )
     state, binding = auth_service.create_oauth_state(flow="connect", user_id=user["id"])
 
     callback_url = str(request.url_for("github_oauth_callback"))
@@ -521,7 +531,7 @@ def github_connection_status(
     try:
         from ..github_auth import get_github_user_info
 
-        info = get_github_user_info(gh_token)
+        info = get_github_user_info(gh_token, proxy=config.settings.git_proxy)
         if info:
             username = info.get("login")
         else:
@@ -673,4 +683,4 @@ async def delete_invite_code(
         auth_service.delete_invite_code(code)
         return {"ok": True}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=public_text(e))

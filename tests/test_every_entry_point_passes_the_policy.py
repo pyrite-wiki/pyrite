@@ -109,6 +109,7 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "POST /api/reviews": "3b: requires_kb_tier('write'), a per-KB write",
     "DELETE /api/reviews/{review_id}": "3b: requires_kb_tier('write', resolve_kb=...), a row's KB",
     "POST /api/tasks/{task_id}/claim": "3b: requires_kb_tier('write'), a per-KB write",
+    "POST /api/tasks/{task_id}/start": "3b: requires_kb_tier('write'), a per-KB write",
     "GET /api/admin/merge-queue": "3c: requires_tier('admin'), instance administration",
     "GET /api/admin/merge-queue/{username}/diff": (
         "3c: requires_tier('admin'), instance administration"
@@ -174,7 +175,9 @@ REST_NOT_YET_MIGRATED: dict[str, str] = {
     "GET /auth/users/{user_id}/permissions": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
     "PUT /auth/users/{user_id}/role": "3c: _ADMIN_ONLY, Action.USER_MANAGE",
 }
-REST_NOT_YET_MIGRATED_SIZE = 67  # lower it with every entry removed; never raise it
+# 67 -> 68, maintainer 2026-11-18 (#1685, PR #1708): POST /api/tasks/{task_id}/start,
+# guarded as /claim; it migrates with claim (ADR-0037 §5, recorded changes).
+REST_NOT_YET_MIGRATED_SIZE = 68  # lower it with every entry removed; never raise it
 
 #: Non-GET operations that pass the policy only with a *read* declaration while
 #: their write or admin tier is still decided by `requires_tier`, the repos
@@ -310,9 +313,13 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "task_create",
         "task_critical_path",
         "task_decompose",
+        "task_finish",
         "task_list",
+        "task_park",
+        "task_start",
         "task_status",
         "task_subtree",
+        "task_unpark",
         "task_update",
         "wiki_assess_quality",
         "wiki_protect",
@@ -324,12 +331,19 @@ MCP_NOT_YET_MIGRATED: frozenset[str] = frozenset(
         "zettel_inbox",
     }
 )
-MCP_NOT_YET_MIGRATED_SIZE = 106  # lower it with every entry removed; never raise it
+# 106 -> 108, maintainer 2026-11-18 (#1685, PR #1708): task_start and task_finish,
+# guarded as task_claim; they migrate with it (ADR-0037 §5, recorded changes).
+# 108 -> 110, maintainer 2026-11-19 (#1688, PR #1777): task_park and task_unpark,
+# write tier as task_claim; they migrate with it (ADR-0037 §5, recorded changes).
+MCP_NOT_YET_MIGRATED_SIZE = 110  # lower it with every entry removed; never raise it
 
 #: Where a tool handler may be read out of the registry: (file, function).
 HANDLER_READ_SITES = {
-    ("pyrite/server/mcp_server.py", "PyriteMCPServer._dispatch_tool"): "the chokepoint: calls it",
-    ("pyrite/server/mcp_server.py", "PyriteMCPServer._handler_takes_readable_kbs"): (
+    ("pyrite/server/mcp_server.py", "PyriteMCPServer._dispatch_tool_checked"): (
+        "the chokepoint's checks, reached only through _dispatch_tool, which holds "
+        "its one error contract: calls it"
+    ),
+    ("pyrite/server/mcp_server.py", "PyriteMCPServer._handler_takes"): (
         "inspect.signature only; calls nothing"
     ),
 }

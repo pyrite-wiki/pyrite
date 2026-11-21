@@ -24,6 +24,19 @@ from pyrite.services.kb_registry_service import KBRegistryService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import app_db
 
+
+@pytest.fixture(autouse=True)
+def _as_the_local_operator():
+    """These tests call ``KBRegistryService.add_kb`` directly, as the
+    operator's own process does (``acting.is_local_process``). A network
+    caller is held to ``settings.kb_roots``:
+    ``tests/test_kb_roots_limit_network_registration.py``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
+
+
 KEY = "operator-key"
 ADMIN = {"X-API-Key": KEY}
 YAML_KB, REPO_KB, EPH_KB = "yaml-kb", "repo-kb", "eph-kb"

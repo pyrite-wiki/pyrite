@@ -1,0 +1,1 @@
+- `-f metadata.tags=...` on entry create and update is now refused as a usage error pointing at `--tags`, matching `-f tags=...`; similarly, `--append` and `--remove metadata.tags=...` with a comma outside a JSON list is refused (#1725).

@@ -470,16 +470,15 @@ def test_a_write_the_filesystem_refuses_names_its_reason_without_the_path(tmp_pa
 
     from pyrite.exceptions import StorageError, public_text
 
+    from pyrite.exceptions import EntryNotFoundError
+
     config, path = _build(tmp_path)
     os.link(path, tmp_path / "twin.md")
-    with pytest.raises(StorageError) as info:
+    # A file with two names is not the KB's: a by-id write never matches it
+    # (maintainer decision 2026-11-10), and the answer names no path.
+    with pytest.raises(EntryNotFoundError) as info:
         _service(config)
-    shown = public_text(info.value)
-    assert "hard link" in shown and str(tmp_path) not in shown, shown
-    # The log's text names the file by its KB-relative path, never an
-    # absolute one (no refusal text names a path outside the KB's own).
-    assert path.relative_to(config.knowledge_bases[0].path).as_posix() in str(info.value)
-    assert str(tmp_path) not in str(info.value)
+    assert str(tmp_path) not in public_text(info.value)
 
     config, path = _build(tmp_path / "lockdir")
     shutil.rmtree(config.knowledge_bases[0].path / ".git")

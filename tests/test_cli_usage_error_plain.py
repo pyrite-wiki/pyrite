@@ -113,6 +113,13 @@ def test_unknown_command_is_a_json_refusal(root):
     _assert_refusal(*_invoke(root, ["no-such-command-zz"]), names="no-such-command-zz")
 
 
+def test_unknown_subcommand_names_the_groups_commands():
+    doc = _assert_refusal(*_invoke("pyrite", ["links", "validate"]), names="validate")
+    assert "pyrite links has:" in doc["suggestion"]
+    assert "check" in doc["suggestion"]
+    assert "--help" in doc["suggestion"]
+
+
 @pytest.mark.parametrize("root", list(ROOTS))
 def test_an_error_in_the_roots_own_arguments_is_a_json_refusal(root):
     _assert_refusal(*_invoke(root, [BAD_OPTION]), names=BAD_OPTION)

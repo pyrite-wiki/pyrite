@@ -100,19 +100,24 @@ class TestDailyNoteReadTierNoSideEffect:
         kb_path = daily_env["config"].knowledge_bases[0].path
         assert not (kb_path / "daily-2026-01-15.md").exists()
 
-    def test_write_tier_viewing_new_date_still_auto_creates(self, daily_env):
+    def test_write_tier_viewing_new_date_creates_no_entry(self, daily_env):
+        """A GET writes nothing for any caller: it never asks where a write
+        lands, so a note it made would land canonical past a review KB's
+        change set (ADR-0044 L2). The UI creates with POST."""
         admin = daily_env["admin_client"]
         response = admin.get("/api/daily/2026-01-16?kb=test-kb")
 
-        assert response.status_code == 200
-        assert response.json()["id"] == "daily-2026-01-16"
+        assert response.status_code == 404
+        kb_path = daily_env["config"].knowledge_bases[0].path
+        assert not (kb_path / "daily-2026-01-16.md").exists()
 
+    @pytest.mark.control(reason="reading an existing note is unchanged; it is now made by POST")
     def test_read_tier_can_still_read_an_existing_note(self, daily_env):
         admin = daily_env["admin_client"]
         reader = daily_env["reader_client"]
 
         # Admin creates it first (existing note case).
-        created = admin.get("/api/daily/2026-01-17?kb=test-kb")
+        created = admin.post("/api/daily/2026-01-17?kb=test-kb")
         assert created.status_code == 200
 
         # Reader can view the now-existing note without any error.

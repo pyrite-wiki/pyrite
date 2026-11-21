@@ -1,1 +1,0 @@
-- Updates now apply the same model validation as creates, including event dates and importance. Unchanged violations in hand-edited files produce warnings while new invalid values are refused before writing (#1270).

@@ -1,6 +1,6 @@
 """The SPA's ``index.html`` responses (served by ``mount_static``) must carry
 a Content-Security-Policy and X-Content-Type-Options, the same as ``/site``
-(private #64, P-B1). Without a CSP, a stored-content XSS anywhere in the web
+(P-B1). Without a CSP, a stored-content XSS anywhere in the web
 app (the transclusion/tooltip/citation sinks fixed alongside this test) can
 still run script, because nothing stops an injected ``<script>`` tag or
 inline event handler from executing on the app's own origin.

@@ -939,6 +939,86 @@ class TestOneRowPerWrittenLink:
         assert [(e["source_id"], e["target_id"]) for e in graph["edges"]] == [("s", "x")]
 
 
+class TestMarkdownLinkRows:
+    """A Markdown link row keeps its path and names the entry at that path now,
+    on both backends' syncs and through the one shared resolver (#1723). The
+    entries are given as the indexer passes them: an absolute ``file_path``
+    under the KB root, the root as ``_kb_root``, and each path link with its
+    KB-relative ``path``."""
+
+    ROOT = "/kb"
+
+    @classmethod
+    def _entry(cls, entry_id, rel, links=()):
+        return _make_entry(
+            entry_id,
+            file_path=f"{cls.ROOT}/{rel}",
+            _kb_root=cls.ROOT,
+            links=[
+                {
+                    "target": path,
+                    "kb": "test",
+                    "prefix": None,
+                    "relation": "markdown_link",
+                    "note": note,
+                    "path": path,
+                }
+                for path, note in links
+            ],
+        )
+
+    @staticmethod
+    def _out(backend, source="s"):
+        return sorted(
+            (r["id"], r["relation"], r["note"])
+            for r in backend.get_outlinks(source, "test", readable_kbs=UNSCOPED)
+        )
+
+    def test_the_row_names_the_entry_at_its_path_in_any_write_order(self, backend):
+        backend.upsert_entry(self._entry("s", "s.md", [("notes/a.md", "#H")]))
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        backend.upsert_entry(self._entry("a", "notes/a.md"))
+        assert self._out(backend) == [("a", "markdown_link", "#H")]
+        # A rename: the new id is written at the same file, then the old row goes.
+        backend.upsert_entry(self._entry("a2", "notes/a.md"))
+        backend.delete_entry("a", "test")
+        assert self._out(backend) == [("a2", "markdown_link", "#H")]
+        # A move: the same id at another file; the path now names nothing.
+        backend.upsert_entry(self._entry("a2", "notes/moved.md"))
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        backend.upsert_entry(self._entry("b", "notes/a.md"))
+        backend.delete_entry("b", "test")
+        assert self._out(backend) == [("notes/a.md", "markdown_link", "#H")]
+        assert [
+            (r["id"], r["forward_relation"])
+            for r in backend.get_backlinks("a2", "test", readable_kbs=UNSCOPED)
+        ] == []
+
+    def test_a_markdown_link_and_a_wikilink_to_one_entry_are_two_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        entry = self._entry("s", "s.md", [("a.md", "")])
+        entry["links"].append(
+            {"target": "a", "kb": "test", "prefix": None, "relation": "wikilink", "note": ""}
+        )
+        backend.upsert_entry(entry)
+        assert self._out(backend) == [("a", "markdown_link", ""), ("a", "wikilink", "")]
+
+    def test_rewriting_the_same_links_keeps_the_resolved_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", ""), ("gone.md", "")]))
+        first = self._out(backend)
+        assert first == [("a", "markdown_link", ""), ("gone.md", "markdown_link", "")]
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", ""), ("gone.md", "")]))
+        assert self._out(backend) == first
+
+    def test_a_write_without_the_root_leaves_the_markdown_rows(self, backend):
+        backend.upsert_entry(self._entry("a", "a.md"))
+        backend.upsert_entry(self._entry("s", "s.md", [("a.md", "")]))
+        from_read = backend.get_entry("s", "test")
+        backend.upsert_entry(from_read)
+        assert self._out(backend) == [("a", "markdown_link", "")]
+
+
 # =========================================================================
 # Embeddings (basic — only tests interface, not actual model)
 # =========================================================================
@@ -1982,3 +2062,91 @@ class TestArchivedExclusionRetry:
         knn = self._knn(sql_log)
         assert [p[1] for _, p in knn] == [4, 8], knn
         assert all("rowid IN" in q for q, _ in knn), knn
+
+
+# Filters on a column of the row itself, correlated with its KB before the fix;
+# the tag filters were not.
+_FILTERS_SAFE_BEFORE = {
+    "entry_type",
+    "entry_types",
+    "state",
+    "fips",
+    "status",
+    "date_from",
+    "date_to",
+}
+
+
+class TestEveryFilterIsScopedToTheRowsKB:
+    """A filter on a search of KB K is evaluated against K's row only.
+
+    Entry ids are unique within a KB, not across KBs. Every filter of both
+    legs is listed here, each with a same-id entry in a second KB that
+    satisfies it while K's entry does not: K's entry must not match.
+    """
+
+    # (search kwargs, what the other KB's same-id entry carries)
+    FILTERS = {
+        "tags": ({"tags": ["only-elsewhere"]}, {"tags": ["only-elsewhere"]}),
+        "two-tags": (
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+            {"tags": ["only-elsewhere", "also-elsewhere"]},
+        ),
+        "entry_type": ({"entry_type": "event"}, {"entry_type": "event"}),
+        "entry_types": ({"entry_types": ["event"]}, {"entry_type": "event"}),
+        "state": ({"state": "MI"}, {"state": "MI"}),
+        "fips": ({"fips": "26163"}, {"fips": "26163"}),
+        "status": ({"status": "processed"}, {"status": "processed"}),
+        "date_from": ({"date_from": "2030-01-01"}, {"date": "2030-06-01"}),
+        "date_to": ({"date_to": "2000-01-01"}, {"date": "1999-06-01"}),
+    }
+
+    @pytest.fixture
+    def two_kbs(self, backend_with_db):
+        backend, _ = backend_with_db
+        return backend
+
+    @pytest.mark.parametrize("scope", ["kb_name", "kb_names"])
+    @pytest.mark.parametrize("leg", ["keyword", "semantic"])
+    @pytest.mark.parametrize(
+        "name",
+        [
+            pytest.param(
+                n,
+                marks=[pytest.mark.control(reason="a column of the row itself, never wrong")]
+                if n in _FILTERS_SAFE_BEFORE
+                else [],
+                id=n,
+            )
+            for n in FILTERS
+        ],
+    )
+    def test_a_same_id_entry_in_another_kb_does_not_satisfy_the_filter(
+        self, two_kbs, name, leg, scope
+    ):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        where = {"kb_name": "test"} if scope == "kb_name" else {"kb_names": ["test"]}
+        if leg == "keyword":
+            rows = backend.search("Title", **where, **search)
+        else:
+            if not (
+                backend.upsert_embedding("dup", "test", _near_vector(1))
+                and backend.upsert_embedding("dup", "other", _near_vector(2))
+                and backend.has_embeddings()
+            ):
+                pytest.skip("backend cannot store embeddings (no vector support)")
+            rows = backend.search_semantic(_near_vector(), limit=10, **where, **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == []
+
+    @pytest.mark.control(reason="each filter still matches the entry that carries it")
+    @pytest.mark.parametrize("name", list(FILTERS))
+    def test_the_filter_matches_its_own_kbs_entry(self, two_kbs, name):
+        backend = two_kbs
+        search, other = self.FILTERS[name]
+        backend.upsert_entry(_make_entry("dup", kb_name="test", date="2020-01-01"))
+        backend.upsert_entry(_make_entry("dup", kb_name="other", **{"date": "2020-01-01", **other}))
+        rows = backend.search("Title", kb_name="other", **search)
+        assert [(r["kb_name"], r["id"]) for r in rows] == [("other", "dup")]

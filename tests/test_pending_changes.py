@@ -5,6 +5,7 @@ import subprocess
 
 import pytest
 
+
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.git_service import GitService
 from pyrite.services.kb_service import KBService
@@ -239,6 +240,7 @@ class TestPublishChanges:
         result = git_kb["svc"].publish_changes("test-kb", summary="Test publish")
 
         assert result["success"] is True
-        assert "simulated auth failure" in (result["push_error"] or ""), (
-            f"expected the real exception message surfaced, got {result['push_error']!r}"
-        )
+        # Not relabeled as a missing remote; and the exception's own text is
+        # the operator's (the server log has it), so the caller gets Pyrite's.
+        assert "No remote" not in (result["push_error"] or "")
+        assert result["push_error"] == "Internal error; the server log has the details."

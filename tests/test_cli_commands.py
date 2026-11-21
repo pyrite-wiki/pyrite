@@ -192,6 +192,33 @@ class TestTyperTagsCommand:
             result = runner.invoke(app, ["tags", "--kb", "test-events"])
             assert result.exit_code == 0
 
+    @pytest.mark.parametrize("bad_limit", ["0", "-1"])
+    def test_tags_limit_below_one_is_usage_error(self, cli_env, bad_limit):
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["tags", "--limit", bad_limit])
+            assert result.exit_code == 2
+            assert "Invalid value for '--limit'" in result.output
+
+    def test_tags_limit_one_returns_one_tag(self, cli_env):
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["tags", "--limit", "1"])
+            assert result.exit_code == 0
+
+
+@pytest.mark.cli
+class TestTyperQaCompactCommand:
+    @pytest.mark.parametrize("bad_age", ["-1", "-5"])
+    def test_compact_min_age_negative_is_usage_error(self, cli_env, bad_age):
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["qa", "compact", "test-events", "--min-age", bad_age])
+            assert result.exit_code == 2
+            assert "Invalid value for '--min-age'" in result.output
+
+    def test_compact_min_age_zero_is_accepted(self, cli_env):
+        with _patch_config(cli_env):
+            result = runner.invoke(app, ["qa", "compact", "test-events", "--min-age", "0"])
+            assert result.exit_code == 0
+
 
 @pytest.mark.cli
 class TestTyperBacklinksCommand:

@@ -77,7 +77,7 @@ def _template_test_env(tmpdir: Path, config: PyriteConfig, template: str, builti
 
 
 @pytest.mark.cli
-@pytest.mark.parametrize("template", ["software", "zettelkasten"])
+@pytest.mark.parametrize("template", ["software", "zettelkasten", "research-queue"])
 @pytest.mark.parametrize("builtin_only", [False, True], ids=["plugin-preset", "builtin-template"])
 def test_task_create_works_in_fresh_kb(template, builtin_only):
     """task create succeeds without --allow-undeclared in a fresh KB (#860).

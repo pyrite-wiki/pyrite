@@ -5,6 +5,9 @@
   "DELETE /api/kbs/characterization-access-deciding-does-not-exist | anonymous": {
     "status": 403
   },
+  "DELETE /api/kbs/characterization-access-deciding-does-not-exist | bad_key": {
+    "status": 401
+  },
   "DELETE /api/kbs/characterization-access-deciding-does-not-exist | global_user": {
     "status": 403
   },
@@ -25,6 +28,9 @@
   },
   "DELETE /api/kbs/ephemeral/characterization-access-deciding-does-not-exist | anonymous": {
     "status": 403
+  },
+  "DELETE /api/kbs/ephemeral/characterization-access-deciding-does-not-exist | bad_key": {
+    "status": 401
   },
   "DELETE /api/kbs/ephemeral/characterization-access-deciding-does-not-exist | global_user": {
     "status": 403
@@ -47,6 +53,9 @@
   "DELETE /api/settings/characterization.does.not.exist | anonymous": {
     "status": 403
   },
+  "DELETE /api/settings/characterization.does.not.exist | bad_key": {
+    "status": 401
+  },
   "DELETE /api/settings/characterization.does.not.exist | global_user": {
     "status": 403
   },
@@ -66,6 +75,9 @@
     "status": 401
   },
   "DELETE /auth/api-keys/does-not-exist-provider | anonymous": {
+    "status": 401
+  },
+  "DELETE /auth/api-keys/does-not-exist-provider | bad_key": {
     "status": 401
   },
   "DELETE /auth/api-keys/does-not-exist-provider | global_user": {
@@ -89,6 +101,9 @@
   "DELETE /auth/invite-codes/does-not-exist-invite-code | anonymous": {
     "status": 401
   },
+  "DELETE /auth/invite-codes/does-not-exist-invite-code | bad_key": {
+    "status": 401
+  },
   "DELETE /auth/invite-codes/does-not-exist-invite-code | global_user": {
     "status": 403
   },
@@ -109,6 +124,9 @@
   },
   "GET /api/admin/merge-queue | anonymous": {
     "status": 403
+  },
+  "GET /api/admin/merge-queue | bad_key": {
+    "status": 401
   },
   "GET /api/admin/merge-queue | global_user": {
     "status": 403
@@ -131,6 +149,9 @@
   "GET /api/admin/merge-queue/characterization-access-deciding-does-not-exist/diff | anonymous": {
     "status": 403
   },
+  "GET /api/admin/merge-queue/characterization-access-deciding-does-not-exist/diff | bad_key": {
+    "status": 401
+  },
   "GET /api/admin/merge-queue/characterization-access-deciding-does-not-exist/diff | global_user": {
     "status": 403
   },
@@ -151,6 +172,9 @@
   },
   "GET /api/admin/usage | anonymous": {
     "status": 403
+  },
+  "GET /api/admin/usage | bad_key": {
+    "status": 401
   },
   "GET /api/admin/usage | global_user": {
     "status": 403
@@ -173,6 +197,9 @@
   "GET /api/index/jobs | anonymous": {
     "status": 403
   },
+  "GET /api/index/jobs | bad_key": {
+    "status": 401
+  },
   "GET /api/index/jobs | global_user": {
     "status": 403
   },
@@ -193,6 +220,9 @@
   },
   "GET /api/index/jobs/characterization-access-deciding-no-such-job | anonymous": {
     "status": 403
+  },
+  "GET /api/index/jobs/characterization-access-deciding-no-such-job | bad_key": {
+    "status": 401
   },
   "GET /api/index/jobs/characterization-access-deciding-no-such-job | global_user": {
     "status": 403
@@ -215,6 +245,9 @@
   "GET /api/kbs/ephemeral | anonymous": {
     "status": 403
   },
+  "GET /api/kbs/ephemeral | bad_key": {
+    "status": 401
+  },
   "GET /api/kbs/ephemeral | global_user": {
     "status": 403
   },
@@ -235,6 +268,9 @@
   },
   "GET /api/settings | anonymous": {
     "status": 200
+  },
+  "GET /api/settings | bad_key": {
+    "status": 401
   },
   "GET /api/settings | global_user": {
     "status": 200
@@ -257,6 +293,9 @@
   "GET /api/settings/characterization.does.not.exist | anonymous": {
     "status": 200
   },
+  "GET /api/settings/characterization.does.not.exist | bad_key": {
+    "status": 401
+  },
   "GET /api/settings/characterization.does.not.exist | global_user": {
     "status": 200
   },
@@ -276,6 +315,9 @@
     "status": 401
   },
   "GET /auth/api-keys | anonymous": {
+    "status": 401
+  },
+  "GET /auth/api-keys | bad_key": {
     "status": 401
   },
   "GET /auth/api-keys | global_user": {
@@ -299,6 +341,9 @@
   "GET /auth/invite-codes | anonymous": {
     "status": 401
   },
+  "GET /auth/invite-codes | bad_key": {
+    "status": 401
+  },
   "GET /auth/invite-codes | global_user": {
     "status": 403
   },
@@ -319,6 +364,9 @@
   },
   "GET /auth/users | anonymous": {
     "status": 403
+  },
+  "GET /auth/users | bad_key": {
+    "status": 401
   },
   "GET /auth/users | global_user": {
     "status": 403
@@ -341,6 +389,9 @@
   "GET /auth/users/999999999/permissions | anonymous": {
     "status": 403
   },
+  "GET /auth/users/999999999/permissions | bad_key": {
+    "status": 401
+  },
   "GET /auth/users/999999999/permissions | global_user": {
     "status": 403
   },
@@ -361,6 +412,9 @@
   },
   "POST /api/admin/merge-queue/characterization-access-deciding-does-not-exist/merge | anonymous": {
     "status": 403
+  },
+  "POST /api/admin/merge-queue/characterization-access-deciding-does-not-exist/merge | bad_key": {
+    "status": 401
   },
   "POST /api/admin/merge-queue/characterization-access-deciding-does-not-exist/merge | global_user": {
     "status": 403
@@ -383,6 +437,9 @@
   "POST /api/admin/merge-queue/characterization-access-deciding-does-not-exist/reject | anonymous": {
     "status": 403
   },
+  "POST /api/admin/merge-queue/characterization-access-deciding-does-not-exist/reject | bad_key": {
+    "status": 401
+  },
   "POST /api/admin/merge-queue/characterization-access-deciding-does-not-exist/reject | global_user": {
     "status": 403
   },
@@ -403,6 +460,9 @@
   },
   "POST /api/index/sync | anonymous": {
     "status": 403
+  },
+  "POST /api/index/sync | bad_key": {
+    "status": 401
   },
   "POST /api/index/sync | global_user": {
     "status": 403
@@ -425,6 +485,9 @@
   "POST /api/kbs | anonymous": {
     "status": 403
   },
+  "POST /api/kbs | bad_key": {
+    "status": 401
+  },
   "POST /api/kbs | global_user": {
     "status": 403
   },
@@ -445,6 +508,9 @@
   },
   "POST /api/kbs/characterization-access-deciding-does-not-exist/commit | anonymous": {
     "status": 403
+  },
+  "POST /api/kbs/characterization-access-deciding-does-not-exist/commit | bad_key": {
+    "status": 401
   },
   "POST /api/kbs/characterization-access-deciding-does-not-exist/commit | global_user": {
     "status": 403
@@ -467,6 +533,9 @@
   "POST /api/kbs/characterization-access-deciding-does-not-exist/publish | anonymous": {
     "status": 403
   },
+  "POST /api/kbs/characterization-access-deciding-does-not-exist/publish | bad_key": {
+    "status": 401
+  },
   "POST /api/kbs/characterization-access-deciding-does-not-exist/publish | global_user": {
     "status": 403
   },
@@ -487,6 +556,9 @@
   },
   "POST /api/kbs/characterization-access-deciding-does-not-exist/push | anonymous": {
     "status": 403
+  },
+  "POST /api/kbs/characterization-access-deciding-does-not-exist/push | bad_key": {
+    "status": 401
   },
   "POST /api/kbs/characterization-access-deciding-does-not-exist/push | global_user": {
     "status": 403
@@ -509,6 +581,9 @@
   "POST /api/kbs/characterization-access-deciding-does-not-exist/reindex | anonymous": {
     "status": 403
   },
+  "POST /api/kbs/characterization-access-deciding-does-not-exist/reindex | bad_key": {
+    "status": 401
+  },
   "POST /api/kbs/characterization-access-deciding-does-not-exist/reindex | global_user": {
     "status": 403
   },
@@ -528,6 +603,9 @@
     "status": 401
   },
   "POST /api/kbs/ephemeral | anonymous": {
+    "status": 401
+  },
+  "POST /api/kbs/ephemeral | bad_key": {
     "status": 401
   },
   "POST /api/kbs/ephemeral | global_user": {
@@ -551,6 +629,9 @@
   "POST /api/kbs/gc | anonymous": {
     "status": 403
   },
+  "POST /api/kbs/gc | bad_key": {
+    "status": 401
+  },
   "POST /api/kbs/gc | global_user": {
     "status": 403
   },
@@ -570,6 +651,9 @@
     "status": 422
   },
   "POST /auth/api-keys | anonymous": {
+    "status": 422
+  },
+  "POST /auth/api-keys | bad_key": {
     "status": 422
   },
   "POST /auth/api-keys | global_user": {
@@ -593,6 +677,9 @@
   "POST /auth/invite-codes | anonymous": {
     "status": 401
   },
+  "POST /auth/invite-codes | bad_key": {
+    "status": 401
+  },
   "POST /auth/invite-codes | global_user": {
     "status": 403
   },
@@ -613,6 +700,9 @@
   },
   "PUT /api/kbs/characterization-access-deciding-does-not-exist | anonymous": {
     "status": 403
+  },
+  "PUT /api/kbs/characterization-access-deciding-does-not-exist | bad_key": {
+    "status": 401
   },
   "PUT /api/kbs/characterization-access-deciding-does-not-exist | global_user": {
     "status": 403
@@ -635,6 +725,9 @@
   "PUT /api/kbs/characterization-access-deciding-does-not-exist/default-role | anonymous": {
     "status": 403
   },
+  "PUT /api/kbs/characterization-access-deciding-does-not-exist/default-role | bad_key": {
+    "status": 401
+  },
   "PUT /api/kbs/characterization-access-deciding-does-not-exist/default-role | global_user": {
     "status": 403
   },
@@ -655,6 +748,9 @@
   },
   "PUT /api/settings | anonymous": {
     "status": 403
+  },
+  "PUT /api/settings | bad_key": {
+    "status": 401
   },
   "PUT /api/settings | global_user": {
     "status": 403
@@ -677,6 +773,9 @@
   "PUT /api/settings/characterization.does.not.exist | anonymous": {
     "status": 403
   },
+  "PUT /api/settings/characterization.does.not.exist | bad_key": {
+    "status": 401
+  },
   "PUT /api/settings/characterization.does.not.exist | global_user": {
     "status": 403
   },
@@ -697,6 +796,9 @@
   },
   "PUT /auth/users/999999999/role | anonymous": {
     "status": 403
+  },
+  "PUT /auth/users/999999999/role | bad_key": {
+    "status": 401
   },
   "PUT /auth/users/999999999/role | global_user": {
     "status": 403
