@@ -1,15 +1,14 @@
-"""Task claim and start endpoints.
+"""Task claim, start, and finish endpoints.
 
-mcp-rest-tool-parity: ports task_claim (atomic task claim used by the
-conductor pattern) from MCP-only (pyrite/server/mcp_server.py) to
-REST. Shares the same TaskService.claim_task call the MCP handler
-already uses -- no service-layer duplication.
+mcp-rest-tool-parity: ports task_claim, task_start, and task_finish from
+MCP (pyrite/server/mcp_server.py) to REST. Shares the same TaskService
+calls the MCP handlers already use -- no service-layer duplication.
 """
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 
-from ...plugins.identity import CALLER, resolve_person_arguments
+from ...plugins.identity import CALLER, OPTIONAL, person_key, resolve_person_arguments
 from ...services.access_policy import KB, Action, ReadScope
 from ...services.read_shaping import parse_fields_param
 from ...services.task_service import TaskService
@@ -117,3 +116,50 @@ def start_task(
         {"assignee": req.assignee}, {"assignee": CALLER}, get_principal(request)
     )
     return svc.start_task(task_id=task_id, kb_name=kb, assignee=resolved["assignee"])
+
+
+class TaskFinishRequest(BaseModel):
+    """Request body for finishing a task (#1745).
+
+    ``by`` names who finishes it: a signed-in caller is recorded as
+    themselves (``user:<id>``), and naming anyone else is refused; with no
+    session identity (an operator key, auth disabled) it is a label naming
+    the task's holder. ``operator_override`` lets the operator finish a task
+    it does not hold, recorded as ``by: "operator", override: true``; it is
+    refused for anyone else.
+    """
+
+    walk: bool = False
+    reason: str | None = None
+    by: str | None = None
+    operator_override: bool = False
+
+
+@router.post("/tasks/{task_id}/finish", dependencies=[Depends(authorize(Action.KB_WRITE, KB))])
+@limiter.limit("60/minute")
+def finish_task(
+    request: Request,
+    task_id: str,
+    req: TaskFinishRequest,
+    kb: str = Query(..., description="KB the task belongs to"),
+    svc: TaskService = Depends(get_task_service),
+):
+    """Move a held task to done in one write (#1745, ``TaskService.finish_task``).
+
+    Follows the same rules as CLI ``task finish`` and MCP ``task_finish``:
+    the caller must hold the task, or be the operator passing
+    ``operator_override: true`` (recorded as ``by: "operator", override: true``).
+    A refusal raises a ``PyriteError`` answered by the central error handler
+    and writes nothing.
+    """
+    principal = get_principal(request)
+    resolved = resolve_person_arguments({"by": req.by}, {"by": OPTIONAL}, principal)
+    by = resolved["by"] or person_key(principal) or ""
+    return svc.finish_task(
+        task_id=task_id,
+        kb_name=kb,
+        walk=req.walk,
+        reason=req.reason or "",
+        by=by,
+        operator_override=req.operator_override,
+    )
