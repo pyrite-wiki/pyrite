@@ -9,9 +9,10 @@ MCP cells in ``tests/test_task_finish_walk.py`` and
   ``operator_override: true``, recorded as ``by: "operator", override: true``;
 - a signed-in non-operator cannot use ``operator_override`` or spoof another
   caller's ``by``;
-- every refusal writes nothing (the task file remains byte-identical) and
-  answers with the canonical REST error shape
-  ``{"detail": {"code", "message", "retryable", ...}}``;
+- every refusal writes nothing (the task file remains byte-identical); holder-rule
+  and task validation refusals answer with the canonical REST error shape
+  ``{"detail": {"code", "message", "retryable", ...}}``, while the KB write-tier
+  refusal keeps the existing guard answer;
 - the walk to ``done`` (every declared status in ``TASK_WORKFLOW``, direct edge
   vs ``walk: true``, evidence/reason, prior log items preserved, KB-declared
   strict/relaxed workflows) and the answer shape match CLI and MCP identically.
@@ -471,4 +472,23 @@ def test_read_only_key_cannot_finish_task(auth_env):
     resp = _post_finish(client, "t1", {"operator_override": True}, headers=auth_env["read_headers"])
 
     assert resp.status_code == 403, resp.text
+    assert task_path.read_bytes() == before
+
+
+def test_anonymous_cannot_finish_task(auth_env):
+    client = auth_env["client"]
+    start = client.post(
+        "/api/tasks/t1/start",
+        params={"kb": KB},
+        json={},
+        headers=auth_env["alice_headers"],
+    )
+    assert start.status_code == 200 and start.json()["claimed"] is True, start.text
+    task_path = _task_file(auth_env["kb_dir"])
+    before = task_path.read_bytes()
+
+    client.cookies.clear()
+    resp = _post_finish(client, "t1", {})
+
+    assert resp.status_code == 401, resp.text
     assert task_path.read_bytes() == before

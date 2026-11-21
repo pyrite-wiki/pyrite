@@ -5,6 +5,7 @@
   caller acts as themselves; a non-holder is refused with 403 `FORBIDDEN` and nothing is
   written) and the explicit operator override (`operator_override: true`, recorded as
   `by: "operator", override: true`), walks the declared workflow to `done` with evidence,
-  returns the same answer shape as CLI/MCP, and answers refusals with the canonical REST
-  error shape. Guarded via the migrated ADR-0037 `authorize(Action.KB_WRITE, KB)`
+  returns the same answer shape as CLI/MCP, and answers holder-rule and task
+  validation refusals with the canonical REST error shape; the KB write-tier refusal keeps the
+  existing guard answer. Guarded via the migrated ADR-0037 `authorize(Action.KB_WRITE, KB)`
   dependency so `REST_NOT_YET_MIGRATED_SIZE` does not grow.
