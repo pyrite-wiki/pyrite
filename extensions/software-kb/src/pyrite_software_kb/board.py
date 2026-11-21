@@ -289,12 +289,6 @@ OPTIONAL_PARAMS = {"rubric_text": "text"}
 
 _KIND_TEXT = {"text": "must be text", "names": "must be a list of names"}
 
-#: The entry a criterion is dry-run against at load: a parameterised checker
-#: checks its params before it reads the entry (a pattern compiles), so a file
-#: whose params a checker cannot use is refused by every tool, not only by
-#: those that run the gate.
-_DRY_RUN_ENTRY = {"id": "", "kb_name": "", "title": "", "body": "", "metadata": {}, "_links": []}
-
 
 def _check_params(where: str, checker: str, params: dict | None) -> None:
     """``params`` against what ``checker`` declares it reads (CHECKER_PARAMS)."""
@@ -405,4 +399,11 @@ def check_criterion(where: str, criterion: object) -> None:
     _check_params(where, checker, params)
     if checker in NAMED_CHECKERS:
         with _criterion_refusal(where, on_an_item=False):
-            gate_checker(checker)(dict(_DRY_RUN_ENTRY), None, params)
+            # Dry-run against the builder's entry with no row (#1587): a
+            # parameterised checker checks its params before it reads the
+            # entry (a pattern compiles), so a file whose params a checker
+            # cannot use is refused by every tool, not only by those that run
+            # the gate.
+            from pyrite.services.checker_entry import empty_checker_entry
+
+            gate_checker(checker)(empty_checker_entry(), None, params)

@@ -10,7 +10,13 @@ from typing import Any
 
 from .core_types import CORE_TYPES, SYSTEM_INTENT, resolve_type_metadata
 from .enum_check import enum_findings, is_empty
-from .field_schema import EndpointSpec, FieldSchema, TypeSchema, _validate_field_value
+from .field_schema import (
+    LIST_FIELD_TYPES,
+    EndpointSpec,
+    FieldSchema,
+    TypeSchema,
+    _validate_field_value,
+)
 from .provenance import get_all_relationship_types
 from .reserved import RESERVED_FIELD_NAMES
 from .validators import validate_date
@@ -43,8 +49,10 @@ class KBSchema:
     policies: dict[str, Any] = field(default_factory=dict)
     validation: dict[str, Any] = field(default_factory=dict)
     schema_version: int = 0
-    guidelines: dict[str, str] = field(default_factory=dict)
-    goals: dict[str, str] = field(default_factory=dict)
+    # Widened from dict[str, str] to support string forms in kb.yaml (#1498);
+    # see guidelines_mapping() / goals_mapping() for normalization.
+    guidelines: dict[str, Any] | str = field(default_factory=dict)
+    goals: dict[str, Any] | str = field(default_factory=dict)
     evaluation_rubric: list[str | dict[str, Any]] = field(default_factory=list)
     rubric_action: str = "fail"
 
@@ -154,7 +162,8 @@ class KBSchema:
         core < plugin < kb.yaml (#86, #232).
 
         The declaration is the schema, never the model class: ``CORE_TYPES``'s
-        ``fields``, the plugins' ``get_field_schemas()``, then this KB's
+        ``fields`` (a task's from ``TASK_TYPE_METADATA``), the plugins'
+        ``get_field_schemas()``, then this KB's
         ``fields``, each layer replacing a name the one below declared. A name
         kb.yaml lists in ``optional`` or ``required`` without a definition adds
         a text field, unless a lower layer already typed it. A reserved name
@@ -163,9 +172,19 @@ class KBSchema:
         a field a type declares. A type's managed fields are not removed here;
         the create leaves them out itself (``KBService._with_declared_fields``).
         """
+        core = dict(CORE_TYPES.get(entry_type, {}).get("fields", {}))
+        if entry_type == "task":
+            # A built-in type that is not one of the core types: `task`
+            # declares its fields beside its model, as `resolve_type_metadata`
+            # reads its settled statuses (lazy import: models import this
+            # package). Without it a task's `priority` had no declared type
+            # and read as text on every index reader (#1503).
+            from ..models.task import TASK_TYPE_METADATA
+
+            core.update(TASK_TYPE_METADATA.get("fields", {}))
         fields: dict[str, FieldSchema] = {
             name: FieldSchema(name=name, field_type=_core_field_type(spelled))
-            for name, spelled in CORE_TYPES.get(entry_type, {}).get("fields", {}).items()
+            for name, spelled in core.items()
         }
         try:
             from ..plugins import get_registry
@@ -276,6 +295,39 @@ class KBSchema:
             out["malformed"] = malformed
         return out
 
+    def guidelines_mapping(self) -> dict[str, Any]:
+        """The KB-level `guidelines` as a normalized mapping.
+
+        `kb.yaml` may hold a string here, the way a type's `guidelines` is
+        written (the journalism `known-entities` preset wrote one before
+        #1482): it is one guideline, under the key `general`. A mapping is
+        used as is. Any other value (a list, a number) is left out of the
+        export with a warning naming the key, instead of failing it (#1498).
+        `kb_authored_text` still returns the value as written.
+        """
+        value = self.guidelines
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            return {"general": value} if value.strip() else {}
+        if value not in (None, []):
+            logger.warning(
+                "kb.yaml of %r: `guidelines` is a %s, not a mapping or a string; "
+                "left out of the schema export",
+                self.name,
+                type(value).__name__,
+            )
+        return {}
+
+    def goals_mapping(self) -> dict[str, Any]:
+        """The KB-level `goals` as a normalized mapping for tag extraction."""
+        value = self.goals
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            return {"general": value} if value.strip() else {}
+        return {}
+
     def to_agent_schema(self, *, kb_type: str) -> dict[str, Any]:
         """Export schema in agent-friendly format for kb_schema MCP tool.
 
@@ -352,7 +404,7 @@ class KBSchema:
 
         # KB-level intent: merge system defaults with KB overrides
         merged_guidelines = dict(SYSTEM_INTENT.get("guidelines", {}))
-        merged_guidelines.update(self.guidelines)
+        merged_guidelines.update(self.guidelines_mapping())
         if merged_guidelines:
             result["guidelines"] = merged_guidelines
 
@@ -494,6 +546,25 @@ class KBSchema:
                                 "got": ep_value,
                             }
                         )
+
+        # A list field declared at any layer (`type_fields`: core < plugin <
+        # kb.yaml) holds a list (#1502). The loop above type-checks kb.yaml's
+        # own `fields` only; the list-typed fields it did not see (core's
+        # `person.affiliations`, a plugin's) get the same check here, with the
+        # same `enforce` severity. Widened for list types only: core- and
+        # plugin-declared numbers and selects stay unchecked, as before.
+        seen = set(type_schema.fields) if type_schema else set()
+        list_enforce = self.validation.get("enforce", False)
+        for field_name, declared in self.type_fields(entry_type).items():
+            if field_name in seen or declared.field_type not in LIST_FIELD_TYPES:
+                continue
+            if field_name not in fields or is_empty(fields[field_name]):
+                continue
+            for item in _validate_field_value(field_name, fields[field_name], declared):
+                if list_enforce:
+                    errors.append(item)
+                else:
+                    warnings.append({**item, "severity": "warning"})
 
         # Declared enums (field options/values/items and rule `enum:`), one
         # function for every reader; severity is `validation.enforce_enums`'s,

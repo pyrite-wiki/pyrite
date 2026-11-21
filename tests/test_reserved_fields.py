@@ -43,6 +43,21 @@ class TestReservedFieldNamesCompleteness:
 class TestKBSchemaCollisionValidation:
     """KBSchema.from_dict() should strip colliding field names."""
 
+    def test_strips_entry_warnings_answer_key_and_warns(self, caplog):
+        from pyrite.schema.kb_schema import KBSchema
+
+        fields = {"entry_warnings": {"type": "text"}, "reviewer": {"type": "text"}}
+        with caplog.at_level(logging.WARNING):
+            schema = KBSchema.from_dict({"types": {"report": {"fields": fields}}})
+
+        assert set(schema.types["report"].fields) == {"reviewer"}
+        assert any(
+            record.levelno == logging.WARNING
+            and "entry_warnings" in record.getMessage()
+            and "reserved" in record.getMessage()
+            for record in caplog.records
+        )
+
     def test_strips_colliding_field_and_warns(self, caplog):
         """A custom field named 'summary' collides with Entry.summary."""
         from pyrite.schema.kb_schema import KBSchema

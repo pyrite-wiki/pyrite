@@ -37,7 +37,7 @@ from ..models.core_types import (
 from ..schema import CORE_TYPES, expand_subdirectory_template
 from ..utils.atomic_write import HardLinked
 from ..utils.frontmatter import Frontmatter, describe, split_frontmatter
-from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles
+from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles, KBPresenceUnknownError
 from ..utils.yaml import load_yaml
 from . import entry_paths
 from .entry_writer import (
@@ -214,6 +214,17 @@ def _rewrite_as_values(
     span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
     new_text, _report = apply(text, ops, span)
     return new_text, total
+
+
+def _type_unknown(item: os.DirEntry) -> bool:
+    """Whether the OS will not say what the name ``item`` itself is, a link
+    not followed (``is_dir(follow_symlinks=False)`` raises): the walk's one
+    sign that a name may be a folder it could not list (#1546)."""
+    try:
+        item.is_dir(follow_symlinks=False)
+    except OSError:
+        return True
+    return False
 
 
 def _is_regular_file(path: Path) -> bool:
@@ -654,20 +665,25 @@ class KBRepository:
         return self._contained(self.path / f"{entry_id}.md")
 
     def _resolve_file_path(
-        self, entry: Entry, subdir: str | None, *, taken: Set[Path] = frozenset()
+        self,
+        entry: Entry,
+        subdir: str | None,
+        *,
+        taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """Resolve the file path for an entry, respecting file_pattern if set.
 
-        ``taken``: paths an earlier item of the same dry-run batch would have
-        written (``KBService.bulk_create_entries(validate_only=True)``). The
+        ``taken``: paths an earlier item of the same batch has written (or
+        would write in a dry run: ``KBService.bulk_create_entries``). The
         default name treats each as held by another id, as the real batch
         finds the file there, so a dry run picks the ``-N`` the real write
-        picks (#1552 round 1). One exception: the paths are compared as
-        spelled, so on a case-insensitive disk two items whose paths differ
-        only in case (``Abc``, ``abc``) are two names here and one on disk;
-        the real write then steps the second to ``-2`` (or refuses a
-        ``file_pattern`` name) where the dry run answered valid. It fails
-        safe (#1552, a stated limit)."""
+        picks (#1552 round 1). The paths in ``taken`` are compared with
+        ``entry_paths.fold`` on every disk (#1623, maintainer decision
+        2026-11-17), so on a case-insensitive and case-sensitive disk alike
+        two items whose names differ only in case step the second to ``-2``
+        (or refuse a ``file_pattern`` name), and dry-run and real writes agree.
+        """
         schema = self.config.kb_schema
         type_schema = schema.get_type_schema(entry.entry_type)
         if type_schema:
@@ -680,7 +696,7 @@ class KBRepository:
                     path = self._contained(self.path / custom_name)
                 self._require_listed(path, entry, subdir, from_pattern=True)
                 return path
-        path = self._free_default_path(entry.id, subdir, taken=taken)
+        path = self._free_default_path(entry.id, subdir, taken=taken, taken_keys=taken_keys)
         self._require_listed(path, entry, subdir, from_pattern=False)
         return path
 
@@ -748,7 +764,12 @@ class KBRepository:
         entry_paths.require_listed(self.path, path, source=source, remedy=remedy, errors=rows)
 
     def _free_default_path(
-        self, entry_id: str, subdir: str | None, *, taken: Set[Path] = frozenset()
+        self,
+        entry_id: str,
+        subdir: str | None,
+        *,
+        taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """``<id>.md`` for a new entry, or the first ``<id>-N.md`` when that
         path is held by a *different* id.
@@ -766,9 +787,15 @@ class KBRepository:
         # chooses a listed one, and the id stays what the caller named. The
         # test is on the folded name (``entry_paths.fold``), never a probe of
         # the disk, so a case-insensitive filesystem answers the same.
-        # A path in ``taken`` is held by an earlier item of the same dry-run
+        # A path in ``taken`` is held by an earlier item of the same
         # batch, never by this id (the batch refuses a repeated id first).
-        if entry_paths.is_listed(self.path, path) and path not in taken:
+        # Compared by ``entry_paths.fold`` on every disk (#1623).
+        if not taken_keys and taken:
+            taken_keys = {entry_paths.folded_path_key(self.path, p) for p in taken}
+        if (
+            entry_paths.is_listed(self.path, path)
+            and entry_paths.folded_path_key(self.path, path) not in taken_keys
+        ):
             holder = self.read_id(path)[0] if self.present(path) else None
             if holder is None or holder == entry_id:
                 return path
@@ -776,7 +803,7 @@ class KBRepository:
             candidate = path.with_name(f"{entry_id}-{n}.md")
             if not entry_paths.is_listed(self.path, candidate):
                 break  # the folder itself is skipped: no name in it helps
-            if candidate in taken:
+            if entry_paths.folded_path_key(self.path, candidate) in taken_keys:
                 continue
             # A candidate that already holds this id is the entry's own file:
             # a caller that recomputes the path after the create (a plugin
@@ -891,17 +918,94 @@ class KBRepository:
                 if self.present(yaml_path):
                     yield yaml_path
 
-    def _named(self, name: str) -> Iterator[Path]:
+    def _named(self, name: str, unreadable: list[str] | None = None) -> Iterator[Path]:
         """Every path under the KB whose last component is ``name``, found
         by the name alone: a link (to a file, to a folder, or dangling) is
         listed as the name it is, never followed or checked, and a folder
         that is a link is not walked into (``os.walk``). On Python 3.11
         ``Path.rglob`` with a literal name lists a link only when its target
         exists, so a listing would differ by what lies outside the KB; 3.12
-        and later list it either way. One rule on every Python."""
-        for dirpath, dirnames, filenames in os.walk(self.path):
+        and later list it either way. One rule on every Python.
+
+        ``unreadable``: as ``_folders``."""
+        for dirpath, dirnames, filenames in self._folders(unreadable):
             if name in filenames or name in dirnames:
                 yield Path(dirpath) / name
+
+    def _folders(self, unreadable: list[str] | None = None) -> Iterator[tuple[str, list, list]]:
+        """The one walk of the KB's folders, behind both listings
+        (``walk_files`` and ``_named``): what ``os.walk`` yields top-down,
+        ``(dirpath, dirnames, filenames)``, a folder that is a link listed in
+        ``dirnames`` but not walked into.
+
+        A folder the walk could not list says nothing about the files in it,
+        so it is never read as "no files" (#1546). ``unreadable``, when
+        given, receives the KB-relative path (POSIX spelling) of each folder
+        the walk could not list, or list to the end, once, in walk order:
+        the path the walk asked for, never text from the error. Not the root
+        (the KB gate, ``KBConfig.check_readable``, answers for it: #1551),
+        and not a folder the walk's own rule would never list anything in
+        (under a hidden or ``_templates`` part,
+        ``entry_paths.reason_for_folders``), so it never changes what a sync
+        reports. Only the outermost of nested folders can be named: the walk
+        cannot see past it."""
+
+        def could_not_list(folder: str) -> None:
+            if unreadable is None:
+                return
+            parts = entry_paths.parts_below(self.path, folder)
+            if parts is None or entry_paths.reason_for_folders(parts) is not None:
+                return
+            rel = "/".join(parts)
+            if rel not in unreadable:
+                unreadable.append(rel)
+
+        stack = [os.fspath(self.path)]
+        while stack:
+            top = stack.pop()
+            dirnames: list[str] = []
+            filenames: list[str] = []
+            into: list[str] = []
+            try:
+                with os.scandir(top) as listing:
+                    for item in listing:
+                        # As os.walk: a probe that fails is "not a folder",
+                        # and a link to a folder is listed, never entered.
+                        try:
+                            is_dir = item.is_dir()
+                        except OSError:
+                            is_dir = False
+                            # ``is_dir`` follows a link, so it raises for a
+                            # link whose TARGET cannot be stat-ed (a loop, a
+                            # link into a folder this process may not search,
+                            # one through a file). That is a link the walk
+                            # never enters, so nothing lies under it: not
+                            # named. Only when the OS will not say what the
+                            # name ITSELF is (a folder that gives no type,
+                            # in one this process may not search) may it be
+                            # a folder: the rows under it are kept and it is
+                            # named (#1546, #1720). Whatever its name (*.md and
+                            # __collection.yaml included, #1720): if it is really
+                            # a file, that file's own stat also names it.
+                            if _type_unknown(item):
+                                could_not_list(os.path.join(top, item.name))
+                        if not is_dir:
+                            filenames.append(item.name)
+                            continue
+                        dirnames.append(item.name)
+                        try:
+                            is_link = item.is_symlink()
+                        except OSError:
+                            is_link = False
+                        if not is_link:
+                            into.append(item.name)
+            except OSError:
+                # Not listed, or not to the end: as os.walk, nothing of it is
+                # yielded, and the rows under it are kept.
+                could_not_list(top)
+                continue
+            yield top, dirnames, filenames
+            stack.extend(os.path.join(top, name) for name in reversed(into))
 
     def id_of_file(self, file_path: Path) -> str | None:
         """The id ``file_path`` holds, by the loader's rule; None when it is
@@ -1222,6 +1326,8 @@ class KBRepository:
         touch_updated_at: bool = True,
         keep_filename: bool = False,
         exclusive: bool = False,
+        taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
     ) -> Path:
         """
         Save an entry to file.
@@ -1257,7 +1363,9 @@ class KBRepository:
         # No mkdir here: the create below makes the file's folders beneath
         # the root (KBFiles), so a folder that is a link out is the write's
         # refusal, never an OSError that depends on what lies outside.
-        file_path = self._target_path(entry, subdir, keep_filename)
+        file_path = self._target_path(
+            entry, subdir, keep_filename, taken=taken, taken_keys=taken_keys
+        )
 
         # Stamp current schema version on save
         if getattr(self.config, "kb_yaml_present", False):
@@ -1288,7 +1396,15 @@ class KBRepository:
 
         return file_path
 
-    def _target_path(self, entry: Entry, subdir: str | None, keep_filename: bool) -> Path:
+    def _target_path(
+        self,
+        entry: Entry,
+        subdir: str | None,
+        keep_filename: bool,
+        *,
+        taken: Set[Path] = frozenset(),
+        taken_keys: Set[tuple[str, ...]] = frozenset(),
+    ) -> Path:
         """Where ``entry`` lives: ``subdir`` (inferred from the type when
         None) and either its existing filename (``keep_filename``, an update
         or a rename: a file's name is fixed at creation, #391) or a fresh one
@@ -1304,7 +1420,7 @@ class KBRepository:
             self._require_listed(path, entry, subdir, from_pattern=False)
             return path
         # Check for custom file_pattern in the type schema
-        return self._resolve_file_path(entry, subdir)
+        return self._resolve_file_path(entry, subdir, taken=taken, taken_keys=taken_keys)
 
     def delete(
         self,
@@ -1370,13 +1486,14 @@ class KBRepository:
                 touching the filesystem.
 
         Returns:
-            Plan/result dict with keys ``renamed`` (bool), ``old_id``,
-            ``new_id``, ``files_rewritten`` (linking files written),
+            Plan/result dict with keys ``renamed`` (true only after a write),
+            ``old_id``, ``new_id``, ``files_rewritten`` (linking files written),
             ``links_rewritten``, ``files_skipped`` (linking files the rename
             could not patch, each ``{"path", "reason"}``), ``files_partial``
             (linking files whose body was rewritten while a wikilink in a
             frontmatter that could not be patched as values still names the
-            old id, each ``{"path", "reason"}``), ``dry_run``.
+            old id, each ``{"path", "reason"}``), ``dry_run``. A dry run also
+            includes ``file_path``, the retained path relative to the KB.
 
         A rename either completes, with every linker it could not patch
         listed, or changes nothing (#978 delta review, round 1): the entry
@@ -1466,7 +1583,7 @@ class KBRepository:
                     rewrites.append((md_file, linker, rewrite))
 
         if dry_run:
-            return self._rename_result(
+            plan = self._rename_result(
                 old_id,
                 new_id,
                 files_rewritten=len(rewrites),
@@ -1475,6 +1592,8 @@ class KBRepository:
                 partial=partial,
                 dry_run=True,
             )
+            plan["file_path"] = self._rel(src)
+            return plan
 
         # Execute: the entry first, so a rename that cannot write it changes
         # nothing (the delta review's "half-applied rename": the linkers used
@@ -1545,7 +1664,7 @@ class KBRepository:
         dry_run: bool,
     ) -> dict:
         return {
-            "renamed": True,
+            "renamed": not dry_run,
             "old_id": old_id,
             "new_id": new_id,
             "files_rewritten": files_rewritten,
@@ -1616,7 +1735,9 @@ class KBRepository:
                 yield md_file
 
     def walk_files(
-        self, unlisted: list[tuple[Path, str]] | None = None
+        self,
+        unlisted: list[tuple[Path, str]] | None = None,
+        unreadable: list[str] | None = None,
     ) -> Iterator[tuple[Path, Path | None]]:
         """Every markdown path the walk's lexical rules keep, with the walked
         file it is an alias of (``alias_target``), or None for an entry file.
@@ -1626,13 +1747,28 @@ class KBRepository:
         ``unlisted``, when given, receives ``(path, reason)`` for each path
         the same pass meets and the rule skips (``entry_paths.HEALTH_REASONS``:
         a README, a hidden part, ``_templates``), unread: ``index health``
-        asks which of them state an ``id:`` (``unlisted_entry_rows``, #1552)."""
-        for md_file in self.path.rglob("*.md"):
-            reason = entry_paths.unlisted_reason(self.path, md_file)
-            if reason is None:
-                yield md_file, self.alias_target(md_file)
-            elif unlisted is not None and reason in entry_paths.HEALTH_REASONS:
-                unlisted.append((md_file, reason))
+        asks which of them state an ``id:`` (``unlisted_entry_rows``, #1552).
+
+        ``unreadable``, when given, receives each folder the walk could not
+        list (``_folders``, #1546): the reconcile keeps the rows under it.
+
+        The names are those ``rglob("*.md")`` matched: a file, a link, or a
+        folder whose name ends in ``.md`` (the reconcile skips a folder as
+        "not a regular file", #1119); a folder that is a link is not walked
+        into."""
+        root = os.fspath(self.path)
+        for dirpath, dirnames, filenames in self._folders(unreadable):
+            for name in (*filenames, *dirnames):
+                if not name.endswith(".md"):
+                    continue
+                # Joined as text and asked as text: one Path per kept name
+                # (a lookup's walk of a 2,000-file KB, #135).
+                joined = os.path.join(dirpath, name)
+                reason = entry_paths.unlisted_reason(root, joined)
+                if reason is None:
+                    yield Path(joined), self.alias_target(joined)
+                elif unlisted is not None and reason in entry_paths.HEALTH_REASONS:
+                    unlisted.append((Path(joined), reason))
 
     def unlisted_entry_rows(self, unlisted: list[tuple[Path, str]]) -> list[dict[str, str]]:
         """``{kb, path, reason}`` for each skipped path (from ``walk_files``)
@@ -1664,7 +1800,7 @@ class KBRepository:
         rows.sort(key=lambda r: r["path"])
         return rows
 
-    def alias_target(self, md_file: Path) -> Path | None:
+    def alias_target(self, md_file: Path | str) -> Path | None:
         """The walked entry file ``md_file`` is another name for, or None.
 
         An alias (#1262) is a path that is itself a symbolic link whose fully
@@ -1701,13 +1837,25 @@ class KBRepository:
         reconcile reports it as a dangling link, not as an unreadable file.
         None for anything else: a link out of the KB, a loop (its target is
         there, and unreadable), a path that is not a link. ``lexists`` is a
-        probe of a name ``KBFiles`` placed inside the root; nothing is read."""
+        probe of a name ``KBFiles`` placed inside the root; nothing is read.
+
+        "Nothing there" is ``KBFiles.present``'s answer first: where it cannot
+        tell (a folder this process cannot search), the link is not dangling
+        and the reconcile reports it as unreadable (#1546). ``lexists`` then
+        keeps a link loop (absent to ``present``, ELOOP) "there", as before."""
         target = self._in_kb_link(md_file)
-        if target is None or os.path.lexists(target):
+        if target is None:
+            return None
+        try:
+            if KBFiles(self.path).present(target):
+                return None
+        except KBPresenceUnknownError:
+            return None
+        if os.path.lexists(target):
             return None
         return target
 
-    def _in_kb_link(self, md_file: Path) -> Path | None:
+    def _in_kb_link(self, md_file: Path | str) -> Path | None:
         """Where ``md_file`` leads, spelled under ``self.path``, when it is a
         symbolic link under the root that does not lead out of the KB; None
         otherwise. Where it leads is ``KBFiles.resolved`` (the rule behind
@@ -1766,12 +1914,13 @@ class KBRepository:
         yield from self.list_files()
         yield from self.list_collection_files()
 
-    def list_collection_files(self) -> Iterator[Path]:
-        """Every ``__collection.yaml`` the walk keeps (not under a hidden part)."""
-        for yaml_file in self._named("__collection.yaml"):
-            if any(part.startswith(".") for part in yaml_file.parts):
-                continue
-            yield yaml_file
+    def list_collection_files(self, unreadable: list[str] | None = None) -> Iterator[Path]:
+        """Every ``__collection.yaml`` the walk keeps (not under a hidden part
+        or templates folder inside the KB).
+        ``unreadable``: as ``_folders``."""
+        for yaml_file in self._named("__collection.yaml", unreadable):
+            if self._lexically_listed(yaml_file):
+                yield yaml_file
 
     def load_entry_from_bytes(self, file_path: Path, raw: bytes) -> Entry:
         """``load_entry_from_file`` of ``raw``, the file's bytes as already read.
@@ -1824,9 +1973,7 @@ class KBRepository:
                 continue
 
         # Discover __collection.yaml files
-        for yaml_file in self._named("__collection.yaml"):
-            if any(part.startswith(".") for part in yaml_file.parts):
-                continue
+        for yaml_file in self.list_collection_files():
             try:
                 entry = self._load_collection(yaml_file)
                 entry.kb_name = self.name
@@ -1850,11 +1997,7 @@ class KBRepository:
     def count(self) -> int:
         """Count total entries in the KB."""
         md_count = sum(1 for _ in self.list_files())
-        yaml_count = sum(
-            1
-            for f in self._named("__collection.yaml")
-            if not any(part.startswith(".") for part in f.parts)
-        )
+        yaml_count = sum(1 for _ in self.list_collection_files())
         return md_count + yaml_count
 
     def search_files(self, query: str) -> Iterator[tuple[Entry, Path]]:

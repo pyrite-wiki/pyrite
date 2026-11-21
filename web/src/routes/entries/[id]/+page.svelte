@@ -19,7 +19,7 @@
 	import { jsonForScriptTag } from '$lib/utils/sanitize';
 	import { api, ApiError } from '$lib/api/client';
 	import { kbStore } from '$lib/stores/kbs.svelte';
-	import { page } from '$app/stores';
+	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
 	import { parseWikilinks } from '$lib/editor/wikilink-utils';
 	import SkeletonLoader from '$lib/components/common/SkeletonLoader.svelte';
@@ -34,8 +34,8 @@
 	let editorContent = $state('');
 	let resolvedIds = $state<Set<string>>(new Set());
 
-	const entryId = $derived($page.params.id as string);
-	const requestedKb = $derived($page.url.searchParams.get('kb') || undefined);
+	const entryId = $derived(page.params.id as string);
+	const requestedKb = $derived(page.url.searchParams.get('kb') || undefined);
 	// `?kb=` may be a shortname (a link built before the KB list was known,
 	// or typed): the API takes the full name only, so it is resolved here,
 	// against the KB list, before anything is requested.

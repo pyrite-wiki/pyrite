@@ -209,9 +209,7 @@ class TestRenameIndexVerification:
 
     def test_dry_run_skips_index_verification(self, indexed_test_env, sample_events):
         """A dry run never touches the filesystem or the index -- there is
-        nothing to verify, and it must not raise. (dry_run still reports
-        renamed=True as "this is the plan that would execute" -- only the
-        actual file/index side effects are skipped.)"""
+        nothing to verify, and it must not raise."""
         kb_service = _kb_service(indexed_test_env)
         old_id = sample_events[0].id
         kb_name = indexed_test_env["events_kb"].name

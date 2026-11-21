@@ -31,6 +31,25 @@ import pytest
 _KEEP = frozenset({"GIT_TERMINAL_PROMPT", "GIT_PAGER", "GIT_EDITOR", "GIT_SSH_COMMAND"})
 
 
+def _check_checkout_imports() -> None:
+    """Refuse to run tests against packages from a different checkout."""
+    if os.environ.get("PYRITE_SKIP_CHECKOUT_IMPORTS") == "1":
+        return
+
+    from scripts.check_checkout_imports import check
+
+    root = Path(__file__).resolve().parent
+    failures = check(root)
+    if failures:
+        details = "\n".join(failures)
+        raise pytest.UsageError(
+            "Checkout import isolation failed:\n"
+            f"{details}\n"
+            "Run scripts/setup-checkout.sh for this checkout; do not share its editable venv.\n"
+            "Set PYRITE_SKIP_CHECKOUT_IMPORTS=1 only for an environment with non-editable installs."
+        )
+
+
 def _isolate_git_environment() -> None:
     for var in [v for v in os.environ if v.startswith("GIT_") and v not in _KEEP]:
         del os.environ[var]
@@ -83,6 +102,9 @@ def _isolate_pyrite_config_environment() -> None:
 
 
 _isolate_pyrite_config_environment()
+
+
+_check_checkout_imports()
 
 
 def _isolate_hypothesis_storage() -> None:

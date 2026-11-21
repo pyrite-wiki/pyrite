@@ -1,0 +1,1 @@
+- `pyrite rename --dry-run` shows the entry's retained KB-relative path and reports `renamed: false` in JSON (#1271).

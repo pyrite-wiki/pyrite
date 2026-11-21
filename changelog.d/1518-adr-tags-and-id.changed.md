@@ -1,0 +1,1 @@
+- `sw new-adr` accepts comma-separated `--tags` and prints the created entry ID (for example, `adr-0001`) for use with `get` and `update`. The MCP `sw_create_adr` tool also accepts an optional array of tags (#1518).

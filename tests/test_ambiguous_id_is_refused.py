@@ -383,6 +383,8 @@ REST_EXCLUDED = {
     ("GET", "/api/qa/validate/{entry_id}"): _NAMED_ONLY,
     ("POST", "/api/tasks/{task_id}/claim"): "kb required by the write guard; claims in "
     "the named KB only",
+    ("POST", "/api/tasks/{task_id}/start"): "kb required by the write guard; starts in "
+    "the named KB only",
     ("PUT", "/api/entries/{entry_id}"): "kb in the body, required by the write guard",
     ("PATCH", "/api/entries/{entry_id}"): "as PUT",
 }

@@ -1,1 +1,0 @@
-- `pyrite link --format rich` now marks a link whose target does not exist yet as `unresolved`. (#1371)

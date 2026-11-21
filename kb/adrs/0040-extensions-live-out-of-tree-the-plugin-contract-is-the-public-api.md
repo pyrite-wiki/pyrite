@@ -447,7 +447,7 @@ extension is one in-tree theme and one extraction theme.
 
 **Sequencing.** Themes 1–4 (the façade, plugin wiring, context services and the conformance kit) are 0.27 core work, after G1. They are worth doing even if nothing moves. Theme 3 fixes #94 and #92. Extracting journalism-investigation is the last step of 0.27.
 
-## Amendment, proposed 2026-11-16 (the maintainer's to accept): declared type mappings (#468)
+## Amendment, accepted 2026-11-17: declared type mappings (#468, #1526)
 
 Measured before this amendment (dev 3256697): `KBService._resolve_entry_type` stored, for a named core type, the plugin type with the longest MRO among the KB's plugin types that subclass the core class, tie-broken by name. The rule was written nowhere but that docstring. In a `kb_type: software` KB, `pyrite create -t note --allow-undeclared` wrote `adrs/plain-note.md` with `type: adr`, `adr_number: 0`; the web form's default `note`, a REST daily note, MCP and import did the same; zettelkasten, encyclopedia and social KBs turned `note` into `literature_note`, `article` and `writeup`. `add FILE` alone kept the named type, by switching the rule off at its call site (`resolve_type=False`, #197). ADR-0014 makes type interoperability structural, not nominal; plugins subclass `NoteEntry` to reuse its fields, and resolution was the one place core gave inheritance a meaning. The maintainer's decision (2026-10-02, option A): plugins declare which core types map to theirs; nothing is inferred from subclassing.
 

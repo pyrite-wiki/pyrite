@@ -363,10 +363,22 @@ STANDARD = (
 @pytest.fixture
 def software_plugin():
     pytest.importorskip("pyrite_software_kb.cli")
-    from pyrite.plugins.registry import PluginRegistry
+    from pyrite.plugins import get_registry
     from pyrite_software_kb.plugin import SoftwareKBPlugin
 
-    PluginRegistry().register(SoftwareKBPlugin())
+    registry = get_registry()
+    plugin = SoftwareKBPlugin()
+    previous = registry._plugins.get(plugin.name)
+    registry.register(plugin)
+    cli_app._plugins_mounted = False
+    try:
+        yield plugin
+    finally:
+        if previous is None:
+            registry._plugins.pop(plugin.name, None)
+        else:
+            registry._plugins[plugin.name] = previous
+        cli_app._plugins_mounted = False
 
 
 def _migrate_standards(config: PyriteConfig, *, exit_code: int = 0) -> str:
@@ -416,6 +428,28 @@ def test_migrate_standards_never_writes_a_file_its_type_can_no_longer_load(
     assert "title must be a string" in out.replace("\n", " "), out
 
 
+def test_migrate_standards_reports_and_skips_when_move_is_refused(tmp_path: Path, software_plugin):
+    import sqlite3
+
+    # #1625 item 3: sw_migrate_standards catches ValidationError from a refused move,
+    # reports the skip, and exits with 1.
+    config, kb_path = _kb(tmp_path, {"standards/s.md": STANDARD}, kb_type="software")
+    readme_path = kb_path / "standards" / "README.md"
+    (kb_path / "standards" / "s.md").rename(readme_path)
+    before = readme_path.read_bytes()
+
+    with sqlite3.connect(config.settings.index_path) as conn:
+        conn.execute("UPDATE entry SET file_path = ? WHERE id = 's'", (str(readme_path),))
+        conn.commit()
+
+    out = _migrate_standards(config, exit_code=1)
+
+    assert readme_path.read_bytes() == before
+    assert not (kb_path / "validations" / "README.md").exists()
+    assert "Skip" in out
+    assert "the index walk does not list that path" in out
+
+
 # --------------------------------------------------------------------------
 # #978 cold read (2026-10-19): a rename is refused only for the entry renamed;
 # the migrate version is stamped only on a written result; a move holds one
@@ -459,7 +493,7 @@ def test_a_rename_is_refused_only_for_the_entry_renamed(
     repo = KBRepository(config.knowledge_bases[0])
 
     plan = repo.rename("old-one", "new-one", dry_run=True)
-    assert plan["renamed"] and plan["dry_run"], plan
+    assert not plan["renamed"] and plan["dry_run"], plan
     assert _text(linker) == before
 
     result = repo.rename("old-one", "new-one")
@@ -559,7 +593,7 @@ def test_a_rename_completes_and_lists_every_linker_it_could_not_patch(
     repo = KBRepository(config.knowledge_bases[0])
 
     plan = repo.rename("old-one", "new-one", dry_run=True)
-    assert plan["renamed"] and plan["dry_run"], plan
+    assert not plan["renamed"] and plan["dry_run"], plan
     assert faulty.read_bytes() == before and all("[[old-one]]" in _text(p) for p in healthy)
 
     result = repo.rename("old-one", "new-one")

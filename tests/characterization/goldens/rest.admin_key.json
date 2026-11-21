@@ -3676,7 +3676,8 @@
       "type_name_drift": [],
       "type_name_drift_has_more": false,
       "type_name_drift_total": 0,
-      "unlisted_entry_files": 0
+      "unlisted_entry_files": 0,
+      "unreadable_folders": 0
     },
     "status": 200
   },
@@ -3694,7 +3695,8 @@
       "type_name_drift": [],
       "type_name_drift_has_more": false,
       "type_name_drift_total": 0,
-      "unlisted_entry_files": 0
+      "unlisted_entry_files": 0,
+      "unreadable_folders": 0
     },
     "status": 200
   },
@@ -3712,7 +3714,8 @@
       "type_name_drift": [],
       "type_name_drift_has_more": false,
       "type_name_drift_total": 0,
-      "unlisted_entry_files": 0
+      "unlisted_entry_files": 0,
+      "unreadable_folders": 0
     },
     "status": 200
   },
@@ -3748,7 +3751,7 @@
           "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
-        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
         "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
         "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
       },
@@ -3854,6 +3857,8 @@
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
+          "markdown_link": "Markdown link to the entry's file",
+          "markdown_linked_by": "Linked to by a Markdown link",
           "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
@@ -4116,7 +4121,7 @@
           "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
-        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
         "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
         "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
       },
@@ -4222,6 +4227,8 @@
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
+          "markdown_link": "Markdown link to the entry's file",
+          "markdown_linked_by": "Linked to by a Markdown link",
           "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
@@ -4484,7 +4491,7 @@
           "shape": "{error, error_code, suggestion?, errors?, retryable}",
           "suggestion": "optional fix hint, omitted when not applicable"
         },
-        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+        "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
         "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
         "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
       },
@@ -4590,6 +4597,8 @@
           "is_part_of": "Part of a larger whole",
           "located_at": "Location relationship",
           "location_of": "Location of",
+          "markdown_link": "Markdown link to the entry's file",
+          "markdown_linked_by": "Linked to by a Markdown link",
           "member_of": "Person is a member of an organization",
           "mentioned_by": "Mentioned by",
           "mentions": "Mentions",
@@ -4920,6 +4929,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -5234,6 +5245,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -5548,6 +5561,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -6439,6 +6454,15 @@
           "id": "no-default-role-note",
           "kb_name": "no-default-role-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -6458,6 +6482,15 @@
           "id": "private-note",
           "kb_name": "private-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -6477,6 +6510,15 @@
           "id": "readable-note",
           "kb_name": "readable-kb"
         }
+      ],
+      "searched": [
+        "id",
+        "kb_name",
+        "entry_type",
+        "title",
+        "body",
+        "summary",
+        "location"
       ]
     },
     "status": 200
@@ -7759,6 +7801,39 @@
     "status": 200
   },
   "POST /api/tasks/{task_id}/claim | admin_key | readable-kb": {
+    "body": {
+      "claimed": false,
+      "error": "Entry 'does-not-exist-task' not found in KB 'readable-kb'"
+    },
+    "status": 200
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | missing-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | no-default-role-kb": {
+    "body": {
+      "claimed": false,
+      "error": "Entry 'does-not-exist-task' not found in KB 'no-default-role-kb'"
+    },
+    "status": 200
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | private-kb": {
+    "body": {
+      "claimed": false,
+      "error": "Entry 'does-not-exist-task' not found in KB 'private-kb'"
+    },
+    "status": 200
+  },
+  "POST /api/tasks/{task_id}/start | admin_key | readable-kb": {
     "body": {
       "claimed": false,
       "error": "Entry 'does-not-exist-task' not found in KB 'readable-kb'"

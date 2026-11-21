@@ -115,6 +115,20 @@ def fold(part: str) -> str:
     return unicodedata.normalize("NFC", folded).rstrip(". ")
 
 
+def fold_parts(parts: tuple[str, ...]) -> tuple[str, ...]:
+    """Fold each part of ``parts`` with ``fold``."""
+    return tuple(fold(p) for p in parts)
+
+
+def folded_path_key(root: str | os.PathLike[str], path: str | os.PathLike[str]) -> tuple[str, ...]:
+    """Folded parts of ``path`` below ``root``; falls back to folded parts
+    of the path itself if outside or relative."""
+    parts = parts_below(root, path)
+    if parts is not None:
+        return fold_parts(parts)
+    return fold_parts(tuple(p for p in os.fspath(path).replace("\\", "/").split("/") if p))
+
+
 def reason_for_folders(parts: tuple[str, ...]) -> str | None:
     """The folder half of the rule: ``hidden`` or ``templates`` for the first
     of ``parts`` the walk would not enter (a file name is a part too: ``.x.md``

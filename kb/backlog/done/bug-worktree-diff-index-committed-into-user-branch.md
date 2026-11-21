@@ -20,7 +20,7 @@ branch, which would then merge into the canonical KB on accept.
 ## Impact
 
 End-to-end data-corruption risk on the multi-user collaboration path
-([ADR-0024](../adrs/0024-multi-user-collaboration.md)): a per-user diff
+([ADR-0024](../../adrs/0024-worktree-collaboration-model.md)): a per-user diff
 index — meant to be ephemeral, per-worktree, and machine-local — would have
 shipped into the KB's main branch and propagated to every fork on the next
 sync. The binary contents include the user's draft entries; merging them

@@ -38,6 +38,9 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
         # A KB whose kb.yaml could not be checked or read: what the index
         # holds for it cannot be compared with its files (#1542).
         or health.get("unreadable_kbs")
+        # A folder the walk could not list (#1546): the rows under it are
+        # kept, but nothing can say whether its files still hold them.
+        or health.get("unreadable_folders")
         # A KB whose kb.yaml does not load (#1547): every operation that needs
         # its schema stops, so the KB is unusable, not merely warned about. A
         # key with the wrong shape (#1498's class) carries no code and stays
@@ -81,3 +84,65 @@ def health_verdict(health: dict[str, Any]) -> dict[str, Any]:
     )
     status = "unhealthy" if is_unhealthy else ("warning" if has_warning else "healthy")
     return {"status": status, "is_unhealthy": is_unhealthy, "has_warning": has_warning}
+
+
+def network_shape(result: dict[str, Any]) -> dict[str, Any]:
+    """What a network caller (REST, MCP) gets of a reconcile or health
+    result's could-not-reach keys: the one place that decides it (#1546).
+
+    Folders and files the reconcile could not read become counts. The
+    local CLI names them, and its ``malformed`` rows also include the unreadable
+    files. Drop those specific rows from the network result so reindex
+    reports unreadable files by count only.
+
+    A ``confirm`` block (``index sync --confirm``, #1691) is shaped the same
+    way, row by row (``_network_confirm_row``): a file the walk does not index
+    is not described, the files claiming a duplicate id are not listed, and
+    a file that could not be read is not named. The local CLI keeps the rows
+    whole.
+    """
+    shaped = dict(result)
+    shaped["unreadable_folders"] = len(result.get("unreadable_folders") or [])
+    if "unreadable_files" in result:
+        unreadable_files = result["unreadable_files"]
+        shaped["unreadable_files"] = len(unreadable_files)
+        if unreadable_files and "malformed" in result:
+            unreadable_paths = {row["path"] for row in unreadable_files}
+            shaped["malformed"] = [
+                row for row in result["malformed"] if row["path"] not in unreadable_paths
+            ]
+    if isinstance(result.get("confirm"), dict):
+        block = result["confirm"]
+        shaped["confirm"] = {
+            **block,
+            "entries": [_network_confirm_row(row) for row in block.get("entries", [])],
+        }
+    return shaped
+
+
+def _network_confirm_row(row: dict[str, Any]) -> dict[str, Any]:
+    """One confirm row as a network caller gets it (``network_shape``).
+
+    - ``skipped`` (a dot-folder, ``_templates``, a README, a file that is not
+      regular, an in-KB link): the walk does not index it, and index health
+      gives network callers only a count of such files, so the name reads as
+      ``not_found``, with no path and no reason, exactly as for a name no file
+      holds.
+    - ``duplicate``: ``paths`` (every file claiming the id) is left out; the
+      row keeps the indexed file's ``path``, which an entry read gives too.
+    - a ``malformed`` file that could not be read: its ``path`` is left out.
+
+    The status, ``confirmed`` and the counts do not change: a skipped row is
+    never confirmed, and neither is a ``not_found`` one.
+    """
+    from ..storage.index import CONFIRM_UNREADABLE
+
+    shaped = dict(row)
+    status = row.get("status")
+    if status == "skipped":
+        shaped.update({"status": "not_found", "path": None, "reason": None})
+    elif status == "duplicate":
+        shaped.pop("paths", None)
+    elif status == "malformed" and row.get("reason") == CONFIRM_UNREADABLE:
+        shaped["path"] = None
+    return shaped

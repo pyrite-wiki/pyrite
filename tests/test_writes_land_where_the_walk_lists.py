@@ -72,6 +72,8 @@ types:
     file_pattern: "{{id}}.txt"
   pat_upper:
     file_pattern: "{{id}}.MD"
+  pat_case:
+    file_pattern: "{{id}}-x.md"
   tpl_case:
     subdirectory: memos/_TeMpLaTeS
   tpl_upper:
@@ -763,6 +765,18 @@ PARITY_BATCHES = {
         {"entry_type": "pat_title", "id": "x1", "title": "Pat B"},
         {"entry_type": "pat_title", "id": "x2", "title": "Pat B"},
     ],
+    "case collision default names": [{"id": "Abc"}, {"id": "abc"}],
+    "case collision default names reversed": [{"id": "abc"}, {"id": "Abc"}],
+    "case collision with pattern colliding with stepped": [
+        {"id": "Abc"},
+        {"id": "abc"},
+        {"entry_type": "pat_title", "id": "p1", "title": "abc-2"},
+    ],
+    "case collision with pattern colliding with stepped reversed": [
+        {"entry_type": "pat_title", "id": "p1", "title": "abc-2"},
+        {"id": "Abc"},
+        {"id": "abc"},
+    ],
 }
 
 
@@ -877,3 +891,81 @@ def test_create_entry_text_writes_a_listed_path(tmp_path):
     root.mkdir()
     create_entry_text(root / "notes" / "readme-2.md", _note("readme", "R"), root=root)
     assert (root / "notes" / "readme-2.md").is_file()
+
+
+def test_taken_names_comparison_folds_case_and_normalises(tmp_path):
+    """Disk-independent test (#1623): ``_free_default_path`` compares taken
+    paths using ``entry_paths.fold``."""
+    root = tmp_path / "kb"
+    root.mkdir()
+    (root / "kb.yaml").write_text(KB_YAML)
+    repo = KBRepository(KBConfig(name="k", path=root, kb_type="generic"))
+
+    # Abc in taken causes abc to step to -2
+    p1 = repo._free_default_path("abc", None, taken={root / "Abc.md"})
+    assert p1 == root / "abc-2.md"
+
+    # abc in taken causes Abc to step to -2
+    p2 = repo._free_default_path("Abc", None, taken={root / "abc.md"})
+    assert p2 == root / "Abc-2.md"
+
+    # Both abc.md and abc-2.md in taken causes ABC to step to -3
+    p3 = repo._free_default_path("ABC", None, taken={root / "abc.md", root / "abc-2.md"})
+    assert p3 == root / "ABC-3.md"
+
+    # Unicode normalisation: NFD café in taken causes NFC café to step to -2
+    import unicodedata
+
+    cafe_nfc = unicodedata.normalize("NFC", "café")
+    cafe_nfd = unicodedata.normalize("NFD", "café")
+    p_norm = repo._free_default_path(cafe_nfc, None, taken={root / f"{cafe_nfd}.md"})
+    assert p_norm == root / f"{cafe_nfc}-2.md"
+
+
+def test_batch_refuses_colliding_file_pattern_under_case_difference(tmp_path):
+    """#1623: a batch with a file_pattern type refuses a second item whose
+    resolved path differs only in case from an earlier item in the same batch,
+    in both dry-run and real writes."""
+    env = Env(tmp_path / "env")
+    try:
+        batch = [
+            {"entry_type": "pat_case", "id": "Abc", "title": "First"},
+            {"entry_type": "pat_case", "id": "abc", "title": "Second"},
+        ]
+        # Dry run
+        dry = env.svc.bulk_create_entries(KB, batch, validate_only=True)
+        assert dry[0]["valid"] is True
+        assert dry[1]["valid"] is False
+        assert dry[1]["error_code"] == "ENTRY_EXISTS"
+
+        # Real write
+        real = env.svc.bulk_create_entries(KB, batch)
+        assert real[0]["created"] is True
+        assert real[1]["created"] is False
+        assert real[1]["error_code"] == "ENTRY_EXISTS"
+    finally:
+        env.close()
+
+
+@pytest.mark.control(
+    reason="under maintainer decision (a) on #1623, a case-sensitive disk steps "
+    "the second case-colliding id to -2 so a KB written on Linux never holds "
+    "two files that collide when cloned on a case-insensitive disk"
+)
+def test_case_sensitive_disk_steps_second_case_variant_id(tmp_path):
+    env = Env(tmp_path / "env")
+    try:
+        results = env.svc.bulk_create_entries(
+            KB,
+            [
+                {"entry_type": "note", "id": "Abc", "title": "Abc", "body": "1"},
+                {"entry_type": "note", "id": "abc", "title": "abc", "body": "2"},
+            ],
+        )
+        assert results[0]["created"] is True
+        assert results[1]["created"] is True
+        files = {f.name for f in env.root.rglob("*.md")}
+        assert "Abc.md" in files
+        assert "abc-2.md" in files
+    finally:
+        env.close()

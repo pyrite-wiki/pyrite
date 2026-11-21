@@ -11,7 +11,7 @@ For admin operations: pyrite-admin
 import typer
 from rich.table import Table
 
-from .cli.context import open_index_db, require_kb
+from .cli.context import ROW_COUNT_MAX, open_index_db, require_kb
 from .cli.output import cli_console, path_line, validate_output_format
 from .cli.search_commands import register_search_command
 from .config import current_config_file, load_config
@@ -223,8 +223,10 @@ register_search_command(app)
 def timeline(
     date_from: str = typer.Option(None, "--from", help="Start date (YYYY-MM-DD)"),
     date_to: str = typer.Option(None, "--to", help="End date (YYYY-MM-DD)"),
-    min_importance: int = typer.Option(1, "--min-importance", help="Minimum importance (1-10)"),
-    limit: int = typer.Option(50, "--limit", "-n", help="Max results"),
+    min_importance: int = typer.Option(
+        1, "--min-importance", min=1, max=10, help="Minimum importance (1-10)"
+    ),
+    limit: int = typer.Option(50, "--limit", "-n", min=1, max=500, help="Max results (1-500)"),
     output_format: str = typer.Option(
         "rich",
         "--format",
@@ -282,7 +284,9 @@ def timeline(
 def tags_cmd(
     kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
     prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-    limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
+    limit: int = typer.Option(
+        100, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Max tags to show"
+    ),
     output_format: str = typer.Option(
         "rich",
         "--format",

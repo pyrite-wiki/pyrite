@@ -27,4 +27,4 @@ AI agents (Claude Code, Gemini CLI, Codex) use the CLI as their primary Pyrite i
 
 ## References
 
-- [CLI System](../components/cli-system.md)
+- [CLI System](../../components/cli-system.md)

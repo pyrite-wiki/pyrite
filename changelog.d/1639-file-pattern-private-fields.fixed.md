@@ -1,1 +1,0 @@
-- A `file_pattern` in `kb.yaml` that names a private entry field (such as `{_schema_version}`, `{_create_fields}`, `{_entry_type}`) is now refused with `VALIDATION_FAILED`; `_`-prefixed metadata keys on declared types continue to resolve and absent `_` placeholders fall back to the default filename (#1639).
