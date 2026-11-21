@@ -383,8 +383,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite links batch-suggest", "limit_per_entry"),
     ("pyrite links orphans", "min_importance"),
     #
-    # pyrite/cli/task_commands.py
-    ("pyrite task list", "priority"),
 }
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"
