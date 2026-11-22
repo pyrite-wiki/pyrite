@@ -969,7 +969,11 @@ class BaseBackend(ABC):
     ) -> int:
         from sqlalchemy import func
 
-        query = self._session.query(func.count(func.distinct(Entry.id)))
+        # Count the same set `list_entries` returns: archived entries are
+        # dropped there, and the entry key is (id, kb_name), so one id in two
+        # KBs is two entries — not one merged row.
+        query = self._session.query(Entry.id, Entry.kb_name)
+        query = query.filter(func.coalesce(Entry.lifecycle, "active") != "archived")
         if tag:
             query = (
                 query.join(
@@ -991,7 +995,7 @@ class BaseBackend(ABC):
             query = query.filter(effective_status.status_orm(keys) == status)
         if min_importance is not None:
             query = query.filter(Entry.importance >= min_importance)
-        return query.scalar() or 0
+        return query.distinct().count()
 
     def get_distinct_types(
         self,

@@ -1540,8 +1540,11 @@ class PyriteMCPServer:
         """
         kb_name = args.get("kb_name")
         entry_type = args.get("entry_type")
-        limit = min(args.get("limit", 20), 200)
-        offset = args.get("offset", 0)
+        # Out-of-range values are clamped to the declared bounds and the
+        # clamped values are echoed, so the envelope never reports an offset
+        # or limit the answer was not computed with.
+        limit = min(max(int(args.get("limit", 20)), 0), 200)
+        offset = max(int(args.get("offset", 0)), 0)
         # A value that cannot be read is refused, never compared as a string
         # and answered with an empty list (#1268). `since` is parsed here so
         # the refusal names the parameter before any entries are fetched.

@@ -3771,14 +3771,17 @@ class KBService:
         drop changes past the limit (#1859).
 
         With `since`, the scan pages through `list_entries` sorted by
-        `updated_at` descending until it passes `since` (rows are in that
-        order, so it can stop) and keeps the rows whose `updated_at` parses to
-        an instant at or after `since` — the same instant comparison
-        `filter_updated_since` makes, so a stored non-UTC offset cannot
-        mis-sort the filter the way a string comparison would (#1268). A row
-        whose `updated_at` cannot be read is dropped: it cannot be shown to be
-        newer. Without `since`, one query plus `count_entries` over the same
-        readable set suffices, the way `kb_list_entries` pages.
+        `updated_at` descending to the very end and keeps the rows whose
+        `updated_at` parses to an instant at or after `since` — the same
+        instant comparison `filter_updated_since` makes, so a stored non-UTC
+        offset cannot mis-sort the filter the way a string comparison would
+        (#1268). It cannot stop early: `updated_at` is a string column sorted
+        as text, so mixed UTC offsets mis-sort (a row that is newer as an
+        instant can sort after older ones), and the worktree overlay appends
+        new entries at the end of the merged list. A row whose `updated_at`
+        cannot be read is dropped: it cannot be shown to be newer. Without
+        `since`, one query plus `count_entries` over the same readable set
+        suffices, the way `kb_list_entries` pages.
         """
         limit = max(int(limit), 0)
         offset = max(int(offset), 0)
@@ -3809,19 +3812,19 @@ class KBService:
                 )
                 if not rows:
                     break
-                past_since = False
                 for row in rows:
                     stamp = _timestamp_instant(row.get("updated_at"))
                     if stamp is None or stamp < since:
-                        # A readable instant before `since` means the ordered
-                        # scan has passed it; an unreadable one is just dropped.
-                        past_since = past_since or stamp is not None
+                        # Not in the filtered set. The scan keeps going:
+                        # `updated_at` sorts as text, not as an instant, and
+                        # the overlay merge appends new entries at the end, so
+                        # one older-looking row proves nothing about the rest.
                         continue
                     if offset <= total < offset + limit:
                         page.append(row)
                     total += 1
                 cursor += len(rows)
-                if past_since or len(rows) < self._RECENT_PAGE_SIZE:
+                if len(rows) < self._RECENT_PAGE_SIZE:
                     break
             rows = page
         return (attach_importance_warnings(self.db, rows) if include_warnings else rows), total

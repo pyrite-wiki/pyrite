@@ -37,8 +37,16 @@ ALL_NOTES = ["old-note", "a-note", "b-note", "c-note", "d-note"]
 SINCE_MATCHES_DESC = ["d-note", "c-note", "b-note"]
 
 
-def _note(entry_id: str, updated_at: str, *, title: str | None = None, entry_type: str = "note"):
+def _note(
+    entry_id: str,
+    updated_at: str,
+    *,
+    title: str | None = None,
+    entry_type: str = "note",
+    lifecycle: str | None = None,
+):
     """One entry file whose ``updated_at`` is the instant under test."""
+    lifecycle_line = f"lifecycle: {lifecycle}\n" if lifecycle else ""
     return (
         "---\n"
         f"id: {entry_id}\n"
@@ -46,6 +54,7 @@ def _note(entry_id: str, updated_at: str, *, title: str | None = None, entry_typ
         f"title: {title or entry_id}\n"
         "created_at: 2026-10-19T00:00:00Z\n"
         f"updated_at: {updated_at}\n"
+        f"{lifecycle_line}"
         "---\n\n"
         f"Body of {entry_id}\n"
     )
@@ -62,9 +71,13 @@ def world(cli_world):
 
 @pytest.fixture
 def tie_world(cli_world):
-    """One KB, three notes sharing one ``updated_at`` (a page-edge tie)."""
+    """One KB, three notes sharing one ``updated_at`` (a page-edge tie).
+
+    Inserted in reverse id order, so a listing that falls back to insertion
+    order (no id tiebreak) would answer tie-c first and fail the tests below.
+    """
     w = cli_world()
-    for entry_id in ("tie-a", "tie-b", "tie-c"):
+    for entry_id in ("tie-c", "tie-b", "tie-a"):
         w.add_entry("test-kb", _note(entry_id, T_D))
     return w
 
@@ -302,3 +315,88 @@ def test_cli_ties_at_a_page_edge_never_repeat_or_skip(tie_world):
         assert payload["total"] == 3, payload
         seen.extend(_cli_ids(payload))
     assert seen == ["tie-a", "tie-b", "tie-c"], seen
+
+
+# -- review follow-ups (markramm) -------------------------------------------
+
+
+def test_mcp_since_scan_does_not_stop_at_a_text_sorting_artifact(cli_world, monkeypatch):
+    """`updated_at` sorts as text, not as an instant: a row stored with a
+    -04:00 offset can be newer as an instant yet sort *after* +00:00 rows.
+    The since-scan must page past the first batch and still find it."""
+    from pyrite.services.kb_service import KBService
+
+    monkeypatch.setattr(KBService, "_RECENT_PAGE_SIZE", 2)
+    w = cli_world()
+    w.add_entry("test-kb", _note("offset-note", "2026-10-21T22:00:00-04:00"))  # 2026-10-22T02:00Z
+    w.add_entry("test-kb", _note("utc-note-a", "2026-10-21T23:30:00+00:00"))
+    w.add_entry("test-kb", _note("utc-note-b", "2026-10-21T23:30:00+00:00"))
+
+    result = _mcp(w, {"kb_name": "test-kb", "since": "2026-10-22", "limit": 10})
+    assert _mcp_ids(result) == ["offset-note"], result
+    assert result["total"] == 1 and result["has_more"] is False, result
+
+
+def test_total_ignores_archived_entries_like_the_listing_does(world):
+    """`count_entries` counts the same set `list_entries` returns: archived
+    entries are listed neither in the page nor in `total`."""
+    world.add_entry("test-kb", _note("gone-note", T_D, lifecycle="archived"))
+
+    recent = _mcp(world, {"kb_name": "test-kb", "limit": 10})
+    assert recent["total"] == 5, recent
+    assert "gone-note" not in _mcp_ids(recent), recent
+
+    listed = world.mcp(tier="read")._dispatch_tool(
+        "kb_list_entries", {"kb_name": "test-kb", "limit": 10}, readable_kbs={"test-kb"}
+    )
+    assert listed["total"] == 5, listed
+    assert "gone-note" not in [e["id"] for e in listed["entries"]], listed
+
+
+def test_total_counts_one_id_in_two_kbs_as_two_entries(cli_world, tmp_path):
+    """The entry key is (id, kb_name): the same id in two KBs is two entries
+    in `total`, not one merged row."""
+    kbs = [
+        KBConfig(name="kb-a", path=tmp_path / "kb-a", kb_type="generic"),
+        KBConfig(name="kb-b", path=tmp_path / "kb-b", kb_type="generic"),
+    ]
+    w = cli_world(kbs=kbs)
+    w.add_entry("kb-a", _note("same-id", T_C))
+    w.add_entry("kb-b", _note("same-id", T_D))
+    w.add_entry("kb-a", _note("a-only", T_A))
+
+    unscoped = _mcp(w, {"limit": 10}, tier="admin")
+    assert unscoped["total"] == 3, unscoped
+    assert sorted(_mcp_ids(unscoped)) == ["a-only", "same-id", "same-id"], unscoped
+
+    listed = w.mcp(tier="admin")._dispatch_tool(
+        "kb_list_entries", {"limit": 10}, readable_kbs={"kb-a", "kb-b"}
+    )
+    assert listed["total"] == 3, listed
+
+
+def test_kb_recent_schema_declares_the_bounds():
+    """`offset`/`limit` declare the bounds the handler clamps to, so the wire
+    contract refuses out-of-range values instead of silently echoing them."""
+    import jsonschema
+
+    from pyrite.server.tool_schemas import READ_TOOLS
+
+    schema = READ_TOOLS["kb_recent"]["inputSchema"]
+    jsonschema.validate({"kb_name": "test-kb", "limit": 0, "offset": 0}, schema)
+    jsonschema.validate({"kb_name": "test-kb", "limit": 200}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"kb_name": "test-kb", "offset": -1}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"kb_name": "test-kb", "limit": 201}, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"kb_name": "test-kb", "limit": -1}, schema)
+
+
+def test_mcp_out_of_range_offset_and_limit_are_clamped_and_echoed(world):
+    """An out-of-range `offset`/`limit` is clamped to the declared bounds and
+    the envelope echoes the clamped values, never the raw request."""
+    result = _mcp(world, {"kb_name": "test-kb", "since": SINCE, "limit": 999, "offset": -1})
+    assert result["limit"] == 200 and result["offset"] == 0, result
+    assert _mcp_ids(result) == SINCE_MATCHES_DESC, result
+    assert result["total"] == 3 and result["has_more"] is False, result

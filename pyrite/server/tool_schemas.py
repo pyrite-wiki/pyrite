@@ -452,10 +452,13 @@ READ_TOOLS = {
                 "entry_type": {"type": "string", "description": "Filter by entry type"},
                 "limit": {
                     "type": "integer",
+                    "minimum": 0,
+                    "maximum": 200,
                     "description": "Max entries to return (default 20, max 200)",
                 },
                 "offset": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Pagination offset into the entries matching the filters (default 0)",
                 },
                 "since": {

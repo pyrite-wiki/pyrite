@@ -1663,10 +1663,13 @@
           },
           "limit": {
             "description": "Max entries to return (default 20, max 200)",
+            "maximum": 200,
+            "minimum": 0,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset into the entries matching the filters (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "since": {
@@ -4605,10 +4608,13 @@
           },
           "limit": {
             "description": "Max entries to return (default 20, max 200)",
+            "maximum": 200,
+            "minimum": 0,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset into the entries matching the filters (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "since": {
@@ -7070,10 +7076,13 @@
           },
           "limit": {
             "description": "Max entries to return (default 20, max 200)",
+            "maximum": 200,
+            "minimum": 0,
             "type": "integer"
           },
           "offset": {
             "description": "Pagination offset into the entries matching the filters (default 0)",
+            "minimum": 0,
             "type": "integer"
           },
           "since": {
