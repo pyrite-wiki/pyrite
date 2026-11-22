@@ -941,6 +941,10 @@ class BaseBackend(ABC):
             query = query.order_by(sort_col.desc())
         if col != "updated_at":
             query = query.order_by(Entry.updated_at.desc())
+        # Ties broken by the primary key, so offset-paged reads (recent's
+        # since-filtered pages, list_entries) never repeat or skip a row that
+        # shares its sort value with a page boundary (#1859).
+        query = query.order_by(Entry.id.asc(), Entry.kb_name.asc())
 
         query = query.limit(limit).offset(offset)
         rows = query.all()
@@ -960,12 +964,20 @@ class BaseBackend(ABC):
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
         from sqlalchemy import func
 
-        query = self._session.query(func.count(func.distinct(Entry.id)))
+        # Count the same set `list_entries` returns by default: archived
+        # entries are dropped there, and the entry key is (id, kb_name), so
+        # one id in two KBs is two entries — not one merged row.
+        # `include_archived=True` is for "is anything indexed?" callers,
+        # which must not report an archived-only index as empty.
+        query = self._session.query(Entry.id, Entry.kb_name)
+        if not include_archived:
+            query = query.filter(func.coalesce(Entry.lifecycle, "active") != "archived")
         if tag:
             query = (
                 query.join(
@@ -987,7 +999,7 @@ class BaseBackend(ABC):
             query = query.filter(effective_status.status_orm(keys) == status)
         if min_importance is not None:
             query = query.filter(Entry.importance >= min_importance)
-        return query.scalar() or 0
+        return query.distinct().count()
 
     def get_distinct_types(
         self,

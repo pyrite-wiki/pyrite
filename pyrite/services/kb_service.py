@@ -3722,6 +3722,89 @@ class KBService:
         )
         return attach_importance_warnings(self.db, rows) if include_warnings else rows
 
+    #: Page size for `recent`'s scan down the `updated_at`-descending list.
+    _RECENT_PAGE_SIZE = 200
+
+    def recent(
+        self,
+        kb_name: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
+        entry_type: str | None = None,
+        since: datetime | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        *,
+        include_warnings: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Recently changed entries, newest first, with ``since`` applied *before* the limit.
+
+        Returns ``(page, total)``: `page` is up to `limit` entries from the set
+        of entries updated at or after `since` (all entries when `since` is
+        None), starting at `offset`, ordered by `updated_at` descending with
+        ties broken by id; `total` is the size of that set. Callers compute
+        ``has_more`` as ``offset + limit < total`` over the filtered set —
+        never over the page — so a `since`-filtered browse cannot silently
+        drop changes past the limit (#1859).
+
+        With `since`, the scan pages through `list_entries` sorted by
+        `updated_at` descending to the very end and keeps the rows whose
+        `updated_at` parses to an instant at or after `since` — the same
+        instant comparison `filter_updated_since` makes, so a stored non-UTC
+        offset cannot mis-sort the filter the way a string comparison would
+        (#1268). It cannot stop early: `updated_at` is a string column sorted
+        as text, so mixed UTC offsets mis-sort (a row that is newer as an
+        instant can sort after older ones), and the worktree overlay appends
+        new entries at the end of the merged list. A row whose `updated_at`
+        cannot be read is dropped: it cannot be shown to be newer. Without
+        `since`, one query plus `count_entries` over the same readable set
+        suffices, the way `kb_list_entries` pages.
+        """
+        limit = max(int(limit), 0)
+        offset = max(int(offset), 0)
+        if since is None:
+            rows = self.db.list_entries(
+                kb_name=kb_name,
+                kb_names=kb_names,
+                entry_type=entry_type,
+                sort_by="updated_at",
+                sort_order="desc",
+                limit=limit,
+                offset=offset,
+            )
+            total = self.count_entries(kb_name=kb_name, kb_names=kb_names, entry_type=entry_type)
+        else:
+            page: list[dict[str, Any]] = []
+            total = 0
+            cursor = 0
+            while True:
+                rows = self.db.list_entries(
+                    kb_name=kb_name,
+                    kb_names=kb_names,
+                    entry_type=entry_type,
+                    sort_by="updated_at",
+                    sort_order="desc",
+                    limit=self._RECENT_PAGE_SIZE,
+                    offset=cursor,
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    stamp = _timestamp_instant(row.get("updated_at"))
+                    if stamp is None or stamp < since:
+                        # Not in the filtered set. The scan keeps going:
+                        # `updated_at` sorts as text, not as an instant, and
+                        # the overlay merge appends new entries at the end, so
+                        # one older-looking row proves nothing about the rest.
+                        continue
+                    if offset <= total < offset + limit:
+                        page.append(row)
+                    total += 1
+                cursor += len(rows)
+                if len(rows) < self._RECENT_PAGE_SIZE:
+                    break
+            rows = page
+        return (attach_importance_warnings(self.db, rows) if include_warnings else rows), total
+
     def list_collections(
         self,
         kb_name: str | None = None,
@@ -3875,15 +3958,21 @@ class KBService:
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries, optionally filtered."""
+        """Count entries, optionally filtered.
+
+        ``include_archived=True`` counts archived entries too — for the
+        "is anything indexed?" callers, not for listing totals.
+        """
         return self.db.count_entries(
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
             tag=tag,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )

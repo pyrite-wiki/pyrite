@@ -2642,7 +2642,11 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_recent | read_key | private-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2651,7 +2655,11 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_recent | read_key | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2660,7 +2668,11 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_schema | read_key | missing-kb": {
     "did_you_mean": [],

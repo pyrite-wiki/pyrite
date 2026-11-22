@@ -177,15 +177,21 @@ class CRUDMixin:
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries, optionally filtered by KB, type, tag, status, importance."""
+        """Count entries, optionally filtered by KB, type, tag, status, importance.
+
+        ``include_archived`` also counts archived entries (for "is anything
+        indexed?" callers); listings and their totals exclude them.
+        """
         return self._backend.count_entries(
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
             tag=tag,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )

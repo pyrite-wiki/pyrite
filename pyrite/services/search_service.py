@@ -1348,7 +1348,9 @@ class SearchService:
             # be warned about (#668).
             kwargs["kb_names"] = kb_names
         try:
-            return self.db.count_entries(**kwargs) > 0
+            # "Is anything indexed?" — archived entries count, so an
+            # archived-only index is not reported as empty (#1860 review).
+            return self.db.count_entries(include_archived=True, **kwargs) > 0
         except Exception:
             logger.debug("Could not count entries for the embed warning", exc_info=True)
             return False
