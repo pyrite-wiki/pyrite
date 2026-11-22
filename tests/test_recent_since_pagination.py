@@ -397,7 +397,8 @@ def test_list_entries_sql_order_by_ends_with_the_id_tiebreak(world):
         event.remove(engine, "before_cursor_execute", capture)
 
     listing_sql = [
-        s for s in statements
+        s
+        for s in statements
         if "ORDER BY" in s.upper() and "from entry" in s.lower() and "count(" not in s.lower()
     ]
     assert listing_sql, f"no listing SQL captured: {statements}"
