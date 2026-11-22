@@ -373,7 +373,7 @@ The skill is built around one hard-won rule: agents invent plausible details, so
 
 ## Where to read next
 
-- **The design, on one page:** `pyrite get design -k pyrite --format markdown`. What Pyrite is, nine principles, and where the code is behind them.
+- **The design, on one page:** `pyrite get design -k pyrite --format markdown`. What Pyrite is, eleven principles, and where the code is behind them.
 - **The topic maps:** one short page per area, from the write path to plugins, linked from the design page. They are the files in `pyrite/kb/maps/`; read one with `pyrite get map-write-read-path-and-identity -k pyrite --format markdown`.
 - **The decisions:** the architecture decision records are the files in `pyrite/kb/adrs/`. Ask Claude "which ADRs are still proposed, and what would each change?"
 - **Reference:** [Getting started](../getting-started.md), the [README](../../README.md), and [Writing a plugin](plugin-writing.md).
