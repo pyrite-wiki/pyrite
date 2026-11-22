@@ -96,10 +96,15 @@ class SearchBackend(Protocol):
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries matching filters."""
+        """Count entries matching filters.
+
+        ``include_archived`` counts archived entries too — for callers that
+        ask "is anything indexed?" rather than "what does a listing show?".
+        """
         ...
 
     def get_distinct_types(

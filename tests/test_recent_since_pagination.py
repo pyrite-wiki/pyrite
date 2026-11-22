@@ -375,6 +375,59 @@ def test_total_counts_one_id_in_two_kbs_as_two_entries(cli_world, tmp_path):
     assert listed["total"] == 3, listed
 
 
+def test_list_entries_sql_order_by_ends_with_the_id_tiebreak(world):
+    """Item 4 of the #1860 delta review: the tiebreak is pinned by the SQL
+    itself, not only by result order — `list_entries` ORDER BY must end with
+    `id, kb_name` so a tied page edge can never repeat or skip a row (SQLite
+    happens to return tied rows in id order even without the clause, which is
+    why the result-only tie tests could stay green with the clause deleted)."""
+    from sqlalchemy import event
+
+    session = world.db._backend._session  # noqa: SLF001 - test inspects the real query
+    engine = session.get_bind()
+    statements: list[str] = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        world.db.list_entries(kb_name="test-kb", limit=10)
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    listing_sql = [
+        s for s in statements
+        if "ORDER BY" in s.upper() and "from entry" in s.lower() and "count(" not in s.lower()
+    ]
+    assert listing_sql, f"no listing SQL captured: {statements}"
+    for sql in listing_sql:
+        order_by = sql.upper().split("ORDER BY", 1)[1]
+        order_by = order_by.split("LIMIT", 1)[0].strip().rstrip(";")
+        normalized = order_by.replace(" ", "").replace("ENTRY.", "")
+        assert normalized.endswith("IDASC,KB_NAMEASC"), (
+            f"ORDER BY does not end with the (id, kb_name) tiebreak: {order_by}"
+        )
+
+
+def test_index_holding_only_archived_entries_is_not_empty(cli_world):
+    """Item 5 of the #1860 delta review: `count_entries` grew
+    `include_archived`, and the "is anything indexed?" callers use it — an
+    index whose only entries are archived must not report empty (which made
+    `pyrite search` rebuild it on every call and REST search answer 503)."""
+    w = cli_world()
+    w.add_entry("test-kb", _note("only-archived", T_D, lifecycle="archived"))
+
+    # Listing totals still exclude archived entries...
+    assert w.db.count_entries(kb_name="test-kb") == 0
+    recent = _mcp(w, {"kb_name": "test-kb", "limit": 10})
+    assert recent["total"] == 0, recent
+
+    # ...but the emptiness checks count them.
+    assert w.db.count_entries(kb_name="test-kb", include_archived=True) == 1
+    assert w._index_mgr().is_empty() is False  # noqa: SLF001 - the production emptiness check
+
+
 def test_kb_recent_schema_declares_the_bounds():
     """`offset`/`limit` declare the bounds the handler clamps to, so the wire
     contract refuses out-of-range values instead of silently echoing them."""

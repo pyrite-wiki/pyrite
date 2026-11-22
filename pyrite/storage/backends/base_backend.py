@@ -964,16 +964,20 @@ class BaseBackend(ABC):
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
         from sqlalchemy import func
 
-        # Count the same set `list_entries` returns: archived entries are
-        # dropped there, and the entry key is (id, kb_name), so one id in two
-        # KBs is two entries — not one merged row.
+        # Count the same set `list_entries` returns by default: archived
+        # entries are dropped there, and the entry key is (id, kb_name), so
+        # one id in two KBs is two entries — not one merged row.
+        # `include_archived=True` is for "is anything indexed?" callers,
+        # which must not report an archived-only index as empty.
         query = self._session.query(Entry.id, Entry.kb_name)
-        query = query.filter(func.coalesce(Entry.lifecycle, "active") != "archived")
+        if not include_archived:
+            query = query.filter(func.coalesce(Entry.lifecycle, "active") != "archived")
         if tag:
             query = (
                 query.join(

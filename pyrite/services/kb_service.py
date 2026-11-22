@@ -3982,15 +3982,21 @@ class KBService:
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries, optionally filtered."""
+        """Count entries, optionally filtered.
+
+        ``include_archived=True`` counts archived entries too — for the
+        "is anything indexed?" callers, not for listing totals.
+        """
         return self.db.count_entries(
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
             tag=tag,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )

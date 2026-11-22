@@ -128,6 +128,7 @@ class OverlaySearchBackend:
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
@@ -136,6 +137,7 @@ class OverlaySearchBackend:
             kb_names=kb_names,
             entry_type=entry_type,
             tag=tag,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )
@@ -145,6 +147,7 @@ class OverlaySearchBackend:
             entry_type=entry_type,
             tag=tag,
             limit=10000,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )

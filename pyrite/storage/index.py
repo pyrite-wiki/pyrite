@@ -1784,8 +1784,12 @@ class IndexManager:
         self.db.unregister_kb(kb_name)
 
     def is_empty(self) -> bool:
-        """True when the index holds no entries at all."""
-        return self.db.count_entries() == 0
+        """True when the index holds no entries at all.
+
+        Archived entries count: an index holding only archived entries is
+        not empty, so `pyrite search` does not rebuild it on every call.
+        """
+        return self.db.count_entries(include_archived=True) == 0
 
     def get_index_stats(self, kb_names: set[str] | None = None) -> dict[str, Any]:
         """Get statistics about the index.
