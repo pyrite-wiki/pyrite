@@ -267,6 +267,7 @@ def test_create_simulated_case_insensitive_disk(tmp_path, monkeypatch):
         (env.root / "notes").mkdir(exist_ok=True)
 
         orig_is_dir = Path.is_dir
+        orig_samefile = os.path.samefile
 
         def fake_is_dir(p: Path) -> bool:
             if p == env.root / "Notes":
@@ -278,7 +279,7 @@ def test_create_simulated_case_insensitive_disk(tmp_path, monkeypatch):
             if pair == {env.root / "Notes", env.root / "notes"}:
                 return True
             try:
-                return os.path.samefile(p1, p2)
+                return orig_samefile(p1, p2)
             except OSError:
                 return False
 
@@ -350,15 +351,17 @@ def test_create_preserves_existing_folder_casing_on_disk(tmp_path):
 
 
 def test_templated_move_preserves_existing_folder_casing(tmp_path):
-    """When 'items/archive/' exists on disk, a templated move to category 'Archive'
-    places and reports the file under 'items/archive/'."""
+    """When a hand-made 'items/Archive/' folder exists on disk, a templated move
+    whose template expands to 'items/archive' places and reports the file under
+    'items/Archive/'."""
     env = CaseEnv(tmp_path)
     try:
         if not _is_case_insensitive_fs(env.root):
             pytest.skip("the filesystem here is case-sensitive")
 
-        # Create items/archive on disk in lowercase
-        (env.root / "items" / "archive").mkdir(parents=True, exist_ok=True)
+        # A folder made by hand with capitals, while the template lowercases
+        # the category to 'items/archive'.
+        (env.root / "items" / "Archive").mkdir(parents=True, exist_ok=True)
         (env.root / "items" / "active").mkdir(parents=True, exist_ok=True)
 
         res = env.svc.create(
@@ -373,11 +376,11 @@ def test_templated_move_preserves_existing_folder_casing(tmp_path):
         )
         assert res.entry.file_path.relative_to(env.root).as_posix() == "items/active/i1.md"
 
-        # Update category to 'Archive' (title-case). Because 'items/archive' exists,
-        # templated move should resolve to 'items/archive/i1.md'.
-        updated = env.svc.update_entry("i1", "kb_case", category="Archive")
+        # Template value is lowercased, so category "archive" requests
+        # items/archive; the existing items/Archive/ spelling is kept.
+        updated = env.svc.update_entry("i1", "kb_case", category="archive")
         new_rel = updated.file_path.relative_to(env.root).as_posix()
-        assert new_rel == "items/archive/i1.md", f"Expected 'items/archive/i1.md', got: {new_rel}"
+        assert new_rel == "items/Archive/i1.md", f"Expected 'items/Archive/i1.md', got: {new_rel}"
         assert (env.root / new_rel).exists()
     finally:
         env.close()
@@ -423,11 +426,12 @@ def test_folder_casing_cache_stores_only_existing_folders(tmp_path):
 
 
 def test_update_entry_templated_move_simulated_case_insensitive_disk(tmp_path, monkeypatch):
-    """Through update_entry, a templated move uses the existing disk spelling.
-    Fails on Linux CI if the _templated_move resolve line is removed."""
+    """Through update_entry, a templated move uses a hand-made uppercase folder
+    when the template expands to the lowercase spelling. Fails on Linux CI if
+    the _templated_move resolve lines are removed."""
     env = CaseEnv(tmp_path)
     try:
-        (env.root / "items" / "archive").mkdir(parents=True, exist_ok=True)
+        (env.root / "items" / "Archive").mkdir(parents=True)
         (env.root / "items" / "active").mkdir(parents=True, exist_ok=True)
 
         res = env.svc.create(
@@ -443,26 +447,29 @@ def test_update_entry_templated_move_simulated_case_insensitive_disk(tmp_path, m
         assert res.entry.file_path.relative_to(env.root).as_posix() == "items/active/i1.md"
 
         orig_is_dir = Path.is_dir
+        orig_samefile = os.path.samefile
+        archive = env.root / "items" / "Archive"
+        requested = env.root / "items" / "archive"
 
         def fake_is_dir(p: Path) -> bool:
-            if p == env.root / "items" / "Archive":
+            if p == requested:
                 return True
             return orig_is_dir(p)
 
         def fake_samefile(p1: str | os.PathLike[str], p2: str | os.PathLike[str]) -> bool:
             pair = {Path(p1), Path(p2)}
-            if pair == {env.root / "items" / "Archive", env.root / "items" / "archive"}:
+            if pair == {requested, archive}:
                 return True
             try:
-                return os.path.samefile(p1, p2)
+                return orig_samefile(p1, p2)
             except OSError:
                 return False
 
         monkeypatch.setattr(Path, "is_dir", fake_is_dir)
         monkeypatch.setattr(os.path, "samefile", fake_samefile)
 
-        updated = env.svc.update_entry("i1", "kb_case", category="Archive")
+        updated = env.svc.update_entry("i1", "kb_case", category="archive")
         new_rel = updated.file_path.relative_to(env.root).as_posix()
-        assert new_rel == "items/archive/i1.md", f"Expected 'items/archive/i1.md', got: {new_rel}"
+        assert new_rel == "items/Archive/i1.md", f"Expected 'items/Archive/i1.md', got: {new_rel}"
     finally:
         env.close()

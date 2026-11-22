@@ -186,14 +186,6 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         {"KBFiles.present": 1},
         "KBFiles.present, then read_bytes",
     ),
-    ("pyrite/storage/entry_paths.py", "_default_samefile"): (
-        {"os.path.samefile": 1},
-        "samefile fallback comparing directory identity for case-insensitive folder preservation (#1624)",
-    ),
-    ("pyrite/storage/entry_paths.py", "resolve_existing_folder_casing"): (
-        {"os.scandir": 1, "path.is_dir": 2, "path.is_symlink": 1},
-        "scandir, is_dir and is_symlink select an existing directory spelling; symlinks are skipped (#1624)",
-    ),
     ("pyrite/storage/index.py", "IndexManager._load_schemas"): (
         {"KBConfig.kb_yaml_present": 1},
         "kb_yaml_present",
@@ -213,10 +205,6 @@ DECIDED_INSIDE: dict[Site, Entry] = {
     ("pyrite/storage/repository.py", "KBRepository._contained"): (
         {"KBFiles.require": 1},
         "KBFiles.require",
-    ),
-    ("pyrite/storage/repository.py", "KBRepository._resolve_existing_folder_casing"): (
-        {"path.is_dir": 1},
-        "is_dir of a resolved folder under the KB root, only to decide whether to cache the spelling (#1624)",
     ),
     ("pyrite/storage/repository.py", "KBRepository._filename_candidates"): (
         {"repo._named": 2, "repo.present": 2},
@@ -376,6 +364,14 @@ SAME_ANSWER: dict[Site, Entry] = {
         {"path.exists": 1},
         "old_path came from find_file (read through KBFiles)",
     ),
+    ("pyrite/storage/entry_paths.py", "_default_samefile"): (
+        {"os.path.samefile": 1},
+        "samefile comparing directory identity for folder-case preservation (#1624); a linked parent can still be followed, so callers must call _contained, which refuses a path outside the KB with an error that names no path",
+    ),
+    ("pyrite/storage/entry_paths.py", "resolve_existing_folder_casing"): (
+        {"os.scandir": 1, "path.is_dir": 2, "path.is_symlink": 1},
+        "scandir, is_dir and is_symlink select an existing directory spelling; a linked parent can still be followed, so callers must call _contained, which refuses a path outside the KB with an error that names no path (#1624)",
+    ),
     ("pyrite/storage/index.py", "IndexManager._entry_to_dict"): (
         {"KBConfig.kb_yaml_present": 2, "path.stat": 1},
         "the stat of a file loaded through KBFiles (a link out never loads); kb_yaml_present",
@@ -395,6 +391,10 @@ SAME_ANSWER: dict[Site, Entry] = {
     ("pyrite/storage/index.py", "unmodellable_files"): (
         {"path.stat": 1, "repo._read_inside": 1},
         "skips what is not a regular file; a link out that is one is refused by _read_inside and skipped",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository._resolve_existing_folder_casing"): (
+        {"path.is_dir": 1},
+        "is_dir of a resolved folder under the KB root, only to decide whether to cache the spelling; the check returns resolved either way, and callers must call _contained (#1624)",
     ),
     ("pyrite/storage/repository.py", "KBRepository.list_entries"): (
         {"_is_regular_file": 1},
@@ -743,8 +743,8 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 62,
-    "SAME_ANSWER": 19,
+    "DECIDED_INSIDE": 59,
+    "SAME_ANSWER": 22,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
 }
