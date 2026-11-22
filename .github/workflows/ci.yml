@@ -961,6 +961,49 @@ jobs:
         run: bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md
 
   # ===========================================================================
+  # A live check of the recorded fixtures. The Hugo download stays outside gate.
+  hugo-oracle:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/dev')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - name: Install Hugo
+        env:
+          HUGO_VERSION: "0.168.0"
+        run: |
+          hugo_dir=$(mktemp -d)
+          curl --fail --location --show-error --silent --retry 3 \
+            "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_${HUGO_VERSION}_linux-amd64.tar.gz" \
+            --output "$hugo_dir/hugo.tar.gz"
+          tar -xzf "$hugo_dir/hugo.tar.gz" -C "$hugo_dir" hugo
+          version=$("$hugo_dir/hugo" version)
+          echo "$version"
+          [[ "$version" == "hugo v${HUGO_VERSION}-"* || "$version" == "hugo v${HUGO_VERSION} "* ]]
+          echo "$hugo_dir" >> "$GITHUB_PATH"
+
+      - name: Install dependencies
+        run: |
+          constraints=$(scripts/lock-constraints.sh)
+          uv pip install --system -c "$constraints" -e ".[all]"
+          for ext in extensions/*/; do
+            if [ -f "$ext/pyproject.toml" ]; then
+              uv pip install --system -c "$constraints" -e "$ext"
+            fi
+          done
+
+      - name: Compare recorded fixtures with live Hugo
+        env:
+          HF_HUB_OFFLINE: "1"
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
+        run: pytest tests/test_frontmatter_splitter.py::test_oracle_matches_live_hugo -n auto -q
+
+  # ===========================================================================
   # verify-red (#352; redesigned in 0.26): do the PR's new and edited tests
   # fail without its change? scripts/verify_red_ci.py checks the merge base
   # out into a throwaway worktree, overlays the PR's test-side files, runs the
