@@ -385,6 +385,8 @@ REST_EXCLUDED = {
     "the named KB only",
     ("POST", "/api/tasks/{task_id}/start"): "kb required by the write guard; starts in "
     "the named KB only",
+    ("POST", "/api/tasks/{task_id}/finish"): "kb required by the write guard; finishes in "
+    "the named KB only",
     ("PUT", "/api/entries/{entry_id}"): "kb in the body, required by the write guard",
     ("PATCH", "/api/entries/{entry_id}"): "as PUT",
 }

@@ -38,7 +38,7 @@ from tests.characterization.surfaces import (
 )
 
 PINNED_REST_TOTAL_ROUTE_COUNT = (
-    133  # 132 until #1685 added POST /api/tasks/{task_id}/start; 143 until #953
+    134  # 133 until #1745 added POST /api/tasks/{task_id}/finish; 132 until #1685
 )
 PINNED_MCP_TOTAL_TOOL_COUNT = 110  # 108 before #1688 (task_park/unpark); 106 before #1685
 

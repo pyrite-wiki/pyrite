@@ -302,6 +302,15 @@ REST_CASES: dict[str, Case] = {
         lambda s: {"url": f"/api/tasks/{s[0]}/start", "params": {"kb": NOTES}, "json": {}},
         seeds=((NOTES, "task", "status: open\n"),),
     ),
+    "POST /api/tasks/{task_id}/finish": Case(
+        WRITES,
+        lambda s: {
+            "url": f"/api/tasks/{s[0]}/finish",
+            "params": {"kb": NOTES},
+            "json": {"reason": "shipped"},
+        },
+        seeds=((NOTES, "task", "status: in_progress\nassignee: {holder}\n"),),
+    ),
     # -- reads by POST, and writes that are not KB files ---------------------
     "POST /api/entries/resolve-batch": Case(
         NO_KB_FILE, lambda s: {"json": {"targets": ["x"], "kb": NOTES}}, reason="a read"
