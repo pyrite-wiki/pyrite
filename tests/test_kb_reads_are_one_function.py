@@ -191,8 +191,8 @@ DECIDED_INSIDE: dict[Site, Entry] = {
         "samefile fallback comparing directory identity for case-insensitive folder preservation (#1624)",
     ),
     ("pyrite/storage/entry_paths.py", "resolve_existing_folder_casing"): (
-        {"os.scandir": 1, "path.is_dir": 2},
-        "scandir and is_dir check existing directory spelling on case-insensitive filesystems (#1624)",
+        {"os.scandir": 1, "path.is_dir": 2, "path.is_symlink": 1},
+        "scandir, is_dir and is_symlink select an existing directory spelling; symlinks are skipped (#1624)",
     ),
     ("pyrite/storage/index.py", "IndexManager._load_schemas"): (
         {"KBConfig.kb_yaml_present": 1},
@@ -213,6 +213,10 @@ DECIDED_INSIDE: dict[Site, Entry] = {
     ("pyrite/storage/repository.py", "KBRepository._contained"): (
         {"KBFiles.require": 1},
         "KBFiles.require",
+    ),
+    ("pyrite/storage/repository.py", "KBRepository._resolve_existing_folder_casing"): (
+        {"path.is_dir": 1},
+        "is_dir of a resolved folder under the KB root, only to decide whether to cache the spelling (#1624)",
     ),
     ("pyrite/storage/repository.py", "KBRepository._filename_candidates"): (
         {"repo._named": 2, "repo.present": 2},
@@ -739,7 +743,7 @@ LOCAL_ONLY: dict[Site, Entry] = {
 }
 
 SIZES = {
-    "DECIDED_INSIDE": 61,
+    "DECIDED_INSIDE": 62,
     "SAME_ANSWER": 19,
     "NOT_A_KB_FILE": 68,
     "LOCAL_ONLY": 7,
