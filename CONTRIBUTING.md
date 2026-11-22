@@ -626,6 +626,9 @@ the issue. The plan scales with the change: for a `good first issue` one
 sentence is enough ("I'll add `id`/`kb_name` to the three projections and a
 test per command").
 
+An issue assigned to a maintainer is not open for contributors; pick one
+labelled `help wanted` or `good first issue`.
+
 A claim with no PR after 5 days lapses. Two people on one issue is fine — the
 first PR that meets the acceptance criteria merges, and we credit the other
 in the changelog entry for the change.
@@ -717,6 +720,8 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
   Anyone can file one; use the templates. Issues labelled
   [`good first issue`](https://github.com/pyrite-wiki/pyrite/labels/good%20first%20issue)
   are small, well-specified and a fine place to start.
+  An issue assigned to a maintainer is not open for contributors; pick one
+  labelled `help wanted` or `good first issue`.
 - **The roadmap → `kb/`** in this repo: epics, planned work and architecture
   decisions, browsable with the tool itself:
 
