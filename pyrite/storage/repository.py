@@ -676,7 +676,10 @@ class KBRepository:
         if cached is not None:
             return cached
         resolved = entry_paths.resolve_existing_folder_casing(self.path, subdir)
-        self._folder_casing_cache[subdir] = resolved
+        # Only cache spellings that already exist, so a later create or
+        # rename is not hidden by a miss cached from an earlier write.
+        if resolved and (self.path / resolved).is_dir():
+            self._folder_casing_cache[subdir] = resolved
         return resolved
 
     def _get_file_path(self, entry_id: str, subdir: str | None = None) -> Path:

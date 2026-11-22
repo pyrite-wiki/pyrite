@@ -147,6 +147,7 @@ def resolve_existing_folder_casing(
     is_dir: Callable[[Path], bool] | None = None,
     iter_dir: Callable[[Path], Sequence[str]] | None = None,
     same_file: Callable[[Path, Path], bool] | None = None,
+    is_symlink: Callable[[Path], bool] | None = None,
 ) -> str: ...
 
 
@@ -158,6 +159,7 @@ def resolve_existing_folder_casing(
     is_dir: Callable[[Path], bool] | None = None,
     iter_dir: Callable[[Path], Sequence[str]] | None = None,
     same_file: Callable[[Path, Path], bool] | None = None,
+    is_symlink: Callable[[Path], bool] | None = None,
 ) -> None: ...
 
 
@@ -169,6 +171,7 @@ def resolve_existing_folder_casing(
     is_dir: Callable[[Path], bool] | None = None,
     iter_dir: Callable[[Path], Sequence[str]] | None = None,
     same_file: Callable[[Path, Path], bool] | None = None,
+    is_symlink: Callable[[Path], bool] | None = None,
 ) -> str | None: ...
 
 
@@ -179,6 +182,7 @@ def resolve_existing_folder_casing(
     is_dir: Callable[[Path], bool] | None = None,
     iter_dir: Callable[[Path], Sequence[str]] | None = None,
     same_file: Callable[[Path, Path], bool] | None = None,
+    is_symlink: Callable[[Path], bool] | None = None,
 ) -> str | None:
     """Resolve ``subdir`` against existing directories under ``root``, preserving
     the folder spelling the disk already holds on case-insensitive filesystems (#1624).
@@ -188,11 +192,13 @@ def resolve_existing_folder_casing(
     filesystem holds. On a case-sensitive disk where the differently-cased folder
     does not exist, ``subdir`` keeps its requested spelling.
 
-    A different spelling is chosen only when it names the same directory as the
-    requested path (verified via ``same_file`` / ``os.path.samefile``).
+    A listed name is only a candidate when it folds to the same string as the
+    requested part and is not a symlink. A different spelling is then chosen
+    only when ``same_file`` / ``os.path.samefile`` says it is the same directory.
 
-    ``is_dir``, ``iter_dir``, and ``same_file`` can be supplied to simulate a
-    case-insensitive filesystem on case-sensitive platforms in unit tests.
+    ``is_dir``, ``iter_dir``, ``same_file``, and ``is_symlink`` can be supplied
+    to simulate a case-insensitive filesystem on case-sensitive platforms in
+    unit tests.
     """
     if subdir is None:
         return None
@@ -207,6 +213,7 @@ def resolve_existing_folder_casing(
     resolved_parts: list[str] = []
     _is_dir = is_dir if is_dir is not None else (lambda p: p.is_dir())
     _same_file = same_file if same_file is not None else _default_samefile
+    _is_symlink = is_symlink if is_symlink is not None else (lambda p: p.is_symlink())
 
     for part in parts:
         probe = current / part
@@ -215,14 +222,21 @@ def resolve_existing_folder_casing(
                 names = iter_dir(current)
             else:
                 try:
-                    names = [e.name for e in os.scandir(current) if e.is_dir()]
+                    names = [e.name for e in os.scandir(current) if e.is_dir(follow_symlinks=False)]
                 except (OSError, ValueError):
                     names = []
 
-            if part in names:
+            folded = fold(part)
+            candidates = [
+                name for name in names if fold(name) == folded and not _is_symlink(current / name)
+            ]
+            if part in candidates:
                 chosen = part
             else:
-                match = next((name for name in names if _same_file(probe, current / name)), None)
+                match = next(
+                    (name for name in candidates if _same_file(probe, current / name)),
+                    None,
+                )
                 chosen = match if match is not None else part
         else:
             chosen = part

@@ -122,6 +122,38 @@ def test_resolve_existing_folder_casing_different_dirs_that_fold_alike():
     assert resolved_dot == "items."
 
 
+def test_resolve_existing_folder_casing_skips_symlink_listed_first():
+    """A symlink whose name folds like the request, listed first, must not be
+    chosen over the real directory it points at."""
+    root = Path("/fake/root")
+
+    def is_dir(p: Path) -> bool:
+        # is_dir follows the link: Notes -> notes looks like a directory
+        return p.relative_to(root).as_posix() in ("notes", "Notes", "NOTES")
+
+    def iter_dir(p: Path) -> list[str]:
+        if p == root:
+            return ["Notes", "notes"]  # symlink first
+        return []
+
+    def same_file(p1: Path, p2: Path) -> bool:
+        names = {p1.relative_to(root).as_posix(), p2.relative_to(root).as_posix()}
+        return names <= {"notes", "Notes", "NOTES"}
+
+    def is_symlink(p: Path) -> bool:
+        return p.relative_to(root).as_posix() == "Notes"
+
+    resolved = resolve_existing_folder_casing(
+        root,
+        "NOTES",
+        is_dir=is_dir,
+        iter_dir=iter_dir,
+        same_file=same_file,
+        is_symlink=is_symlink,
+    )
+    assert resolved == "notes"
+
+
 def test_resolve_existing_folder_casing_both_exist_case_sensitive():
     """When 'notes/' and 'Notes/' both exist as distinct directories on a
     case-sensitive disk, each requested spelling is kept as requested."""
@@ -369,5 +401,68 @@ def test_reconcile_preserves_existing_folder_casing(tmp_path):
         # Reconcile should find no moves needed because expected_dir matches notes
         reconcile_result = env.svc.reconcile_templated_subdirectories("kb_case", apply=True)
         assert len(reconcile_result.moves) == 0
+    finally:
+        env.close()
+
+
+def test_folder_casing_cache_stores_only_existing_folders(tmp_path):
+    """A miss must not be cached, so a folder created afterwards can still be found."""
+    env = CaseEnv(tmp_path)
+    try:
+        repo = env.repo
+        assert repo._resolve_existing_folder_casing("Notes") == "Notes"
+        assert "Notes" not in repo._folder_casing_cache
+
+        (env.root / "notes").mkdir()
+        # The earlier miss was not cached, but on a case-sensitive disk
+        # 'Notes' is still a different path; cache a real existing folder.
+        assert repo._resolve_existing_folder_casing("notes") == "notes"
+        assert repo._folder_casing_cache.get("notes") == "notes"
+    finally:
+        env.close()
+
+
+def test_update_entry_templated_move_simulated_case_insensitive_disk(tmp_path, monkeypatch):
+    """Through update_entry, a templated move uses the existing disk spelling.
+    Fails on Linux CI if the _templated_move resolve line is removed."""
+    env = CaseEnv(tmp_path)
+    try:
+        (env.root / "items" / "archive").mkdir(parents=True, exist_ok=True)
+        (env.root / "items" / "active").mkdir(parents=True, exist_ok=True)
+
+        res = env.svc.create(
+            "kb_case",
+            {
+                "entry_type": "item",
+                "id": "i1",
+                "title": "Item 1",
+                "body": "Body",
+                "category": "active",
+            },
+        )
+        assert res.entry.file_path.relative_to(env.root).as_posix() == "items/active/i1.md"
+
+        orig_is_dir = Path.is_dir
+
+        def fake_is_dir(p: Path) -> bool:
+            if p == env.root / "items" / "Archive":
+                return True
+            return orig_is_dir(p)
+
+        def fake_samefile(p1: str | os.PathLike[str], p2: str | os.PathLike[str]) -> bool:
+            pair = {Path(p1), Path(p2)}
+            if pair == {env.root / "items" / "Archive", env.root / "items" / "archive"}:
+                return True
+            try:
+                return os.path.samefile(p1, p2)
+            except OSError:
+                return False
+
+        monkeypatch.setattr(Path, "is_dir", fake_is_dir)
+        monkeypatch.setattr(os.path, "samefile", fake_samefile)
+
+        updated = env.svc.update_entry("i1", "kb_case", category="Archive")
+        new_rel = updated.file_path.relative_to(env.root).as_posix()
+        assert new_rel == "items/archive/i1.md", f"Expected 'items/archive/i1.md', got: {new_rel}"
     finally:
         env.close()
