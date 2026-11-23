@@ -1070,11 +1070,10 @@ class GitService:
             "--format=%H|%an|%ae|%aI|%s",
             "--name-status",
             "-z",
-            "--",
-            file_path,
         ]
         if since_commit:
-            cmd.insert(2, f"{since_commit}..HEAD")
+            cmd.extend(["--end-of-options", f"{since_commit}..HEAD"])
+        cmd.extend(["--", file_path])
 
         try:
             result = subprocess.run(
@@ -1265,6 +1264,7 @@ class GitService:
                 "--no-ext-diff",
                 "--no-textconv",
                 "--name-only",
+                "--end-of-options",
                 f"{since_commit}..HEAD",
                 "--",
                 "*.md",
@@ -2303,9 +2303,10 @@ class GitService:
         repo_path: Path, worktree_path: Path, force: bool = False
     ) -> tuple[bool, str]:
         """Remove a git worktree."""
-        cmd = ["git", "worktree", "remove", str(worktree_path)]
+        cmd = ["git", "worktree", "remove"]
         if force:
             cmd.append("--force")
+        cmd.extend(["--", str(worktree_path)])
         try:
             result = subprocess.run(
                 cmd,

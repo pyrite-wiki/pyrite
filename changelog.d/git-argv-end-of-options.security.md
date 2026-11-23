@@ -1,0 +1,1 @@
+Every git command Pyrite builds now passes each variable value (a path, a branch, a ref, a remote, a URL) after `--` or `--end-of-options`, as the value of an option that takes one, or after a check that refuses a leading "-", and a structural test fails when new code breaks that rule.
