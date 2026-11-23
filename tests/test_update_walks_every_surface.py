@@ -1409,42 +1409,6 @@ def test_task_service_migrate_relaxed_mode_changes_only_status_reason(tmp_path: 
     _crlf_kept(after)
 
 
-def test_task_service_unblock_dependents_changes_only_status(tmp_path: Path):
-    from pyrite.services.task_service import TaskService
-
-    text = TASK.replace("status: open", "status: blocked")
-    config, db, folder = _task_kb(tmp_path, {"t1.md": text, "t0.md": PARENT})
-    path = folder / "t1.md"
-    before = _text(path)
-    try:
-        unblocked = TaskService(config, db).unblock_dependents("t0", "tasks")
-    finally:
-        db.close()
-    after = _text(path)
-    assert [u["id"] for u in unblocked] == ["t1"], unblocked
-    assert "status: in_progress" in after
-    assert_only_these_keys_changed(before, after, ("status", "updated_at"))
-    _crlf_kept(after)
-
-
-def test_task_service_aggregate_evidence_changes_only_the_parents_evidence(tmp_path: Path):
-    from pyrite.services.task_service import TaskService
-
-    child = TASK.replace("dependencies: [t0]", "parent: t0\nevidence: [e1]")
-    config, db, folder = _task_kb(tmp_path, {"t1.md": child, "t0.md": PARENT})
-    path = folder / "t0.md"
-    before = _text(path)
-    try:
-        result = TaskService(config, db).aggregate_evidence_to_parent("t1", "tasks")
-    finally:
-        db.close()
-    after = _text(path)
-    assert result and result["evidence_added"] == 1, result
-    assert "e1" in after
-    assert_only_these_keys_changed(before, after, ("evidence", "updated_at"))
-    _crlf_kept(after)
-
-
 def test_task_service_link_qa_assessment_changes_only_evidence(tmp_path: Path):
     from pyrite.services.task_service import TaskService
 

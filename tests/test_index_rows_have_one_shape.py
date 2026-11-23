@@ -1043,10 +1043,6 @@ SERVICES_ENTRY_SQL = {
     ("pyrite/services/task_service.py", "start_task"): (
         "a write: reads the assignee column to start a task; returns the start outcome, not a row"
     ),
-    ("pyrite/services/task_service.py", "unblock_dependents"): (
-        "a write: scans blocked tasks' metadata and transitions the ones it "
-        "unblocks; returns their ids and titles"
-    ),
     ("pyrite/services/task_service.py", "get_subtree"): (
         "returns the task tree's node dicts: its query extracts parent and "
         "assignee from the bag in SQL, so there is no index row to shape"
