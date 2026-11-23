@@ -10,6 +10,7 @@ suite at pre-push, CI as the authority.
 """
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -100,6 +101,29 @@ class TestPreCommitConfig:
 
 
 class TestCIWorkflow:
+    def test_hugo_oracle_checks_the_recorded_version_outside_the_gate(self, ci):
+        job = ci["jobs"]["hugo-oracle"]
+        assert "hugo-oracle" not in ci["jobs"]["gate"]["needs"]
+        assert job["if"] == (
+            "github.event_name == 'workflow_dispatch' || "
+            "(github.event_name == 'push' && github.ref == 'refs/heads/dev')"
+        )
+        assert "dev" in ci[True]["push"]["branches"]
+        assert "workflow_dispatch" in ci[True]
+
+        fixture = (REPO / "tests/test_frontmatter_splitter.py").read_text()
+        recorded = re.search(r"Hugo\s+([0-9]+\.[0-9]+\.[0-9]+)", fixture)
+        assert recorded is not None
+        install = next(step for step in job["steps"] if step.get("name") == "Install Hugo")
+        assert install["env"]["HUGO_VERSION"] == recorded[1]
+        assert "curl --fail" in install["run"]
+        assert '"$hugo_dir/hugo" version' in install["run"]
+        assert any(
+            "pytest tests/test_frontmatter_splitter.py::test_oracle_matches_live_hugo"
+            in step.get("run", "")
+            for step in job["steps"]
+        )
+
     def test_superseded_runs_are_cancelled(self, ci):
         assert ci["concurrency"]["cancel-in-progress"] is True
 
