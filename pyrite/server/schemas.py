@@ -201,6 +201,24 @@ class SearchResponse(BaseModel):
 # =============================================================================
 
 
+def _document_partial_entry_read(schema: dict[str, Any]) -> None:
+    # The endpoint supplies these details as extra keys on partial reads.
+    # Document them without adding a field to the response model.
+    properties = schema["properties"]
+    fields = ("field", "rule", "severity", "message")
+    properties["load_problems"] = {
+        "type": "array",
+        "description": "Present only when the file's type could not load every field.",
+        "items": {
+            "type": "object",
+            "properties": {field: {"type": "string"} for field in fields},
+            "required": list(fields),
+        },
+    }
+    for column in ("tags", "participants", "sources", "metadata"):
+        properties[column]["description"] = "Absent when load_problems names this column."
+
+
 class EntryResponse(BaseModel):
     """Full entry response.
 
@@ -214,7 +232,7 @@ class EntryResponse(BaseModel):
     them silently once they left ``metadata``.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="allow", json_schema_extra=_document_partial_entry_read)
 
     id: str
     kb_name: str

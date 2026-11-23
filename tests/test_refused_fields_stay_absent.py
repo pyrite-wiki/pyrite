@@ -203,6 +203,29 @@ def test_a_rest_read_omits_a_refused_list_column_rather_than_nulling_it(make_wor
         assert isinstance(data[other], list), (other, data[other])
 
 
+def test_openapi_documents_partial_entry_reads(make_world):
+    from tests.test_unloadable_file_is_never_written import Shape
+
+    world = make_world(_text("backlog_item", Shape()))
+    schema = world.app.openapi()["components"]["schemas"]["EntryResponse"]
+    properties = schema["properties"]
+
+    problems = properties["load_problems"]
+    assert problems["type"] == "array"
+    assert "only when" in problems["description"]
+    assert "could not load every field" in problems["description"]
+    item = problems["items"]
+    assert item["type"] == "object"
+    fields = {"field", "rule", "severity", "message"}
+    assert set(item["required"]) == fields
+    assert item["properties"] == {field: {"type": "string"} for field in fields}
+    required = schema["required"]
+    assert "load_problems" not in required
+    for column in ("tags", "participants", "sources", "metadata"):
+        assert column not in required
+        assert "Absent when load_problems names this column" in properties[column]["description"]
+
+
 def _daily_note_text(column: str) -> str:
     """A daily note whose type refuses one column."""
     return f"---\ntype: note\nid: daily-2026-11-16\ntitle: Daily\n{column}: oops\n---\n\nToday.\n"
