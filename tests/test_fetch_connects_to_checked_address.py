@@ -123,8 +123,10 @@ def world(monkeypatch):
             host = host.decode("ascii")
         if host in answers:
             caller = sys._getframe(1).f_globals.get("__name__")
-            addr = answers[host][0] if caller == CHECKER else answers[host][1]
-            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, int(port or 0)))]
+            addrs = answers[host][0] if caller == CHECKER else answers[host][1]
+            if isinstance(addrs, str):
+                addrs = (addrs,)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, int(port or 0))) for a in addrs]
         return real_gai(host, port, *args, **kwargs)
 
     def connect(self, address):
@@ -220,6 +222,46 @@ def test_the_url_checker_connects_to_the_checked_address_on_a_redirect_hop(world
     assert internal.hits == 0
     assert result.ok is True, result
     assert landed.hosts == [f"rebind.test:{internal.port}"]
+
+
+def test_a_hop_whose_check_vouched_for_nothing_is_not_connected(world, servers, monkeypatch):
+    """The connection step never falls back to resolving the name itself."""
+    internal = servers("internal")
+    world.answers["rebind.test"] = ("127.0.0.1", "127.0.0.1")
+    monkeypatch.setattr("pyrite.services.url_checker._check_url_safe", lambda url: None)
+
+    result = URLChecker(db=None, timeout=5).check_url(f"http://rebind.test:{internal.port}/x")
+
+    assert result.ok is False
+    assert result.error == "destination is not a public address"
+    assert world.dialled == []
+    assert internal.hits == 0
+
+
+def _closed_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@pytest.mark.parametrize("caller", ["clipper", "url_checker"])
+def test_an_unreachable_judged_address_falls_through_to_the_next_judged_one(caller, world, servers):
+    public = servers("public")
+    internal = servers("internal")
+    world.answers["rebind.test"] = ((PUBLIC_2, PUBLIC), "127.0.0.1")
+    world.stand_ins[PUBLIC_2] = _closed_port()  # refuses the connection
+    world.stand_ins[PUBLIC] = public.port
+    url = f"http://rebind.test:{internal.port}/x"
+
+    if caller == "clipper":
+        assert _clip(url).title == "public"
+    else:
+        assert URLChecker(db=None, timeout=5).check_url(url).ok is True
+
+    assert [a for a, _ in world.dialled] == [PUBLIC_2, PUBLIC]
+    assert internal.hits == 0
 
 
 # --- https: verification stays on the URL's name ---------------------------------

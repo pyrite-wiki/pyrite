@@ -72,8 +72,8 @@ def test_a_redirect_to_a_non_public_address_is_refused(servers, monkeypatch):
 
     def allow_the_first_hop_only(url):
         if url == hop.url:
-            return
-        real(url)
+            return ("127.0.0.1",)  # vouched for: the connection goes only here
+        return real(url)
 
     # The first destination stands in for a public site; the redirect it
     # issues must meet the real rule.

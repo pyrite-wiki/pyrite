@@ -17,8 +17,10 @@ from pyrite.services.url_checker import URLChecker
     ],
 )
 def test_method_refusal_retries_get_but_missing_sources_do_not(head_status, monkeypatch):
-    # The server is on loopback; the destination rule has its own tests.
-    monkeypatch.setattr("pyrite.services.url_checker._check_url_safe", lambda url: None)
+    # The server is on loopback; the destination rule has its own tests. The
+    # stand-in check vouches for loopback: the connection goes only to an
+    # address the check returned.
+    monkeypatch.setattr("pyrite.services.url_checker._check_url_safe", lambda url: ("127.0.0.1",))
     calls = []
 
     class Handler(BaseHTTPRequestHandler):
