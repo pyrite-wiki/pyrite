@@ -814,7 +814,6 @@ def register_entry_commands(app: typer.Typer) -> None:
             updates["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
-            kb_config = config.require_kb(kb_name)
             # The read is kept for its refusals (an ambiguous id, an unnamed
             # KB), which answer before anything else; entry_type helps parse
             # declared text/number fields correctly (#1672).
@@ -824,6 +823,16 @@ def register_entry_commands(app: typer.Typer) -> None:
                 if isinstance(existing_entry, dict)
                 else getattr(existing_entry, "entry_type", getattr(existing_entry, "type", None))
             )
+            target_kb = (
+                kb_name
+                or (
+                    existing_entry.get("kb_name")
+                    if isinstance(existing_entry, dict)
+                    else getattr(existing_entry, "kb_name", None)
+                )
+                or ""
+            )
+            kb_config = config.require_kb(target_kb) if target_kb else None
 
             # --field key=value pairs: syntax only; the service applies the schema.
             updates.update(
