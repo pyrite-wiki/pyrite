@@ -65,6 +65,10 @@ def test_a_loopback_url_is_refused_without_a_request(servers):
     assert target.hits == 0
 
 
+@pytest.mark.control(
+    reason="the redirect refusal predates pinning; its first-hop stand-in now returns the "
+    "address it vouches for, which the pinned connection requires"
+)
 def test_a_redirect_to_a_non_public_address_is_refused(servers, monkeypatch):
     target = servers()
     hop = servers(redirect_to=target.url)
@@ -72,8 +76,8 @@ def test_a_redirect_to_a_non_public_address_is_refused(servers, monkeypatch):
 
     def allow_the_first_hop_only(url):
         if url == hop.url:
-            return
-        real(url)
+            return ("127.0.0.1",)  # vouched for: the connection goes only here
+        return real(url)
 
     # The first destination stands in for a public site; the redirect it
     # issues must meet the real rule.
