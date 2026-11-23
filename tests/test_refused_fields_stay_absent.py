@@ -207,7 +207,18 @@ def test_openapi_documents_partial_entry_reads(make_world):
     from tests.test_unloadable_file_is_never_written import Shape
 
     world = make_world(_text("backlog_item", Shape()))
-    schema = world.app.openapi()["components"]["schemas"]["EntryResponse"]
+    openapi = world.app.openapi()
+    schemas = openapi["components"]["schemas"]
+
+    def response_schema(path, method):
+        return openapi["paths"][path][method]["responses"]["200"]["content"]["application/json"][
+            "schema"
+        ]
+
+    entry_read = response_schema("/api/entries/{entry_id}", "get")
+    assert response_schema("/api/daily/{date_str}", "get") == entry_read
+    assert response_schema("/api/daily/{date_str}", "post") == entry_read
+    schema = schemas[entry_read["$ref"].rsplit("/", 1)[-1]]
     properties = schema["properties"]
 
     problems = properties["load_problems"]
@@ -224,6 +235,18 @@ def test_openapi_documents_partial_entry_reads(make_world):
     for column in ("tags", "participants", "sources", "metadata"):
         assert column not in required
         assert "Absent when load_problems names this column" in properties[column]["description"]
+
+    for path, method in (
+        ("/api/entries", "get"),
+        ("/api/collections/{collection_id}/entries", "get"),
+        ("/api/collections/query-preview", "post"),
+    ):
+        envelope = schemas[response_schema(path, method)["$ref"].rsplit("/", 1)[-1]]
+        item = envelope["properties"]["entries"]["items"]
+        shared_properties = schemas[item["$ref"].rsplit("/", 1)[-1]]["properties"]
+        assert "load_problems" not in shared_properties, path
+        for column in ("tags", "participants", "sources", "metadata"):
+            assert "load_problems" not in shared_properties[column].get("description", ""), path
 
 
 def _daily_note_text(column: str) -> str:

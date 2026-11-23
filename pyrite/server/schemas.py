@@ -232,7 +232,7 @@ class EntryResponse(BaseModel):
     them silently once they left ``metadata``.
     """
 
-    model_config = ConfigDict(extra="allow", json_schema_extra=_document_partial_entry_read)
+    model_config = ConfigDict(extra="allow")
 
     id: str
     kb_name: str
@@ -257,6 +257,12 @@ class EntryResponse(BaseModel):
     # SHA-256 of the file bytes the read parsed (ADR-0042 decision 9); None
     # for an entry with no file.
     content_hash: str | None = None
+
+
+class SingleEntryResponse(EntryResponse):
+    """OpenAPI response for a single-entry read, which can return a partial entry."""
+
+    model_config = ConfigDict(json_schema_extra=_document_partial_entry_read)
 
 
 # =============================================================================
