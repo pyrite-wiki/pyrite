@@ -35,16 +35,16 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "pyrite/services/git_service.py",
         "GitService.merge_branch",
     ): (
-        "`git checkout <into>`: git checkout has no --end-of-options (it reads it as a "
-        "pathspec); `into` is refused unless GitService.is_valid_branch_name(into) at the "
-        "top of the same function, which refuses a leading '-'."
+        "`git checkout <into>`: safe by GitService.is_valid_branch_name(into) at the top "
+        "of the same function, which refuses a leading '-' or '+'."
     ),
     (
         "pyrite/utils/git_hardening.py",
         "_account_values",
     ): (
-        "follow-up: git_hardening.py is in flight elsewhere; `*args` are the two literal "
-        "`--get`/key calls of the network-home reader; give the key after `--` there."
+        "follow-up: git_hardening.py is in flight elsewhere; `*args` are four literal "
+        "calls (two `--get`, two `--get-all`) of the network-home reader; give the key "
+        "after `--` there."
     ),
 }
 
