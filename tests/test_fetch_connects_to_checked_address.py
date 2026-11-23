@@ -313,6 +313,10 @@ def pki(tmp_path, monkeypatch):
     import certifi
 
     monkeypatch.setattr(certifi, "where", lambda: str(ca_path))
+    # urllib's HTTPSHandler builds its default context through this hook (PEP 476).
+    monkeypatch.setattr(
+        ssl, "_create_default_https_context", lambda: ssl.create_default_context(cafile=ca_path)
+    )
 
     def server_context(*sans: x509.GeneralName) -> ssl.SSLContext:
         key = ec.generate_private_key(ec.SECP256R1())
@@ -372,5 +376,33 @@ def test_https_to_a_pinned_address_does_not_verify_against_the_ip(world, servers
 
     with pytest.raises(httpx.ConnectError, match="CERTIFICATE_VERIFY_FAILED"):
         _clip(f"https://rebind.test:{internal.port}/page")
+    assert internal.hits == 0
+    assert public.hits == 0
+
+
+def test_the_url_checker_over_https_sends_and_verifies_the_urls_name(world, servers, pki):
+    public = servers("public", tls=pki(pki.dns("rebind.test")))
+    internal = servers("internal", tls=pki(pki.dns("rebind.test")))
+    world.answers["rebind.test"] = (PUBLIC, "127.0.0.1")
+    world.stand_ins[PUBLIC] = public.port
+
+    result = URLChecker(db=None, timeout=5).check_url(f"https://rebind.test:{internal.port}/x")
+
+    assert internal.hits == 0
+    assert result.ok is True, result
+    assert public.sni == ["rebind.test"]
+
+
+def test_the_url_checker_over_https_does_not_verify_against_the_ip(world, servers, pki, caplog):
+    public = servers("public", tls=pki(pki.ip(PUBLIC)))
+    internal = servers("internal", tls=pki(pki.dns("rebind.test")))
+    world.answers["rebind.test"] = (PUBLIC, "127.0.0.1")
+    world.stand_ins[PUBLIC] = public.port
+
+    result = URLChecker(db=None, timeout=5).check_url(f"https://rebind.test:{internal.port}/x")
+
+    assert result.ok is False
+    # The report masks exception text; the log names the verification failure.
+    assert "certificate is not valid for 'rebind.test'" in caplog.text
     assert internal.hits == 0
     assert public.hits == 0
