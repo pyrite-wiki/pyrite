@@ -164,7 +164,9 @@ def _stub_clipper(monkeypatch):
         return httpx.Response(200, html="<html><title>Clipped</title><p>clipped body</p></html>")
 
     def client(*args, **kwargs):
-        return real_client(*args, transport=httpx.MockTransport(page), **kwargs)
+        # The answering transport replaces the clipper's own (pinned) one.
+        kwargs["transport"] = httpx.MockTransport(page)
+        return real_client(*args, **kwargs)
 
     monkeypatch.setattr(
         "pyrite.utils.public_destination.socket.getaddrinfo",
