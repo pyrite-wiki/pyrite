@@ -22,8 +22,6 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-pytestmark = pytest.mark.guard
-
 END_OF_OPTIONS = {"--", "--end-of-options"}
 
 # Options whose next argv element is their value, not a new option. Small and

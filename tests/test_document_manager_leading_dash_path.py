@@ -15,7 +15,7 @@ from pyrite.storage.document_manager import DocumentManager
 
 def _git(repo: Path, *args: str) -> str:
     return subprocess.run(
-        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True, timeout=30
     ).stdout
 
 
