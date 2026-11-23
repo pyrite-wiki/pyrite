@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from pyrite.models.core_types import NoteEntry, PersonEntry
+from pyrite.utils.parse import safe_int
 
 WRITEUP_TYPES = ("essay", "story", "review", "howto", "opinion")
 
@@ -80,7 +81,7 @@ class UserProfileEntry(PersonEntry):
         kw["role"] = meta.get("role", "")
         kw["affiliations"] = meta.get("affiliations", []) or []
         kw["research_status"] = research_status
-        kw["reputation"] = int(meta.get("reputation", 0))
+        kw["reputation"] = safe_int(meta.get("reputation", 0))
         kw["join_date"] = meta.get("join_date", "")
-        kw["writeup_count"] = int(meta.get("writeup_count", 0))
+        kw["writeup_count"] = safe_int(meta.get("writeup_count", 0))
         return cls(**kw)

@@ -39,6 +39,7 @@ from ..schema import CORE_TYPES, expand_subdirectory_template
 from ..utils.atomic_write import HardLinked
 from ..utils.frontmatter import Frontmatter, describe, split_frontmatter
 from ..utils.kb_files import KBFileReadOutsideRootError, KBFiles, KBPresenceUnknownError
+from ..utils.parse import safe_int
 from ..utils.yaml import load_yaml
 from . import entry_paths
 from .entry_writer import (
@@ -607,7 +608,7 @@ class KBRepository:
         if not type_schema or type_schema.version == 0:
             return fm
 
-        entry_sv = int(fm.get("_schema_version", 0))
+        entry_sv = safe_int(fm.get("_schema_version", 0))
         if entry_sv >= type_schema.version:
             return fm
 
