@@ -14,9 +14,11 @@ Host header, TLS SNI and certificate verification still use the URL's name.
 A host with no recorded addresses is refused, not resolved.
 """
 
+import functools
 import http.client
 import ipaddress
 import socket
+import ssl
 import urllib.request
 from urllib.parse import urlparse
 
@@ -84,7 +86,7 @@ def check_url_safe(url: str) -> tuple[str, ...]:
 
     judged: list[str] = []
     for info in infos:
-        addr = info[4][0]
+        addr = str(info[4][0])
         if addr in judged:
             continue
         try:
@@ -181,6 +183,10 @@ def pinned_async_transport(pins: PinnedAddresses) -> httpx.AsyncHTTPTransport:
     transport = httpx.AsyncHTTPTransport(trust_env=False)
     # httpx takes no network backend; the pool it built is replaced by one with
     # the same settings and the pinned dial (encode/httpx discussion 2470).
+    # ``_pool`` is httpx's own attribute: if a release renames it, assigning it
+    # would leave the unpinned pool in use, so that is refused, not tolerated.
+    if not isinstance(getattr(transport, "_pool", None), httpcore.AsyncConnectionPool):
+        raise RuntimeError("httpx.AsyncHTTPTransport no longer keeps its pool in _pool")
     transport._pool = httpcore.AsyncConnectionPool(
         ssl_context=httpx.create_ssl_context(trust_env=False),
         max_connections=100,
@@ -196,17 +202,38 @@ def pinned_async_transport(pins: PinnedAddresses) -> httpx.AsyncHTTPTransport:
 # --- urllib: the HTTP(S) connection dials a pinned address ----------------------
 
 
-def _pinned_connection_class(base: type[http.client.HTTPConnection], pins: PinnedAddresses):
-    def make(host: str, **kwargs: object) -> http.client.HTTPConnection:
-        conn = base(host, **kwargs)
-        # http.client dials through this attribute; HTTPSConnection then wraps
-        # the socket with server_hostname=conn.host, the URL's name.
-        conn._create_connection = lambda address, timeout, source_address=None: pins.connect(
-            address[0], address[1], timeout
-        )
-        return conn
+class _PinnedDial(http.client.HTTPConnection):
+    """``connect()`` (public ``http.client`` API) opens the socket to a pinned
+    address instead of resolving ``self.host``. ``HTTPSConnection.connect``
+    calls this through ``super()`` and then wraps the socket with
+    ``server_hostname=self.host``, the URL's name: SNI and certificate
+    verification stay on the name."""
 
-    return make
+    _pins: PinnedAddresses
+
+    def connect(self) -> None:
+        sock = self._pins.connect(self.host, self.port, self.timeout)
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # as http.client does
+        self.sock = sock
+
+
+class _PinnedHTTPConnection(_PinnedDial):
+    def __init__(self, host: str, *, pins: PinnedAddresses, timeout: float | None = None) -> None:
+        super().__init__(host, timeout=timeout)
+        self._pins = pins
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection, _PinnedDial):
+    def __init__(
+        self,
+        host: str,
+        *,
+        pins: PinnedAddresses,
+        context: ssl.SSLContext,
+        timeout: float | None = None,
+    ) -> None:
+        super().__init__(host, timeout=timeout, context=context)
+        self._pins = pins
 
 
 class _PinnedHTTPHandler(urllib.request.HTTPHandler):
@@ -214,20 +241,22 @@ class _PinnedHTTPHandler(urllib.request.HTTPHandler):
         super().__init__()
         self._pins = pins
 
-    def http_open(self, req):  # noqa: ANN001, ANN201
-        return self.do_open(_pinned_connection_class(http.client.HTTPConnection, self._pins), req)
+    def http_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
+        return self.do_open(functools.partial(_PinnedHTTPConnection, pins=self._pins), req)
 
 
 class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
     def __init__(self, pins: PinnedAddresses) -> None:
         super().__init__()
         self._pins = pins
+        # Its own default context (verification on, hostname checked), not
+        # urllib's process-wide default hook, which a PEP 476 opt-out can
+        # replace with one that does not verify.
+        self._tls = ssl.create_default_context()
 
-    def https_open(self, req):  # noqa: ANN001, ANN201
+    def https_open(self, req: urllib.request.Request) -> http.client.HTTPResponse:
         return self.do_open(
-            _pinned_connection_class(http.client.HTTPSConnection, self._pins),
-            req,
-            context=self._context,
+            functools.partial(_PinnedHTTPSConnection, pins=self._pins, context=self._tls), req
         )
 
 

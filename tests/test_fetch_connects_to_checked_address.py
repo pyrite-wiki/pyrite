@@ -309,13 +309,12 @@ def pki(tmp_path, monkeypatch):
     )
     ca_path = tmp_path / "ca.pem"
     ca_path.write_bytes(ca.public_bytes(serialization.Encoding.PEM))
-    # httpx builds its default context from certifi's bundle.
-    import certifi
-
-    monkeypatch.setattr(certifi, "where", lambda: str(ca_path))
-    # urllib's HTTPSHandler builds its default context through this hook (PEP 476).
+    # Both clients build their client context with ssl.create_default_context
+    # (httpx with certifi's bundle as cafile; the URL checker's pinned HTTPS
+    # handler with the system store): each now trusts only the test CA.
+    real_default_context = ssl.create_default_context
     monkeypatch.setattr(
-        ssl, "_create_default_https_context", lambda: ssl.create_default_context(cafile=ca_path)
+        ssl, "create_default_context", lambda *a, **k: real_default_context(cafile=ca_path)
     )
 
     def server_context(*sans: x509.GeneralName) -> ssl.SSLContext:
