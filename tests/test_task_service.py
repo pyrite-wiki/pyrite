@@ -338,32 +338,10 @@ class TestCancelledState:
         assert repo.load(parent_id).status == "in_progress"
         assert svc.derived_completion("test-tasks")[parent_id]["completion"]["complete"] is True
 
-    def test_cancelled_blocker_satisfies_dependency(self, task_env):
-        """A cancelled blocker is resolved-by-removal: unblock_dependents treats
-        it the same as a done blocker and releases the blocked dependent."""
-        svc = task_env["svc"]
-        blocker = svc.create_task(kb_name="test-tasks", title="Blocker")
-        blocker_id = blocker["entry_id"]
-        dependent = svc.create_task(
-            kb_name="test-tasks",
-            title="Dependent",
-            dependencies=[blocker_id],
-        )
-        dep_id = dependent["entry_id"]
-        # Walk dependent to blocked (open → claimed → in_progress → blocked).
-        svc.update_task(dep_id, "test-tasks", status="claimed", assignee="agent:a")
-        svc.update_task(dep_id, "test-tasks", status="in_progress")
-        svc.update_task(dep_id, "test-tasks", status="blocked")
-
-        # Cancel the blocker, then run the (explicit) unblock pass.
-        svc.update_task(blocker_id, "test-tasks", status="cancelled")
-        unblocked = svc.unblock_dependents(blocker_id, "test-tasks")
-
-        assert any(u["id"] == dep_id for u in unblocked), (
-            "a cancelled blocker should release its dependents"
-        )
-        repo = KBRepository(task_env["kb_config"])
-        assert repo.load(dep_id).status != "blocked"
+    def test_dead_task_service_writers_removed(self):
+        """Neither unblock_dependents nor aggregate_evidence_to_parent exists on TaskService (#1847)."""
+        assert not hasattr(TaskService, "unblock_dependents")
+        assert not hasattr(TaskService, "aggregate_evidence_to_parent")
 
 
 class TestResetTask:
