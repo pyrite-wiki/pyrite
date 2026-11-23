@@ -8,6 +8,10 @@ import pytest
 from pyrite.services.url_checker import URLChecker
 
 
+@pytest.mark.control(
+    reason="not a pinning test: its stand-in check now returns the address it vouches "
+    "for, which the pinned connection requires; passes before the change by design"
+)
 @pytest.mark.parametrize(
     "head_status",
     [
