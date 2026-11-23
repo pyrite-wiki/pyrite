@@ -1,6 +1,6 @@
 ---
 id: web-clipper-response-size-cap-and-dns-rebinding-toctou-defense-r1300-follow-ups
-title: 'Web clipper: response-size cap and DNS-rebinding TOCTOU defense (r1300 follow-ups)'
+title: 'Web clipper and URL checker: connect only to the address the destination check judged (DNS-rebinding defense)'
 type: backlog_item
 tags:
 - security
@@ -13,17 +13,14 @@ priority: medium
 rank: 0
 ---
 
-Follow-up from r1300 clipper-ssrf-defense, which closed the primary SSRF vector (private/loopback/link-local/reserved IP blocklist via ipaddress stdlib classifiers). Two acceptance criteria from the original ticket remain open:
+Follow-up from r1300 clipper-ssrf-defense, which closed the primary SSRF vector (a destination rule: every address a host resolves to must be globally routable). This item is now the DNS-rebinding (TOCTOU) defense only.
 
-1. **Response-body size cap.** A malicious URL serving a multi-GB stream could OOM the worker. Currently httpx buffers the full response into memory via response.text. Fix: stream the response via client.stream() and abort if cumulative bytes exceed MAX_CLIP_BYTES (default 10 MB, configurable via PYRITE_CLIP_MAX_BYTES).
+**Property.** For every fetch of a URL a user or an entry supplied (the web clipper and the QA URL checker, which share `check_url_safe` in `pyrite/utils/public_destination.py`), the host is resolved once per hop, every resolved address is judged by the rule, and the connection goes to an address that was judged, on the first hop and on every redirect hop. The Host header and TLS SNI / certificate verification keep the URL's name. No second, independent name resolution happens between the check and the connect.
 
-2. **DNS-rebinding TOCTOU defense.** The current validator resolves the hostname once, checks all returned IPs, then httpx independently re-resolves and connects. A malicious host can return a public A record to the validator and a private A record to httpx milliseconds later. Fix: resolve once, pin the connection by passing the resolved IP via httpx transport='ssl' + host header, or by using an httpx custom HTTPCore transport that fixes the destination IP. (Reference: https://github.com/encode/httpx/discussions/2470)
+**Was.** `check_url_safe` resolved, judged and returned nothing; httpx (clipper) and urllib (URL checker) then resolved the name again to connect, so a rebinding host could answer the check with a public address and the connect with an internal one.
 
-3. **Optional deploy-level hostname allowlist.** Off by default; configurable via PYRITE_CLIP_ALLOWLIST=host1,host2,... for tighter lockdown on hardened deployments.
+**Done by.** `check_url_safe` returns the judged addresses; each hop records them in a per-fetch `PinnedAddresses`; the connection step dials only one of them (an httpcore network backend for the clipper's httpx client, an HTTP(S)Connection dial for the URL checker's urllib opener). A host with no recorded addresses is refused, never resolved. Tests: `tests/test_fetch_connects_to_checked_address.py`.
 
-Acceptance:
-  - Streaming clip of a 100 MB upstream response aborts after the configured cap, not after full buffer.
-  - DNS rebinding test (mock socket.getaddrinfo to return public IP, but mock httpx connect target to private IP) is rejected.
-  - Allowlist test: with PYRITE_CLIP_ALLOWLIST=example.com, clipping example.org returns CLIPPER_BLOCKED_HOST.
+**Already landed, not in this item: the response-size cap.** `pyrite/services/clipper.py` streams the body through `_read_capped` and refuses past `MAX_CLIP_BYTES` (5 MiB, decoded bytes, compressed codings included) with `ClipperTooLargeError` (`CLIP_TOO_LARGE`, 413); tests in `tests/test_clipper_bounds.py` (`test_reading_stops_at_the_cap_and_does_not_drain_the_stream`, `test_a_page_past_the_cap_is_413_clip_too_large`) and `tests/test_clipper_decoding.py`. The cap is a constant, not the `PYRITE_CLIP_MAX_BYTES` setting first proposed here.
 
-Effort: M. Should land before transparencycascade.org gates public clipper access.
+**Not in this item: the optional deploy-level hostname allowlist** (`PYRITE_CLIP_ALLOWLIST`). It is a separate decision, not part of making the connect match the check.
