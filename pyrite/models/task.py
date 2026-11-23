@@ -39,6 +39,8 @@ _TASK_KNOWN_KEYS = {
     "status",
     "status_reason",
     "parked_awaiting",
+    "park_kind",
+    "retest_after",
     "assignee",
     "parent",
     "parent_task",
@@ -364,6 +366,50 @@ def resolve_workflow_for_type(entry_type: str, kb_schema: Any) -> dict:
     return TASK_WORKFLOW
 
 
+def status_walk(workflow: dict, from_status: str, to_status: str) -> list[str] | None:
+    """The shortest path of states from ``from_status`` to ``to_status``.
+
+    ``[from_status, ..., to_status]``, or None when the workflow has no path.
+    A strict workflow's edges are its declared transitions (for the write
+    role); a relaxed one's are any move to a declared state, so its walk is
+    the direct edge. Structure only: a reason an edge requires is not judged
+    here. The walk is an input to ``validate_status_change``, which judges
+    every edge of it on the write (``_task_validate_transition``); computing
+    a path never permits one. Ties go to the table's order.
+    """
+    if from_status == to_status:
+        return [from_status]
+    if workflow.get("enforce_transitions", True):
+
+        def nexts(state: str) -> list[str]:
+            return [t["to"] for t in get_allowed_transitions(workflow, state, "write")]
+    else:
+        states = list(workflow.get("states", []))
+
+        def nexts(state: str) -> list[str]:
+            return [s for s in states if s != state]
+
+    previous: dict[str, str] = {}
+    frontier = [from_status]
+    seen = {from_status}
+    while frontier:
+        following: list[str] = []
+        for state in frontier:
+            for nxt in nexts(state):
+                if nxt in seen:
+                    continue
+                seen.add(nxt)
+                previous[nxt] = state
+                if nxt == to_status:
+                    path = [nxt]
+                    while path[-1] != from_status:
+                        path.append(previous[path[-1]])
+                    return path[::-1]
+                following.append(nxt)
+        frontier = following
+    return None
+
+
 def validate_status_change(
     workflow: dict,
     old_status: str,
@@ -509,6 +555,14 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
     # read spells only a declared field at the top level, and
     # `TaskService.list_tasks` and the web UI read it there.
     parked_awaiting: str = ""
+    # The rest of a park (#1688): who must act (`person` keeps it from agents;
+    # absent or `external` gives it back on its date) and the date it is
+    # rechecked. Declared fields, kept as written: `retest_after` may be a
+    # YAML date, a quoted date or anything a hand edit left, and is never
+    # rewritten on load. `task_queue.parked_state` is the one reading of the
+    # three; `task park` / `task unpark` write and remove them.
+    park_kind: str = ""
+    retest_after: Any = ""
     parent: str = ""  # overrides Parentable default
     dependencies: list[str] = field(default_factory=list)
     evidence: list[str] = field(default_factory=list)
@@ -544,6 +598,10 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             meta["status_reason"] = self.status_reason
         if self.parked_awaiting:
             meta["parked_awaiting"] = self.parked_awaiting
+        if self.park_kind:
+            meta["park_kind"] = self.park_kind
+        if self.retest_after not in ("", None):
+            meta["retest_after"] = self.retest_after
         if self.assignee:
             meta["assignee"] = self.assignee
         if self.assigned_at:
@@ -607,6 +665,8 @@ class TaskEntry(Assignable, Temporal, Statusable, Prioritizable, Parentable, Not
             status=meta.get("status", "open"),
             status_reason=meta.get("status_reason", "") or "",
             parked_awaiting=meta.get("parked_awaiting", "") or "",
+            park_kind=meta.get("park_kind", "") or "",
+            retest_after=meta.get("retest_after", "") or "",
             assignee=meta.get("assignee", ""),
             assigned_at=meta.get("assigned_at", "") or "",
             parent=parent,

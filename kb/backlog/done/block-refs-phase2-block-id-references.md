@@ -40,5 +40,5 @@ Support `[[entry^block-id]]` syntax for referencing specific paragraphs/blocks.
 
 ## References
 
-- [ADR-0012: Block References and Transclusion](../adrs/0012-block-references-and-transclusion.md)
+- [ADR-0012: Block References and Transclusion](../../adrs/0012-block-references-and-transclusion.md)
 - Parent: [Block References and Transclusion](block-references.md) (#17)

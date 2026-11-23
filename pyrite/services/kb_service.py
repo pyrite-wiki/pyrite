@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import json
 import logging
 import re
 import shlex
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
@@ -40,6 +41,7 @@ from ..exceptions import (
     UndeclaredTypeError,
     UpdateWouldNotLoadError,
     ValidationError,
+    json_safe_value,
     kb_origin,
     outside_text,
     public_attribute,
@@ -90,6 +92,8 @@ from .access_policy import named_kb
 from .body_bounds import MARKER_KEYS, ensure_not_truncated
 from .export_service import ExportService
 from .hook_runner import HookRunner
+from .importance_reading import attach_importance_warnings, refused_importance_message
+from .read_shaping import ENTRY_WARNINGS_KEY
 from .wikilink_service import WikilinkService
 
 logger = logging.getLogger(__name__)
@@ -129,6 +133,19 @@ def _refuse_assignee_change(entry_id: str, before: Entry | None, after: Entry) -
     applies. ``before`` is None for a create.
     """
     _refuse_assignee_values(entry_id, _assignee_of(before), _assignee_of(after))
+
+
+def _lost_claim(
+    entry_id: str, current: Any, from_status: str, current_holder: str, holder: str | None
+) -> dict[str, Any]:
+    """A claim's compare-and-set lost: claim's lost dict. When the status was
+    right and the holder was not (`task start`'s retry, #1685), the error
+    names who holds it now."""
+    if holder is not None and current == from_status and current_holder != holder:
+        error = f"Entry '{entry_id}' is '{current}', held by '{current_holder}', not '{holder}'"
+    else:
+        error = f"Entry '{entry_id}' is '{current}', not '{from_status}'"
+    return {"claimed": False, "error": error, "current_status": current}
 
 
 def _refuse_assignee_values(entry_id: str, old: str, new: str) -> None:
@@ -526,16 +543,21 @@ def _safe_message(exc: Exception) -> str:
 def _validation_suggestion(errors: list[dict[str, Any]]) -> str | None:
     """The one fix hint a field refusal carries (#1284), or ``None``.
 
-    Built from the first row whose fix is mechanical: a missing field names the
-    field, a format or a range names the accepted value. A row that carries
-    only a message (a plugin's own rule) has no mechanical fix and adds none.
+    Built from the first row that carries a ``suggestion`` or whose fix is
+    mechanical: a missing field names the field, a format or a range names
+    the accepted value. A row that carries only a message (a plugin's own
+    rule) has no mechanical fix and adds none.
     """
     for error in errors:
+        if error.get("suggestion"):
+            return str(error["suggestion"])
         field = error.get("field") or "the field"
         expected = error.get("expected")
         rule = error.get("rule")
         if rule == "required":
             return f"set {field}" + (f" ({expected})" if expected else "")
+        if rule == "range" and field == "importance":
+            return "use a whole number 1-10 for importance (e.g. 5)"
         if rule in {"format", "range"} and expected:
             return f"use {expected} for {field}"
     return None
@@ -792,6 +814,53 @@ class KBService:
                 kept.append(err)
         return kept, excepted
 
+    @staticmethod
+    def _raise_schema_violation(entry: Entry, kb_name: str, errors: list[dict[str, Any]]) -> None:
+        """Refuse with the schema path's own rows, rendered once.
+
+        The message is the one :meth:`_validate_write` has always produced,
+        so a refusal raised here and one raised there answer alike on every
+        surface. Always raises; the ``None`` return is for the type checker.
+        """
+        parts = []
+        for e in errors:
+            field = e.get("field", "?")
+            rule = e.get("rule", "")
+            got = e.get("got")
+            expected = e.get("expected")
+            message = e.get("message")
+            if is_off_list(e) and isinstance(expected, list):
+                # Every declared-enum refusal reads the same way, naming the
+                # field, the value and the allowed list (#555); the rule
+                # identifiers themselves are unchanged.
+                rendered = f"{field}: {got!r} is not one of {expected}"
+                # A validator's `message` can say more than the generic
+                # "Invalid <field>: <got>" (e.g. explaining why an enum only
+                # applies conditionally) -- append it when it does, same
+                # spirit as the `required` case below.
+                generic = f"Invalid {field}: {got}"
+                if message and message != generic:
+                    rendered += f" ({message})"
+                parts.append(rendered)
+            elif rule == "required":
+                # A conditional `required` rule (e.g. journalism's "amount is
+                # required when transaction_type is payment") sets `message`
+                # to explain *why*; dropping it for the bare "field: required"
+                # loses the only useful part of the refusal (#429).
+                parts.append(f"{field}: {message or 'required'}")
+            elif message:
+                # A rule this renderer does not know, or none at all (e.g.
+                # journalism-investigation's "Importance must be 1-10, got: 99"): the
+                # validator's own message beats "(expected None, got None)".
+                parts.append(f"{field}: {message}" if field != "?" else message)
+            else:
+                parts.append(f"{field}: {rule} (expected {expected}, got {json_safe_value(got)!r})")
+        raise SchemaViolationError(
+            f"Invalid {entry.entry_type} for KB '{kb_name}': " + "; ".join(parts),
+            errors,
+            suggestion=_validation_suggestion(errors),
+        )
+
     def _validate_write(
         self,
         entry: Entry,
@@ -882,42 +951,8 @@ class KBService:
             warnings.extend(excepted)
         if not errors:
             return warnings
-        parts = []
-        for e in errors:
-            field = e.get("field", "?")
-            rule = e.get("rule", "")
-            got = e.get("got")
-            expected = e.get("expected")
-            message = e.get("message")
-            if is_off_list(e) and isinstance(expected, list):
-                # Every declared-enum refusal reads the same way, naming the
-                # field, the value and the allowed list (#555); the rule
-                # identifiers themselves are unchanged.
-                rendered = f"{field}: {got!r} is not one of {expected}"
-                # A validator's `message` can say more than the generic
-                # "Invalid <field>: <got>" (e.g. explaining why an enum only
-                # applies conditionally) -- append it when it does, same
-                # spirit as the `required` case below.
-                generic = f"Invalid {field}: {got}"
-                if message and message != generic:
-                    rendered += f" ({message})"
-                parts.append(rendered)
-            elif rule == "required":
-                # A conditional `required` rule (e.g. journalism's "amount is
-                # required when transaction_type is payment") sets `message`
-                # to explain *why*; dropping it for the bare "field: required"
-                # loses the only useful part of the refusal (#429).
-                parts.append(f"{field}: {message or 'required'}")
-            elif message:
-                # A rule this renderer does not know, or none at all (e.g.
-                # journalism-investigation's "Importance must be 1-10, got: 99"): the
-                # validator's own message beats "(expected None, got None)".
-                parts.append(f"{field}: {message}" if field != "?" else message)
-            else:
-                parts.append(f"{field}: {rule} (expected {expected}, got {got!r})")
-        raise SchemaViolationError(
-            f"Invalid {entry.entry_type} for KB '{kb_name}': " + "; ".join(parts), errors
-        )
+        self._raise_schema_violation(entry, kb_name, errors)
+        return warnings  # unreachable; _raise_schema_violation always raises
 
     def _get_embedding_worker(self):
         """Lazy `EmbeddingWorker` over this service's index DB.
@@ -1294,6 +1329,9 @@ class KBService:
                 # (left out above): the read names them rather than presenting
                 # a default or answering "not found" (ADR-0042 decision 8a).
                 result["load_problems"] = problems
+            # A refused importance keeps its legacy reading above; say so (#1761).
+            if (said := refused_importance_message(entry._importance_given)) is not None:
+                result[ENTRY_WARNINGS_KEY] = [said]
             return result
         except TypeError as exc:
             # A file with no readable fields: a tagged or complex key, or a
@@ -1779,6 +1817,81 @@ class KBService:
         if envelope:
             fields["metadata"] = envelope
         return {**fields, **added}, attributes
+
+    def create_template_fields(
+        self,
+        entry_type: str,
+        kb_config: KBConfig,
+        *,
+        allow_undeclared: bool = False,
+        importance: int | str | None = None,
+    ) -> dict[str, Any]:
+        """The fields a create of this type in this KB would write, with their values (#1598).
+
+        Read-only: the entry is built the way :meth:`_prepare` builds one
+        (:meth:`_with_declared_fields` + :func:`build_entry`), but nothing is
+        checked against the filesystem and nothing is written, so a preview
+        never refuses an id that already exists. The type is resolved the way
+        :meth:`_prepare` resolves it (:meth:`_resolve_entry_type` and
+        :meth:`_refuse_undeclared_mapping_target`), so the returned ``type``
+        is the type a create would store, not the name the caller gave. The
+        base fields the skeleton sets itself (``id``, ``title``, ``tags``,
+        ``importance``) are left out; the caller adds those. An undeclared
+        type is refused exactly as a create refuses it, unless
+        `allow_undeclared` says otherwise -- and a type the KB's schema does
+        not know, in a KB that enforces validation, is refused with the
+        create's own ``known_type`` rule even under `allow_undeclared`
+        (the flag only lifts the undeclared-type refusal above). That is the
+        type-level refusal only: other value validation is a create's, with
+        values a preview does not have, so it is not run here. The one value
+        a preview does have is the caller's ``importance``: when given, it
+        is judged by the model's own rule, so an out-of-range importance is
+        refused exactly as a create refuses it.
+        """
+        # Resolve first, as `_prepare` does since #1601: the refusal is
+        # on the type that will be stored, the mapped target when a
+        # mapping applies, else the named type.
+        named = entry_type
+        entry_type = self._resolve_entry_type(named, kb_config)
+        if not allow_undeclared:
+            if entry_type != named:
+                self._refuse_undeclared_mapping_target(named, entry_type, kb_config.name, kb_config)
+            else:
+                self._refuse_undeclared_type(named, kb_config.name, kb_config)
+        fields, attributes = self._with_declared_fields(entry_type, kb_config, {})
+        build_kwargs = dict(fields)
+        if importance is not None:
+            build_kwargs["importance"] = importance
+        entry = build_entry(
+            entry_type, entry_id="", title="Your Title Here", body="", **build_kwargs
+        )
+        entry._create_fields = attributes
+        if importance is not None:
+            # The model's own row, the way `_validate_write` raises it: the
+            # skeleton must not show an importance a create would refuse.
+            rows = [row for row in entry.validation_errors() if row.get("field") == "importance"]
+            if rows:
+                raise ValidationError(
+                    "; ".join(row["message"] for row in rows),
+                    errors=rows,
+                    suggestion=_validation_suggestion(rows),
+                )
+        schema = kb_config.kb_schema
+        if schema is not None:
+            # The schema's own `known_type` row, so this refusal cannot
+            # drift from what a create raises: only that row is taken,
+            # the required-field rows a preview has no values for are not.
+            rows = [
+                row
+                for row in schema.validate_entry(entry_type, {}).get("errors", [])
+                if row.get("field") == "entry_type" and row.get("rule") == "known_type"
+            ]
+            if rows:
+                self._raise_schema_violation(entry, kb_config.name, rows)
+        meta = entry.declared_frontmatter()
+        for key in ("id", "title", "tags", "importance"):
+            meta.pop(key, None)
+        return meta
 
     def _prepare_and_save(
         self,
@@ -2313,7 +2426,16 @@ class KBService:
         )
 
     def apply_operations(
-        self, entry_id: str, kb_name: str, ops: list[Any], *, merge_spellings: bool = False
+        self,
+        entry_id: str,
+        kb_name: str,
+        ops: list[Any],
+        *,
+        merge_spellings: bool = False,
+        status_path: Sequence[str] | None = None,
+        expect_holder: str | None = None,
+        refuse_statuses: Sequence[str] | None = None,
+        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The in-process form of an operation write: ``ops`` are
         ``file_operations`` operations (``Set``, ``Append``, ``Remove``,
@@ -2324,9 +2446,29 @@ class KBService:
         fix's link and tag repairs) write one item here instead of a list
         read through the model (#955, B6 P3b). ``merge_spellings`` is `qa
         fix`'s own: the one write a doubly spelled field takes (removing a
-        spelling of an equal pair); no surface passes it (#1001 round 4)."""
+        spelling of an equal pair); no surface passes it (#1001 round 4).
+        ``status_path`` is a multi-step status change (`task finish --walk`,
+        #1685): the states the write passes through, first to last, handed
+        to the ``before_save`` hooks, where the workflow judges every edge.
+        ``expect_holder`` refuses the write unless the bytes it replaces name
+        that assignee (`task start`'s retry and `task finish`, #1685).
+        ``refuse_statuses`` refuses the write if the bytes it replaces name
+        any of those statuses (`task park`, #1817).
+        ``drop_emptied_metadata``: when the write unsets every key of the
+        file's ``metadata:`` block, the block goes with them rather than
+        staying as ``metadata: {}`` (`task unpark`, #1688 round 1); decided
+        on the file's own keys, never the caller's word."""
         return self._update(
-            entry_id, kb_name, {}, ops=list(ops), restrict=False, merge_spellings=merge_spellings
+            entry_id,
+            kb_name,
+            {},
+            ops=list(ops),
+            restrict=False,
+            merge_spellings=merge_spellings,
+            status_path=status_path,
+            expect_holder=expect_holder,
+            refuse_statuses=refuse_statuses,
+            drop_emptied_metadata=drop_emptied_metadata,
         )
 
     def _update(
@@ -2338,6 +2480,10 @@ class KBService:
         restrict: bool,
         ops: list[Any] | None = None,
         merge_spellings: bool = False,
+        status_path: Sequence[str] | None = None,
+        expect_holder: str | None = None,
+        refuse_statuses: Sequence[str] | None = None,
+        drop_emptied_metadata: bool = False,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2395,6 +2541,25 @@ class KBService:
                 raise EntryNotFoundError(
                     f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
                 ) from None
+            if expect_holder is not None:
+                # `task start`'s retry from `claimed` (#1685): only the holder
+                # it read moves the claim on. Read from these bytes, on every
+                # attempt, so a claim taken in between is refused, not replaced.
+                file_holder = getattr(entry, "assignee", "") or ""
+                if file_holder != expect_holder:
+                    raise ValidationError(
+                        f"'{entry_id}' is held by '{file_holder}', not '{expect_holder}': "
+                        "only its holder moves it on. Nothing was written."
+                    )
+            if refuse_statuses is not None:
+                # `task park` refuses done or cancelled tasks (#1817): re-checked
+                # in these bytes on every attempt so a task completed in between
+                # is refused, not parked.
+                file_status = getattr(entry, "status", "") or ""
+                if file_status in refuse_statuses:
+                    raise ValidationError(
+                        f"Task '{entry_id}' is {file_status}: a {file_status} task is not parked. Nothing was written."
+                    )
             text = raw.decode("utf-8")
             split = split_frontmatter(text)
             if not isinstance(split, Frontmatter):
@@ -2423,6 +2588,8 @@ class KBService:
                         continue  # the same field named twice with one value
                     placed[resolved.path] = resolved.value
                 all_ops.append(resolved)
+            if drop_emptied_metadata:
+                all_ops = _drop_emptied_metadata(file_values, all_ops)
             self._refuse_conflicting_spellings(entry, updates)
             try:
                 # The file is this KB's: its parser's words go to a reader of it.
@@ -2440,6 +2607,13 @@ class KBService:
                             origin=kb_origin(kb_config.name),
                         )
             except OperationRefusedError as e:
+                suggestion = self._append_scalar_repair(entry, kb_config, file_values, e.op)
+                if suggestion:
+                    raise ValidationError(
+                        f"Cannot update '{entry_id}': {e.reason}; "
+                        f"set it as a list first: {suggestion}, then retry the append.",
+                        suggestion=suggestion,
+                    ) from e
                 raise ValidationError(f"Cannot update '{entry_id}': {e.reason}") from e
 
             # The field set as loaded, for the exception that keeps an off-list
@@ -2483,7 +2657,11 @@ class KBService:
             warnings = self._validate_write(
                 new_entry, kb_name, kb_config, before=before, existing_entry=entry
             )
-            extra = {"old_status": old_status} if old_status else {}
+            extra: dict[str, Any] = {"old_status": old_status} if old_status else {}
+            if status_path is not None:
+                # Fixed before the read: a retry that finds another status
+                # is refused by the hook, never re-planned (#1685).
+                extra["status_path"] = tuple(status_path)
             hook_ctx = self._hook_ctx(kb_name, kb_config, "update", extra)
             # A before_save hook may refuse (raise); its return value is
             # ignored and nothing it does reaches the file (decision 4). What
@@ -2755,6 +2933,34 @@ class KBService:
                 out.pop("metadata")
         return out, sorted(ignored)
 
+    @staticmethod
+    def _append_scalar_repair(
+        entry: Entry, kb_config: KBConfig, file_values: dict[str, Any], op: Any
+    ) -> str | None:
+        """Name a lossless repair for a refused append to a declared list (#1760).
+
+        Called only after storage refuses: an explicit set followed by append
+        in the same write may already repair the file's scalar.
+        """
+        from ..schema.field_aliases import field_at
+
+        if not isinstance(op, Append):
+            return None
+        field, rest = field_at(type(entry), entry.entry_type, op.path)
+        declared = kb_config.kb_schema.type_fields(entry.entry_type).get(field)
+        current = _value_at(file_values, op.path)
+        if (
+            rest
+            or declared is None
+            or declared.field_type not in ("list", "multi-select", "tags")
+            or not isinstance(current, str)
+        ):
+            return None
+        value = json.dumps([current], ensure_ascii=False)
+        return shlex.join(
+            ["pyrite", "update", entry.id, "-k", kb_config.name, "-f", f"{field}={value}"]
+        )
+
     def _resolve_operation(
         self,
         entry: Entry,
@@ -2904,6 +3110,7 @@ class KBService:
         path: tuple[Any, ...] = (*head, *rest)
         if isinstance(op, Set):
             sent = op.value
+            declared = None
             if not rest:
                 # A value set on a declared list field is stored as a list
                 # (#1502): the same coercion a create makes, on the resolved
@@ -2915,6 +3122,10 @@ class KBService:
             spelled = path[0] if isinstance(path, tuple) and len(path) == 1 else path
             if _same_instant_as_file(file_values, spelled, value):
                 return Set(path, file_values[spelled])  # the same instant: no change
+            if isinstance(spelled, str) and _same_number_spelling_as_file(
+                file_values, spelled, value, declared=declared
+            ):
+                return Set(path, file_values[spelled])  # the same number spelling: no change
             return Set(path, value)
         if isinstance(op, Append | Remove):
             value = _plain_value(op.value)
@@ -2997,6 +3208,8 @@ class KBService:
         # folder that is a link out of the KB is refused by ``_contained``.
         try:
             subdir = repo._infer_subdir(entry)
+            if subdir:
+                subdir = repo._resolve_existing_folder_casing(subdir)
             target = repo._contained(
                 kb_config.path / subdir / path.name if subdir else kb_config.path / path.name
             )
@@ -3469,9 +3682,15 @@ class KBService:
     # Query Operations (read-only, delegate to db)
     # =========================================================================
 
-    def get_entries(self, ids: list[tuple[str, str]]) -> list[dict[str, Any]]:
+    def get_entries(
+        self,
+        ids: list[tuple[str, str]],
+        *,
+        include_warnings: bool = False,
+    ) -> list[dict[str, Any]]:
         """Batch-get multiple entries by (entry_id, kb_name) pairs."""
-        return self.db.get_entries(ids)
+        rows = self.db.get_entries(ids)
+        return attach_importance_warnings(self.db, rows) if include_warnings else rows
 
     def list_entries(
         self,
@@ -3485,9 +3704,11 @@ class KBService:
         offset: int = 0,
         status: str | None = None,
         min_importance: int | None = None,
+        *,
+        include_warnings: bool = False,
     ) -> list[dict[str, Any]]:
         """List entries with pagination."""
-        return self.db.list_entries(
+        rows = self.db.list_entries(
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
@@ -3499,6 +3720,90 @@ class KBService:
             status=status,
             min_importance=min_importance,
         )
+        return attach_importance_warnings(self.db, rows) if include_warnings else rows
+
+    #: Page size for `recent`'s scan down the `updated_at`-descending list.
+    _RECENT_PAGE_SIZE = 200
+
+    def recent(
+        self,
+        kb_name: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
+        entry_type: str | None = None,
+        since: datetime | None = None,
+        limit: int = 20,
+        offset: int = 0,
+        *,
+        include_warnings: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Recently changed entries, newest first, with ``since`` applied *before* the limit.
+
+        Returns ``(page, total)``: `page` is up to `limit` entries from the set
+        of entries updated at or after `since` (all entries when `since` is
+        None), starting at `offset`, ordered by `updated_at` descending with
+        ties broken by id; `total` is the size of that set. Callers compute
+        ``has_more`` as ``offset + limit < total`` over the filtered set —
+        never over the page — so a `since`-filtered browse cannot silently
+        drop changes past the limit (#1859).
+
+        With `since`, the scan pages through `list_entries` sorted by
+        `updated_at` descending to the very end and keeps the rows whose
+        `updated_at` parses to an instant at or after `since` — the same
+        instant comparison `filter_updated_since` makes, so a stored non-UTC
+        offset cannot mis-sort the filter the way a string comparison would
+        (#1268). It cannot stop early: `updated_at` is a string column sorted
+        as text, so mixed UTC offsets mis-sort (a row that is newer as an
+        instant can sort after older ones), and the worktree overlay appends
+        new entries at the end of the merged list. A row whose `updated_at`
+        cannot be read is dropped: it cannot be shown to be newer. Without
+        `since`, one query plus `count_entries` over the same readable set
+        suffices, the way `kb_list_entries` pages.
+        """
+        limit = max(int(limit), 0)
+        offset = max(int(offset), 0)
+        if since is None:
+            rows = self.db.list_entries(
+                kb_name=kb_name,
+                kb_names=kb_names,
+                entry_type=entry_type,
+                sort_by="updated_at",
+                sort_order="desc",
+                limit=limit,
+                offset=offset,
+            )
+            total = self.count_entries(kb_name=kb_name, kb_names=kb_names, entry_type=entry_type)
+        else:
+            page: list[dict[str, Any]] = []
+            total = 0
+            cursor = 0
+            while True:
+                rows = self.db.list_entries(
+                    kb_name=kb_name,
+                    kb_names=kb_names,
+                    entry_type=entry_type,
+                    sort_by="updated_at",
+                    sort_order="desc",
+                    limit=self._RECENT_PAGE_SIZE,
+                    offset=cursor,
+                )
+                if not rows:
+                    break
+                for row in rows:
+                    stamp = _timestamp_instant(row.get("updated_at"))
+                    if stamp is None or stamp < since:
+                        # Not in the filtered set. The scan keeps going:
+                        # `updated_at` sorts as text, not as an instant, and
+                        # the overlay merge appends new entries at the end, so
+                        # one older-looking row proves nothing about the rest.
+                        continue
+                    if offset <= total < offset + limit:
+                        page.append(row)
+                    total += 1
+                cursor += len(rows)
+                if len(rows) < self._RECENT_PAGE_SIZE:
+                    break
+            rows = page
+        return (attach_importance_warnings(self.db, rows) if include_warnings else rows), total
 
     def list_collections(
         self,
@@ -3653,15 +3958,21 @@ class KBService:
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries, optionally filtered."""
+        """Count entries, optionally filtered.
+
+        ``include_archived=True`` counts archived entries too — for the
+        "is anything indexed?" callers, not for listing totals.
+        """
         return self.db.count_entries(
             kb_names=kb_names,
             kb_name=kb_name,
             entry_type=entry_type,
             tag=tag,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )
@@ -3772,7 +4083,10 @@ class KBService:
                 "Entries are only searchable once indexed. Direct file "
                 "writes under a KB's path (not via `pyrite create`/`update`) "
                 "need `pyrite index sync` afterward -- it's incremental "
-                "and cheap, safe to run after every batch of writes."
+                "and cheap, safe to run after every batch of writes. "
+                "`pyrite index sync -k <kb> --confirm <id-or-path> ...` also "
+                "says whether each named entry is indexed and searchable, "
+                "and exits 3 when one is not."
             ),
             "error_contract": {
                 "shape": "{error, error_code, suggestion?, errors?, retryable}",
@@ -4319,11 +4633,25 @@ class KBService:
         *,
         from_status: str = "open",
         to_status: str = "claimed",
+        via: Sequence[str] = (),
+        ops: Sequence[Any] = (),
+        holder: str | None = None,
     ) -> dict[str, Any]:
         """Atomically claim an Assignable + Statusable entry via CAS.
 
         Uses compare-and-swap on the index to ensure only one agent can claim.
         On success, updates the markdown file to match.
+
+        ``via`` and ``ops`` are `task start`'s (#1685): the states the claim
+        passes through between ``from_status`` and ``to_status``, judged
+        edge by edge by the workflow on the file write, and the item
+        operations (its audit trail) that write carries. The compare-and-set
+        is the same one either way; with neither, the file write is exactly
+        a plain claim's. ``holder`` is `task start`'s retry from ``claimed``:
+        only that holder moves the claim on, so every check this claim
+        passes (the index compare-and-set, the change set's read, the file
+        write) also matches it, and a claim someone else took in between is
+        refused, naming them. A plain claim passes none.
 
         Returns:
             Dict with claimed=True on success, or error details.
@@ -4348,9 +4676,18 @@ class KBService:
         )
         if held:
             _refuse_assignee_values(entry_id, held[0].get("assignee") or "", assignee or "")
+        # The holder a refused file write puts back in the index row: none for
+        # a plain claim, as it always was; `task start`'s retry from `claimed`
+        # needs its own holder back, or the retry reads no holder and loses
+        # until the next sync (#1685).
+        prior_assignee = (held[0].get("assignee") or None) if held else None
+        rollback_assignee = prior_assignee if (via or ops) else None
+        status_path = (from_status, *via, to_status) if (via or ops) else None
 
         if getattr(self.db, "is_change_set", False):
-            return self._claim_in_change_set(entry_id, kb_name, assignee, from_status, to_status)
+            return self._claim_in_change_set(
+                entry_id, kb_name, assignee, from_status, to_status, ops, status_path, holder
+            )
 
         session = self.db.session
 
@@ -4359,6 +4696,8 @@ class KBService:
             status_clause = "(status = :from_status OR status IS NULL)"
         else:
             status_clause = "status = :from_status"
+        if holder is not None:
+            status_clause += " AND assignee = :holder"
         result = session.execute(
             text(f"""UPDATE entry
                SET status = :to_status,
@@ -4371,13 +4710,14 @@ class KBService:
                 "kb_name": kb_name,
                 "to_status": to_status,
                 "from_status": from_status,
+                "holder": holder,
             },
         )
         session.commit()
 
         if result.rowcount == 0:
             rows = self.db.execute_sql(
-                "SELECT status FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
+                "SELECT status, assignee FROM entry WHERE id = :entry_id AND kb_name = :kb_name",
                 {"entry_id": entry_id, "kb_name": kb_name},
             )
             if not rows:
@@ -4386,24 +4726,27 @@ class KBService:
                     "error": f"Entry '{entry_id}' not found in KB '{kb_name}'",
                 }
             current = rows[0].get("status", from_status)
-            return {
-                "claimed": False,
-                "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
-                "current_status": current,
-            }
+            return _lost_claim(
+                entry_id, current, from_status, rows[0].get("assignee") or "", holder
+            )
 
         # Update the markdown file to match
         try:
-            self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+            self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path, holder)
         except Exception as e:
-            # Rollback index CAS on file error
+            # Rollback index CAS on file error (the holder: see rollback_assignee).
             logger.warning("File update failed for claim on %s, rolling back: %s", entry_id, e)
             session.execute(
                 text("""UPDATE entry
                    SET status = :from_status,
-                       assignee = NULL
+                       assignee = :rollback_assignee
                    WHERE id = :entry_id AND kb_name = :kb_name"""),
-                {"entry_id": entry_id, "kb_name": kb_name, "from_status": from_status},
+                {
+                    "entry_id": entry_id,
+                    "kb_name": kb_name,
+                    "from_status": from_status,
+                    "rollback_assignee": rollback_assignee,
+                },
             )
             session.commit()
             return {"claimed": False, "error": f"File update failed: {outside_text(e)}"}
@@ -4424,7 +4767,15 @@ class KBService:
         return AccessPolicy(self.config, self.db).lands_in(principal, kb_name)
 
     def _claim_in_change_set(
-        self, entry_id: str, kb_name: str, assignee: str, from_status: str, to_status: str
+        self,
+        entry_id: str,
+        kb_name: str,
+        assignee: str,
+        from_status: str,
+        to_status: str,
+        ops: Sequence[Any] = (),
+        status_path: Sequence[str] | None = None,
+        holder: str | None = None,
     ) -> dict[str, Any]:
         """A claim whose write lands in the claimer's change set (a KB with
         `landing: review`; ADR-0044 §1, decided 2026-10-20: claims follow the
@@ -4436,14 +4787,40 @@ class KBService:
         if not entry:
             return {"claimed": False, "error": f"Entry '{entry_id}' not found in KB '{kb_name}'"}
         current = entry.get("status")
-        if not (current == from_status or (from_status == "open" and not current)):
-            return {
-                "claimed": False,
-                "error": f"Entry '{entry_id}' is '{current}', not '{from_status}'",
-                "current_status": current,
-            }
-        self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+        current_holder = entry.get("assignee") or ""
+        if not (current == from_status or (from_status == "open" and not current)) or (
+            holder is not None and current_holder != holder
+        ):
+            return _lost_claim(entry_id, current, from_status, current_holder, holder)
+        self._write_claim(entry_id, kb_name, assignee, to_status, ops, status_path, holder)
         return {"claimed": True, "task_id": entry_id, "assignee": assignee, "status": to_status}
+
+    def _write_claim(
+        self,
+        entry_id: str,
+        kb_name: str,
+        assignee: str,
+        to_status: str,
+        ops: Sequence[Any],
+        status_path: Sequence[str] | None,
+        holder: str | None = None,
+    ) -> None:
+        """A claim's one file write. A plain claim is exactly the field update
+        it always was; `task start`'s carries its audit items, the path its
+        edges are judged along, and on a retry from `claimed` the holder the
+        file must still name (#1685)."""
+        if status_path is None:
+            self.update_entry(entry_id, kb_name, status=to_status, assignee=assignee)
+            return
+        self._update(
+            entry_id,
+            kb_name,
+            {"status": to_status, "assignee": assignee},
+            restrict=False,
+            ops=list(ops),
+            status_path=status_path,
+            expect_holder=holder,
+        )
 
     # =========================================================================
     # Hooks
@@ -4496,6 +4873,8 @@ class KBService:
                 if not DocumentManager._uses_templated_subdir(repo, entry):
                     continue
                 inferred_subdir = repo._infer_subdir(entry)
+                if inferred_subdir:
+                    inferred_subdir = repo._resolve_existing_folder_casing(inferred_subdir)
                 expected_dir = repo._get_file_path(entry.id, inferred_subdir).parent
                 target_path = repo._contained(expected_dir / current_path.name)
                 if current_path.parent.resolve() != expected_dir.resolve():
@@ -5012,6 +5391,28 @@ def _same_yaml_value(a: Any, b: Any) -> bool:
     return values_identical(a, b)
 
 
+def _drop_emptied_metadata(file_values: dict[str, Any], ops: list[Any]) -> list[Any]:
+    """``ops`` with the unsets of every key of the file's ``metadata:`` block
+    replaced by one unset of the block, when they remove all of it; else
+    ``ops`` unchanged (#1688 round 1: a park cleared to nothing)."""
+    bag = file_values.get("metadata")
+    if not isinstance(bag, dict) or not bag:
+        return ops
+
+    def nested_unset(op: Any) -> bool:
+        path = getattr(op, "path", None)
+        return (
+            isinstance(op, Unset)
+            and isinstance(path, tuple)
+            and len(path) == 2
+            and path[0] == "metadata"
+        )
+
+    if not set(bag) <= {op.path[1] for op in ops if nested_unset(op)}:
+        return ops
+    return [op for op in ops if not nested_unset(op)] + [Unset(("metadata",))]
+
+
 def _nested_block_is_all_equal_pairs(entry: Entry, file_values: dict[str, Any]) -> bool:
     """True when the file's ``metadata:`` block holds only second spellings
     of fields whose every spelling is the same YAML value: the block the
@@ -5066,6 +5467,31 @@ def _plain_value(value: Any) -> Any:
 #: too, #955 P4); kept under its old name for this module's callers.
 _updated_at_stamp = updated_at_stamp
 _raw_scalar = raw_scalar
+
+
+def _same_number_spelling_as_file(
+    file_values: dict[str, Any], path: Any, value: Any, *, declared: Any = None
+) -> bool:
+    """Is ``value`` the author's spelling of the float the file already holds
+    at a declared ``number`` key ``path``?
+
+    An author-spelled float that Python's ``repr`` does not reproduce
+    (``0.00001``, ``1e-05``, ``1.5e10``, ``7.50``) is stored and read back as
+    the author's text (#1697, maintainer decision (a)). Echoing that string
+    back on update is a no-change: the file keeps its unquoted bytes and
+    ``updated_at`` is not stamped for it.
+    """
+    if declared is None or getattr(declared, "field_type", None) != "number":
+        return False
+    key = path[0] if isinstance(path, tuple) and len(path) == 1 else path
+    if not isinstance(key, str) or key not in file_values or not isinstance(value, str):
+        return False
+    old = file_values[key]
+    if not isinstance(old, float):
+        return False
+    from ..storage.crud import float_text
+
+    return bool(float_text(old) == value)
 
 
 def _same_instant_as_file(file_values: dict[str, Any], path: Any, value: Any) -> bool:

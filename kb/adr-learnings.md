@@ -13,8 +13,8 @@ tags:
 
 # What the ADRs taught
 
-Layer 2 of the design docs. [[design]] is the one page (the nine principles,
-written P1 to P9 below). This entry is read when you need the *why* behind a
+Layer 2 of the design docs. [[design]] is the one page (the eleven principles;
+the lessons below cover P1 to P9). This entry is read when you need the *why* behind a
 principle, or the ADR that taught a lesson, without reading 45 ADRs in date
 order. The [[adr-audit-2026-10]] gives each accepted ADR's true standing; the
 topic maps (table in [[design]]) answer "what is the design of X".

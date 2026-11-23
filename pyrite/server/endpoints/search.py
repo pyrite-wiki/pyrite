@@ -73,7 +73,7 @@ def search(
         _, content = error_response(exc)
         return JSONResponse(status_code=400, content=content)
 
-    if svc.count_entries() == 0:
+    if svc.count_entries(include_archived=True) == 0:  # archived-only is not empty
         raise HTTPException(
             status_code=503,
             detail={

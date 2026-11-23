@@ -14,8 +14,8 @@ walk the other CLI structure tests use (``_commands``, ``outcome_walk.leaves``).
 The checker takes any such mapping, so the planted tests below point it at a
 small app built in the test.
 
-What counts, read from the click parameter type: INT, FLOAT, IntRange and
-FloatRange (so ``Optional[int]``, ``int | None``, ``Annotated[int, typer.Option()]``,
+What counts: Click's INT, FLOAT, IntRange and FloatRange, or Typer 0.29's
+int and float annotations (so ``Optional[int]``, ``int | None``, ``Annotated[int, typer.Option()]``,
 ``list[int]`` and the members of a ``tuple[int, int]`` are all seen). Bounded means
 a Range whose type REFUSES a value just outside each declared bound (#1541: "Typer
 refuses an out-of-range value as a usage error"). One exclusion: a ``count=True`` option
@@ -29,12 +29,15 @@ and ``max_open``: the bound itself is outside, so it is the value probed; ``clam
 ``convert`` returns the bound instead of failing, so the type does not refuse and
 the option is NOT bounded (the FIX says to drop ``clamp=True``). Nothing else in
 click's range types affects refusal. The check is behavioural, not an attribute
-scan: for each declared bound the type's own ``convert`` is called on a value just
-outside it (int: one step; float: ``math.nextafter``) and must raise click's
-bad-parameter error. Where no value can be stepped to (an infinite bound) the
+scan: for each declared bound the parameter's own converter is called on a value
+just outside it (int: one step; float: ``math.nextafter``). Click rejects with
+``BadParameter``; Typer 0.29's leaf validator raises ``ValidationError``. Where no value can be stepped to (an infinite bound) the
 declared attribute stands. Limit: a hand-written type that subclasses a known
 non-numeric one (a ``StringParamType`` whose ``convert`` returns an int) is classified
 by its base class and counted non-numeric.
+
+Typer 0.29 uses the private ``typer._adapters.build_leaf_adapter``; if that
+API moves, the guard errors so the compatibility code can be updated.
 
 Where a parameter can be declared between a root and a leaf, and what the walk
 (``every_command``: roots, every group at every depth, every leaf, hidden ones
@@ -52,26 +55,33 @@ Ways Typer hands click a number: ``int``/``float``, ``Optional``, ``| None``,
 ``Annotated``, ``list[...]`` (``multiple``), ``tuple[...]`` (a mixed tuple is
 numeric, and bounded only if every numeric member is): seen, planted. ``min=``
 and ``max=``: a Range. ``count=True``: excluded, see above. ``parser=``:
-click gets a ``FuncParamType`` (locked Typer 0.27.3), so neither
-the number nor a range given that way is visible: a stated limit, refused by
-``test_every_parameter_type_is_classified_or_listed`` (``UNCLASSIFIED``, empty),
-pinned by a control. An ``Enum`` (an int-valued one too) is a ``Choice`` of text:
+a custom parser controls coercion, so the checker flags it as unknown. Unknown
+parameters require a reviewed row in ``UNCLASSIFIED``. An ``Enum`` (an int-valued one too) is a ``Choice`` of text:
 a closed set, not a range. Any click type outside the known numeric and
 non-numeric ones is "unknown" and refused the same way.
 """
 
 from __future__ import annotations
 
+import inspect
 import math
 import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+from io import IOBase
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional, get_args, get_origin
+from uuid import UUID
 
 import pytest
 import typer
+from pydantic import ValidationError
+from typer.models import ParameterInfo
+from typer.testing import CliRunner
 
+from tests.cli_help import plain
 from tests.outcome_walk import root_app
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -124,22 +134,81 @@ def _members(click_type) -> list:
     return [click_type]
 
 
-def _numeric_members(click_type) -> list:
-    return [m for m in _members(click_type) if _class_names(m) & {_INT, _FLOAT}]
+@dataclass(frozen=True)
+class TyperNumber:
+    """One numeric leaf of a Typer 0.29 parameter."""
+
+    annotation: type
+    parameter_info: ParameterInfo
+
+    @property
+    def min(self):
+        return self.parameter_info.min
+
+    @property
+    def max(self):
+        return self.parameter_info.max
+
+    @property
+    def clamp(self):
+        return self.parameter_info.clamp
+
+    def convert(self, value, _param, _ctx):
+        # The same leaf adapter Typer uses inside its scalar, list and tuple
+        # parsers. Probe the leaf without running a CLI callback.
+        from typer._adapters import build_leaf_adapter
+
+        return build_leaf_adapter(self.annotation, self.parameter_info).validate_python(value)
+
+
+def _typer_members(annotation, info) -> list:
+    """Return numeric leaves and unrecognized annotations, omitting known text shapes."""
+    origin = get_origin(annotation)
+    if origin in (list, tuple):
+        return [member for arg in get_args(annotation) for member in _typer_members(arg, info)]
+    if info.parser is not None:
+        return [info.parser]
+    if annotation in (int, float):
+        return [TyperNumber(annotation, info)]
+    if origin is Literal or (
+        isinstance(annotation, type)
+        and issubclass(annotation, (str, bool, Enum, Path, IOBase, datetime, UUID))
+    ):
+        return []
+    return [annotation]
+
+
+def _parameter_members(param) -> list:
+    """Click's types through Typer 0.27, or Typer's own coercion leaves from 0.29."""
+    if hasattr(param, "type"):
+        return _members(param.type)
+    descriptor = param.type_descriptor
+    return _typer_members(descriptor.annotation, descriptor.parameter_info)
+
+
+def _numeric_kind(member) -> str | None:
+    if isinstance(member, TyperNumber):
+        return member.annotation.__name__
+    names = _class_names(member)
+    if _INT in names:
+        return "int"
+    if _FLOAT in names:
+        return "float"
+    return None
 
 
 def _is_unknown(member) -> bool:
-    names = _class_names(member)
-    return not (names & {_INT, _FLOAT} or names & _NOT_NUMERIC)
+    return _numeric_kind(member) is None and not (_class_names(member) & _NOT_NUMERIC)
 
 
 def _refuses(click_type, value) -> bool:
-    """Does the type's own ``convert`` refuse ``value`` with click's bad-parameter
-    error? No command runs: this is the check click makes while parsing."""
+    """Check the parser's own conversion without running a CLI callback."""
     try:
         click_type.convert(value, None, None)
     except Exception as exc:
-        if "BadParameter" in _class_names(exc):
+        if "BadParameter" in _class_names(exc) or (
+            isinstance(click_type, TyperNumber) and isinstance(exc, ValidationError)
+        ):
             return True
         raise
     return False
@@ -150,7 +219,7 @@ def _just_outside(member, bound, direction: int):
     when none can be stepped to (an infinite bound)."""
     if getattr(member, "min_open" if direction < 0 else "max_open", False):
         return bound  # an open bound excludes itself
-    if "IntRange" in _class_names(member):
+    if _numeric_kind(member) == "int":
         return bound + direction
     stepped = math.nextafter(bound, direction * math.inf)
     return None if stepped == bound else stepped
@@ -181,12 +250,13 @@ def numeric_params(commands: Mapping[str, object]) -> list[NumericParam]:
         for param in getattr(cmd, "params", ()):
             if getattr(param, "count", False):
                 continue
-            members = _numeric_members(param.type)
+            members = [m for m in _parameter_members(param) if _numeric_kind(m)]
             if not members:
                 continue
             bounded = all(_refuses_outside_its_bounds(m) for m in members)
             clamps = any(getattr(m, "clamp", False) for m in members)
-            kind = "float" if _FLOAT in _class_names(members[0]) else "int"
+            kind = _numeric_kind(members[0])
+            assert kind is not None
             found.append(NumericParam(path, param.name, kind, bounded, clamps))
     return found
 
@@ -203,17 +273,17 @@ class Unclassified:
 
 
 def unclassified_params(commands: Mapping[str, object]) -> list[Unclassified]:
-    """Parameters whose click type is neither numeric nor a known non-numeric one,
-    so the checker cannot say whether a number is typed there. Typer hands click a
-    ``FuncParamType`` for ``parser=`` (locked Typer 0.27.3), and
-    a hand-written ``click.ParamType`` is the same: not guessed from the name."""
+    """Parameters with an unknown type or custom coercion, such as ``parser=``."""
     found = []
     for path, cmd in commands.items():
         for param in getattr(cmd, "params", ()):
             if getattr(param, "count", False):
                 continue
-            if any(_is_unknown(m) for m in _members(param.type)):
-                found.append(Unclassified(path, param.name, type(param.type).__name__))
+            for member in _parameter_members(param):
+                if _is_unknown(member):
+                    type_name = getattr(member, "__name__", type(member).__name__)
+                    found.append(Unclassified(path, param.name, type_name))
+                    break
     return found
 
 
@@ -297,13 +367,6 @@ UNCLASSIFIED: dict[tuple[str, str], str] = {
 #: The ``pyrite-read`` rows are the same declarations as their ``pyrite`` twins,
 #: except ``timeline``: a second copy in read_cli.py.
 NOT_YET: set[tuple[str, str]] = {
-    # pyrite/cli/search_commands.py
-    ("pyrite search", "limit"),
-    ("pyrite-read search", "limit"),
-    #
-    # pyrite/cli/entry_commands.py (see also #1537)
-    ("pyrite create", "importance"),
-    ("pyrite update", "importance"),
     #
     # pyrite/cli/browse_commands.py
     ("pyrite orient", "recent"),
@@ -316,27 +379,6 @@ NOT_YET: set[tuple[str, str]] = {
     ("pyrite links batch-suggest", "limit_per_entry"),
     ("pyrite links orphans", "min_importance"),
     #
-    # pyrite/cli/task_commands.py
-    ("pyrite task list", "priority"),
-    #
-    #
-    # extensions/journalism-investigation/src/pyrite_journalism_investigation/cli.py
-    ("pyrite investigation timeline", "min_importance"),
-    ("pyrite investigation timeline", "limit"),
-    ("pyrite investigation entities", "min_importance"),
-    ("pyrite investigation entities", "limit"),
-    ("pyrite investigation sources", "limit"),
-    ("pyrite investigation claims", "min_importance"),
-    ("pyrite investigation claims", "limit"),
-    ("pyrite investigation qa", "stale_days"),
-    ("pyrite investigation search", "limit"),
-    ("pyrite investigation ownership", "depth"),
-    ("pyrite investigation money-flow", "hops"),
-    ("pyrite investigation export", "min_importance"),
-    ("pyrite investigation dedup", "threshold"),
-    #
-    #
-    # extensions/social/src/pyrite_social/cli.py
 }
 
 FIX = "declare min= or max= in the option where it is declared, see #1541"
@@ -536,7 +578,9 @@ def test_a_count_option_is_a_plain_int_to_click_and_is_excluded_by_the_checker()
 
     cmd = commands_of(_app(verbose))["app verbose"]
     param = next(p for p in cmd.params if p.name == "v")
-    assert param.count and getattr(param.type, "min", None) is None  # Typer: not an IntRange
+    assert (
+        param.count and getattr(_parameter_members(param)[0], "min", None) is None
+    )  # Typer: not an IntRange
     assert numeric_params({"app verbose": cmd}) == []
 
 
@@ -629,43 +673,47 @@ def test_planted_custom_click_type_cannot_be_classified():
     assert [(u.command, u.name) for u in unclassified_params({"app c": cmd})] == [("app c", "n")]
 
 
-@pytest.mark.parametrize(
-    "how", ["parser=int", "click_type=INT", "click_type=IntRange()", "click_type=IntRange(min=0)"]
+_LEGACY_CLICK_TYPE = pytest.mark.skipif(
+    "click_type" not in inspect.signature(typer.Option).parameters,
+    reason="Typer 0.29 removed the click_type= option keyword",
 )
-def test_planted_typer_parser_or_click_type_cannot_be_classified(how):
-    """With the locked Typer (0.27.3), ``parser=`` and ``click_type=`` both hand click
-    a FuncParamType: neither the number nor a range given that way is visible, so
-    the shape is refused unless a reviewed row says why (UNCLASSIFIED, empty)."""
-    option = {
-        "parser=int": typer.Option(1, parser=int),
-        "click_type=INT": typer.Option(1, click_type=click.INT),
-        "click_type=IntRange()": typer.Option(1, click_type=click.IntRange()),
-        "click_type=IntRange(min=0)": typer.Option(1, click_type=click.IntRange(min=0)),
-    }[how]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        pytest.param({"parser": int}, id="parser"),
+        pytest.param({"parser": int, "min": 0}, id="parser-with-min"),
+        pytest.param({"click_type": click.INT}, id="click-int", marks=_LEGACY_CLICK_TYPE),
+        pytest.param({"click_type": click.IntRange()}, id="click-range", marks=_LEGACY_CLICK_TYPE),
+        pytest.param(
+            {"click_type": click.IntRange(min=0)}, id="click-min", marks=_LEGACY_CLICK_TYPE
+        ),
+    ],
+)
+def test_planted_typer_parser_or_click_type_cannot_be_classified(options):
+    """A custom parser can decide whether to enforce its own bounds."""
+    option = typer.Option(1, **options)
 
     def command(n: int = option): ...
 
     commands = commands_of(_app(command))
     assert [(u.command, u.name) for u in unclassified_params(commands)] == [("app command", "n")]
+    assert numeric_params(commands) == []
 
 
-@pytest.mark.control(
-    reason="pins what the locked Typer gives for parser=/click_type=, and that a classified type is not flagged"
-)
-def test_typer_gives_a_func_param_type_for_parser_and_click_type_and_plain_types_are_classified():
+@pytest.mark.control(reason="a custom parser is unknown and the plain types are classified")
+def test_custom_parser_and_plain_types_are_classified_separately():
     def command(
         a: int = typer.Option(1, parser=int),
-        b: int = typer.Option(1, click_type=click.IntRange(min=0)),
-        c: int = 1,
-        d: str = "x",
-        e: bool = False,
-        f: float = typer.Option(0.5, min=0.0),
+        b: int = 1,
+        c: str = "x",
+        d: bool = False,
+        e: float = typer.Option(0.5, min=0.0),
     ): ...
 
     cmd = commands_of(_app(command))["app command"]
-    by_name = {p.name: type(p.type).__name__ for p in cmd.params}
-    assert by_name["a"] == by_name["b"] == "FuncParamType", by_name
-    assert [u.name for u in unclassified_params({"app command": cmd})] == ["a", "b"]
+    assert [u.name for u in unclassified_params({"app command": cmd})] == ["a"]
 
 
 # --------------------------------------------------------------------------
@@ -709,13 +757,12 @@ def test_a_plain_min_is_refused_just_outside_and_accepted_at_the_bound():
     command = _one_param(min=1)
     (param,) = _params_for(_app(command))
     assert param.bounded and not param.clamps
-    click_type = next(
-        p for p in commands_of(_app(command))["app command"].params if p.name == "limit"
-    ).type
-    assert click_type.convert(1, None, None) == 1
-    with pytest.raises(Exception, match="not in the range") as refused:
-        click_type.convert(0, None, None)
-    assert "BadParameter" in {k.__name__ for k in type(refused.value).__mro__}
+    app = _app(command)
+    runner = CliRunner()
+    assert runner.invoke(app, ["command", "--limit", "1"]).exit_code == 0
+    refused = runner.invoke(app, ["command", "--limit", "0"])
+    assert refused.exit_code == 2, refused.output
+    assert "--limit" in plain(refused.output)
 
 
 @pytest.mark.control(reason="a plain float range and an open bound are refused outside, so bounded")
@@ -740,3 +787,21 @@ def test_a_float_range_and_an_open_bound_are_bounded_and_a_clamped_open_bound_is
         ("app open", "n"): True,
         ("app openclamp", "n"): False,
     }
+
+
+@pytest.mark.control(
+    reason="a row-count option bounded by ROW_COUNT_MAX refuses 2**63 and accepts 2**63-1 (#1800)"
+)
+def test_a_row_count_bounded_by_max_refuses_sqlite_overflow_and_accepts_at_the_bound():
+    from pyrite.cli.context import ROW_COUNT_MAX
+
+    command = _one_param(min=1, max=ROW_COUNT_MAX)
+    (param,) = _params_for(_app(command))
+    assert param.bounded and not param.clamps
+    click_type = next(
+        p for p in commands_of(_app(command))["app command"].params if p.name == "limit"
+    ).type
+    assert click_type.convert(ROW_COUNT_MAX, None, None) == ROW_COUNT_MAX
+    with pytest.raises(Exception, match="not in the range") as refused:
+        click_type.convert(ROW_COUNT_MAX + 1, None, None)
+    assert "BadParameter" in {k.__name__ for k in type(refused.value).__mro__}

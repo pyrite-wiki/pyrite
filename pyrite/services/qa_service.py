@@ -30,6 +30,7 @@ from ..exceptions import (
     KBUnreadableError,
     PyriteError,
     ValidationError,
+    json_safe_value,
     public_attribute,
     public_text,
 )
@@ -48,6 +49,8 @@ from ..utils.kb_files import (
     KBFilesUnreadableError,
 )
 from ..utils.metadata import parse_metadata
+from .importance_reading import row_importance_warning
+from .qa_records import content_only, is_qa_record, records_only
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +228,11 @@ class QAService:
             )
         }
         self._check_entry_fields(entry, issues)
+        # The same file-value judgment as the KB-wide sweep (#1761): it replaces
+        # the column-based finding `_check_entry_fields` gave for this entry.
+        if range_issue := self._importance_range_issue(row):
+            issues[:] = [i for i in issues if i.get("rule") != "importance_range"]
+            issues.append(range_issue)
         self._check_entry_links(entry_id, kb_name, issues, readable_kbs=readable_kbs)
         # The checks below read the KB's folder (its files, its kb.yaml).
         if not self._report_unreadable_kb(issues, kb_name):
@@ -258,9 +266,10 @@ class QAService:
         self.require_tier(tier)
         issues: list[dict[str, Any]] = []
 
-        # Count entries
+        # Count content entries: a QA record is not one (#1752)
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name", {"kb_name": kb_name}
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
+            {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
 
@@ -836,7 +845,7 @@ class QAService:
         *,
         readable_kbs: set[str] | None,
     ) -> dict[str, Any]:
-        """Assess all entries in a KB (skipping qa_assessment entries and recently assessed).
+        """Assess all entries in a KB (skipping QA records and recently assessed).
 
         ``readable_kbs`` bounds each entry's link checks, as in `validate_entry`.
 
@@ -864,7 +873,7 @@ class QAService:
             etype = row["entry_type"]
 
             # Skip assessment entries themselves
-            if etype == "qa_assessment":
+            if is_qa_record(etype):
                 skipped += 1
                 continue
 
@@ -934,7 +943,7 @@ class QAService:
         """Check if entry was assessed within max_age_hours."""
         rows = self.db.execute_sql(
             "SELECT json_extract(metadata, '$.assessed_at') as assessed_at "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment' "
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()} "
             "AND json_extract(metadata, '$.target_entry') = :entry_id "
             "ORDER BY json_extract(metadata, '$.assessed_at') DESC LIMIT 1",
             {"kb_name": kb_name, "entry_id": entry_id},
@@ -993,7 +1002,7 @@ class QAService:
         """Query assessment entries with optional filters."""
         sql = (
             "SELECT id, title, body, metadata FROM entry "
-            "WHERE kb_name = :kb_name AND entry_type = 'qa_assessment'"
+            f"WHERE kb_name = :kb_name AND {records_only()}"
         )
         params: dict[str, Any] = {"kb_name": kb_name}
 
@@ -1029,10 +1038,10 @@ class QAService:
         """Get entries that have no assessment."""
         rows = self.db.execute_sql(
             "SELECT e.id, e.entry_type, e.title FROM entry e "
-            "WHERE e.kb_name = :kb_name AND e.entry_type != 'qa_assessment' "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM entry a WHERE a.kb_name = :kb_name2 "
-            "  AND a.entry_type = 'qa_assessment' "
+            f"  AND {records_only('a')} "
             "  AND json_extract(a.metadata, '$.target_entry') = e.id"
             ")",
             {"kb_name": kb_name, "kb_name2": kb_name},
@@ -1046,7 +1055,7 @@ class QAService:
         """Get assessment coverage stats for a KB."""
         # Total non-assessment entries
         total_rows = self.db.execute_sql(
-            "SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment'",
+            f"SELECT COUNT(*) as cnt FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
         total = total_rows[0]["cnt"] if total_rows else 0
@@ -1054,7 +1063,7 @@ class QAService:
         # Entries with at least one assessment
         assessed_rows = self.db.execute_sql(
             "SELECT COUNT(DISTINCT json_extract(metadata, '$.target_entry')) as cnt "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment'",
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()}",
             {"kb_name": kb_name},
         )
         assessed = assessed_rows[0]["cnt"] if assessed_rows else 0
@@ -1065,7 +1074,7 @@ class QAService:
         by_status: dict[str, int] = {}
         rows = self.db.execute_sql(
             "SELECT json_extract(metadata, '$.qa_status') as qs, COUNT(*) as cnt "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type = 'qa_assessment' "
+            f"FROM entry WHERE kb_name = :kb_name AND {records_only()} "
             "GROUP BY qs",
             {"kb_name": kb_name},
         )
@@ -1090,7 +1099,10 @@ class QAService:
     def _check_missing_titles(
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
-        sql = "SELECT id, kb_name, entry_type FROM entry WHERE (title IS NULL OR title = '')"
+        sql = (
+            "SELECT id, kb_name, entry_type FROM entry "
+            f"WHERE (title IS NULL OR title = '') AND {content_only()}"
+        )
         params: dict[str, Any] = {}
         if kb_name:
             sql += " AND kb_name = :kb_name"
@@ -1112,7 +1124,7 @@ class QAService:
         sql = (
             "SELECT id, kb_name, entry_type, title FROM entry "
             "WHERE (body IS NULL OR body = '') "
-            "AND entry_type NOT IN ('collection', 'relationship')"
+            f"AND entry_type NOT IN ('collection', 'relationship') AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -1159,7 +1171,8 @@ class QAService:
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
         sql = (
-            "SELECT id, kb_name, entry_type, date FROM entry WHERE date IS NOT NULL AND date != ''"
+            "SELECT id, kb_name, entry_type, date FROM entry "
+            f"WHERE date IS NOT NULL AND date != '' AND {content_only()}"
         )
         params: dict[str, Any] = {}
         if kb_name:
@@ -1182,24 +1195,44 @@ class QAService:
     def _check_importance_range(
         self, issues: list[dict[str, Any]], kb_name: str | None = None
     ) -> None:
-        sql = "SELECT id, kb_name, entry_type, importance FROM entry WHERE importance IS NOT NULL"
+        sql = (
+            "SELECT id, kb_name, entry_type, importance, file_path FROM entry "
+            f"WHERE importance IS NOT NULL AND {content_only()}"
+        )
         params: dict[str, Any] = {}
         if kb_name:
             sql += " AND kb_name = :kb_name"
             params["kb_name"] = kb_name
 
+        roots: dict[str, Any] = {}
         for row in self.db.execute_sql(sql, params):
-            if not validate_importance(row["importance"]):
-                issues.append(
-                    {
-                        "entry_id": row["id"],
-                        "kb_name": row["kb_name"],
-                        "rule": "importance_range",
-                        "severity": "warning",
-                        "field": "importance",
-                        "message": f"Entry '{row['id']}' has importance {row['importance']} (must be 1-10)",
-                    }
-                )
+            if issue := self._importance_range_issue(row, roots):
+                issues.append(issue)
+
+    def _importance_range_issue(
+        self, row: dict[str, Any], roots: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """The `importance_range` finding for an index row, or None.
+
+        The file's value, not the index column: the column holds the legacy
+        reading of a refused value (7.5 -> 7) and never fires (#1761). The
+        column still judges a row with no readable file.
+        """
+        refused = row_importance_warning(self.db, row["kb_name"], row.get("file_path"), roots)
+        if refused is not None:
+            message = f"Entry '{row['id']}': {refused}"
+        elif not validate_importance(row["importance"]):
+            message = f"Entry '{row['id']}' has importance {row['importance']} (must be 1-10)"
+        else:
+            return None
+        return {
+            "entry_id": row["id"],
+            "kb_name": row["kb_name"],
+            "rule": "importance_range",
+            "severity": "warning",
+            "field": "importance",
+            "message": message,
+        }
 
     def _check_broken_links(
         self,
@@ -1368,6 +1401,8 @@ class QAService:
     ) -> None:
         orphans = self.db.get_orphans(kb_name=kb_name, readable_kbs=readable_kbs)
         for entry in orphans:
+            if is_qa_record(entry.get("entry_type")):
+                continue
             issues.append(
                 {
                     "entry_id": entry["id"],
@@ -1522,38 +1557,10 @@ class QAService:
         )
 
         for err in result.get("errors", []):
-            issues.append(
-                {
-                    "entry_id": entry["id"],
-                    "kb_name": kb_name,
-                    "rule": "schema_violation",
-                    "severity": "error",
-                    "field": err.get("field", ""),
-                    **_schema_rule(err),
-                    "message": (
-                        f"Schema error on '{entry['id']}': "
-                        f"field '{err.get('field', '')}' — {err.get('rule', '')} "
-                        f"(expected {err.get('expected', '')}, got {err.get('got', '')})"
-                    ),
-                }
-            )
+            issues.append(_schema_violation_issue(entry["id"], kb_name, "error", err))
 
         for warn in result.get("warnings", []):
-            issues.append(
-                {
-                    "entry_id": entry["id"],
-                    "kb_name": kb_name,
-                    "rule": "schema_violation",
-                    "severity": "warning",
-                    "field": warn.get("field", ""),
-                    **_schema_rule(warn),
-                    "message": (
-                        f"Schema warning on '{entry['id']}': "
-                        f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
-                        f"(expected {warn.get('expected', '')}, got {warn.get('got', '')})"
-                    ),
-                }
-            )
+            issues.append(_schema_violation_issue(entry["id"], kb_name, "warning", warn))
 
     # =========================================================================
     # Reserved-key pass (reads the files)
@@ -1697,6 +1704,7 @@ class QAService:
                 shown = file_path
             self._check_reserved_key_collisions(issues, kb_name, entry, shown)
             self._check_task_priority(issues, kb_name, entry, shown)
+            self._check_task_park(issues, kb_name, entry, shown)
             self._check_number_as_text(issues, kb_name, kb_config, entry, file_path, shown)
             self._check_double_spellings(issues, kb_name, entry, shown)
             if problem := lifecycle_validation_error(entry.lifecycle):
@@ -1809,6 +1817,61 @@ class QAService:
                 ),
             }
         )
+
+    @staticmethod
+    def _check_task_park(
+        issues: list[dict[str, Any]], kb_name: str, entry: Any, shown: Any
+    ) -> None:
+        """Report a task park the views read conservatively (#1688), from the
+        file's own values; nothing is rewritten.
+
+        - a ``park_kind`` other than ``person`` or ``external``: read as
+          ``person``, so the task never returns to agents by date;
+        - a ``retest_after`` that names no date: the task stays parked;
+        - a ``retest_after`` with no ``parked_awaiting``: parked until the
+          date, but nothing says why.
+        """
+        from ..models.task_queue import PARK_KINDS, is_parked, park_fields, retest_date
+
+        if entry.entry_type != "task":
+            return
+        # Top level, else under `metadata:`, as the views read it.
+        source = park_fields(entry._source_frontmatter or {})
+
+        def finding(field: str, message: str) -> None:
+            issues.append(
+                {
+                    "entry_id": entry.id,
+                    "kb_name": kb_name,
+                    "rule": "task_park",
+                    "severity": "warning",
+                    "field": field,
+                    "message": f"{shown}: {message}",
+                }
+            )
+
+        kind = source.get("park_kind")
+        if kind not in (None, "") and str(kind).strip().lower() not in PARK_KINDS:
+            finding(
+                "park_kind",
+                f"park_kind {kind!r} is not one of {', '.join(PARK_KINDS)}; Pyrite reads "
+                "it as person, so the task never returns to agents by date.",
+            )
+        retest = source.get("retest_after")
+        if retest in (None, "") or (isinstance(retest, str) and not retest.strip()):
+            return
+        if retest_date(retest) is None:
+            finding(
+                "retest_after",
+                f"retest_after {retest!r} is not a date (YYYY-MM-DD); the task stays "
+                "parked until it is unparked.",
+            )
+        if not is_parked(source.get("parked_awaiting")):
+            finding(
+                "parked_awaiting",
+                "retest_after is set but parked_awaiting is not; the task is parked "
+                "until that date with no reason given (`pyrite task park` sets both).",
+            )
 
     def _check_number_as_text(
         self,
@@ -1971,6 +2034,11 @@ class QAService:
         for key, value in kept.items():
             if key not in RESERVED_FIELD_NAMES:
                 continue
+            if key == "importance" and not isinstance(value, (dict, list, tuple, set)):
+                # A scalar importance has its own rule, `importance_range`
+                # (#1761); a mapping or list is a key used for something
+                # else, and keeps the rename advice.
+                continue
             # A key the model leaves out at its default (`lifecycle:
             # active`) is read, not lost: fall back to the attribute.
             read_as = emitted[key] if key in emitted else getattr(entry, key, None)
@@ -2022,7 +2090,7 @@ class QAService:
 
         rows = self.db.execute_sql(
             "SELECT id, kb_name, entry_type, title, date, importance, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name",
+            f"FROM entry WHERE kb_name = :kb_name AND {content_only()}",
             {"kb_name": kb_name},
         )
 
@@ -2038,38 +2106,10 @@ class QAService:
             )
 
             for err in result.get("errors", []):
-                issues.append(
-                    {
-                        "entry_id": entry["id"],
-                        "kb_name": kb_name,
-                        "rule": "schema_violation",
-                        "severity": "error",
-                        "field": err.get("field", ""),
-                        **_schema_rule(err),
-                        "message": (
-                            f"Schema error on '{entry['id']}': "
-                            f"field '{err.get('field', '')}' — {err.get('rule', '')} "
-                            f"(expected {err.get('expected', '')}, got {err.get('got', '')})"
-                        ),
-                    }
-                )
+                issues.append(_schema_violation_issue(entry["id"], kb_name, "error", err))
 
             for warn in result.get("warnings", []):
-                issues.append(
-                    {
-                        "entry_id": entry["id"],
-                        "kb_name": kb_name,
-                        "rule": "schema_violation",
-                        "severity": "warning",
-                        "field": warn.get("field", ""),
-                        **_schema_rule(warn),
-                        "message": (
-                            f"Schema warning on '{entry['id']}': "
-                            f"field '{warn.get('field', '')}' — {warn.get('rule', '')} "
-                            f"(expected {warn.get('expected', '')}, got {warn.get('got', '')})"
-                        ),
-                    }
-                )
+                issues.append(_schema_violation_issue(entry["id"], kb_name, "warning", warn))
 
     # =========================================================================
     # Rubric evaluation
@@ -2130,7 +2170,7 @@ class QAService:
             key = (issue.get("entry_id", ""), issue.get("kb_name", ""))
             by_entry.setdefault(key, []).append(issue)
         rows = self.db.execute_sql(
-            "SELECT * FROM entry WHERE kb_name = :kb_name ORDER BY id",
+            f"SELECT * FROM entry WHERE kb_name = :kb_name AND {content_only()} ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -2404,14 +2444,14 @@ class QAService:
     def _check_llm_rubric_all(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Tier 2 of `validate_kb`: the model-judged rubric over every entry.
 
-        Skips ``qa_assessment`` entries, as `assess_kb` does. A model finding
+        Skips QA records, as `assess_kb` does. A model finding
         is an issue as `assess_entry` records it; an entry the model did not
         answer for is an ``evaluation_failed`` error naming the reason, so
         `ci` can never pass a check that did not run (#795).
         """
         rows = self.db.execute_sql(
             "SELECT id, kb_name, entry_type, title, date, importance, body, status, metadata "
-            "FROM entry WHERE kb_name = :kb_name AND entry_type != 'qa_assessment' ORDER BY id",
+            f"FROM entry WHERE kb_name = :kb_name AND {content_only()} ORDER BY id",
             {"kb_name": kb_name},
         )
         for row in rows:
@@ -2439,7 +2479,7 @@ class QAService:
         no_tag_rows = self.db.execute_sql(
             "SELECT e.id, e.kb_name, e.entry_type, e.title FROM entry e "
             "LEFT JOIN entry_tag et ON e.id = et.entry_id AND e.kb_name = et.kb_name "
-            "WHERE e.kb_name = :kb_name AND et.entry_id IS NULL",
+            f"WHERE e.kb_name = :kb_name AND et.entry_id IS NULL AND {content_only('e')}",
             {"kb_name": kb_name},
         )
         for row in no_tag_rows:
@@ -2458,7 +2498,7 @@ class QAService:
         # 2. Missing outlinks (excluding stubs)
         no_link_rows = self.db.execute_sql(
             "SELECT e.id, e.kb_name, e.entry_type, e.title, e.body FROM entry e "
-            "WHERE e.kb_name = :kb_name "
+            f"WHERE e.kb_name = :kb_name AND {content_only('e')} "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM link l WHERE l.source_id = e.id AND l.source_kb = e.kb_name"
             ")",
@@ -2482,7 +2522,7 @@ class QAService:
         # 3. Generic titles
         rows = self.db.execute_sql(
             "SELECT id, kb_name, title FROM entry WHERE kb_name = :kb_name "
-            "AND title IS NOT NULL AND title != ''",
+            f"AND title IS NOT NULL AND title != '' AND {content_only()}",
             {"kb_name": kb_name},
         )
         from .rubric_checkers import GENERIC_TITLES
@@ -2730,6 +2770,40 @@ def _schema_rule(item: dict[str, Any]) -> dict[str, str]:
     validator that gives no rule adds no key."""
     rule = item.get("rule")
     return {"schema_rule": rule} if rule else {}
+
+
+def _schema_violation_issue(
+    entry_id: str, kb_name: str, severity: str, item: dict[str, Any]
+) -> dict[str, Any]:
+    """Build one QA ``schema_violation`` issue using the validator's message and suggestion."""
+    field = item.get("field", "")
+    prefix = "Schema error" if severity == "error" else "Schema warning"
+    item_msg = item.get("message")
+    if item_msg:
+        message = (
+            f"{prefix} on '{entry_id}': field '{field}' — {item_msg}"
+            if field
+            else f"{prefix} on '{entry_id}': {item_msg}"
+        )
+    else:
+        got = json_safe_value(item.get("got", ""))
+        message = (
+            f"{prefix} on '{entry_id}': "
+            f"field '{field}' — {item.get('rule', '')} "
+            f"(expected {item.get('expected', '')}, got {got})"
+        )
+    issue: dict[str, Any] = {
+        "entry_id": entry_id,
+        "kb_name": kb_name,
+        "rule": "schema_violation",
+        "severity": severity,
+        "field": field,
+        **_schema_rule(item),
+        "message": message,
+    }
+    if item.get("suggestion"):
+        issue["suggestion"] = item["suggestion"]
+    return issue
 
 
 def _validation_fields(

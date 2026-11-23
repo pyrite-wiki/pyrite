@@ -6,7 +6,7 @@ Extracted from api.py to reduce file size and improve organization.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 # =============================================================================
 # Knowledge Bases
@@ -102,16 +102,18 @@ class KBReindexResponse(BaseModel):
     #: never a path, over the network. The local CLI names them.
     unreadable_folders: int = 0
 
-    @field_validator("unreadable_folders", mode="before")
+    unreadable_files: int = 0
+
+    @field_validator("unreadable_folders", "unreadable_files", mode="before")
     @classmethod
-    def _folders_as_counted(cls, value: Any) -> Any:
-        """The route builds this from the registry's dict (``**result``):
-        the folder rows are shaped by ``network_shape``, the one place that
-        decides what a network caller gets, whichever way the dict arrives."""
+    def _unreadable_as_counted(cls, value: Any, info: ValidationInfo) -> Any:
+        """Accept raw registry rows as well as the route's shaped counts."""
         if isinstance(value, list):
             from ..services.index_health import network_shape
 
-            return network_shape({"unreadable_folders": value})["unreadable_folders"]
+            field = info.field_name
+            assert field is not None
+            return network_shape({field: value})[field]
         return value
 
 
@@ -145,6 +147,10 @@ class SearchResult(BaseModel):
     #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
     #: ``semantic``.
     legs: list[str] | None = None
+    #: What the entry's file holds that this row's reading does not show
+    #: faithfully (a refused ``importance``, #1761). Not the response-level
+    #: ``warnings`` (a leg was skipped). Absent on a row with nothing to say.
+    entry_warnings: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
@@ -171,6 +177,12 @@ class SearchResponse(BaseModel):
     #: search with ``["keyword"]`` here was a keyword search. Not the
     #: per-result ``legs``, which says which legs returned that result.
     legs_run: list[str]
+    #: The entry parts the legs that ran read: ``[]`` when none ran. Tags and
+    #: declared field values are not indexed, so a miss on one is not an absence.
+    searched: list[str]
+    #: With ``searched`` holding ``body_prefix`` (only the vector leg ran): how many
+    #: characters of each body its vectors were built from. Omitted otherwise.
+    body_prefix_chars: int | None = None
     #: The keyword leg's signal, when one ran: ``all_terms``, ``some_terms``
     #: or ``none``.
     keyword_match: str | None = None
@@ -475,6 +487,7 @@ class SyncResponse(BaseModel):
     #: How many folders it could not list in the KBs it synced: their rows
     #: kept (#1546). A count, never a path; the local CLI names them.
     unreadable_folders: int = 0
+    unreadable_files: int = 0
 
 
 class ErrorResponse(BaseModel):

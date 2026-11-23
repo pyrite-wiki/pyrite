@@ -11,7 +11,7 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
 
 ## Start here
 
-1. Read `kb/design.md`: Pyrite's design on one page, nine principles and the
+1. Read `kb/design.md`: Pyrite's design on one page, eleven principles and the
    questions to ask of any ticket or change. Judge your work against it.
 2. Read [CONTRIBUTING.md](CONTRIBUTING.md), "Branches, hooks and pull
    requests" and "Running the tests". They are the only statement of the

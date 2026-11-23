@@ -14,6 +14,7 @@ project is worth their time.
 
 - Python 3.11+ (3.13 recommended)
 - Git
+- Node.js 22.17 or later, only to build or test the web UI in `web/` (SvelteKit 3; `web/package.json` `engines`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ### Initial Setup
@@ -48,7 +49,9 @@ pre-commit install
 scripts/setup-checkout.sh
 pyrite kb list   # the `pyrite` KB path must be this checkout's kb/
 
-# Verify imports resolve to this checkout, including every extension
+# Verify imports resolve to this checkout, including every extension. Pytest
+# repeats this check at startup, so a manually created or tool-created worktree
+# fails before tests run if its editable installs point at another checkout.
 .venv/bin/python scripts/check_checkout_imports.py
 
 # Verify installation
@@ -57,6 +60,12 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+Each checkout must use its own environment. Run `scripts/setup-checkout.sh`
+for a manually created or tool-created worktree before testing. The pytest
+guard reports the package and both checkout paths when it refuses a run. An
+environment that intentionally uses non-editable installs may set
+`PYRITE_SKIP_CHECKOUT_IMPORTS=1` for that run.
 
 #### The dependency lock
 
@@ -617,6 +626,9 @@ the issue. The plan scales with the change: for a `good first issue` one
 sentence is enough ("I'll add `id`/`kb_name` to the three projections and a
 test per command").
 
+An issue assigned to a maintainer is not open for contributors; pick one
+labelled `help wanted` or `good first issue`.
+
 A claim with no PR after 5 days lapses. Two people on one issue is fine — the
 first PR that meets the acceptance criteria merges, and we credit the other
 in the changelog entry for the change.
@@ -708,6 +720,8 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
   Anyone can file one; use the templates. Issues labelled
   [`good first issue`](https://github.com/pyrite-wiki/pyrite/labels/good%20first%20issue)
   are small, well-specified and a fine place to start.
+  An issue assigned to a maintainer is not open for contributors; pick one
+  labelled `help wanted` or `good first issue`.
 - **The roadmap → `kb/`** in this repo: epics, planned work and architecture
   decisions, browsable with the tool itself:
 

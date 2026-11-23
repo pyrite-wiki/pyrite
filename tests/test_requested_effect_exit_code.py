@@ -699,6 +699,30 @@ class TestTasks:
             is False
         )
 
+    def test_a_lost_start_exits_one_in_json_as_in_rich(self, cli):
+        cli.pyrite("task", "create", "S1", "-k", "demo")
+        first = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "me", "--format", "json")
+        assert first.returncode == 0, first.stdout + first.stderr
+        for fmt in ("json", "rich"):
+            again = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", fmt)
+            assert again.returncode == REFUSED, (fmt, again.stdout + again.stderr)
+        lost = cli.pyrite("task", "start", "s1", "-k", "demo", "-a", "you", "--format", "json")
+        assert json.loads(lost.stdout)["claimed"] is False
+
+    def test_a_refused_finish_exits_one_in_json_as_in_rich(self, cli):
+        cli.pyrite("task", "create", "F1", "-k", "demo")
+        cli.pyrite("task", "claim", "f1", "-k", "demo", "-a", "me")
+        # claimed -> done is two edges: without --walk it is refused, writing nothing.
+        for fmt in ("json", "rich"):
+            out = cli.pyrite("task", "finish", "f1", "-k", "demo", "--by", "me", "--format", fmt)
+            assert out.returncode == REFUSED, (fmt, out.stdout + out.stderr)
+        refused = cli.pyrite("task", "finish", "f1", "-k", "demo", "--by", "me", "--format", "json")
+        assert json.loads(refused.stdout)["error_code"] == "VALIDATION_FAILED"
+        walked = cli.pyrite(
+            "task", "finish", "f1", "-k", "demo", "--walk", "--by", "me", "--format", "json"
+        )
+        assert walked.returncode == 0, walked.stdout + walked.stderr
+
     def test_children_that_failed_to_create_are_partial(self, cli):
         cli.pyrite("task", "create", "Parent", "-k", "demo")
         # The second child has the first one's title, hence its id: refused.
@@ -967,6 +991,8 @@ GUARDED = {
     "pyrite sw migrate-standards": "TestJournalismAndSoftwareResults",
     "pyrite sw prioritize": "TestJournalismAndSoftwareResults",
     "pyrite task claim": "TestTasks",
+    "pyrite task finish": "TestTasks",
+    "pyrite task start": "TestTasks",
     "pyrite task decompose": "TestTasks",
     "pyrite-admin index embed": "TestEmbed",
     "pyrite-admin index health": "TestAdminRepo",
@@ -1034,6 +1060,8 @@ SAFE = {
     "pyrite sw transition": "one transition; failure exits 1",
     "pyrite task checkpoint": "one write",
     "pyrite task create": "one entry",
+    "pyrite task park": "one write; a refusal (no reason, bad kind or date) exits 1",
+    "pyrite task unpark": "one write, or none when nothing is parked; a refusal exits 1",
     "pyrite task migrate-relaxed-mode": "idempotent backfill; 'skipped' means not applicable, not "
     "failed",
     "pyrite task reset": "one transition",
@@ -1262,7 +1290,7 @@ LEGACY_DIR = Path(__file__).resolve().parent / "legacy_commands"
 # unnoticed. The files are the exact list, so a slice may leave this alone; a
 # reviewer lowers it when a slice migrates commands. Nothing enforces "only
 # goes down" but review.
-LEGACY_COMMANDS_CEILING = 173
+LEGACY_COMMANDS_CEILING = 167
 
 
 def _on_the_contract(cmd) -> bool:
@@ -1821,7 +1849,9 @@ PRINTS: dict[tuple[str, str], tuple[str, str]] = {
     ("pyrite/admin_cli.py", "repo_sync"): ("fixed", "TestAdminRepo"),
     ("pyrite/cli/__init__.py", "import_entries"): ("fixed", "TestImportAndBulkLinks"),
     ("pyrite/cli/index_commands.py", "index_build"): ("fixed", "TestUnreadableKB"),
-    ("pyrite/cli/index_commands.py", "index_sync"): ("fixed", "TestUnreadableKB"),
+    # The text `index sync` prints moved into its renderer when the command
+    # moved onto the outcome contract (#1691); the exit is the Outcome's.
+    ("pyrite/cli/index_commands.py", "render_sync"): ("fixed", "TestUnreadableKB"),
     ("pyrite/cli/index_commands.py", "_report_health"): (
         "safe",
         "index health exits 1 when unhealthy, in its caller",

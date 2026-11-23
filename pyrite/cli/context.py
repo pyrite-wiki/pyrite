@@ -48,6 +48,9 @@ def _ensure_lazy(*names: str) -> None:
 
 logger = logging.getLogger(__name__)
 
+#: SQLite 64-bit signed integer max (2**63 - 1) — upper bound for CLI limit/offset (#1800).
+ROW_COUNT_MAX: int = 9223372036854775807
+
 
 def require_kb(
     config: PyriteConfig,

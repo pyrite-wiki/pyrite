@@ -50,5 +50,5 @@ Implemented in Wave 2. New `FieldSchema` dataclass with 10 field types. Extended
 
 ## References
 
-- [ADR-0008](../adrs/0008-structured-data-and-schema.md)
-- [Design Doc](../designs/structured-data-and-schema.md)
+- [ADR-0008](../../adrs/0008-structured-data-and-schema.md)
+- [Design Doc](../../designs/structured-data-and-schema.md)

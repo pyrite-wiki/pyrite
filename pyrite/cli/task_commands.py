@@ -13,10 +13,12 @@ one of them). Notices go to stderr, which the root leaves open.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
 from rich.table import Table
+from typer.core import TyperCommand
 
 from ..exceptions import EntryNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
@@ -183,7 +185,78 @@ def _parse_task_create_fields(field: list[str] | None) -> dict[str, Any]:
     return fields
 
 
-@task_app.command("create")
+_FRONTMATTER_REFUSAL = (
+    "--body-file/--stdin: the text opens with a frontmatter block, and task bodies do not "
+    "read frontmatter. Use `pyrite create -t task --body-file <file>`, which reads it."
+)
+
+
+class _BodySourceCommand(TyperCommand):
+    """A command that takes ``--body``/``--body-file``/``--stdin`` (#1687).
+
+    What can be judged without reading is judged while click parses, so it is a
+    usage error (``USAGE_ERROR``, exit 2) before any KB is opened or anything is
+    written (ADR-0046: the command body has no usage errors): two body sources.
+    A ``--body-file`` that is missing or a directory is found by reading, so it is
+    a refusal from the command body (``require_input_file``, exit 1).
+
+    ``create`` and ``update`` reuse this check (#1780). Whether a source counts
+    as given is the subclass's to say (``_body_given``, ``_stdin_given``),
+    because the parameter names and defaults differ between the commands."""
+
+    def parse_args(self, ctx, args):
+        rest = super().parse_args(ctx, args)
+        p = ctx.params
+        body_file = p.get("body_file")
+        dash = body_file is not None and str(body_file) == "-"
+        given = [
+            flag
+            for flag, on in (
+                ("--body", self._body_given(p)),
+                ("--body-file", body_file is not None and not dash),
+                ("--stdin", self._stdin_given(p) or dash),
+            )
+            if on
+        ]
+        if len(given) > 1:
+            raise typer.BadParameter(f"give one body source, not {' and '.join(given)}", ctx=ctx)
+        return rest
+
+    def _body_given(self, p):
+        return p.get("body") is not None
+
+    def _stdin_given(self, p):
+        return bool(p.get("stdin_flag"))
+
+
+def _task_body(body: str | None, body_file: Path | None, stdin_flag: bool) -> str | None:
+    """The one body a task command was given, or None when it got none (#1687).
+
+    Reuses the readers ``pyrite create`` uses (``read_input_file``, ``_read_stdin``;
+    ``-`` as the path reads stdin), so undecodable bytes are refused as ``create``
+    refuses them. Text read from a file or stdin that opens with frontmatter is
+    refused (it would write a second frontmatter-looking block); ``--body`` stays
+    literal text, as ``task create --body`` always was.
+    """
+    from ..exceptions import ValidationError
+    from ..utils.frontmatter import Frontmatter, split_frontmatter
+    from .context import read_input_file
+    from .entry_commands import _read_stdin
+
+    if body is not None:
+        return body
+    if stdin_flag or (body_file is not None and str(body_file) == "-"):
+        text = _read_stdin()
+    elif body_file is not None:
+        text = read_input_file(body_file, "Body file")
+    else:
+        return None
+    if isinstance(split_frontmatter(text), Frontmatter):
+        raise ValidationError(_FRONTMATTER_REFUSAL)
+    return text
+
+
+@task_app.command("create", cls=_BodySourceCommand)
 def task_create(
     title_arg: str | None = typer.Argument(
         None, metavar="TITLE", help="Task title (or use --title)"
@@ -196,6 +269,10 @@ def task_create(
         None, "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
     body: str | None = typer.Option(None, "--body", "-b", help="Task description"),
+    body_file: Path | None = typer.Option(
+        None, "--body-file", help="Read the body from a file (- for stdin)"
+    ),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Read the body from stdin"),
     tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
     due_date: str | None = typer.Option(None, "--due-date", "-d", help="Due date (YYYY-MM-DD)"),
     link: list[str] | None = typer.Option(
@@ -231,6 +308,7 @@ def task_create(
 
     from .entry_commands import _parse_link_option
 
+    resolved_body = _task_body(body, body_file, stdin_flag)
     link_specs = [_parse_link_option(spec) for spec in link or []]
     links_payload = [{"target": t, "relation": r} for t, r in link_specs] if link else None
 
@@ -240,7 +318,7 @@ def task_create(
         result = svc.create_task(
             kb_name=kb_name,
             title=title,
-            body=body or "",
+            body=resolved_body or "",
             parent=parent or "",
             priority=priority,
             assignee=assignee or "",
@@ -337,21 +415,73 @@ def task_list(
     parent: str | None = typer.Option(None, "--parent", "-p", help="Filter by parent task"),
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
-    priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
+    priority: int | None = typer.Option(
+        None, "--priority", min=1, max=10, help="Filter by priority (1-10)"
+    ),
+    dispatchable: bool = typer.Option(
+        False,
+        "--dispatchable",
+        help="Only tasks a worker can take now (for a caller who may claim, each one is a "
+        "task claim accepts): open, unassigned, unparked, unblocked, no children; "
+        "highest priority first. Adds counts and excluded.",
+    ),
+    parked: bool | None = typer.Option(
+        None,
+        "--parked/--unparked",
+        help="Only parked tasks (parked_awaiting or retest_after set; due rechecks and "
+        "person parks included), or only unparked ones. Rows gain park_kind, "
+        "retest_after and park_state.",
+    ),
+    fields: str | None = typer.Option(
+        None,
+        "--fields",
+        help="Comma-separated fields per task (id and kb_name are always kept); * for all",
+    ),
 ) -> Outcome:
     """List tasks with optional filters."""
+    from ..services.read_shaping import parse_cli_fields
+
+    fields_list = parse_cli_fields(fields)
     svc, db = _get_service(kb_name)
     try:
-        items = svc.list_tasks(
+        data = svc.task_listing(
             kb_name=kb_name,
             status=status,
             assignee=assignee,
             parent=parent,
             priority=priority,
+            dispatchable=dispatchable,
+            parked=parked,
+            fields=fields_list,
         )
     finally:
         db.close()
-    return Outcome.done({"count": len(items), "tasks": items}, rich=_render_list)
+    if fields_list:
+        from ..services.task_service import TaskService
+
+        unmatched = [
+            f
+            for f in fields_list
+            if f not in TaskService.TASK_ROW_FIELDS and not any(f in t for t in data["tasks"])
+        ]
+        if unmatched:
+            typer.echo(
+                f"warning: no task carries: {', '.join(unmatched)} "
+                "(field names are case-sensitive; '*' returns every field)",
+                err=True,
+            )
+
+    def rich(console, data: dict) -> None:
+        if fields_list:
+            from ..formats.tabular import projected_rich_table
+
+            console.print(projected_rich_table(data["tasks"], fields_list, "Tasks"))
+        else:
+            _render_list(console, data)
+        if "counts" in data:
+            console.print(", ".join(f"{k}: {v}" for k, v in data["counts"].items()), markup=False)
+
+    return Outcome.done(data, rich=rich)
 
 
 @task_app.command("get")
@@ -424,7 +554,7 @@ def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
     return Outcome.done(task_detail, rich=_render_task)
 
 
-@task_app.command("update")
+@task_app.command("update", cls=_BodySourceCommand)
 def task_update(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
@@ -433,6 +563,11 @@ def task_update(
     priority: int | None = typer.Option(
         None, "--priority", min=1, max=10, help="New priority 1-10"
     ),
+    body: str | None = typer.Option(None, "--body", "-b", help="New body text"),
+    body_file: Path | None = typer.Option(
+        None, "--body-file", help="Replace the body with a file's text (- for stdin)"
+    ),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Replace the body with stdin"),
     reason: str | None = typer.Option(
         None,
         "--reason",
@@ -458,8 +593,11 @@ def task_update(
     output_format: str = OUTPUT_FORMAT,
     legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
-    """Update task fields (status, assignee, priority, reason)."""
+    """Update task fields (status, assignee, priority, body, reason)."""
     updates: dict[str, Any] = {}
+    resolved_body = _task_body(body, body_file, stdin_flag)
+    if resolved_body is not None:
+        updates["body"] = resolved_body
     if status is not None:
         updates["status"] = status
     if assignee is not None:
@@ -479,8 +617,8 @@ def task_update(
 
     if not updates:
         raise ValidationError(
-            "No updates specified: pass --status, --assignee, --priority, --reason, "
-            "--comment or --by."
+            "No updates specified: pass --status, --assignee, --priority, --body, "
+            "--body-file, --stdin, --reason, --comment or --by."
         )
 
     svc, db = _get_service(kb_name)
@@ -528,6 +666,104 @@ def task_claim(
     return Outcome.nothing(result, rich=rich)
 
 
+@task_app.command("start")
+def task_start(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    assignee: str = typer.Option(
+        ..., "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Claim and start an open task in one atomic write.
+
+    Decided by the same compare-and-set as `task claim`: of two concurrent
+    starts one wins, and the loser exits 1 with `claimed: false`, as a lost
+    claim does. Records open → claimed → in_progress in the task's
+    status_change_log and returns the task and its parent, with their bodies.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.start_task(task_id, kb_name, assignee)
+    finally:
+        db.close()
+
+    def rich(console, result):
+        if result.get("claimed"):
+            console.print(f"[green]Started:[/green] {task_id}")
+            console.print(f"  Assignee: {assignee}")
+            parent = result.get("parent")
+            if parent:
+                console.print(f"  Parent: {parent['id']}  {parent['title']}")
+            body = (result.get("task") or {}).get("body") or ""
+            if body:
+                console.print(f"\n{body}")
+        else:
+            console.print(f"[red]Failed:[/red] {result.get('error', 'Unknown error')}")
+
+    # A lost start is a lost claim (#526, ADR-0046): `nothing`, exit 1.
+    if result.get("claimed"):
+        return Outcome.done(result, rich=rich)
+    return Outcome.nothing(result, rich=rich)
+
+
+@task_app.command("finish")
+def task_finish(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    walk: bool = typer.Option(
+        False,
+        "--walk",
+        help="Pass through every intermediate state of the task workflow to done, recording each edge",
+    ),
+    reason: str | None = typer.Option(
+        None,
+        "--reason",
+        "--status-reason",
+        help="Reason for the change: set as status_reason and on each log item",
+    ),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is finishing it: must be the task's assignee (finish requires the caller to hold the task)",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, finish a task you do not hold; recorded as by: operator, override: true",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Move a held task to done in one write.
+
+    Finish requires the caller to hold the task: --by names the caller, who
+    must be its assignee. Operators have an explicit override,
+    --operator-override. Without --walk only a direct edge is taken
+    (in_progress → done, review → done); the refusal names the path --walk
+    would take. Each edge is judged by the task's workflow and recorded in
+    its status_change_log.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.finish_task(
+            task_id,
+            kb_name,
+            walk=walk,
+            reason=reason or "",
+            by=by or "",
+            operator_override=operator_override,
+        )
+    finally:
+        db.close()
+
+    def rich(console, result):
+        console.print(f"[green]Finished:[/green] {task_id} ({' → '.join(result['path'])})")
+
+    return Outcome.done(result, rich=rich)
+
+
 @task_app.command("reset")
 def task_reset(
     task_id: str = typer.Argument(..., help="Task entry ID"),
@@ -555,6 +791,108 @@ def task_reset(
     def rich(console, result):
         console.print(f"[green]Reset:[/green] {task_id} ({result['prior_status']} → open)")
         console.print(f"  Reason: {result['reason']}")
+
+    return Outcome.done(result, rich=rich)
+
+
+@task_app.command("park")
+def task_park(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    reason: str = typer.Option(..., "--reason", help="What the task waits on"),
+    kind: str | None = typer.Option(
+        None,
+        "--kind",
+        help="person (a person must act: never handed back to agents) or external "
+        "(the world: back to agents on --retest-after). Absent means external.",
+    ),
+    retest_after: str | None = typer.Option(
+        None,
+        "--retest-after",
+        help="YYYY-MM-DD: from this date an external park is due for a recheck",
+    ),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is acting: a task another caller holds needs its holder here",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, act on a task you do not hold",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Park a task until a date, because of a reason. The status does not change.
+
+    Writes parked_awaiting, park_kind and retest_after in one write; a new
+    park replaces the old one. `task list --dispatchable` leaves a parked
+    task out until its date, then lists it as a recheck. A task another
+    caller holds is parked only by its holder (--by) or the operator
+    (--operator-override); a done or cancelled task is not parked.
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.park_task(
+            task_id,
+            kb_name,
+            reason,
+            kind=kind,
+            retest_after=retest_after,
+            by=by or "",
+            operator_override=operator_override,
+        )
+    finally:
+        db.close()
+
+    def rich(console, result):
+        console.print(f"[green]Parked:[/green] {task_id} ({result['park_state']})")
+        console.print(f"  Awaiting: {result['parked_awaiting']}", markup=False)
+        if result["park_kind"]:
+            console.print(f"  Kind: {result['park_kind']}")
+        if result["retest_after"]:
+            console.print(f"  Retest after: {result['retest_after']}")
+
+    return Outcome.done(result, rich=rich)
+
+
+@task_app.command("unpark")
+def task_unpark(
+    task_id: str = typer.Argument(..., help="Task entry ID"),
+    kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
+    by: str | None = typer.Option(
+        None,
+        "--by",
+        help="Who is acting: a task another caller holds needs its holder here",
+    ),
+    operator_override: bool = typer.Option(
+        False,
+        "--operator-override",
+        help="As the operator, act on a task you do not hold",
+    ),
+    output_format: str = OUTPUT_FORMAT,
+    legacy_format: str | None = LEGACY_FORMAT_SHORT,
+) -> Outcome:
+    """Unpark a task: remove parked_awaiting, park_kind and retest_after.
+
+    The keys are removed, never left empty; the status does not change. A
+    task that is not parked is left as it is. A task another caller holds is
+    unparked only by its holder (--by) or the operator (--operator-override).
+    """
+    svc, db = _get_service(kb_name)
+    try:
+        result = svc.unpark_task(task_id, kb_name, by=by or "", operator_override=operator_override)
+    finally:
+        db.close()
+
+    def rich(console, result):
+        if result["removed"]:
+            console.print(
+                f"[green]Unparked:[/green] {task_id} (removed {', '.join(result['removed'])})"
+            )
+        else:
+            console.print(f"{task_id} was not parked; nothing changed.")
 
     return Outcome.done(result, rich=rich)
 
@@ -632,8 +970,8 @@ def task_checkpoint(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     message: str = typer.Option(..., "--message", "-m", help="Checkpoint message"),
-    confidence: float = typer.Option(
-        0.0, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
+    confidence: float | None = typer.Option(
+        None, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
     ),
     evidence: list[str] | None = typer.Option(
         None, "--evidence", "-e", help="Evidence entry IDs (repeatable)"
@@ -657,7 +995,7 @@ def task_checkpoint(
     def rich(console, _result):
         console.print(f"[green]Checkpoint logged:[/green] {task_id}")
         console.print(f"  {message}")
-        if confidence > 0:
+        if confidence is not None:
             console.print(f"  Confidence: {int(confidence * 100)}%")
 
     return Outcome.done(result, rich=rich)

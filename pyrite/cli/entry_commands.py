@@ -52,7 +52,8 @@ from ..utils.frontmatter import (
 )
 from .context import cli_context, read_input_file, require_input_file
 from .outcome import Outcome
-from .output import OUTPUT_FORMAT, cli_console, validate_output_format
+from .output import OUTPUT_FORMAT, cli_console, print_rich_entry_warnings, validate_output_format
+from .task_commands import _BodySourceCommand
 
 logger = logging.getLogger(__name__)
 console = cli_console()
@@ -136,6 +137,22 @@ def _parse_link_option(spec: str) -> tuple[str, str]:
             suggestion=getattr(e, "suggestion", None),
         ) from None
     return target, relation
+
+
+class _EntryBodySourceCommand(_BodySourceCommand):
+    """``create``'s body sources, judged as the task commands' are (#1780).
+
+    Two differences from ``_BodySourceCommand``: ``--body`` defaults to ""
+    rather than None, so it counts as given only when non-empty (an empty
+    ``--body`` beside another source writes what that source writes, as it
+    does today), and the stdin flag is the parameter ``stdin``, not
+    ``stdin_flag``."""
+
+    def _body_given(self, p):
+        return bool(p.get("body"))
+
+    def _stdin_given(self, p):
+        return bool(p.get("stdin"))
 
 
 def _read_stdin() -> str:
@@ -411,6 +428,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table([result], fields_list, "Entry"))
+                print_rich_entry_warnings(console, result)
                 return
 
             console.print(f"\n[bold cyan]{result.get('title', '')}[/bold cyan]")
@@ -435,7 +453,9 @@ def register_entry_commands(app: typer.Typer) -> None:
                     else:
                         console.print(f"  • {src.title}: {src.url}")
 
-    @app.command("create")
+            print_rich_entry_warnings(console, result)
+
+    @app.command("create", cls=_EntryBodySourceCommand)
     def create_entry(
         kb_name: str = typer.Option(
             None, "--kb", "-k", help="Target knowledge base (required unless --template)"
@@ -445,7 +465,7 @@ def register_entry_commands(app: typer.Typer) -> None:
         body: str = typer.Option("", "--body", "-b", help="Entry body text"),
         tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
         date: str = typer.Option("", "--date", "-d", help="Date (YYYY-MM-DD, for events)"),
-        importance: int = typer.Option(5, "--importance", "-i", help="Importance (1-10)"),
+        importance: str = typer.Option("5", "--importance", "-i", help="Importance (1-10)"),
         status: str = typer.Option("", "--status", help="Entry status (e.g., draft, confirmed)"),
         field: list[str] | None = typer.Option(
             None,
@@ -475,6 +495,7 @@ def register_entry_commands(app: typer.Typer) -> None:
     ) -> Outcome:
         """Create a new entry in a knowledge base."""
         from ..schema import CORE_TYPES
+        from ..schema.validators import importance_value
         from ..utils.yaml import dump_yaml
 
         # Template mode: the skeleton is the result
@@ -485,17 +506,49 @@ def register_entry_commands(app: typer.Typer) -> None:
                 "title": title or "Your Title Here",
                 "tags": [],
             }
-            # Add type-specific fields as empty values
-            type_info = CORE_TYPES.get(entry_type, {})
-            for field_name, field_type in type_info.get("fields", {}).items():
-                if field_name in ("tags", "links"):
-                    continue
-                if "list" in field_type:
-                    fm[field_name] = []
-                elif field_type == "int":
-                    fm[field_name] = 0
-                else:
-                    fm[field_name] = ""
+            if kb_name is not None:
+                # A KB's skeleton shows the fields a create of this type in
+                # this KB would write, read from the same place (#1598).
+                # Opening the context refuses a -k that names no KB the way
+                # a create does (KB_NOT_FOUND).
+                with cli_context(kbs=(kb_name,)) as (config, db, svc):
+                    kb_config = svc.require_kb(kb_name)
+                    try:
+                        fm.update(
+                            svc.create_template_fields(
+                                entry_type,
+                                kb_config,
+                                allow_undeclared=allow_undeclared,
+                                importance=importance,
+                            )
+                        )
+                    except ValidationError as e:
+                        raise _with_cli_hint(e) from None
+                    # The preview's own base fields, not the built entry's;
+                    # the type stays the resolved one the service returned
+                    # (#1598 item 3), not the name the caller gave.
+                    fm["id"] = ""
+                    fm["title"] = title or "Your Title Here"
+                    fm["tags"] = []
+                    fm["importance"] = importance_value(importance)
+                    # The result's entry_type is the stored (mapped) type too,
+                    # as a real create's is (#1657): `event` -> `investigation_event`.
+                    entry_type = fm["type"]
+            else:
+                # Without -k the skeleton is the core types' (CORE_TYPES). The two
+                # branches are deliberately separate: the KB branch asks the KB
+                # service, this one has no KB to ask.
+                # Add type-specific fields as empty values
+                type_info = CORE_TYPES.get(entry_type, {})
+                for field_name, field_type in type_info.get("fields", {}).items():
+                    if field_name in ("tags", "links"):
+                        continue
+                    if "list" in field_type:
+                        fm[field_name] = []
+                    elif field_type == "int":
+                        fm[field_name] = 0
+                    else:
+                        fm[field_name] = ""
             skeleton = f"---\n{dump_yaml(fm)}\n---\n\nYour content here."
 
             def raw(console: Console, data: dict) -> None:
@@ -682,7 +735,7 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         return Outcome.done(data, rich=rich)
 
-    @app.command("update")
+    @app.command("update", cls=_BodySourceCommand)
     def update_entry(
         entry_id: str = typer.Argument(..., help="Entry ID to update"),
         kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
@@ -691,7 +744,9 @@ def register_entry_commands(app: typer.Typer) -> None:
         body_file: Path | None = typer.Option(None, "--body-file", help="Read body from file"),
         stdin_flag: bool = typer.Option(False, "--stdin", help="Read body from stdin"),
         tags: str = typer.Option(None, "--tags", help="New comma-separated tags"),
-        importance: int = typer.Option(None, "--importance", "-i", help="New importance (1-10)"),
+        importance: str | None = typer.Option(
+            None, "--importance", "-i", help="New importance (1-10)"
+        ),
         lifecycle: str = typer.Option(
             None, "--lifecycle", help="Lifecycle state: active or archived"
         ),
@@ -955,6 +1010,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                         f"{escape(item['reason'])}"
                     )
             if dry_run:
+                console.print(f"  File: {escape(result['file_path'])}")
                 console.print("[yellow]Dry run — no files modified.[/yellow]")
 
         if skipped or partial:

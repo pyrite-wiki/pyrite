@@ -10,11 +10,16 @@ import typer
 from rich.table import Table
 
 from ..exceptions import PyriteError, ValidationError
-from ..schema import filter_updated_since, parse_since
+from ..schema import parse_since
 from ..services.access_policy import UNSCOPED
 from ..services.read_shaping import parse_cli_fields, project_fields
-from .context import cli_context, require_kb
-from .output import cli_console, output_format_choice, validate_output_format
+from .context import ROW_COUNT_MAX, cli_context, require_kb
+from .output import (
+    cli_console,
+    output_format_choice,
+    print_rich_entry_warnings,
+    validate_output_format,
+)
 
 console = cli_console()
 
@@ -78,7 +83,9 @@ def register_browse_commands(app: typer.Typer) -> None:
             help="Sort direction: asc, desc",
         ),
         limit: int = typer.Option(50, "--limit", "-n", min=0, help="Max entries (max 200)"),
-        offset: int = typer.Option(0, "--offset", min=0, help="Pagination offset"),
+        offset: int = typer.Option(
+            0, "--offset", min=0, max=ROW_COUNT_MAX, help="Pagination offset"
+        ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
         output_format: str = typer.Option(
             "json",
@@ -98,6 +105,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 sort_order=sort_order,
                 limit=limit,
                 offset=offset,
+                include_warnings=True,
             )
             total = svc.count_entries(kb_name=kb_name, entry_type=entry_type, tag=tag)
 
@@ -127,6 +135,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(entries, fields_list, "Entries"))
+                print_rich_entry_warnings(console, resp_data)
                 return
 
             table = Table(title=f"Entries ({total} total)")
@@ -144,6 +153,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 )
 
             console.print(table)
+            print_rich_entry_warnings(console, resp_data)
 
     @app.command("batch-read")
     def batch_read(
@@ -176,7 +186,7 @@ def register_browse_commands(app: typer.Typer) -> None:
             # `not_found`. A spec with no KB (":id") is left to the read.
             for _eid, kb in parsed_ids:
                 require_kb(config, kb, db=db, output_format=output_format)
-            results = svc.get_entries(parsed_ids)
+            results = svc.get_entries(parsed_ids, include_warnings=True)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
@@ -218,6 +228,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 for r in results:
                     console.print(f"\n[bold cyan]{r.get('title', '')}[/bold cyan]")
                     console.print(f"[dim]KB: {r.get('kb_name', '')} | ID: {r.get('id', '')}[/dim]")
+            print_rich_entry_warnings(console, resp_data)
 
             if not_found:
                 console.print(f"\n[yellow]Not found: {len(not_found)} entries[/yellow]")
@@ -402,14 +413,18 @@ def register_browse_commands(app: typer.Typer) -> None:
     def recent_entries(
         kb_name: str | None = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         entry_type: str | None = typer.Option(None, "--type", "-t", help="Filter by entry type"),
-        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries"),
+        limit: int = typer.Option(20, "--limit", "-n", min=0, help="Max entries (max 200)"),
+        offset: int = typer.Option(
+            0, "--offset", min=0, max=ROW_COUNT_MAX, help="Pagination offset"
+        ),
         since: str = typer.Option(
             None,
             "--since",
             help=(
                 "Entries updated at or after this instant (inclusive): a date "
                 "(2026-10-22, read as midnight UTC) or an ISO datetime with or "
-                "without an offset"
+                "without an offset. Applied before --limit, so --offset pages "
+                "through everything it matches"
             ),
         ),
         fields: str = typer.Option(None, "--fields", help="Comma-separated fields to return"),
@@ -433,23 +448,32 @@ def register_browse_commands(app: typer.Typer) -> None:
                 # exception to it is a mypy error once the block ends (#1268).
                 cli_error_from(exc, output_format)
 
-            entries = svc.list_entries(
+            # `since` is applied before the limit in the service, so the page
+            # holds up to `limit` entries updated at or after it and
+            # `has_more` counts the filtered set, not the page (#1859).
+            limit = min(limit, 200)
+            entries, total = svc.recent(
                 kb_name=kb_name,
                 entry_type=entry_type,
-                sort_by="updated_at",
-                sort_order="desc",
-                limit=min(limit, 200),
+                since=since_instant,
+                limit=limit,
+                offset=offset,
+                include_warnings=True,
             )
-
-            if since_instant is not None:
-                entries = filter_updated_since(entries, since_instant)
 
             # Apply field projection. One rule for every read surface (#193).
             fields_list = parse_cli_fields(fields)
             if fields_list:
                 entries = [project_fields(record, fields_list) for record in entries]
 
-            resp_data = {"entries": entries, "count": len(entries)}
+            resp_data = {
+                "entries": entries,
+                "count": len(entries),
+                "total": total,
+                "limit": limit,
+                "offset": offset,
+                "has_more": offset + limit < total,
+            }
 
             formatted = _format_output(resp_data, output_format, fields=fields_list)
             if formatted is not None:
@@ -464,6 +488,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(entries, fields_list, "Recent Entries"))
+                print_rich_entry_warnings(console, resp_data)
                 return
 
             table = Table(title=f"Recent Entries ({len(entries)})")
@@ -481,6 +506,7 @@ def register_browse_commands(app: typer.Typer) -> None:
                 )
 
             console.print(table)
+            print_rich_entry_warnings(console, resp_data)
 
     @app.command("timeline")
     def timeline(
@@ -545,7 +571,9 @@ def register_browse_commands(app: typer.Typer) -> None:
     def tags_cmd(
         kb_name: str = typer.Option(None, "--kb", "-k", help="Filter by KB"),
         prefix: str = typer.Option(None, "--prefix", "-p", help="Filter tags by prefix"),
-        limit: int = typer.Option(100, "--limit", "-n", min=1, help="Max tags to show"),
+        limit: int = typer.Option(
+            100, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Max tags to show"
+        ),
         output_format: str = typer.Option(
             "json",
             "--format",

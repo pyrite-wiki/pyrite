@@ -57,6 +57,24 @@ PLUGIN_TYPES = sorted(n for n, (origin, _) in TYPES.items() if origin == "plugin
 CORE_TYPES = sorted(n for n, (origin, _) in TYPES.items() if origin == "core")
 
 
+def test_every_in_tree_plugin_type_loads_the_base_keys_alone():
+    """A loader accepts ``type``, ``id`` and ``title`` with no other key (#1855).
+
+    ``_refused_fields`` probes a failing loader with exactly those three keys.
+    A loader that refuses the probe turns a partial read into
+    ``ENTRY_UNREADABLE``; the rule is contractual, so a new plugin type must
+    satisfy it too.
+    """
+    for name in PLUGIN_TYPES:
+        cls = TYPES[name][1]
+        entry = cls.from_frontmatter(
+            {"type": name, "id": "base-only", "title": "Base only"}, "Body\n"
+        )
+
+        assert entry.id == "base-only", name
+        assert entry.title == "Base only", name
+
+
 def _int(cls):
     int("notanumber")
 

@@ -25,9 +25,10 @@ Verdicts, for each new or edited test:
   already on that node id at the merge base. Not a failure, and not evidence.
 - **n/a**: no claim (did not pass with the fix, skipped, not run, timed out).
 
-Test-side files are those under ``tests/`` or ``extensions/*/tests/``, and any
-``conftest.py``; everything else the PR changes is the fix. Tests the PR did not
-add or edit (compared by AST, so formatting does not count) are a count.
+Test-side files are those under ``tests/`` or ``extensions/*/tests/`` (including
+their ``conftest.py`` files, but not the repo-root ``conftest.py``); everything
+else the PR changes is the fix. Tests the PR did not add or edit (compared by
+AST, so formatting does not count) are a count.
 
 ADVISORY (#1074): CI neither gates on this nor passes ``--enforce-fix``; gating
 waits for #1104's model. The claim rule is sound only for module-level tables on the
@@ -100,10 +101,8 @@ class InfraError(Exception):
 
 def is_test_side(path: str) -> bool:
     parts = PurePosixPath(path).parts
-    return (
-        parts[0] == "tests"
-        or (len(parts) > 3 and parts[0] == "extensions" and parts[2] == "tests")
-        or parts[-1] == "conftest.py"
+    return parts[0] == "tests" or (
+        len(parts) > 3 and parts[0] == "extensions" and parts[2] == "tests"
     )
 
 
