@@ -311,22 +311,15 @@ def _item_flag(flag: str) -> Callable[[str], str]:
 
 def _parse_field_flags(
     pairs: list[str],
-    config: Any = None,
-    kb_name: str | None = None,
-    entry_type: str | None = None,
+    *,
     kb_config: Any = None,
+    entry_type: str | None = None,
 ) -> dict[str, Any]:
     """``-f key=value`` pairs of ``create``/``update`` as ``{key: value}``.
 
     A key named twice is refused: keeping one of the values would drop the
     other (#1502). Several values for one field go as one JSON array.
     """
-    if kb_config is None and config is not None and kb_name:
-        try:
-            kb_config = config.require_kb(kb_name)
-        except Exception:
-            kb_config = None
-
     out: dict[str, Any] = {}
     for fv in pairs:
         if "=" not in fv:
@@ -550,10 +543,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             extra["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
-            try:
-                kb_config = config.require_kb(kb_name)
-            except Exception:
-                kb_config = None
+            kb_config = config.require_kb(kb_name)
             # --field key=value pairs: syntax only; the service applies the schema.
             extra.update(
                 _parse_field_flags(field or [], kb_config=kb_config, entry_type=entry_type)
@@ -769,10 +759,7 @@ def register_entry_commands(app: typer.Typer) -> None:
             updates["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
-            try:
-                kb_config = config.require_kb(kb_name)
-            except Exception:
-                kb_config = None
+            kb_config = config.require_kb(kb_name)
             # The read is kept for its refusals (an ambiguous id, an unnamed
             # KB), which answer before anything else; entry_type helps parse
             # declared text/number fields correctly (#1672).
