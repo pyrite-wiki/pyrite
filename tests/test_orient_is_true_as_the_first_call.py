@@ -651,6 +651,14 @@ class TestANegativeRecentIsRefused:
         assert r.status_code == 422
         assert "VALIDATION_FAILED" in r.text
 
+    def test_the_published_mcp_schema_declares_the_minimum(self):
+        """The refusal is part of the contract an agent reads, not only a
+        runtime error it finds by trying -1."""
+        from pyrite.server.tool_schemas import READ_TOOLS
+
+        props = READ_TOOLS["kb_orient"]["inputSchema"]["properties"]
+        assert props["recent_limit"].get("minimum") == 0
+
     @pytest.mark.control(reason="zero is a real bound (an empty recent list), not a refusal")
     def test_zero_recent_is_still_accepted(self, sw, monkeypatch):
         assert sw.svc.orient("sw", recent_limit=0)["recent"] == []
