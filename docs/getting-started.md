@@ -336,7 +336,7 @@ cd ..
 pyrite init --template software --path my-project
 ```
 
-The **software** template adds ADRs, components, backlog items, standards, and runbooks — everything you need to manage a software project's knowledge. Its `pyrite sw` commands (`sw adrs`, `sw backlog`, ...) come from the software-kb extension, which is a separate install: `pip install -e extensions/software-kb`. Extensions are never installed by a template; the [README](../README.md#install) lists them.
+The **software** template adds ADRs, components, backlog items, standards, and runbooks — everything you need to manage a software project's knowledge. Its `pyrite sw` commands (`sw adrs`, `sw backlog`, ...) come from the software-kb extension, which is a separate install: `pip install -e extensions/software-kb`. Extensions are never installed by a template; the [README](../README.md#install) lists them. The extension's [README](../extensions/software-kb/README.md) covers the backlog lifecycle, blocked items and review.
 
 The `zettelkasten` template gives note-maturity types; the extension behind it is an example plugin, showing how a Pyrite plugin adds entry types, CLI commands, MCP tools and a preset, not a supported product.
 
