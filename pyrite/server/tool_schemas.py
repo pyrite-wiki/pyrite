@@ -294,6 +294,7 @@ READ_TOOLS = {
                 },
                 "recent_limit": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Number of recent entries to include (default 5)",
                 },
                 "detail": {
