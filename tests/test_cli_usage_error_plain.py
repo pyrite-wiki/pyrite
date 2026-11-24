@@ -27,7 +27,6 @@ point with stderr piped, and one pty puts a terminal on stderr.
 
 from __future__ import annotations
 
-import importlib
 import json
 import os
 import re
@@ -125,68 +124,193 @@ EXTENSION_COMMANDS = [
 ]
 
 
+@pytest.fixture
+def bare_pyrite():
+    """The ``pyrite`` root with none of the first-party extension commands
+    registered, whichever extensions this environment has installed.
+
+    The extension groups are mounted onto the module's one ``app`` the first
+    time it is resolved; this resolves it, then hides every name in
+    ``EXTENSION_COMMANDS`` for the test, so ``pyrite sw`` is an unknown command
+    here exactly as on a fresh install (#1457). Yields the app.
+    """
+    from pyrite.cli import app
+
+    mounted = app.registered_groups  # resolving it mounts the plugin groups
+    hidden = {name for name, _ in EXTENSION_COMMANDS}
+    mp = pytest.MonkeyPatch()
+    mp.setattr(app, "_groups", [g for g in mounted if g.name not in hidden])
+    mp.setattr(
+        app,
+        "registered_commands",
+        [c for c in app.registered_commands if c.name not in hidden],
+    )
+    try:
+        yield app
+    finally:
+        mp.undo()
+
+
+def _invoke_app(app: typer.Typer, args: list[str]):
+    result = CliRunner().invoke(app, args)
+    return result.stdout, result.stderr, result.exit_code
+
+
+def test_the_bare_root_has_no_extension_commands(bare_pyrite):
+    """Guards the fixture: if it hid nothing, or hid too much, every test
+    below would pass or fail for the wrong reason."""
+    names = set(typer.main.get_command(bare_pyrite).list_commands(None))
+    assert not names & {name for name, _ in EXTENSION_COMMANDS}
+    assert {"kb", "task"} <= names
+
+
 @pytest.mark.parametrize(("command", "directory"), EXTENSION_COMMANDS)
-def test_unknown_extension_command_names_its_install_line(command, directory):
+def test_unknown_extension_command_names_its_install_line(bare_pyrite, command, directory):
     """#1457: typing an extension command without the extension says how to
     install it. The refusal itself is unchanged: exit 2, USAGE_ERROR, the
     same "No such command" error."""
-    stdout, stderr, code = _invoke("pyrite", [command, "adrs"])
+    stdout, stderr, code = _invoke_app(bare_pyrite, [command, "adrs"])
     assert code == 2, (code, stdout, stderr)
     doc = json.loads(stdout)
+    assert doc["outcome"] == "error"
     assert doc["error"] == f"No such command '{command}'."
     assert doc["error_code"] == "USAGE_ERROR"
+    assert doc["retryable"] is False
     assert doc["suggestion"] == f"Install it with 'pip install -e extensions/{directory}'."
     assert f"Error: No such command '{command}'." in stderr
 
 
-def test_an_unknown_command_that_is_no_extension_keeps_the_help_hint():
-    stdout, _, code = _invoke("pyrite", ["no-such-command-zz"])
+def test_an_unknown_command_that_is_no_extension_keeps_the_help_hint(bare_pyrite):
+    stdout, _, code = _invoke_app(bare_pyrite, ["no-such-command-zz"])
     assert code == 2
-    doc = json.loads(stdout)
-    assert doc["suggestion"].endswith("Try 'pyrite --help' for help.")
+    suggestion = json.loads(stdout)["suggestion"]
+    assert suggestion.endswith("Try 'pyrite --help' for help."), suggestion
+    assert "pip install" not in suggestion
 
 
-def test_a_typo_inside_a_group_keeps_the_help_hint():
+def test_a_typo_inside_a_group_keeps_the_help_hint(bare_pyrite):
     """The install hint is only for a top-level command: a typo inside an
     installed group is not an extension to install."""
-    stdout, _, code = _invoke("pyrite", ["kb", "no-such-zz"])
+    stdout, _, code = _invoke_app(bare_pyrite, ["kb", "no-such-zz"])
     assert code == 2
+    suggestion = json.loads(stdout)["suggestion"]
+    assert suggestion.endswith("Try 'pyrite kb --help' for help."), suggestion
+    assert "pip install" not in suggestion
+
+
+def test_a_typo_inside_an_installed_extension_group_keeps_the_help_hint(bare_pyrite):
+    """The reverse of the install-line case (#1457 review): with the ``sw``
+    group installed, ``pyrite sw no-such-zz`` is a typo inside it, and
+    installing the extension would not help. The group here is a stand-in, so
+    the case holds whichever extensions are installed."""
+    stub = typer.Typer()
+
+    @stub.command("adrs")
+    def adrs() -> None: ...
+
+    bare_pyrite.add_typer(stub, name="sw")
+    stdout, stderr, code = _invoke_app(bare_pyrite, ["sw", "no-such-zz"])
+    assert code == 2, (code, stdout, stderr)
     doc = json.loads(stdout)
-    assert doc["suggestion"].endswith("Try 'pyrite kb --help' for help.")
+    assert doc["error"] == "No such command 'no-such-zz'."
+    assert doc["suggestion"].endswith("Try 'pyrite sw --help' for help."), doc
+    assert "pip install" not in doc["suggestion"]
 
 
-def test_the_extension_hint_in_rich_format():
+def test_a_typo_inside_the_real_sw_group_keeps_the_help_hint():
+    """The same, end to end against the real extension, where it is installed."""
+    pytest.importorskip("pyrite_software_kb.plugin")
+    stdout, stderr, code = _invoke("pyrite", ["sw", "no-such-zz"])
+    assert code == 2, (code, stdout, stderr)
+    suggestion = json.loads(stdout)["suggestion"]
+    assert suggestion.endswith("Try 'pyrite sw --help' for help."), suggestion
+    assert "pip install" not in suggestion
+
+
+def test_the_extension_hint_in_rich_format(bare_pyrite):
     """--format rich prints the new hint on the "hint:" line (#1457)."""
-    stdout, stderr, code = _invoke("pyrite", ["sw", "--format", "rich"])
+    stdout, stderr, code = _invoke_app(bare_pyrite, ["sw", "--format", "rich"])
     assert code == 2, (code, stdout, stderr)
     assert "USAGE_ERROR" in stdout
     assert "hint:" in stdout
     assert "pip install -e extensions/software-kb" in stdout
 
 
-def test_extension_command_table_matches_the_plugins():
-    """A renamed extension command cannot leave the table behind (#1457)."""
+def _root_context(app: typer.Typer):
+    return typer.main.get_command(app).make_context("pyrite", [], resilient_parsing=True)
+
+
+# The messages below are click's usage-error text as Typer flattens it. They
+# were written against click 8.5.0 / Typer 0.27.3, where an unknown command
+# reads `No such command 'x'.`; the install hint matches that wording, so a
+# click release that rewords it fails these unit cases instead of the hint
+# going missing silently.
+def test_the_hint_is_built_from_the_root_context_alone(bare_pyrite):
+    from pyrite.utils.errors import _extension_install_hint
+
+    root = _root_context(bare_pyrite)
+    assert (
+        _extension_install_hint(root, "No such command 'sw'.")
+        == "Install it with 'pip install -e extensions/software-kb'."
+    )
+    assert _extension_install_hint(root, "No such command 'nope'.") is None
+    assert _extension_install_hint(root, "No such option: --sw") is None
+    assert _extension_install_hint(None, "No such command 'sw'.") is None
+
+
+def test_the_hint_is_not_given_below_the_root(bare_pyrite):
+    """A context one level down (``pyrite kb``) or on another root's prog name
+    is never offered the install line, even for an extension's own name."""
+    from pyrite.utils.errors import _extension_install_hint
+
+    kb = typer.main.get_command(bare_pyrite).get_command(None, "kb")
+    child = kb.make_context("kb", [], parent=_root_context(bare_pyrite), resilient_parsing=True)
+    assert _extension_install_hint(child, "No such command 'sw'.") is None
+    other = typer.main.get_command(bare_pyrite).make_context(
+        "pyrite-admin", [], resilient_parsing=True
+    )
+    assert _extension_install_hint(other, "No such command 'sw'.") is None
+
+
+EXTENSION_PLUGINS = [
+    ("software-kb", "pyrite_software_kb.plugin", "SoftwareKBPlugin"),
+    ("zettelkasten", "pyrite_zettelkasten.plugin", "ZettelkastenPlugin"),
+    ("encyclopedia", "pyrite_encyclopedia.plugin", "EncyclopediaPlugin"),
+    ("social", "pyrite_social.plugin", "SocialPlugin"),
+    (
+        "journalism-investigation",
+        "pyrite_journalism_investigation.plugin",
+        "JournalismInvestigationPlugin",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    ("directory", "module_name", "class_name"),
+    EXTENSION_PLUGINS,
+    ids=[d for d, _, _ in EXTENSION_PLUGINS],
+)
+def test_extension_command_table_matches_the_plugin(directory, module_name, class_name):
+    """A renamed extension command cannot leave the table behind (#1457). One
+    case per plugin: a plugin that is not installed here is skipped by name,
+    and the others are still checked."""
     from pyrite.utils.errors import _EXTENSION_COMMAND_INSTALLS
 
-    plugins = [
-        ("pyrite_software_kb.plugin", "SoftwareKBPlugin"),
-        ("pyrite_zettelkasten.plugin", "ZettelkastenPlugin"),
-        ("pyrite_encyclopedia.plugin", "EncyclopediaPlugin"),
-        ("pyrite_social.plugin", "SocialPlugin"),
-        ("pyrite_journalism_investigation.plugin", "JournalismInvestigationPlugin"),
-    ]
-    seen: dict[str, str] = {}
-    for module_name, class_name in plugins:
-        try:
-            module = importlib.import_module(module_name)
-        except ImportError:
-            pytest.skip(f"{module_name} is not installed in this venv")
-        directory = Path(module.__file__).resolve().parents[2].name
-        names = [name for name, _ in getattr(module, class_name)().get_cli_commands()]
-        assert names, module_name
-        for name in names:
-            seen[name] = directory
-    assert seen == _EXTENSION_COMMAND_INSTALLS
+    module = pytest.importorskip(module_name)
+    assert Path(module.__file__).resolve().parents[2].name == directory
+    names = {name for name, _ in getattr(module, class_name)().get_cli_commands()}
+    assert names, module_name
+    in_table = {n for n, d in _EXTENSION_COMMAND_INSTALLS.items() if d == directory}
+    assert in_table == names
+
+
+def test_every_table_row_belongs_to_a_known_extension():
+    """Whatever is installed: no row names a directory the per-plugin cases do
+    not check."""
+    from pyrite.utils.errors import _EXTENSION_COMMAND_INSTALLS
+
+    assert set(_EXTENSION_COMMAND_INSTALLS.values()) == {d for d, _, _ in EXTENSION_PLUGINS}
+    assert _EXTENSION_COMMAND_INSTALLS == dict(EXTENSION_COMMANDS)
 
 
 def test_unknown_subcommand_names_the_groups_commands():
