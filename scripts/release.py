@@ -21,7 +21,9 @@ change the world come after every check:
                        yet (locally, on origin, or as a GitHub release) and
                        `origin/main` is an ancestor of the SHA, so step d can
                        only ever fast-forward; the version in pyproject.toml is
-                       <version>; README install tags match <version>;
+                       <version>; README install tags match <version>; so do
+                       pyrite-mcp's version, its `pyrite @ git+...@v<tag>`
+                       dependency and its README's tags (when `pyrite-mcp/` exists);
                        `uv lock --check` passes (a version bump leaves uv.lock
                        stale until `scripts/lock-deps.sh`); CHANGELOG has a dated section with content
                        and no stranded `[Unreleased]` entries; no open PR
@@ -337,18 +339,90 @@ def check_version_matches(repo: Path, version: str) -> None:
         )
 
 
+# `git+https://github.com/pyrite-wiki/pyrite@v<tag>`; the tag stops at whitespace,
+# a quote or the `#subdirectory=` fragment pyrite-mcp's install line carries.
+_INSTALL_TAG = re.compile(r"git\+https://github\.com/pyrite-wiki/pyrite@v([0-9][^\s\"'#]*)")
+
+
+def _install_tag_problem(name: str, text: str, version: str) -> str | None:
+    """What is wrong with the install tags in `text` (the file `name`), or None."""
+    tags = _INSTALL_TAG.findall(text)
+    if not tags:
+        return f"{name} has no git+...@v<version> install line."
+    if set(tags) != {version}:
+        found = ", ".join(f"v{t}" for t in sorted(set(tags)))
+        return f"{name} installs {found}, but requested version is {version!r}."
+    return None
+
+
 def check_readme_install_tag(repo: Path, version: str) -> None:
-    """Catch stale installation instructions before attempting a release."""
+    """Catch stale installation instructions before attempting a release.
+
+    tests/test_readme_install_tag.py asserts the same on every PR; this asks
+    again at release time, when the bump is made on the release commit (#1436).
+    """
     path = repo / "README.md"
     try:
         readme = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         raise ReleaseError("README.md is missing; cannot check the install tag.") from None
-    tags = re.findall(r"git\+https://github\.com/pyrite-wiki/pyrite@v([0-9][^\s\"']*)", readme)
-    if not tags:
-        raise ReleaseError("README.md has no git+...@v<version> install line.")
-    if set(tags) != {version}:
-        raise ReleaseError(f"README.md installs v{tags}, but requested version is {version!r}.")
+    problem = _install_tag_problem("README.md", readme, version)
+    if problem:
+        raise ReleaseError(problem)
+
+
+def check_pyrite_mcp_matches(repo: Path, version: str) -> None:
+    """`pyrite-mcp` carries Pyrite's version (#1582): its own `version`, the tag
+    its `pyrite @ git+...` dependency names, and the tags in its README.
+
+    One ReleaseError, one line per file that is wrong, each naming the file. A
+    checkout with no `pyrite-mcp/` has nothing to check (the script takes its
+    repository from `origin`; it is not Pyrite-only).
+    """
+    root = repo / "pyrite-mcp"
+    if not root.is_dir():
+        return
+    problems: list[str] = []
+
+    name = "pyrite-mcp/pyproject.toml"
+    try:
+        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get(
+            "project", {}
+        )
+    except FileNotFoundError:
+        problems.append(f"{name} is missing; cannot check its version.")
+    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as exc:
+        problems.append(f"{name} could not be read as TOML: {exc}")
+    else:
+        declared = project.get("version") if isinstance(project, dict) else None
+        if declared != version:
+            problems.append(
+                f"{name} says version = {declared!r} but you asked to release {version!r}."
+            )
+        deps = project.get("dependencies", []) if isinstance(project, dict) else []
+        pyrite_deps = [d for d in deps if isinstance(d, str) and d.startswith("pyrite @")]
+        if not pyrite_deps:
+            problems.append(f"{name} has no `pyrite @ git+...@v<version>` dependency.")
+        else:
+            problem = _install_tag_problem(name + " dependency", " ".join(pyrite_deps), version)
+            if problem:
+                problems.append(problem)
+
+    name = "pyrite-mcp/README.md"
+    try:
+        text = (root / "README.md").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        problems.append(f"{name} is missing; cannot check the install tags.")
+    else:
+        problem = _install_tag_problem(name, text, version)
+        if problem:
+            problems.append(problem)
+
+    if problems:
+        raise ReleaseError(
+            "\n".join(problems)
+            + "\nThe release commit moves these together: bump them on dev first."
+        )
 
 
 def check_lock_is_current(repo: Path) -> None:
@@ -1095,6 +1169,11 @@ def step_preconditions(ctx: Context) -> None:
 
     if ctx.attempt(lambda: check_readme_install_tag(ctx.repo, ctx.version)):
         ctx.runner.note(f"README.md install tag == v{ctx.version}")
+
+    if ctx.attempt(lambda: check_pyrite_mcp_matches(ctx.repo, ctx.version)):
+        ctx.runner.note(
+            f"pyrite-mcp version, pyrite dependency tag and README tags == {ctx.version}"
+        )
 
     if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version, ctx.day)):
         ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {ctx.day.isoformat()}` with content")
