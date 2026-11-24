@@ -408,6 +408,38 @@ _EXTENSION_COMMAND_INSTALLS = {
     "investigation": "journalism-investigation",
 }
 
+#: Each extension directory's distribution name: the ``name`` in its
+#: ``pyproject.toml`` (checked there by the same tests), which the no-clone
+#: ``pip install "<dist> @ git+...#subdirectory=..."`` form needs.
+_EXTENSION_DISTRIBUTIONS = {
+    "software-kb": "pyrite-software-kb",
+    "zettelkasten": "pyrite-zettelkasten",
+    "encyclopedia": "pyrite-encyclopedia",
+    "social": "pyrite-social",
+    "journalism-investigation": "pyrite-journalism-investigation",
+}
+
+
+def extension_install_line(directory: str) -> str:
+    """The sentence that tells a user how to install a first-party extension.
+
+    The form that works with no clone of the repository comes first, pinned to
+    the running Pyrite's release tag (the users who hit this installed from a
+    tag, #1457); the clone form follows. A Pyrite whose version is unknown
+    (``0+unknown``, no tag to pin) gets the clone form only.
+    """
+    from .. import __version__
+
+    clone = f"pip install -e extensions/{directory}"
+    if __version__.startswith("0+unknown"):
+        return f"Install it with '{clone}' from a clone of the repository."
+    dist = _EXTENSION_DISTRIBUTIONS[directory]
+    url = (
+        f"git+https://github.com/pyrite-wiki/pyrite@v{__version__}"
+        f"#subdirectory=extensions/{directory}"
+    )
+    return f"Install it with 'pip install \"{dist} @ {url}\"', or from a clone '{clone}'."
+
 
 def _extension_install_hint(ctx: Any, message: str) -> str | None:
     """The install line for a first-party extension command typed without it.
@@ -425,7 +457,7 @@ def _extension_install_hint(ctx: Any, message: str) -> str | None:
     directory = _EXTENSION_COMMAND_INSTALLS.get(match.group(1))
     if directory is None:
         return None
-    return f"Install it with 'pip install -e extensions/{directory}'."
+    return extension_install_line(directory)
 
 
 def _print_click_error(error: Any, fmt: str) -> None:

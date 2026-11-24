@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -123,6 +124,33 @@ EXTENSION_COMMANDS = [
     ("investigation", "journalism-investigation"),
 ]
 
+#: Each extension directory's distribution name, written out by hand (checked
+#: against the extension's own pyproject.toml below).
+DISTRIBUTIONS = {
+    "software-kb": "pyrite-software-kb",
+    "zettelkasten": "pyrite-zettelkasten",
+    "encyclopedia": "pyrite-encyclopedia",
+    "social": "pyrite-social",
+    "journalism-investigation": "pyrite-journalism-investigation",
+}
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _declared_version() -> str:
+    return tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]
+
+
+def _install_line(directory: str) -> str:
+    """The line the user is told, spelled out from the property: the form that
+    needs no clone first, pinned to the release tag, the clone form after."""
+    return (
+        f"Install it with 'pip install \"{DISTRIBUTIONS[directory]} @ "
+        f"git+https://github.com/pyrite-wiki/pyrite@v{_declared_version()}"
+        f"#subdirectory=extensions/{directory}\"', "
+        f"or from a clone 'pip install -e extensions/{directory}'."
+    )
+
 
 @pytest.fixture
 def bare_pyrite():
@@ -176,7 +204,7 @@ def test_unknown_extension_command_names_its_install_line(bare_pyrite, command, 
     assert doc["error"] == f"No such command '{command}'."
     assert doc["error_code"] == "USAGE_ERROR"
     assert doc["retryable"] is False
-    assert doc["suggestion"] == f"Install it with 'pip install -e extensions/{directory}'."
+    assert doc["suggestion"] == _install_line(directory)
     assert f"Error: No such command '{command}'." in stderr
 
 
@@ -233,7 +261,7 @@ def test_the_extension_hint_in_rich_format(bare_pyrite):
     assert code == 2, (code, stdout, stderr)
     assert "USAGE_ERROR" in stdout
     assert "hint:" in stdout
-    assert "pip install -e extensions/software-kb" in stdout
+    assert _install_line("software-kb") in stdout
 
 
 def _root_context(app: typer.Typer):
@@ -249,10 +277,7 @@ def test_the_hint_is_built_from_the_root_context_alone(bare_pyrite):
     from pyrite.utils.errors import _extension_install_hint
 
     root = _root_context(bare_pyrite)
-    assert (
-        _extension_install_hint(root, "No such command 'sw'.")
-        == "Install it with 'pip install -e extensions/software-kb'."
-    )
+    assert _extension_install_hint(root, "No such command 'sw'.") == _install_line("software-kb")
     assert _extension_install_hint(root, "No such command 'nope'.") is None
     assert _extension_install_hint(root, "No such option: --sw") is None
     assert _extension_install_hint(None, "No such command 'sw'.") is None
@@ -620,3 +645,39 @@ def test_a_terminal_on_stderr_gets_the_same_document_and_no_box():
     assert json.loads(out)["error_code"] == "USAGE_ERROR"
     assert BAD_OPTION in text  # the one plain line for a person
     assert not BOX.search(text), text
+
+
+def test_the_install_line_is_pinned_to_the_running_version(monkeypatch):
+    """A version bump moves the hint with it: the tag in the line is the running
+    Pyrite's ``__version__``, which is the version pyproject.toml declares."""
+    import pyrite
+    from pyrite.utils.errors import extension_install_line
+
+    assert pyrite.__version__ == _declared_version()
+    assert f"@v{_declared_version()}#subdirectory=" in extension_install_line("software-kb")
+    monkeypatch.setattr(pyrite, "__version__", "9.8.7")
+    assert "@v9.8.7#subdirectory=extensions/social" in extension_install_line("social")
+    assert "@v0.26" not in extension_install_line("social")
+
+
+def test_an_unknown_version_gives_only_the_clone_form(monkeypatch):
+    """With no release tag to pin (``0+unknown``) the no-clone form would name
+    a tag that does not exist; the clone form is all that is true."""
+    import pyrite
+    from pyrite.utils.errors import extension_install_line
+
+    monkeypatch.setattr(pyrite, "__version__", "0+unknown")
+    line = extension_install_line("software-kb")
+    assert "git+https" not in line
+    assert "pip install -e extensions/software-kb" in line
+
+
+@pytest.mark.parametrize(("directory", "dist"), sorted(DISTRIBUTIONS.items()))
+def test_the_distribution_name_is_the_extensions_own(directory, dist):
+    """Whatever is installed: the name in the line is the ``name`` in that
+    extension's pyproject.toml, so the pip line names a real distribution."""
+    from pyrite.utils.errors import _EXTENSION_DISTRIBUTIONS
+
+    declared = tomllib.loads((REPO / "extensions" / directory / "pyproject.toml").read_text())
+    assert declared["project"]["name"] == dist
+    assert _EXTENSION_DISTRIBUTIONS[directory] == dist
