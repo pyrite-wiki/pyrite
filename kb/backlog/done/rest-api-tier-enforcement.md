@@ -50,5 +50,5 @@ Multi-user or shared deployments need per-client access control. Agent workflows
 
 ## References
 
-- [REST API Server](../components/rest-api.md)
-- [MCP Server](../components/mcp-server.md) — reference implementation of tier enforcement
+- [REST API Server](../../components/rest-api.md)
+- [MCP Server](../../components/mcp-server.md) — reference implementation of tier enforcement

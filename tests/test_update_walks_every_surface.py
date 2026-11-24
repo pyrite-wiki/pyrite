@@ -1193,12 +1193,13 @@ def test_the_cli_says_when_a_templated_move_did_not_happen(tmp_path: Path, fmt: 
 
 
 @pytest.mark.parametrize("surface", sorted(SURFACES))
-def test_a_hard_linked_file_is_refused_as_a_storage_error(tmp_path: Path, surface: str):
-    """`atomic_write_text` refuses an `expect=` write to a file with two names
-    (`HardLinked`, ADR-0042 §10a A2). The update reports it as a
-    `StorageError` (`STORAGE_ERROR`), whose public text names no path
-    (ADR-0037 §3), and writes nothing. The base wrote the file."""
-    from pyrite.exceptions import StorageError
+def test_a_hard_linked_file_is_not_found_by_id(tmp_path: Path, surface: str):
+    """A file with two names is not the KB's (its other name may be outside
+    it): a by-id update never matches it, so every surface answers
+    not-found, as for an id nothing holds (maintainer decision 2026-11-10),
+    names no path, and writes nothing. (It used to reach the writer, which
+    refused it as `STORAGE_ERROR`.)"""
+    from pyrite.exceptions import EntryNotFoundError
 
     text, flags = SHAPES["root-file"]
     config, path = _build(tmp_path, text, flags)
@@ -1209,27 +1210,31 @@ def test_a_hard_linked_file_is_refused_as_a_storage_error(tmp_path: Path, surfac
         SURFACES[surface](config, {"title": "Walk, second draft"})
 
     if surface.startswith("service."):
-        # The service's own exception carries the detail for the log; what
-        # a transport may show is `public_text`.
-        assert isinstance(info.value, StorageError)
-        assert info.value.retryable is False
+        assert isinstance(info.value, EntryNotFoundError)
         assert str(tmp_path) not in public_text(info.value)
     else:
         assert str(tmp_path) not in str(info.value), str(info.value)
-        assert "STORAGE_ERROR" in str(info.value), str(info.value)
+        assert "NOT_FOUND" in str(info.value), str(info.value)
     assert path.read_bytes() == before
 
 
-def test_mcp_kb_update_carries_its_own_old_code_for_a_storage_fault(tmp_path: Path):
+def test_mcp_kb_update_carries_its_own_old_code_for_a_storage_fault(tmp_path: Path, monkeypatch):
     """`kb_update` answered every failure it did not name with `UPDATE_FAILED`
     before ADR-0037, so that is its `legacy_error_code` for a storage fault
     too; `REQUEST_REFUSED` (the module-wide fallback a plain `_refusal` would
     carry) is a code `kb_update` never gave (#990, the #992 merge review)."""
     from pyrite.server.mcp_server import PyriteMCPServer
 
+    from pyrite.exceptions import StorageError
+    from pyrite.services import kb_service
+
     text, flags = SHAPES["root-file"]
     config, path = _build(tmp_path, text, flags)
-    os.link(path, path.with_name("another-name.bak"))
+
+    def storage_fault(*a, **k):  # the writer refuses the file
+        raise StorageError("the writer refused the file")
+
+    monkeypatch.setattr(kb_service, "publish_entry_text", storage_fault)
     server = PyriteMCPServer(config, tier="write")
     try:
         result = server._dispatch_tool(
@@ -1401,42 +1406,6 @@ def test_task_service_migrate_relaxed_mode_changes_only_status_reason(tmp_path: 
     assert result["migrated"] >= 1, result
     assert "status_reason: pre-relaxed-mode" in after
     assert_only_these_keys_changed(before, after, ("status_reason", "updated_at"))
-    _crlf_kept(after)
-
-
-def test_task_service_unblock_dependents_changes_only_status(tmp_path: Path):
-    from pyrite.services.task_service import TaskService
-
-    text = TASK.replace("status: open", "status: blocked")
-    config, db, folder = _task_kb(tmp_path, {"t1.md": text, "t0.md": PARENT})
-    path = folder / "t1.md"
-    before = _text(path)
-    try:
-        unblocked = TaskService(config, db).unblock_dependents("t0", "tasks")
-    finally:
-        db.close()
-    after = _text(path)
-    assert [u["id"] for u in unblocked] == ["t1"], unblocked
-    assert "status: in_progress" in after
-    assert_only_these_keys_changed(before, after, ("status", "updated_at"))
-    _crlf_kept(after)
-
-
-def test_task_service_aggregate_evidence_changes_only_the_parents_evidence(tmp_path: Path):
-    from pyrite.services.task_service import TaskService
-
-    child = TASK.replace("dependencies: [t0]", "parent: t0\nevidence: [e1]")
-    config, db, folder = _task_kb(tmp_path, {"t1.md": child, "t0.md": PARENT})
-    path = folder / "t0.md"
-    before = _text(path)
-    try:
-        result = TaskService(config, db).aggregate_evidence_to_parent("t1", "tasks")
-    finally:
-        db.close()
-    after = _text(path)
-    assert result and result["evidence_added"] == 1, result
-    assert "e1" in after
-    assert_only_these_keys_changed(before, after, ("evidence", "updated_at"))
     _crlf_kept(after)
 
 

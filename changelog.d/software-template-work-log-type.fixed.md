@@ -1,0 +1,1 @@
+- **Built-in `software` init template now declares `work_log`, `milestone`, `programmatic_validation`, and `development_convention` (#1762).** Running `pyrite init -t software` before installing `pyrite-software-kb` previously omitted those types and their subdirectories from `kb.yaml`, causing `pyrite sw log` to fail once the extension was installed.

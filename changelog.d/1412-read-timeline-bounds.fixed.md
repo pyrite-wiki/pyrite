@@ -1,0 +1,1 @@
+- `pyrite-read timeline` now refuses `--min-importance` outside 1-10 and `--limit` outside 1-500 with a usage error (exit 2), the same bounds as `pyrite timeline` and the REST timeline; a negative `--limit` used to drop the last event (#1412).

@@ -3,21 +3,21 @@
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from ...exceptions import KBNotFoundError
 from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
 from ...services.kb_service import KBService
 from ..api import (
-    TIER_LEVELS,
-    KBRoleResolver,
     get_access_policy,
-    get_kb_role_resolver,
     get_kb_service,
+    get_read_kb_service,
     limiter,
     requires_kb_tier,
 )
 from ..authz import authorize, read_scope
 from ..schemas import DailyDatesResponse, EntryResponse
+from .entries import apply_refused_columns, entry_response
 
 router = APIRouter(tags=["Daily Notes"])
 
@@ -61,12 +61,13 @@ def list_daily_dates(
 
 def _load_existing_daily_note(
     svc: KBService, entry_id: str, kb: str, readable_kbs: set[str] | None
-) -> EntryResponse | None:
+) -> EntryResponse | JSONResponse | None:
     """Return the daily note if it's already indexed or present on disk
     (indexing it first in the latter case). None if it doesn't exist yet.
 
     Its backlinks may come from any KB, so they are bounded by the caller's
-    readable set (P-R4)."""
+    readable set (P-R4). A column the file's type refused is left out, never
+    a default, exactly like the single-entry read (ADR-0042 8a, #1490)."""
     existing = svc.get_entry(entry_id, kb, readable_kbs=readable_kbs)
     if not existing:
         loaded = svc.load_entry_from_disk(entry_id, kb)
@@ -76,11 +77,10 @@ def _load_existing_daily_note(
 
     if not existing:
         return None
-    existing.setdefault("sources", [])
-    existing.setdefault("tags", [])
+    refused = apply_refused_columns(existing)
     existing.setdefault("outlinks", [])
     existing.setdefault("backlinks", [])
-    return EntryResponse(**existing)
+    return entry_response(existing, refused)
 
 
 def _create_daily_note(
@@ -168,48 +168,34 @@ def _validate_date(date_str: str) -> None:
     response_model=EntryResponse,
 )
 @limiter.limit("60/minute")
-async def get_or_create_daily_note(
+async def get_daily_note(
     request: Request,
     date_str: str,
     kb: str = Query(..., description="KB name"),
-    svc: KBService = Depends(get_kb_service),
-    role_of: KBRoleResolver = Depends(get_kb_role_resolver),
+    svc: KBService = Depends(get_read_kb_service),
     scope: ReadScope = Depends(authorize(Action.KB_READ, KB)),
 ):
-    """Get a daily note for the given date, auto-creating it only for a
-    write-tier caller.
+    """The daily note for the given date, or 404 when there is none.
 
-    If a daily note already exists (entry id = ``daily-YYYY-MM-DD``), it is
-    returned regardless of tier. Otherwise, a write-tier caller gets a new
-    note created from the ``daily`` template (if present in the KB's
-    ``_templates/`` directory) or from a sensible default. A caller
-    without write access on this KB never triggers creation -- merely
-    viewing/navigating must not have write side effects
-    (web-daily-notes-view-side-effect) -- and gets 404 instead; the
-    frontend uses `POST /daily/{date_str}` to create explicitly.
+    A GET writes nothing, for any caller: only a write route asks where a
+    write lands (ADR-0044 §1). Creating is `POST /daily/{date_str}`, which the
+    web view's "Start today's note" calls.
     """
     _validate_date(date_str)
 
     svc.require_kb(kb)  # the one resolver (#952); a blank name is refused as unnamed
 
     entry_id = _daily_entry_id(date_str)
-    readable = scope.as_set()
-
-    existing = _load_existing_daily_note(svc, entry_id, kb, readable)
+    existing = _load_existing_daily_note(svc, entry_id, kb, scope.as_set())
     if existing:
         return existing
-
-    effective_role = await role_of(kb)
-    if effective_role is None or TIER_LEVELS.get(effective_role, -1) < TIER_LEVELS.get("write", 99):
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "NOT_FOUND",
-                "message": f"No daily note for '{date_str}' in KB '{kb}'",
-            },
-        )
-
-    return _create_daily_note(svc, entry_id, kb, date_str, readable)
+    raise HTTPException(
+        status_code=404,
+        detail={
+            "code": "NOT_FOUND",
+            "message": f"No daily note for '{date_str}' in KB '{kb}'",
+        },
+    )
 
 
 @router.post(

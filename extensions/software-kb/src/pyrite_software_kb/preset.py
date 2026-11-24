@@ -115,16 +115,6 @@ SOFTWARE_KB_PRESET = {
         "milestones",
         "tasks",
     ],
-    "default_board": {
-        "lanes": [
-            {"name": "Backlog", "statuses": ["proposed", "planned"]},
-            {"name": "Ready", "statuses": ["accepted"]},
-            {"name": "In Progress", "statuses": ["in_progress"], "wip_limit": 5},
-            {"name": "Review", "statuses": ["review"], "wip_limit": 3},
-            {"name": "Done", "statuses": ["done", "completed"]},
-        ],
-        "wip_policy": "warn",
-    },
 }
 
 # Keep the preset vocabulary tied to the plugin validator constants.

@@ -3,6 +3,7 @@
 	import TagBadge from '$lib/components/common/TagBadge.svelte';
 	import type { EntryResponse } from '$lib/api/types';
 	import { isSafeLinkUrl } from '$lib/utils/safe-url';
+	import { isPresent } from '$lib/utils/is-present';
 
 	interface Props {
 		entry: EntryResponse;
@@ -20,13 +21,13 @@
 		<span class="text-zinc-500">KB:</span>
 		<span class="ml-2">{entry.kb_name}</span>
 	</div>
-	{#if entry.date}
+	{#if isPresent(entry.date)}
 		<div>
 			<span class="text-zinc-500">Date:</span>
 			<span class="ml-2">{entry.date}</span>
 		</div>
 	{/if}
-	{#if entry.status}
+	{#if isPresent(entry.status)}
 		<div>
 			<span class="text-zinc-500">Status:</span>
 			<span class="ml-2 rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
@@ -40,21 +41,21 @@
 			<span class="ml-2 font-medium {entry.importance >= 8 ? 'text-amber-500' : ''}">{entry.importance}/10</span>
 		</div>
 	{/if}
-	{#if entry.tags.length > 0}
+	{#if (entry.tags ?? []).length > 0}
 		<div>
 			<span class="text-zinc-500">Tags:</span>
 			<div class="mt-1 flex flex-wrap gap-1">
-				{#each entry.tags as tag}
+				{#each entry.tags ?? [] as tag}
 					<TagBadge {tag} href="/entries?tag={encodeURIComponent(tag)}" />
 				{/each}
 			</div>
 		</div>
 	{/if}
-	{#if entry.participants.length > 0}
+	{#if (entry.participants ?? []).length > 0}
 		<div>
 			<span class="text-zinc-500">Participants:</span>
 			<div class="mt-1 flex flex-wrap gap-1">
-				{#each entry.participants as p}
+				{#each entry.participants ?? [] as p}
 					<a
 						href="/search?q={encodeURIComponent(p)}"
 						class="inline-flex items-center rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"

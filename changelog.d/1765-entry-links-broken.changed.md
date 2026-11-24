@@ -1,0 +1,1 @@
+- An entry's `links` in a single-entry read (CLI `get --format json`, REST `GET /api/entries/{id}`, MCP `kb_get`) now say when a Markdown link is broken: an item for a Markdown link to an entry file carries `target_path` and `broken: true|false`, so a broken link whose path text equals another entry's id no longer reads as a link to that entry (#1765).

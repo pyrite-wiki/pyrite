@@ -295,7 +295,7 @@ ENUMERATION_SENSITIVE_FIELDS: dict[str, tuple[str, ...]] = {
         "coverage",
     ),
     "kb_qa_validate": ("issues", "count", "truncated"),
-    "kb_recent": ("entries", "count"),
+    "kb_recent": ("entries", "count", "total", "limit", "offset", "has_more"),
     "kb_search": ("count", "has_more", "results"),
     "kb_stats": ("kbs", "total_entries", "total_tags", "total_links", "type_counts"),
     "kb_tags": ("tag_count", "has_more", "tags"),

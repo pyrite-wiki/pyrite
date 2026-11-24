@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import copy
+import json
+import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any
 
 from .validators import validate_date
@@ -14,6 +17,11 @@ if TYPE_CHECKING:
     from ..models import Entry
 
 _TEMPLATE_RE = re.compile(r"\{(\w+)\}")
+
+#: The field types whose value is a list: a value sent to one is stored as a
+#: list (:meth:`FieldSchema.coerce`) and a value on disk that is not one is a
+#: type finding (`_validate_field_value`), #1502.
+LIST_FIELD_TYPES = ("list", "multi-select", "tags")
 
 
 def expand_subdirectory_template(template: str, entry: Entry) -> str:
@@ -133,9 +141,28 @@ class FieldSchema:
             return copy.deepcopy(self.default)
         if self.field_type in ("text", "select"):
             return ""
-        if self.field_type in ("list", "multi-select", "tags"):
+        if self.field_type in LIST_FIELD_TYPES:
             return []
         return None
+
+    def coerce(self, value: Any) -> Any:
+        """``value`` as this field stores it when a caller sends it (#1502).
+
+        THE coercion of a write's value to its declared type, called by the
+        service on every surface (``KBService._with_declared_fields`` on a
+        create, ``KBService._resolve_operation``'s ``Set`` on an update). A
+        field typed ``list``, ``multi-select`` or ``tags`` that is sent a value
+        which is not a list stores ``[value]``: one item, never split on
+        commas. An empty value (``None``, ``''``) stays empty, and a mapping is
+        left for the type check ("expected list"); every other type and value
+        is returned unchanged. A value already on disk is never passed here:
+        a file is reported, not repaired (principle 2).
+        """
+        if self.field_type not in LIST_FIELD_TYPES:
+            return value
+        if value is None or value == "" or isinstance(value, list | dict):
+            return value
+        return [value]
 
     def allowed_values(self) -> list[Any]:
         """The declared enum for this field: ``options`` (or ``values``), else
@@ -206,6 +233,11 @@ class TypeSchema:
     evaluation_rubric: list[str | dict[str, Any]] = field(
         default_factory=list
     )  # Assertions for QA validation
+    #: Statuses that end live work (#934), as the operator wrote them: ``None`` is
+    #: "not declared", ``[]`` is "declared: none". Kept raw like ``field_aliases``,
+    #: so a malformed value is reported by ``qa validate`` and ignored by
+    #: ``core_types.settled_statuses``, never a crash at load.
+    settled_statuses: Any = None
     edge_type: bool = False  # Whether this type represents an edge/relationship
     endpoints: dict[str, EndpointSpec] = field(default_factory=dict)  # Edge endpoint specs
     state_machine: dict[str, Any] | None = None  # Per-type workflow override (Tier A r1175)
@@ -265,13 +297,12 @@ class TypeSchema:
         """
         if not self.file_pattern:
             return None
-        from ..exceptions import ValidationError
+        from ..exceptions import ValidationError, outside_text
         from ..schema import generate_entry_id
 
         fixed = {
             "id": entry.id,
             "slug": entry.id,
-            "date": getattr(entry, "date", "") or "",
             "title": generate_entry_id(entry.title),
             "type": entry.entry_type,
         }
@@ -279,11 +310,13 @@ class TypeSchema:
         import dataclasses
         from string import Formatter
 
-        data_fields = (
+        dataclass_fields = (
             {f.name for f in dataclasses.fields(entry)}
             if dataclasses.is_dataclass(entry)
             else set()
         )
+        private_fields = {name for name in dataclass_fields if name.startswith("_")}
+        data_fields = dataclass_fields - private_fields
         meta = getattr(entry, "metadata", None) or {}
 
         def _is_missing(value: Any) -> bool:
@@ -298,8 +331,30 @@ class TypeSchema:
         for _literal, field_name, _format_spec, conversion in Formatter().parse(self.file_pattern):
             if field_name is None:
                 continue
-            if field_name in fixed:
-                values[field_name] = fixed[field_name]
+            if field_name in fixed or field_name == "date":
+                if field_name == "date":
+                    # `date` is a dataclass field on typed entries but lives
+                    # in metadata on kb.yaml-declared ones (GenericEntry has
+                    # no date attribute), so resolve it like any other
+                    # placeholder instead of reading one location (#1467 --
+                    # a kb.yaml-only type formatted an empty `{date}` into
+                    # the filename).
+                    value = getattr(entry, "date", None)
+                    if _is_missing(value):
+                        value = meta.get("date")
+                    if _is_missing(value):
+                        return None
+                else:
+                    # The fixed placeholders carry the entry's identity
+                    # verbatim and do NOT go through the missing-value
+                    # fallback: an id of `..` is not an ordinarily-absent
+                    # field, it is a traversal attempt the `..`-component
+                    # check below must see and refuse. Routing it through
+                    # `_is_missing` (it starts with `.`) swallowed it into
+                    # a `None` fallback and broke the pre-existing
+                    # test_a_resolved_filename_of_exactly_dotdot_is_refused.
+                    value = fixed[field_name]
+                values[field_name] = value
                 continue
             if not self._PLACEHOLDER_NAME_RE.match(field_name):
                 raise ValidationError(
@@ -307,6 +362,15 @@ class TypeSchema:
                     f"{{{field_name}}}, which is not a plain field name (no "
                     "attribute/index access, no positional placeholders); "
                     "refusing to resolve it"
+                )
+            if field_name in private_fields:
+                # Private bookkeeping fields (_schema_version, _create_fields,
+                # _entry_type, etc.) are internal entry state, not data fields,
+                # and must not be resolved into file names (#1639).
+                raise ValidationError(
+                    f"file_pattern {self.file_pattern!r} names {{{field_name}}}, "
+                    f"which is a private field of entry {entry.id!r} (type "
+                    f"{entry.entry_type!r}); refusing to resolve it"
                 )
             if field_name in data_fields:
                 value = getattr(entry, field_name, None)
@@ -345,7 +409,7 @@ class TypeSchema:
         except (ValueError, TypeError, IndexError, KeyError) as e:
             raise ValidationError(
                 f"file_pattern {self.file_pattern!r} could not be resolved for entry "
-                f"{entry.id!r}: {e}"
+                f"{entry.id!r}: {outside_text(e)}"
             ) from e
 
         if "\x00" in result:
@@ -420,6 +484,87 @@ class TypeSchema:
         return result
 
 
+_YAML_STR_TAG = "tag:yaml.org,2002:str"
+
+
+def _plain_type_name(value: Any) -> str:
+    """Plain-word kind for ``value``; never leaks Python or YAML class names."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str) or str(getattr(value, "tag", "")) == _YAML_STR_TAG:
+        return "text"
+    if isinstance(value, list):
+        return "list"
+    if isinstance(value, Mapping):
+        return "dict"
+    if isinstance(value, datetime):
+        return "datetime"
+    if isinstance(value, date):
+        return "date"
+    return "value"
+
+
+def _plain_scalar(value: Any) -> Any:
+    """Strip ruamel scalar subclasses to plain Python values for safe display."""
+    if isinstance(value, bool) or type(value).__name__ == "ScalarBoolean":
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value) if math.isfinite(value) else str(value)
+    if isinstance(value, str):
+        return str(value)
+    if str(getattr(value, "tag", "")) == _YAML_STR_TAG:
+        return str(getattr(value, "value", ""))
+    return _plain_type_name(value)
+
+
+def _suggested_number(value: Any, field_schema: FieldSchema) -> str:
+    """A corrected numeric example for ``value`` respecting ``min``/``max``."""
+    min_val = field_schema.constraints.get("min")
+    max_val = field_schema.constraints.get("max")
+    if isinstance(value, str):
+        cleaned = re.sub(r"[,\s$€£¥_]", "", value.strip())
+        if cleaned and cleaned not in {"-", ".", "-."}:
+            try:
+                parsed: int | float = int(cleaned)
+            except ValueError:
+                try:
+                    fval = float(cleaned)
+                    parsed = fval if math.isfinite(fval) else None  # type: ignore[assignment]
+                except ValueError:
+                    parsed = None  # type: ignore[assignment]
+            if (
+                parsed is not None
+                and (min_val is None or parsed >= min_val)
+                and (max_val is None or parsed <= max_val)
+            ):
+                return cleaned
+    if min_val is not None and max_val is not None:
+        return str(42 if min_val <= 42 <= max_val else min_val)
+    if min_val is not None:
+        return str(max(min_val, 42))
+    if max_val is not None:
+        return str(min(max_val, 42))
+    return "42"
+
+
+def _list_example(field_schema: FieldSchema, value: Any) -> str:
+    """A corrected JSON/YAML list example for a list-typed field."""
+    allowed = field_schema.allowed_values()
+    if allowed:
+        return json.dumps(allowed[:2])
+    if isinstance(value, str) and value.strip():
+        return json.dumps([value.strip()])
+    return '["item1", "item2"]'
+
+
 def _validate_field_value(
     field_name: str, value: Any, field_schema: FieldSchema
 ) -> list[dict[str, Any]]:
@@ -432,42 +577,65 @@ def _validate_field_value(
             num = int(value) if isinstance(value, int) else float(value)
             min_val = field_schema.constraints.get("min")
             max_val = field_schema.constraints.get("max")
+            plain_num = _plain_scalar(value)
             if min_val is not None and num < min_val:
+                expected = (
+                    f"number from {min_val} to {max_val}"
+                    if max_val is not None
+                    else f"number >= {min_val}"
+                )
                 errors.append(
                     {
                         "field": field_name,
                         "rule": "field_range",
-                        "expected": f">= {min_val}",
-                        "got": value,
+                        "expected": expected,
+                        "got": plain_num,
+                        "message": f"expected a {expected}, got {plain_num}",
+                        "suggestion": f"use a {expected} for {field_name}, e.g. {min_val}",
                     }
                 )
             if max_val is not None and num > max_val:
+                expected = (
+                    f"number from {min_val} to {max_val}"
+                    if min_val is not None
+                    else f"number <= {max_val}"
+                )
                 errors.append(
                     {
                         "field": field_name,
                         "rule": "field_range",
-                        "expected": f"<= {max_val}",
-                        "got": value,
+                        "expected": expected,
+                        "got": plain_num,
+                        "message": f"expected a {expected}, got {plain_num}",
+                        "suggestion": f"use a {expected} for {field_name}, e.g. {max_val}",
                     }
                 )
         except (ValueError, TypeError):
+            got = _plain_scalar(value)
+            got_shown = repr(got) if isinstance(value, (str, int, float)) else got
+            example = _suggested_number(value, field_schema)
             errors.append(
                 {
                     "field": field_name,
                     "rule": "field_number",
-                    "expected": "numeric value",
-                    "got": value,
+                    "expected": "number",
+                    "got": got,
+                    "message": f"expected a number (digits only), got {got_shown}",
+                    "suggestion": f"use digits only for {field_name}, e.g. {example}",
                 }
             )
 
     elif ft == "date":
         if isinstance(value, str) and not validate_date(value):
+            got = str(value)
             errors.append(
                 {
                     "field": field_name,
                     "rule": "field_date",
                     "expected": "YYYY-MM-DD",
-                    "got": value,
+                    "got": got,
+                    "message": f"expected a date in YYYY-MM-DD format, got {got!r}",
+                    "suggestion": f"use YYYY-MM-DD for {field_name}, e.g. 2026-01-15",
                 }
             )
 
@@ -476,23 +644,29 @@ def _validate_field_value(
             try:
                 datetime.fromisoformat(value)
             except ValueError:
+                got = str(value)
                 errors.append(
                     {
                         "field": field_name,
                         "rule": "field_datetime",
                         "expected": "ISO 8601 datetime",
-                        "got": value,
+                        "got": got,
+                        "message": f"expected an ISO 8601 datetime (such as 2026-01-15T09:00:00Z), got {got!r}",
+                        "suggestion": f"use an ISO 8601 datetime for {field_name}, e.g. 2026-01-15T09:00:00Z",
                     }
                 )
 
     elif ft == "checkbox":
         if not isinstance(value, bool):
+            got_kind = _plain_type_name(value)
             errors.append(
                 {
                     "field": field_name,
                     "rule": "field_checkbox",
                     "expected": "boolean",
-                    "got": type(value).__name__,
+                    "got": got_kind,
+                    "message": f"expected a boolean (use true or false), got {got_kind}",
+                    "suggestion": f"use true or false for {field_name}, e.g. true",
                 }
             )
 
@@ -502,16 +676,39 @@ def _validate_field_value(
         # (#555). A value that is not a list at all is a type error, governed
         # by `validation.enforce` like every other one.
         if not isinstance(value, list):
+            got_kind = _plain_type_name(value)
+            example = _list_example(field_schema, value)
             errors.append(
                 {
                     "field": field_name,
                     "rule": "field_multi_select",
                     "expected": "list",
-                    "got": type(value).__name__,
+                    "got": got_kind,
+                    "message": f"expected list, got {got_kind}",
+                    "suggestion": f"use a list for {field_name}, e.g. {example}",
+                }
+            )
+
+    elif ft in ("list", "tags"):
+        # A list field holding a scalar or a mapping (#1502): a type error,
+        # governed by `validation.enforce` like `multi-select`'s above. Its
+        # own rule, `field_type`, so a reader keyed on `rule` never takes it
+        # for the enum check's `field_list` (an off-list element).
+        if not isinstance(value, list):
+            got_kind = _plain_type_name(value)
+            example = _list_example(field_schema, value)
+            errors.append(
+                {
+                    "field": field_name,
+                    "rule": "field_type",
+                    "expected": "list",
+                    "got": got_kind,
+                    "message": f"expected list, got {got_kind}",
+                    "suggestion": f"use a list for {field_name}, e.g. {example}",
                 }
             )
 
     # select / list / multi-select membership: see enum_check.enum_findings.
-    # text, object-ref, tags -- no validation beyond presence (for now)
+    # text, object-ref -- no validation beyond presence (for now)
 
     return errors

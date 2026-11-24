@@ -1,1 +1,0 @@
-- Add a test that the plugin capability map covers every `PyritePlugin` Protocol method, so a new method without a map entry (silently ungated) or a deleted map entry fails the suite instead of going unnoticed (#1383).

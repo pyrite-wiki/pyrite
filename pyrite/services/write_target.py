@@ -112,7 +112,12 @@ def change_set_target(
     if diff_db is None:
         raise LandingRefusedError(f"KB '{kb_name}': the change set has no index")
     # WorktreeDB is the overlay that stands in for a PyriteDB (duck-typed).
-    return target_config, cast("PyriteDB", WorktreeDB(db, diff_db))
+    # Rows main still holds name main's files, and diff rows name the user's
+    # working copy: read only inside those granted folders.
+    main_kb = config.get_kb(kb_name)
+    granted = tuple(p for p in (user_kb.path, main_kb.path if main_kb is not None else None) if p)
+    roots = {kb_name: granted} if granted else {}
+    return target_config, cast("PyriteDB", WorktreeDB(db, diff_db, kb_roots=roots))
 
 
 # =============================================================================
@@ -163,6 +168,14 @@ def binding(target: tuple[PyriteConfig, PyriteDB] | None):
         yield _BOUND.get()
     finally:
         _BOUND.reset(token)
+
+
+def session_for_call(canonical_db: PyriteDB):
+    """A database session scope for one call, on the call's bound target if
+    there is one, else on ``canonical_db``. Closed with the call, so a reused
+    worker thread starts its next call with no session state from this one."""
+    bound = current_target()
+    return (bound.db if bound is not None else canonical_db).session_scope()
 
 
 def context_kb_service(ctx):

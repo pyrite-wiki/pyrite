@@ -48,7 +48,10 @@ community needs and feedback.
 | 0.25.8 | The CLI contract for agents | 2026-10-16 |
 | 0.26.0 | Your files, exactly | 2026-10-22 |
 | 0.26.1 | Search flags, link resolution and cross-KB tools | 2026-11-10 |
-| 0.26.2 | Symlink identity and note typing | undated |
+| 0.26.2 | A network call borrows nothing of the server account | 2026-11-11 |
+| 0.26.3 | A network call borrows nothing of the server account, continued | 2026-11-16 |
+| 0.26.4 | Symlink identity and note typing; bugs and dependency alerts | 2026-11-18 |
+| 0.26.5 | One answer per question: the five structural themes of the 2026-11-16 code audit | 2026-12-10 |
 | 0.27 | One operator, many users | undated |
 | 0.28 | Alpha plugin and API contracts | undated |
 
@@ -75,9 +78,30 @@ milestones carry the issues; this table carries the promise and the gate.
   (#124, #622, #623).
 - **0.26.1 (shipped).** What was left from the 0.25.9 / 0.26 line: #627,
   #64 and #62.
-- **0.26.2.** What slipped from 0.26.1: #468 (note entries in a software KB
-  resolve to ADREntry) and #1262 (the duplicate-id half of the symlink case
-  from #637; the rename half went to #811).
+- **0.26.2 (shipped).** Security fixes: a network call reaches the entries it
+  holds a grant on and nothing else the server account holds (ADR-0052,
+  proposed). Release notes in `CHANGELOG.md`.
+- **0.26.3 (shipped).** Security fixes continuing 0.26.2: network git
+  borrows no credential or configuration of the server account, reads come
+  only from files inside the KB, and parser text is shown only to a caller
+  who may read it (ADR-0052, proposed). Release notes in `CHANGELOG.md`.
+- **0.26.4 (shipped 2026-11-18).** What slipped from 0.26.1: #468 (a create
+  stores the type the caller named) and #1262 (a link to another entry file of
+  the same KB is an alias, indexed once), with the milestone's bugs as a short
+  train. Frozen early (maintainer, 2026-11-18) at 68 commits; what was not in
+  flight moved to 0.26.5 or the backlog. The high Dependabot alerts and the
+  CodeQL error-level alerts moved to 0.26.5.
+- **0.26.5: one answer per question.** The five themes of
+  `kb/designs/code-audit-2026-11-16.md` (maintainer, 2026-11-16): a type is
+  one schema per KB (#1528); a plugin passes the same single points as core,
+  behind an alpha `pyrite.plugin_api` (#1529); a KB name resolves once at the
+  boundary (#1530); a failure is never a success-shaped answer (#1531); a
+  surface translates and the service decides (#1532). Order of work and the
+  estimate are in #1533. *Checkpoint:* 2026-11-26, the five fences and the
+  first two waves merged. *Slips first:* the `KBService` split, then the last
+  plugin conversions. Also carries what 0.26.4 did not close: the
+  high-severity web dependency alerts and the CodeQL error-level alerts. A
+  dated target, not a train: the date moves before a theme is cut.
 - **0.27: one operator, many users.** Design first: the authorization model
   and its executable matrix (#587), the security review (#586), and one
   operator-owned KB registry ([[adr-0039]]; #539, #602, #382).

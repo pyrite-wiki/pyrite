@@ -48,7 +48,13 @@ class KBOpsMixin:
         source: str = "user",
         default_role: str | None = None,
     ) -> None:
-        """Register a KB in the index."""
+        """Register a KB in the index, as these arguments describe it.
+
+        ``default_role`` is written as given, None included: the seed of a
+        config.yaml KB passes the file's value, and a line the operator
+        removed must clear the row, not leave the role an earlier load
+        stored.
+        """
         type_str = kb_type.value if hasattr(kb_type, "value") else kb_type
         existing = self.session.get(KB, name)
         if existing:
@@ -56,8 +62,7 @@ class KBOpsMixin:
             existing.path = path
             existing.description = description
             existing.source = source
-            if default_role is not None:
-                existing.default_role = default_role
+            existing.default_role = default_role
         else:
             kb = KB(
                 name=name,
@@ -69,6 +74,19 @@ class KBOpsMixin:
             )
             self.session.add(kb)
         self.session.commit()
+
+    def ensure_kb(self, name: str, kb_type: str, path: str, description: str = "") -> bool:
+        """Make the KB's row when it has none; never change one.
+
+        What an entry write and the index sync call: they need the row to
+        exist (an entry's foreign key), and they are not the operator's
+        registry operations, so an existing row's ``source``, ``path``,
+        ``description`` and ``default_role`` stay as the operator's
+        ``seed_from_config``/``add_kb``/``update_kb`` left them. ``register_kb``
+        overwrote them, so every write turned a config KB into a ``user`` KB
+        that ``remove_kb`` no longer protected. Returns whether it made the row.
+        """
+        return self.insert_new_kb(name, kb_type, path, description)
 
     def insert_new_kb(
         self,
@@ -165,13 +183,9 @@ class KBOpsMixin:
                 except (OSError, RuntimeError, ValueError):
                     # A path that cannot be resolved (an unknown ~user, a
                     # symlink loop) must not stop the load, and fails closed:
-                    # private for this process, nothing written back.
-                    logger.warning(
-                        "Could not resolve the path of KB %r (%s); loading it private ('none')",
-                        name,
-                        path,
-                        exc_info=True,
-                    )
+                    # private for this process, nothing written back. The
+                    # loader then leaves the KB out and says so, once
+                    # (`PyriteConfig.kb_config_from_registry_row`).
                     default_role = "none"
                     orphan = False
                 if orphan:
@@ -222,7 +236,14 @@ class KBOpsMixin:
             )
 
     def update_kb_default_role(self, name: str, default_role: str | None) -> bool:
-        """Update a KB's default_role. Returns True if KB was found."""
+        """Update a KB's default_role. Returns True if KB was found.
+
+        Through the one validator (`validate_kb_default_role`, `ConfigError`
+        otherwise), so no write stores a value the role check would refuse.
+        """
+        from ..config import validate_kb_default_role
+
+        validate_kb_default_role(default_role, f"KB '{name}'")
         kb = self.session.get(KB, name)
         if not kb:
             return False

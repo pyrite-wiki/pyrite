@@ -393,7 +393,9 @@ def _importer_error(fmt: str, data: bytes) -> str:
 
 
 @pytest.mark.parametrize("fmt", sorted(MALFORMED))
-def test_a_malformed_file_answers_parse_error_in_pyrites_words(make_client, fmt, caplog):
+def test_a_malformed_file_answers_parse_error_with_the_parsers_words(make_client, fmt, caplog):
+    """The parser's words are about the caller's own upload: shown to
+    them, inside Pyrite's message, and still in the server log."""
     data = MALFORMED[fmt]
     raw = _importer_error(fmt, data)
     assert raw, "the importer must raise with some text for this test to mean anything"
@@ -404,10 +406,11 @@ def test_a_malformed_file_answers_parse_error_in_pyrites_words(make_client, fmt,
     assert resp.status_code == 400, resp.text
     detail = resp.json()["detail"]
     assert detail["code"] == "PARSE_ERROR", detail
-    assert raw not in resp.text, resp.text
+    assert raw in detail["message"], detail
+    assert "the server log has the details" not in detail["message"], detail
     assert fmt in detail["message"]
     assert _written(config) == []
-    # The detail is the operator's: it is in the server log.
+    # The operator still finds it in the server log.
     assert any(raw in (r.getMessage() + str(r.exc_info and r.exc_info[1])) for r in caplog.records)
 
 

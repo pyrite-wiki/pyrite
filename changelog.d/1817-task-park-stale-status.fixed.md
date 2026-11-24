@@ -1,0 +1,1 @@
+- `pyrite task park` and MCP `task_park` now re-check the task's status during the guarded write so that a task completed or cancelled concurrently between the status check and the write is refused, leaving the file's bytes unchanged (#1817).

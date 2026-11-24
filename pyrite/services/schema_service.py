@@ -4,8 +4,8 @@ schemas, and the schema migration of a KB's entry files."""
 from typing import Any
 
 from pyrite.config import KBConfig, PyriteConfig
-from pyrite.exceptions import KBNotFoundError, ValidationError
-from pyrite.utils.yaml import load_yaml_file
+from pyrite.exceptions import KBNotFoundError, ValidationError, outside_text
+from pyrite.utils.yaml import read_kb_yaml
 
 
 def migration_operations(before: dict[str, Any], after: dict[str, Any]) -> list[Any]:
@@ -50,15 +50,24 @@ class SchemaService:
             )
 
     def _load_kb_yaml(self, kb: KBConfig) -> dict[str, Any]:
-        """Load kb.yaml, returning empty dict if missing."""
-        if kb.kb_yaml_path.exists():
-            return load_yaml_file(kb.kb_yaml_path)
-        return {}
+        """Load kb.yaml, returning empty dict if missing. Read only inside the
+        KB: a kb.yaml that is a link out of it, or a hard link, raises
+        ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``), so no schema
+        command shows it or writes it back into the KB. One that cannot be
+        loaded as a mapping raises ``KBConfigInvalidError`` before any write,
+        so ``add``, ``remove`` and ``set`` never rewrite it (#1547)."""
+        return read_kb_yaml(kb.path)
 
     def _save_kb_yaml(self, kb: KBConfig, data: dict[str, Any]) -> None:
         """Save kb.yaml and refresh in-memory config. A kb.yaml that is a link
         to a file outside the KB is refused, not written through
-        (``KBFileOutsideRootError``)."""
+        (``KBFileOutsideRootError``).
+
+        Every kb.yaml write passes here, so a KB marked read_only refuses
+        them all, from every surface; `migrate_entries` refuses its entry
+        writes itself.
+        """
+        kb.refuse_writes()
         from pyrite.utils.kb_files import KBFiles
         from pyrite.utils.yaml import dump_yaml_text
 
@@ -71,7 +80,7 @@ class SchemaService:
         data = self._load_kb_yaml(kb)
         return {
             "kb_name": kb_name,
-            "types": data.get("types", {}),
+            "types": (data.get("types") or {}),
             "policies": data.get("policies", {}),
             "validation": data.get("validation", {}),
         }
@@ -91,7 +100,7 @@ class SchemaService:
         self._require_kb_directory(kb)
         data = self._load_kb_yaml(kb)
 
-        types = data.get("types", {})
+        types = data.get("types") or {}
         if type_name in types:
             return {"error": f"Type '{type_name}' already exists in KB '{kb_name}'"}
 
@@ -115,7 +124,7 @@ class SchemaService:
         self._require_kb_directory(kb)
         data = self._load_kb_yaml(kb)
 
-        types = data.get("types", {})
+        types = data.get("types") or {}
         if type_name not in types:
             return {"error": f"Type '{type_name}' not found in KB '{kb_name}'"}
 
@@ -150,7 +159,7 @@ class SchemaService:
 
         self._save_kb_yaml(kb, data)
 
-        type_count = len(data.get("types", {}))
+        type_count = len(data.get("types") or {})
         return {"set": True, "kb_name": kb_name, "type_count": type_count}
 
     def migrate_entries(
@@ -185,6 +194,10 @@ class SchemaService:
         from pyrite.utils.yaml import load_yaml
 
         kb = self._get_kb(kb_name)
+        if not dry_run:
+            # It rewrites entry files under the KB's root: a read-only KB
+            # takes no write, as `_save_kb_yaml` refuses for kb.yaml.
+            kb.refuse_writes()
         repo = KBRepository(kb)
         checked = 0
         migrated = 0
@@ -194,7 +207,10 @@ class SchemaService:
 
         for file_path in repo.list_files():
             try:
-                raw = file_path.read_bytes()
+                # Inside the KB (``_read_inside``): a link out of it, or a hard
+                # link, is an OUTSIDE_KB_ROOT error here, and nothing it holds
+                # (a parse error quoting its text) reaches the report.
+                raw = repo._read_inside(file_path)
                 text = raw.decode("utf-8")
                 split = split_frontmatter(text)
                 if not isinstance(split, Frontmatter):
@@ -234,7 +250,7 @@ class SchemaService:
                 if needs_save:
                     migrated += 1
             except Exception as e:
-                errors.append({"path": str(file_path), "error": str(e)})
+                errors.append({"path": str(file_path), "error": outside_text(e)})
 
         return {
             "kb_name": kb_name,

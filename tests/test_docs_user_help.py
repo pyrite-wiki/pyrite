@@ -31,7 +31,7 @@ def test_every_documented_curl_call_runs_against_real_app(make_client):
     _seed(config, db)
     page = (ROOT / "docs/rest-api.md").read_text(encoding="utf-8")
     calls = re.findall(r"^curl .+$", page, re.M)
-    assert len(calls) == 5
+    assert len(calls) == 6  # the Bearer example joined the key examples (#1754)
     for line in calls:
         tokens = shlex.split(line)[1:]
         method, headers, body, url = "GET", {}, None, None
@@ -155,3 +155,9 @@ def test_reserved_name_is_refused_before_creating_kb(cli_world, tmp_path):
     assert result.exit_code == 1
     assert "INVALID_KB_NAME" in result.output
     assert not (folder / "kb.yaml").exists()
+
+
+def test_web_ui_landing_mode_documentation():
+    web_ui = (ROOT / "docs/web-ui.md").read_text(encoding="utf-8")
+    assert "configuration.md#where-a-users-write-lands-landing" in web_ui
+    assert "never writes to the main KB" not in web_ui

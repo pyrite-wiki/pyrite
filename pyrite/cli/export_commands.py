@@ -10,6 +10,7 @@ from rich.markup import escape
 from pyrite.cli.output import cli_console, path_line
 
 from ..cli.context import cli_context
+from ..exceptions import EntryLoadError
 from ..services.access_policy import UNSCOPED
 from ..utils.errors import exit_unless_whole
 from ..utils.frontmatter import Frontmatter, split_frontmatter
@@ -148,7 +149,11 @@ def export_collection(
                     unreadable.append((_row_name(result), reason))
         else:
             # Collection ID mode — load collection, resolve its entries
-            collection = svc.load_entry_from_disk(collection_id, kb or "")
+            try:
+                collection = svc.load_entry_from_disk(collection_id, kb or "")
+            except EntryLoadError as e:
+                console.print(f"[red]{escape(str(e))}[/red]")
+                raise typer.Exit(1) from None
             if not collection:
                 console.print(f"[red]Collection not found: {collection_id}[/red]")
                 raise typer.Exit(1)
@@ -176,12 +181,25 @@ def export_collection(
                 # Folder-based: list entries in that folder
                 kb_config = config.get_kb(kb or "")
                 if kb_config:
+                    from ..utils.kb_files import KBFiles
+
                     # Resolved once, and compared against each file's resolved
                     # path: `stuff/../stuff` and an in-KB symlink still name
-                    # their files. A `folder_path` that leaves the KB matches
-                    # nothing, as it should.
+                    # their files.
                     folder = (kb_config.path / collection.folder_path).resolve()
-                    if folder.exists():
+                    # The folder is the collection's own value: it is walked
+                    # only where it resolves inside the KB, and each file is
+                    # read the same way (`_entry_from_file`).
+                    inside = KBFiles(kb_config.path).contains(folder)
+                    if not inside:
+                        logger.warning(
+                            "Collection %s names a folder outside its KB; nothing exported from it",
+                            collection_id,
+                        )
+                        unreadable.append(
+                            (collection.folder_path, "the folder resolves outside the KB")
+                        )
+                    if inside and folder.exists():
                         # The indexer's own rule (through the service's
                         # list_entry_files): a README, a hidden file or a
                         # `_templates` scaffold is not an entry, so it is not
@@ -190,7 +208,7 @@ def export_collection(
                             if folder not in md_file.resolve().parents:
                                 continue
                             try:
-                                entry = _entry_from_file(md_file)
+                                entry = _entry_from_file(md_file, kb_config.path)
                             except Exception as e:
                                 logger.warning("Could not load %s: %s", md_file, e)
                                 unreadable.append((str(md_file), _reason(e)))
@@ -200,7 +218,8 @@ def export_collection(
 
         # Follow links to depth N
         if depth > 0 and entries:
-            entries = _follow_links(entries, svc, kb or "", depth)
+            entries, linked_left_out = _follow_links(entries, svc, kb or "", depth)
+            unreadable.extend(linked_left_out)
 
         _report_left_out(unreadable)
 
@@ -267,6 +286,7 @@ def export_site(
 
     from ..renderers.quartz import export_site as quartz_export
     from ..renderers.quartz import scaffold_quartz_project
+    from ..services.qa_records import is_qa_record
 
     # Parse filter sets
     type_filter = set(exclude_types.split(",")) if exclude_types else set()
@@ -285,7 +305,12 @@ def export_site(
                 console.print(path_line("  Created ", f, style="dim"))
 
         # Load all entries from DB
-        raw_entries = svc.list_entries(kb_name=kb, limit=100000)
+        # A QA record is not content: `qa assess` must not change the site (#1752).
+        raw_entries = [
+            row
+            for row in svc.list_entries(kb_name=kb, limit=100000)
+            if not is_qa_record(row.get("entry_type") or row.get("type"))
+        ]
         if not raw_entries:
             console.print("[yellow]No entries found in KB.[/yellow]")
             raise typer.Exit(0)
@@ -392,16 +417,28 @@ def _report_left_out(left_out: list[tuple[str, str]]) -> None:
         console.print(f"  {escape(name)}: {escape(reason)}")
 
 
-def _entry_from_file(path):
+def _entry_from_file(path, root):
     """The Entry a markdown file holds, split by the loader's rule; None when
-    the file has no frontmatter."""
+    the file has no frontmatter.
+
+    Read only where ``path`` resolves inside ``root``, the KB's folder
+    (`KBFiles.read_bytes`): a file that is a link out of the KB raises
+    `KBFileOutsideRootError`, and what it points at reaches no export."""
+    import io
+
     from ..models.core_types import entry_from_frontmatter
+    from ..utils.kb_files import KBFiles
     from ..utils.yaml import load_yaml
 
-    split = split_frontmatter(path.read_text(encoding="utf-8"))
+    raw = KBFiles(root).read_bytes(path)
+    if raw is None:
+        return None
+    text = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read()
+    split = split_frontmatter(text)
     if not isinstance(split, Frontmatter):
         return None
-    entry = entry_from_frontmatter(load_yaml(split.text), split.body)
+    # An empty frontmatter is an empty mapping, a note, as the loader reads it.
+    entry = entry_from_frontmatter(load_yaml(split.text) or {}, split.body)
     entry.file_path = path
     return entry
 
@@ -423,13 +460,21 @@ def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry |
     reason = ""
     # Try file_path from DB first (handles ID/filename mismatches)
     file_path = result.get("file_path", "")
-    if file_path:
+    entry_kb = result.get("kb_name", kb or "")
+    kb_config = svc.config.get_kb(entry_kb) if entry_kb else None
+    if file_path and kb_config is not None:
         from pathlib import Path
+
+        from ..utils.kb_files import OUTSIDE_KB_REASON, KBFileOutsideRootError
 
         path = Path(file_path)
         if path.exists():
             try:
-                entry = _entry_from_file(path)
+                entry = _entry_from_file(path, kb_config.path)
+            except KBFileOutsideRootError:
+                # A link out of the KB: not exported, and not looked up again
+                # by id (the lookup would read the same link).
+                return None, f"the file {OUTSIDE_KB_REASON}"
             except Exception as e:
                 return None, _reason(e)
             if entry:
@@ -438,10 +483,12 @@ def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry |
         else:
             reason = f"the file is missing: {file_path}"
 
-    # Fallback to load_entry_from_disk (searches by ID)
+    # Fallback to load_entry_from_disk (searches by ID). The lookup reads only
+    # inside the KB (`KBRepository._read_inside`): a link out of it, or a
+    # hard link, is never read, so there is nothing to check afterwards. A
+    # KB the config does not know is not looked up at all.
     entry_id = result.get("id", "")
-    entry_kb = result.get("kb_name", kb or "")
-    if entry_id and entry_kb:
+    if entry_id and kb_config is not None:
         try:
             entry = svc.load_entry_from_disk(entry_id, entry_kb)
         except Exception as e:
@@ -451,10 +498,19 @@ def _load_entry_with_reason(result: dict, svc, kb: str | None) -> tuple["Entry |
     return None, reason or "it is not on disk"
 
 
-def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:
-    """Follow links from entries to include linked entries up to depth N."""
+def _follow_links(
+    entries: list, svc, kb_name: str, depth: int
+) -> tuple[list, list[tuple[str, str]]]:
+    """Follow links from entries to include linked entries up to depth N.
+
+    Returns ``(entries, left_out)``: every linked entry that could not be
+    loaded is in ``left_out`` as ``(id, reason)``, for the caller to name and
+    count (ADR-0046, ``exit_unless_whole``), like a row of the collection
+    itself. A link to an id no file holds is a dangling link, not left out.
+    """
     seen_ids = {e.id for e in entries}
     all_entries = list(entries)
+    left_out: list[tuple[str, str]] = []
     frontier = list(entries)
 
     for _ in range(depth):
@@ -462,14 +518,34 @@ def _follow_links(entries: list, svc, kb_name: str, depth: int) -> list:
         for entry in frontier:
             for link in entry.links:
                 target_id = link.target
-                if target_id not in seen_ids:
-                    linked = svc.load_entry_from_disk(target_id, kb_name)
-                    if linked:
-                        all_entries.append(linked)
-                        next_frontier.append(linked)
-                        seen_ids.add(target_id)
+                if target_id in seen_ids:
+                    continue
+                # Once per id, whether it is exported, left out or dangling.
+                seen_ids.add(target_id)
+                try:
+                    row = svc.get_entry(target_id, kb_name, readable_kbs=UNSCOPED)
+                except Exception as e:
+                    # The single-entry read refuses a file its type cannot
+                    # load when no field explains it (ADR-0042 8a): the file
+                    # holds the id, so it is left out, never dangling.
+                    left_out.append((target_id, _reason(e)))
+                    continue
+                if not row:
+                    # The read answers a file it cannot parse as a miss until
+                    # #777, but the index still holds the row it had: that
+                    # entry is left out. No row either: a dangling link.
+                    rows = svc.get_entries([(target_id, kb_name)])
+                    if not rows:
+                        continue
+                    row = rows[0]
+                linked, reason = _load_entry_with_reason(row, svc, kb_name)
+                if linked:
+                    all_entries.append(linked)
+                    next_frontier.append(linked)
+                else:
+                    left_out.append((target_id, reason))
         frontier = next_frontier
         if not frontier:
             break
 
-    return all_entries
+    return all_entries, left_out

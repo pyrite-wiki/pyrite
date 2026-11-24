@@ -123,23 +123,26 @@ class TestTouchesTests:
 
 
 class TestRangeMode:
-    """`--range BASE HEAD` walks each commit in BASE..HEAD, the mode CI uses
-    (a PR's commits, not the one about to be made locally)."""
+    """`--range BASE HEAD` judges the pull request as a whole, the mode CI uses
+    (a PR's commit range, not the single commit about to be made locally)."""
 
     def _git(self, repo, *args):
+        import os
+
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.com",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.com",
+        }
         return subprocess.run(
             ["git", *args],
             cwd=repo,
             capture_output=True,
             text=True,
             check=True,
-            env={
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@example.com",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@example.com",
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
-            },
+            env=env,
             timeout=120,
         )
 
@@ -152,19 +155,169 @@ class TestRangeMode:
 
     def _repo(self, tmp_path):
         repo = tmp_path / "scratch"
-        repo.mkdir()
+        repo.mkdir(parents=True, exist_ok=True)
         self._git(repo, "init", "-q")
         self._commit(repo, "README.md", "chore: seed", "seed")
         return repo
 
-    def test_range_passes_when_fix_commit_touches_tests(self, tmp_path):
-        repo = self._repo(tmp_path)
+    @pytest.mark.parametrize(
+        ("shape_id", "commits", "expected_code", "expected_in_stderr"),
+        [
+            (
+                "test_then_fix",
+                [
+                    ("tests/test_thing.py", "test: add failing test"),
+                    ("pyrite/thing.py", "fix: make the test pass"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "fix_then_test",
+                [
+                    ("pyrite/thing.py", "fix: make the change"),
+                    ("tests/test_thing.py", "test: cover the fix"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "fix_with_its_test",
+                [
+                    ("tests/test_thing.py", "fix: fix with test in same commit"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "fix_alone",
+                [
+                    ("pyrite/thing.py", "fix: fix without any test"),
+                ],
+                1,
+                ["fix: fix without any test", "tests/"],
+            ),
+            (
+                "two_fixes_and_one_test",
+                [
+                    ("pyrite/a.py", "fix: first fix"),
+                    ("pyrite/b.py", "fix: second fix"),
+                    ("tests/test_ab.py", "test: cover both fixes"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "two_fixes_and_no_test",
+                [
+                    ("pyrite/a.py", "fix: first fix"),
+                    ("pyrite/b.py", "fix: second fix"),
+                ],
+                1,
+                ["fix: first fix", "fix: second fix", "tests/"],
+            ),
+            (
+                "scoped_breaking_fix_with_test",
+                [
+                    ("tests/test_api.py", "test: add test"),
+                    ("pyrite/api.py", "fix(api)!: breaking fix"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "scoped_breaking_fix_alone",
+                [
+                    ("pyrite/api.py", "fix(api)!: breaking fix without test"),
+                ],
+                1,
+                ["fix(api)!: breaking fix without test", "tests/"],
+            ),
+            (
+                "docs_only_fix_prefix",
+                [
+                    ("docs/readme.md", "fix: typo in docs"),
+                ],
+                1,
+                ["fix: typo in docs", "tests/"],
+            ),
+            (
+                "docs_commit_without_fix_prefix",
+                [
+                    ("docs/readme.md", "docs: fix typo in docs"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "frontend_test_path",
+                [
+                    ("web/src/button.ts", "fix(web): repair button"),
+                    ("web/src/button.test.ts", "test(web): add button test"),
+                ],
+                0,
+                None,
+            ),
+            (
+                "no_fix_commit",
+                [
+                    ("pyrite/thing.py", "feat: add shiny feature"),
+                    ("pyrite/other.py", "refactor: simplify helper"),
+                ],
+                0,
+                None,
+            ),
+        ],
+    )
+    def test_range_shapes(self, tmp_path, shape_id, commits, expected_code, expected_in_stderr):
+        repo = self._repo(tmp_path / shape_id)
         base = self._git(repo, "rev-parse", "HEAD").stdout.strip()
-        self._commit(repo, "tests/test_thing.py", "fix: correct the thing")
+        for path, msg in commits:
+            self._commit(repo, path, msg)
         head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
 
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--range", base, head],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == expected_code, result.stderr
+        if expected_in_stderr:
+            for snippet in expected_in_stderr:
+                assert snippet in result.stderr
+
+    def test_range_pr_merged_dev_into_itself_with_test(self, tmp_path):
+        """Regime: a PR that merged dev into itself.
+
+        In GitHub Actions, the merge ref HEAD has parent 1 = dev tip,
+        parent 2 = PR branch tip. CI passes HEAD^1 HEAD to --range,
+        so dev's commits are excluded from the range.
+        """
+        repo = self._repo(tmp_path)
+        dev_start = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        # Branch out for PR
+        self._git(repo, "checkout", "-b", "feature")
+        self._commit(repo, "tests/test_feature.py", "test: add test on branch")
+        self._commit(repo, "pyrite/feature.py", "fix: fix bug on branch")
+
+        # Advance dev independently
+        self._git(repo, "checkout", "-b", "dev", dev_start)
+        self._commit(repo, "pyrite/unrelated.py", "feat: upstream change on dev")
+        dev_tip = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        # PR branch merges dev into itself
+        self._git(repo, "checkout", "feature")
+        self._git(repo, "merge", "dev", "-m", "merge dev into feature")
+
+        # Synthetic CI merge commit: parent 1 = dev_tip, parent 2 = feature
+        self._git(repo, "checkout", "-b", "ci_merge", dev_tip)
+        self._git(repo, "merge", "feature", "--no-ff", "-m", "Merge pull request")
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--range", "HEAD^1", "HEAD"],
             cwd=repo,
             capture_output=True,
             text=True,
@@ -172,56 +325,141 @@ class TestRangeMode:
         )
         assert result.returncode == 0, result.stderr
 
-    def test_range_fails_when_fix_commit_touches_no_tests(self, tmp_path):
+    def test_range_pr_merged_dev_into_itself_without_test(self, tmp_path):
+        """Regime: a PR that merged dev into itself, but has no tests."""
         repo = self._repo(tmp_path)
-        base = self._git(repo, "rev-parse", "HEAD").stdout.strip()
-        self._commit(repo, "pyrite/thing.py", "fix: correct the thing without a test")
-        head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+        dev_start = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        # Branch out for PR with fix but NO tests
+        self._git(repo, "checkout", "-b", "feature")
+        self._commit(repo, "pyrite/feature.py", "fix: fix bug without test")
+
+        # Advance dev independently (even if dev had tests, dev commits are excluded)
+        self._git(repo, "checkout", "-b", "dev", dev_start)
+        self._commit(repo, "tests/test_unrelated.py", "test: upstream test on dev")
+        dev_tip = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+
+        # PR branch merges dev into itself
+        self._git(repo, "checkout", "feature")
+        self._git(repo, "merge", "dev", "-m", "merge dev into feature")
+
+        # Synthetic CI merge commit
+        self._git(repo, "checkout", "-b", "ci_merge", dev_tip)
+        self._git(repo, "merge", "feature", "--no-ff", "-m", "Merge pull request")
 
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--range", base, head],
+            [sys.executable, str(SCRIPT), "--range", "HEAD^1", "HEAD"],
             cwd=repo,
             capture_output=True,
             text=True,
             timeout=120,
         )
-        assert result.returncode != 0
+        assert result.returncode == 1
+        assert "fix: fix bug without test" in result.stderr
+
+    def test_range_empty_range_returns_zero(self, tmp_path):
+        """Empty range (e.g. HEAD..HEAD) returns 0."""
+        repo = self._repo(tmp_path)
+        head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), "--range", head, head],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stderr == ""
+
+
+class TestLocalCommitMsgHook:
+    """The local commit-msg hook runs on a single commit being prepared."""
+
+    def _git(self, repo, *args):
+        import os
+
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.com",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.com",
+        }
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+            env=env,
+            timeout=60,
+        )
+
+    def test_local_hook_passes_when_fix_has_staged_test(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        test_file = repo / "tests" / "test_a.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("def test_ok(): pass\n")
+        self._git(repo, "add", "tests/test_a.py")
+
+        msg_file = tmp_path / "msg.txt"
+        msg_file.write_text("fix: fix bug with test\n")
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), str(msg_file)],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_local_hook_fails_when_fix_has_no_staged_test(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        src_file = repo / "pyrite" / "a.py"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("x = 1\n")
+        self._git(repo, "add", "pyrite/a.py")
+
+        msg_file = tmp_path / "msg.txt"
+        msg_file.write_text("fix: fix bug without test\n")
+
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), str(msg_file)],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        assert result.returncode == 1
+        assert "staged file" in result.stderr
         assert "fix:" in result.stderr
-        assert "tests/" in result.stderr
+        assert "Put the test in the same commit as the fix" in result.stderr
 
-    def test_range_ignores_non_fix_commits_without_tests(self, tmp_path):
-        repo = self._repo(tmp_path)
-        base = self._git(repo, "rev-parse", "HEAD").stdout.strip()
-        self._commit(repo, "pyrite/thing.py", "feat: add the thing")
-        head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
+    def test_local_hook_passes_for_non_fix_commit(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q")
+        src_file = repo / "pyrite" / "a.py"
+        src_file.parent.mkdir(parents=True)
+        src_file.write_text("x = 1\n")
+        self._git(repo, "add", "pyrite/a.py")
+
+        msg_file = tmp_path / "msg.txt"
+        msg_file.write_text("feat: add feature\n")
 
         result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--range", base, head],
+            [sys.executable, str(SCRIPT), str(msg_file)],
             cwd=repo,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=60,
         )
         assert result.returncode == 0, result.stderr
-
-    def test_range_checks_every_commit_not_just_the_last(self, tmp_path):
-        repo = self._repo(tmp_path)
-        base = self._git(repo, "rev-parse", "HEAD").stdout.strip()
-        self._commit(repo, "pyrite/a.py", "fix: first fix, no test")
-        self._commit(repo, "tests/test_b.py", "feat: unrelated, has a test dir file anyway")
-        head = self._git(repo, "rev-parse", "HEAD").stdout.strip()
-
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT), "--range", base, head],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        # The offending commit is the FIRST one; a naive "does the whole
-        # range touch tests/" check would wrongly pass because the second
-        # commit happens to add a tests/ file.
-        assert result.returncode != 0, result.stderr
 
 
 class TestTheErrorNamesEveryFixSpelling:

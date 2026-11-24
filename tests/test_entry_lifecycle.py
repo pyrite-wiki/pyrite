@@ -135,7 +135,7 @@ class TestLifecycleField:
         create_entry_text(path, new_entry_text(event), root=(path).parent)
 
         # Reload and verify
-        loaded = EventEntry.load(path)
+        loaded = EventEntry.from_markdown(path.read_text(encoding="utf-8"))
         assert loaded.lifecycle == "archived"
 
     @pytest.mark.control(
@@ -155,7 +155,7 @@ class TestLifecycleField:
         # Save and reload
         path = tmp_path / "test_default.md"
         create_entry_text(path, new_entry_text(event), root=(path).parent)
-        loaded = EventEntry.load(path)
+        loaded = EventEntry.from_markdown(path.read_text(encoding="utf-8"))
         assert loaded.lifecycle == "active"
 
     def test_search_filter_lifecycle(self, pyrite_db, kb_configs, index_mgr):

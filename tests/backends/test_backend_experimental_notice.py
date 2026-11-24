@@ -44,7 +44,7 @@ def test_notice_on_stderr_once_nothing_on_stdout(capfd):
     out, err = capfd.readouterr()
     assert out == ""
     assert err.count("experimental") == 1
-    assert "may not upgrade" in err
+    assert "ensure_schema() runs the alembic chain" in err
     assert URL in err
 
 

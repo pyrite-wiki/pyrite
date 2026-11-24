@@ -1,0 +1,1 @@
+- `pyrite create -k <kb> -t <type> --template` reports the stored type in its result's `entry_type` (a mapped plugin type such as `event` in a journalism-investigation KB reports `investigation_event`), as a real create does, and is tested against a real create's frontmatter across several (KB, type) pairs and under `--allow-undeclared` (#1598).

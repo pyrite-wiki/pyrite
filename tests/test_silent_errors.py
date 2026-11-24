@@ -132,18 +132,19 @@ def test_cli_field_coercion_logs_debug(caplog):
 # ---------------------------------------------------------------------------
 
 
-def test_csv_importer_importance_logs_debug(caplog):
-    """Non-numeric importance in CSV should log a debug message."""
+def test_csv_importer_passes_a_non_number_importance_on_to_the_rule():
+    """A non-numeric importance cell is no longer dropped with a debug line (the
+    entry then silently got the default 5): it reaches the write as given, and
+    the one importance rule refuses that row (#1588; the REST cells in
+    tests/test_importance_range_on_every_type.py)."""
     from pyrite.formats.importers.csv_importer import import_csv
 
     csv_data = "title,importance\nTest Entry,not-a-number\n"
 
-    with caplog.at_level(logging.DEBUG, logger="pyrite.formats.importers.csv_importer"):
-        entries = import_csv(csv_data)
+    entries = import_csv(csv_data)
 
     assert len(entries) == 1
-    assert "importance" not in entries[0]
-    assert "Could not parse importance value" in caplog.text
+    assert entries[0]["importance"] == "not-a-number"
 
 
 # ---------------------------------------------------------------------------

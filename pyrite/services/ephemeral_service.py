@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 
 from ..config import KBConfig, PyriteConfig, check_config_save, save_config
+from ..exceptions import RefusedValueError
 from ..storage.database import PyriteDB
 from .credential_events import announce_kb_policy_change
 from .kb_names import PLAIN_KB_NAME_RULE, is_plain_kb_name, kb_name_in_use
@@ -17,7 +18,7 @@ from .kb_names import PLAIN_KB_NAME_RULE, is_plain_kb_name, kb_name_in_use
 logger = logging.getLogger(__name__)
 
 
-class InvalidEphemeralKBNameError(ValueError):
+class InvalidEphemeralKBNameError(RefusedValueError):
     """The requested ephemeral KB name is unsafe or already in use."""
 
 
@@ -51,13 +52,13 @@ class EphemeralKBService:
         """
         # The name becomes a directory under <workspace>/ephemeral/ and is
         # chosen by any write-role user, so it must be a plain name.
-        from ..exceptions import ConfigError
+        from ..exceptions import ConfigError, public_text
         from .kb_names import refuse_reserved_kb_name
 
         try:
             refuse_reserved_kb_name(name)
         except ConfigError as exc:
-            raise InvalidEphemeralKBNameError(str(exc)) from None
+            raise InvalidEphemeralKBNameError(public_text(exc)) from None
         if not is_plain_kb_name(name):
             raise InvalidEphemeralKBNameError(
                 f"Invalid ephemeral KB name: use {PLAIN_KB_NAME_RULE}"

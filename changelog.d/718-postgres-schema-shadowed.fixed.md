@@ -1,0 +1,1 @@
+- **Postgres startup no longer hides an existing instance behind a new, empty one (#718).** When the connection's own schema holds no Pyrite tables but a later schema on its `search_path` does, startup refuses with `POSTGRES_SCHEMA_SHADOWED`, naming both schemas; `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE=1` creates the new instance there on purpose.

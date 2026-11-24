@@ -10,7 +10,7 @@ own pending edits overlaid on the shared main index.
 
 from __future__ import annotations
 
-import re
+from pathlib import Path
 from typing import Any
 
 from .protocol import DEFAULT_MIN_SIMILARITY
@@ -128,6 +128,7 @@ class OverlaySearchBackend:
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
@@ -136,6 +137,7 @@ class OverlaySearchBackend:
             kb_names=kb_names,
             entry_type=entry_type,
             tag=tag,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )
@@ -145,6 +147,7 @@ class OverlaySearchBackend:
             entry_type=entry_type,
             tag=tag,
             limit=10000,
+            include_archived=include_archived,
             status=status,
             min_importance=min_importance,
         )
@@ -173,10 +176,14 @@ class OverlaySearchBackend:
 
     # ── search → merge ──────────────────────────────────────────────
 
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        return self._main.keyword_searched_parts(query)
+
     def search(
         self,
         query: str,
         kb_name: str | None = None,
+        kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         entry_types: list[str] | None = None,
         exclude_types: list[str] | None = None,
@@ -195,6 +202,7 @@ class OverlaySearchBackend:
         main_results = self._main.search(
             query,
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             entry_types=entry_types or None,
             exclude_types=exclude_types or None,
@@ -213,6 +221,7 @@ class OverlaySearchBackend:
         diff_results = self._diff.search(
             query,
             kb_name=kb_name,
+            kb_names=kb_names,
             entry_type=entry_type,
             entry_types=entry_types or None,
             exclude_types=exclude_types or None,
@@ -256,16 +265,37 @@ class OverlaySearchBackend:
         diff = self._diff.search_by_tag_prefix(prefix, kb_name, limit=10000)
         return self._merge_entry_lists(main, diff)[:limit]
 
-    # ── edge endpoints → delegate to main ────────────────────────────
+    # ── edge endpoints → merge ───────────────────────────────────────
+    #
+    # Endpoint rows are written only to the diff, so reading main alone
+    # made a change set's edges invisible (#1733). Rows keyed by the edge
+    # entry itself come from the diff wholesale when the diff holds that
+    # entry; rows keyed by an endpoint combine both halves by the edge
+    # entry they name.
 
     def get_edge_endpoints(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        if self._diff.get_entry(entry_id, kb_name) is not None:
+            rows = self._diff.get_edge_endpoints(entry_id, kb_name)
+            return self._fill_titles(rows, "endpoint_id", "endpoint_kb")
         return self._main.get_edge_endpoints(entry_id, kb_name)
 
     def get_edges_by_endpoint(self, endpoint_id: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._main.get_edges_by_endpoint(endpoint_id, kb_name)
+        diff_rows = self._diff.get_edges_by_endpoint(endpoint_id, kb_name)
+        main_rows = [
+            row
+            for row in self._main.get_edges_by_endpoint(endpoint_id, kb_name)
+            if self._diff.get_entry(row["id"], row["kb_name"]) is None
+        ]
+        return main_rows + diff_rows
 
     def get_edges_between(self, id_a: str, id_b: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._main.get_edges_between(id_a, id_b, kb_name)
+        diff_rows = self._diff.get_edges_between(id_a, id_b, kb_name)
+        main_rows = [
+            row
+            for row in self._main.get_edges_between(id_a, id_b, kb_name)
+            if self._diff.get_entry(row["id"], row["kb_name"]) is None
+        ]
+        return main_rows + diff_rows
 
     # ── graph → merge ───────────────────────────────────────────────
 
@@ -500,13 +530,47 @@ class OverlaySearchBackend:
     def delete_embedding(self, entry_id: str, kb_name: str) -> None:
         self._diff.delete_embedding(entry_id, kb_name)
 
-    # ── object refs → delegate to main ──────────────────────────────
+    # ── object refs → merge ──────────────────────────────────────────
+    #
+    # Ref rows are written only to the diff, so reading main alone made a
+    # change set's refs invisible (#1733). ``get_refs_from`` is keyed by
+    # the source entry: the diff's rows replace main's wholesale for an
+    # entry the diff holds, so a ref the diff removed does not reappear
+    # from main. ``get_refs_to`` is keyed by the target: main's rows count
+    # only for source entries the diff does not hold, plus all diff rows.
 
     def get_refs_from(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        if self._diff.get_entry(entry_id, kb_name) is not None:
+            rows = self._diff.get_refs_from(entry_id, kb_name)
+            return self._fill_titles(rows, "id", "kb_name")
         return self._main.get_refs_from(entry_id, kb_name)
 
     def get_refs_to(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
-        return self._main.get_refs_to(entry_id, kb_name)
+        diff_rows = self._diff.get_refs_to(entry_id, kb_name)
+        main_rows = [
+            row
+            for row in self._main.get_refs_to(entry_id, kb_name)
+            if self._diff.get_entry(row["id"], row["kb_name"]) is None
+        ]
+        return main_rows + diff_rows
+
+    def _fill_titles(
+        self, rows: list[dict[str, Any]], id_field: str, kb_field: str
+    ) -> list[dict[str, Any]]:
+        """Fill ``title``/``entry_type`` on diff rows from main (#1733).
+
+        A ref or endpoint row read from the diff joins its target in the
+        diff's own table; a target that exists only in main comes back
+        titleless. The overlay's reader can see main's entry, so the row
+        carries its title, as a read on main would have spelled it.
+        """
+        for row in rows:
+            if row.get("title") is None:
+                target = self._main.get_entry(row[id_field], row[kb_field])
+                if target is not None:
+                    row["title"] = target["title"]
+                    row["entry_type"] = target["entry_type"]
+        return rows
 
     # ── folder queries → delegate to main ───────────────────────────
 
@@ -592,10 +656,19 @@ class WorktreeDB:
     #: checks this instead of writing main (ADR-0044 §1).
     is_change_set = True
 
-    def __init__(self, main_db: Any, diff_db: Any):
+    def __init__(
+        self, main_db: Any, diff_db: Any, *, kb_roots: dict[str, tuple[Any, ...]] | None = None
+    ):
         self._main = main_db
         self._diff = diff_db
         self._overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+        #: KB name -> the other copies of that KB this handle's rows may
+        #: name: the user's working copy (a read with main's config) or
+        #: main's folder (a write into the change set, whose config names the
+        #: working copy). A row's file outside the configured root is read
+        #: only inside one of these (``KBService._read_overlay_file``), never
+        #: through a link out of it.
+        self.kb_roots: dict[str, tuple[Any, ...]] = dict(kb_roots or {})
 
     @property
     def _backend(self):
@@ -651,6 +724,24 @@ class WorktreeDB:
     ) -> list[dict[str, Any]]:
         return self._overlay.get_outlinks(entry_id, kb_name, readable_kbs=readable_kbs)
 
+    # Derived-row reads (refs, edge endpoints) merge the change set like
+    # the entry reads do (#1733); they are defined here, not forwarded to
+    # main, for the same reason.
+    def get_refs_from(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_refs_from(entry_id, kb_name)
+
+    def get_refs_to(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_refs_to(entry_id, kb_name)
+
+    def get_edge_endpoints(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_edge_endpoints(entry_id, kb_name)
+
+    def get_edges_by_endpoint(self, endpoint_id: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_edges_by_endpoint(endpoint_id, kb_name)
+
+    def get_edges_between(self, id_a: str, id_b: str, kb_name: str) -> list[dict[str, Any]]:
+        return self._overlay.get_edges_between(id_a, id_b, kb_name)
+
     def get_all_tags(self, kb_name: str | None = None) -> list[tuple[str, int]]:
         return self._overlay.get_all_tags(kb_name)
 
@@ -678,7 +769,7 @@ class WorktreeDB:
         if name in _READS_FROM_MAIN or name in _RAW_HANDLES:
             return getattr(self._main, name)
         if name in _READ_SQL_ONLY:
-            return self._read_only_sql(getattr(self._main, name), name)
+            return self._read_only_sql(self._main, name)
         if name in _WRITES_TO_DIFF:
             return getattr(self._diff, name)
         if name in _RECORDS_REFUSED:
@@ -691,19 +782,108 @@ class WorktreeDB:
         )
 
     @staticmethod
-    def _read_only_sql(method: Any, name: str) -> Any:
-        """`execute_sql` runs whatever it is given, on main: here it runs a
-        read and refuses anything else."""
+    def _read_only_sql(main: Any, name: str) -> Any:
+        """`execute_sql` on a change set: one statement that reads main's
+        index and creates or changes no file.
 
-        def guarded(sql: str, *args: Any, **kwargs: Any) -> Any:
-            if not _READ_SQL.match(sql):
-                return _refuse(name, "a SQL write, which a change set cannot carry")()
-            return method(sql, *args, **kwargs)
+        It runs on a read-only connection to main's database (a write fails
+        with ``SQLITE_READONLY``), with an authorizer that admits only reading
+        (`_READ_ONLY_ACTIONS`, `_READ_PRAGMAS`) and no attached database
+        (``SQLITE_LIMIT_ATTACHED`` 0), so no statement form writes the index
+        or creates or changes any file. A second statement is refused. It reads what main has committed. Rows come back as
+        `execute_sql`'s do: a list of dicts, empty for a statement with none.
+        """
 
-        return guarded
+        def run_read_only(sql: str, params: Any = None) -> list[dict]:
+            import sqlite3
+
+            path = getattr(main, "db_path", None)
+            if path is None:  # not a SQLite index: nothing here can tell a read
+                return _refuse(
+                    name, "SQL on an index that is not SQLite, which a change set cannot check"
+                )()
+            # Main opened (and checked) this index through `_init_connection`;
+            # this second connection only reads what main has committed.
+            conn = sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                conn.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
+                conn.set_authorizer(_authorize_read_only)
+                conn.row_factory = sqlite3.Row
+                try:
+                    cursor = conn.execute(sql, params or {})
+                    return [dict(row) for row in cursor.fetchall()]
+                except sqlite3.DatabaseError as e:
+                    code = getattr(e, "sqlite_errorcode", None)
+                    if isinstance(e, sqlite3.ProgrammingError) and "one statement" in str(e):
+                        raise _refusal(name, "more than one SQL statement") from e
+                    if code in (sqlite3.SQLITE_READONLY, sqlite3.SQLITE_AUTH) or (
+                        "too many attached" in str(e)
+                    ):
+                        raise _refusal(
+                            name, "SQL that writes, which a change set cannot carry"
+                        ) from e
+                    raise
+            finally:
+                conn.close()
+
+        return run_read_only
 
 
-_READ_SQL = re.compile(r"^\s*(SELECT|WITH|PRAGMA|EXPLAIN)\b", re.IGNORECASE)
+def _authorize_read_only(action: int, arg1: Any, arg2: Any, db: Any, trigger: Any) -> int:
+    """The SQLite authorizer of a change set's `execute_sql`: reading only.
+
+    Everything not listed is denied, so an action SQLite adds later is denied
+    too. A PRAGMA is admitted only by name, and with an argument only where the
+    argument names what to read (``table_info(entry)``), never a value to set.
+    """
+    import sqlite3
+
+    if action in _READ_ONLY_ACTIONS:
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_PRAGMA:
+        pragma = (arg1 or "").lower()
+        if pragma in _READ_PRAGMAS and (arg2 is None or pragma in _READ_PRAGMAS_WITH_ARGUMENT):
+            return sqlite3.SQLITE_OK
+    return sqlite3.SQLITE_DENY
+
+
+def _read_only_action_codes() -> frozenset[int]:
+    import sqlite3
+
+    return frozenset(
+        {
+            sqlite3.SQLITE_SELECT,
+            sqlite3.SQLITE_READ,
+            sqlite3.SQLITE_FUNCTION,
+            sqlite3.SQLITE_RECURSIVE,
+        }
+    )
+
+
+_READ_ONLY_ACTIONS = _read_only_action_codes()
+
+#: PRAGMAs that only report.
+_READ_PRAGMAS = frozenset(
+    {"application_id", "collation_list", "compile_options", "data_version", "database_list",
+     "encoding", "foreign_key_list", "foreign_keys", "freelist_count", "function_list",
+     "index_info", "index_list", "index_xinfo", "integrity_check", "journal_mode",
+     "module_list", "page_count", "page_size", "pragma_list", "quick_check", "schema_version",
+     "table_info", "table_list", "table_xinfo", "user_version"}
+)  # fmt: skip
+
+#: Of those, the ones whose argument names a table or index to report on.
+_READ_PRAGMAS_WITH_ARGUMENT = frozenset(
+    {"foreign_key_list", "index_info", "index_list", "index_xinfo", "integrity_check",
+     "quick_check", "table_info", "table_list", "table_xinfo"}
+)  # fmt: skip
+
+
+def _refusal(name: str, why: str) -> Exception:
+    from pyrite.exceptions import ChangeSetRecordRefusedError
+
+    return ChangeSetRecordRefusedError(
+        f"{name} is {why}. It is available to the operator, or after the change set merges."
+    )
 
 
 def _refuse(name: str, why: str):
@@ -728,11 +908,10 @@ _READS_FROM_MAIN = frozenset(
         "entry_version_exists", "find_by_assignee", "find_by_location",
         "find_by_status", "find_overdue", "get_all_backlinks_for_kb", "get_all_outlinks_for_kb",
         "get_all_settings", "get_all_sources_for_kb", "get_contributors", "get_distinct_types",
-        "get_edge_endpoints", "get_edges_between", "get_edges_by_endpoint",
         "get_entries_for_indexing", "get_entry_version_file_path", "get_entry_versions",
         "get_global_counts", "get_graph_data", "get_kb_stats", "get_kbs_for_repo",
         "get_latest_review", "get_migration_status", "get_most_linked",
-        "get_orphans", "get_refs_from", "get_refs_to", "get_related", "get_repo", "get_review",
+        "get_orphans", "get_related", "get_repo", "get_review",
         "get_reviews", "get_schema_version", "get_setting", "get_tag_tree", "get_tags_as_dicts",
         "get_timeline", "get_type_counts", "get_user", "get_workspace_repos",
         "list_entries_in_folder", "list_entry_version_rows", "list_repos", "search_by_date_range",
@@ -756,12 +935,14 @@ _RAW_HANDLES = frozenset(
 
 #: Writes a change-set write makes whose rows are rebuilt from files and git,
 #: so nothing is lost when the diff index is discarded at merge:
-#: - `register_kb`, `update_kb_indexed`: the diff index's own row for the KB
-#:   (path = the working copy); main's row is not the change set's to change.
+#: - `register_kb`, `ensure_kb`, `update_kb_indexed`: the diff index's own row
+#:   for the KB (path = the working copy); main's row is not the change set's
+#:   to change.
 #: - `upsert_entry_version`, `delete_entry_version`: entry history indexed
 #:   from git commits, rebuilt from the merged history.
 _WRITES_TO_DIFF = frozenset(
-    {"register_kb", "update_kb_indexed", "upsert_entry_version", "delete_entry_version"}
+    {"register_kb", "ensure_kb", "update_kb_indexed", "upsert_entry_version",
+     "delete_entry_version"}
 )  # fmt: skip
 
 #: Database-only records: no file behind them, so the merge, which discards the

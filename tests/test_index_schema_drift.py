@@ -12,7 +12,7 @@ The shapes are what three real builds left on disk
 from each tree's own code):
 
 * ``v0.25.8``: schema 27, no ``entry.aliases``, no ``link.target_prefix``;
-* ``v0.26.0``: schema 29, the current columns;
+* ``v0.26.0``: schema 29, every column before ``link.target_path`` (v30, #1723);
 * ``arch-df6372f2``: schema 28 recorded, ``entry.aliases`` present and
   ``link.target_prefix`` absent. On ``arch/2026-10`` between df6372f2 and the
   sprint merge, migration 28 meant aliases; on dev it means the prefix, so dev
@@ -1384,6 +1384,12 @@ def _conversion_sites(root: Path = _PYRITE_ROOT) -> dict[str, list[str]]:
 #: why that is right. Keyed as `_conversion_sites` keys them; an entry that no
 #: longer matches a site with findings fails the test, so the list cannot rot.
 NOT_THE_CLASSIFIERS_JOB = {
+    "pyrite.storage.backends.overlay_backend:WorktreeDB._read_only_sql.run_read_only"
+    ":sqlite3.DatabaseError": (
+        "a change set's execute_sql: SQLite refusing a write (SQLITE_READONLY), the "
+        "read-only authorizer (SQLITE_AUTH) or a second statement is the caller's "
+        "request refused, not a fault; anything else is re-raised"
+    ),
     "pyrite.storage.migrations:MigrationManager._apply_migration:Exception": (
         "wraps the fault as MigrationError with it as __cause__; "
         "connection._run_migrations, the one caller on the open path, classifies that"
@@ -1418,6 +1424,14 @@ NOT_THE_CLASSIFIERS_JOB = {
     ),
     "pyrite.services.kb_service:KBService._update:OSError": (
         "the markdown file's write (a hard link, the lock directory, the disk)"
+    ),
+    "pyrite.services.kb_service:KBService._update:HardLinked": (
+        "a hard-linked entry file is a filesystem fault (ADR-0042 A2) reported by "
+        "_storage_error, not a database fault"
+    ),
+    "pyrite.services.kb_service:_load_link_source:HardLinked": (
+        "a hard-linked entry file is a filesystem fault (ADR-0042 A2) reported by "
+        "_storage_error, not a database fault"
     ),
     "pyrite.services.kb_service:KBService.rename_entry:LockTimeout": (
         "the entry file's rename lock (utils.file_lock): StorageBusyError, retryable"

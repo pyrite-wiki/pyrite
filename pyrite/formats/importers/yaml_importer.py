@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from pyrite.exceptions import CALLER_REQUEST, caller_owned
 from pyrite.utils.yaml import load_yaml_document
 
 
@@ -12,9 +13,12 @@ def import_yaml(data: str | bytes) -> list[dict[str, Any]]:
     Accepts {"entries": [...]} wrapper or bare list.
     """
     if isinstance(data, bytes):
-        data = data.decode("utf-8")
+        try:
+            data = data.decode("utf-8")
+        except UnicodeDecodeError as e:  # the caller's upload: its bytes, its detail
+            raise caller_owned(e) from None
 
-    parsed = load_yaml_document(data)
+    parsed = load_yaml_document(data, origin=CALLER_REQUEST)  # the caller's upload
     if parsed is None:
         return []
 

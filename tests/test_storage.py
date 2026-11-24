@@ -739,10 +739,10 @@ class TestIndexManager:
         target = sorted(setup["kb_path"].rglob("*.md"))[0]
         original_hash = index_module._hash_file
 
-        def unavailable_hash(path):
+        def unavailable_hash(path, root):
             if path == target:
                 return None
-            return original_hash(path)
+            return original_hash(path, root)
 
         original_load = KBRepository.load_entry_from_file
 
@@ -2522,7 +2522,7 @@ class TestVecExtensionLoadFailure:
 
         assert connection.vec_available is False
         assert connection._raw_conn.extension_loading == [True, False]
-        assert connection.vec_load_error is load_error
+        assert connection.vec_load_error.matches(lambda held: held is load_error)
         assert "OSError" in caplog.text
         assert str(load_error) in caplog.text
 

@@ -22,12 +22,20 @@ shapes: the model's `date` row (`VALIDATION_FAILED`) and the KB schema's
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from pyrite.config import KBConfig, KBType
-from pyrite.exceptions import SchemaViolationError, ValidationError, refusal_fields
+from pyrite.exceptions import (
+    OUTSIDE_TEXT_WITHHELD,
+    SchemaViolationError,
+    ValidationError,
+    refusal_fields,
+)
+from pyrite.models.core_types import NoteEntry
+from pyrite.services.acting import local_process
 from pyrite.services.kb_service import KBService, check_link_spec
 from tests._world import build_world
 from tests.characterization.world import build_world as build_characterization_world
@@ -105,6 +113,7 @@ class TestPipelineRefusalsCarryRows:
     @pytest.mark.parametrize(
         ("frontmatter", "field"), [("title: Has no type\n", "type"), ("type: note\n", "title")]
     )
+    @pytest.mark.control(reason="unchanged for the local process, which the test now binds")
     def test_an_imported_file_names_the_frontmatter_key_it_lacks(
         self, event_kb, tmp_path, frontmatter, field
     ):
@@ -112,7 +121,7 @@ class TestPipelineRefusalsCarryRows:
         source = tmp_path / f"{field}.md"
         source.write_text(f"---\n{frontmatter}---\n\nBody\n", encoding="utf-8")
 
-        with pytest.raises(ValidationError) as caught:
+        with local_process(), pytest.raises(ValidationError) as caught:
             service.add_entry_from_file("ev", source)
 
         row = caught.value.errors[0]
@@ -233,6 +242,20 @@ class TestMcpRefusal:
 
         assert result["error_code"] == "VALIDATION_FAILED", result
         assert result["errors"][0]["field"] == "date"
+
+
+class TestOrientNamesTheErrorsKey:
+    def test_the_error_shape_names_every_key_a_field_refusal_carries(self, event_kb):
+        """An agent learns the refusal shape from orient (#1447)."""
+        service = KBService(event_kb.config, event_kb.db)
+        with pytest.raises(ValidationError) as caught:
+            service.create_entry("ev", "no-date", "No date event", "event", "x")
+
+        contract = service.orient("ev")["operational_contracts"]["error_contract"]
+        named = set(re.findall(r"\w+", contract["shape"]))
+        assert set(refusal_fields(caught.value)) == {"errors"}
+        assert "errors" in named
+        assert "errors" in contract
 
 
 class TestNonFieldRefusal:
@@ -386,6 +409,99 @@ def test_every_surface_names_the_field_and_the_rule(surface_world, shape):
     assert row["field"] == case["field"], body
     assert row["rule"] == case["rule"], body
     assert row["expected"] == case["expected"], body
+
+
+@pytest.mark.parametrize("value", ["field-refusal", "cross-field-refusal"])
+def test_refused_update_reports_why_the_candidate_did_not_load(surface_world, monkeypatch, value):
+    surface, world = surface_world
+    path = world.add_entry(
+        "ev", f"---\nid: {value}\ntype: note\ntitle: Original\n---\nOriginal body\n"
+    )
+    original = path.read_bytes()
+
+    load = NoteEntry.from_frontmatter
+
+    def refuse_candidate(cls, meta, body):
+        if meta.get("summary") == "field-refusal":
+            raise ValueError("invalid summary")
+        if meta.get("summary") == "cross-field-refusal" and body.startswith("Original body"):
+            raise ValueError("summary conflicts with body")
+        return load(meta, body)
+
+    monkeypatch.setattr(NoteEntry, "from_frontmatter", classmethod(refuse_candidate))
+
+    if surface == "cli":
+        result = world.cli(
+            "update", value, "-k", "ev", "-f", f"summary={value}", "--format", "json"
+        )
+        detail = _json_body(result)
+    elif surface == "mcp":
+        detail = world.mcp()._dispatch_tool(
+            "kb_update", {"entry_id": value, "kb_name": "ev", "summary": value}
+        )
+    else:
+        response = world.client.patch(
+            f"/api/entries/{value}", json={"kb": "ev", "field": "summary", "value": value}
+        )
+        detail = response.json()["detail"]
+
+    assert path.read_bytes() == original
+    assert detail["retryable"] is False
+    if surface == "rest":
+        assert detail["code"] == "VALIDATION_FAILED", detail
+        message = detail["message"]
+    else:
+        assert detail["error_code"] == "VALIDATION_FAILED", detail
+        message = detail["error"]
+    assert "nothing was written" in message
+    assert "fixed by hand" not in message
+    if value == "field-refusal":
+        assert "summary" in message
+        expected = "The entry type refused this field." if surface != "cli" else "invalid summary"
+        assert detail["errors"] == [{"field": "summary", "rule": "entry_load", "message": expected}]
+    else:
+        assert "errors" not in detail
+        expected = OUTSIDE_TEXT_WITHHELD if surface != "cli" else "summary conflicts with body"
+        assert expected in message
+    if surface == "rest":
+        assert response.status_code == 422
+
+
+@pytest.mark.control(reason="a non-EntryLoadError candidate failure keeps the existing refusal")
+def test_unexpected_candidate_load_error_keeps_prior_refusal(typed_world, monkeypatch, caplog):
+    entry_id = "unexpected-load-fault"
+    path = typed_world.add_entry(
+        SCHEMA_KB, f"---\nid: {entry_id}\ntype: note\ntitle: Original\n---\nOriginal body\n"
+    )
+    original = path.read_bytes()
+    private_detail = "candidate load fault at /private/operator/secret.yaml"
+    set_attribute = NoteEntry.__setattr__
+
+    def fail_candidate_file_path(self, name, value):
+        # The repository assigns the file path after the type loader returns,
+        # outside its EntryLoadError wrapping.
+        if name == "file_path" and isinstance(value, Path) and self.summary == "load-fault":
+            raise RuntimeError(private_detail)
+        set_attribute(self, name, value)
+
+    monkeypatch.setattr(NoteEntry, "__setattr__", fail_candidate_file_path)
+
+    response = typed_world.client.patch(
+        f"/api/entries/{entry_id}",
+        json={"kb": SCHEMA_KB, "field": "summary", "value": "load-fault"},
+    )
+
+    assert response.status_code == 400, response.text
+    detail = response.json()["detail"]
+    assert detail["code"] == "VALIDATION_FAILED", detail
+    assert detail["retryable"] is False
+    assert detail["message"] == (
+        f"Cannot update '{entry_id}': the result would not load ({OUTSIDE_TEXT_WITHHELD})"
+    )
+    assert private_detail not in response.text
+    assert "errors" not in detail
+    assert path.read_bytes() == original
+    assert private_detail in caplog.text
 
 
 def test_a_schema_refusal_without_rows_leaves_the_key_out():

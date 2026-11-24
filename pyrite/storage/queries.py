@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from . import effective_status
-from .backends.base_backend import kb_names_clause
+from .backends.base_backend import kb_names_clause, shape_entry_rows
 from .models import Setting
 
 
@@ -396,9 +396,12 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )
 
     def find_overdue(
         self,
@@ -439,9 +442,12 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )
 
     def find_by_status(
         self,
@@ -477,9 +483,12 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )
 
     def find_by_location(
         self,
@@ -508,6 +517,9 @@ class QueryMixin:
         params["limit"] = limit
         params["offset"] = offset
 
-        result = self.session.execute(text(sql), params)
+        session = self.session
+        result = session.execute(text(sql), params)
         cols = result.keys()
-        return [dict(zip(cols, row, strict=False)) for row in result.fetchall()]
+        return shape_entry_rows(
+            (dict(zip(cols, row, strict=False)) for row in result.fetchall()), session
+        )

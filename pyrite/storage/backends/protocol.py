@@ -96,10 +96,15 @@ class SearchBackend(Protocol):
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries matching filters."""
+        """Count entries matching filters.
+
+        ``include_archived`` counts archived entries too — for callers that
+        ask "is anything indexed?" rather than "what does a listing show?".
+        """
         ...
 
     def get_distinct_types(
@@ -115,6 +120,12 @@ class SearchBackend(Protocol):
         ...
 
     # ── full-text search ─────────────────────────────────────────────
+
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads: what
+        ``search_response`` reports as ``searched`` (#1757). Declared field
+        values and tags are not among them until they are indexed."""
+        ...
 
     def search(
         self,

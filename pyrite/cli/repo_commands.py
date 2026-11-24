@@ -31,6 +31,7 @@ def _get_db_and_services():
     db = open_index_db(config)
     user_service = UserService(db)
     repo_service = RepoService(config, db, user_service=user_service)
+    repo_service.scrub_workspace_remotes()
     return config, db, repo_service, user_service
 
 

@@ -8,15 +8,22 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+from sqlalchemy.engine import Connection, Engine, make_url
 
 from pyrite.storage.models import Base
 
 # Alembic Config object
 config = context.config
 
-# Set up logging from alembic.ini if available
+# Logging from alembic.ini, only when run from the alembic command line with
+# it. Never disabling the loggers that already exist: inside a process (the
+# Postgres backend's ensure_schema, the test suite) the default
+# disable_existing_loggers=True silenced every logger created before this
+# line, and later log-capturing tests on the same worker got nothing (#718,
+# the #1021 review). Pyrite itself builds its Config with no ini file
+# (pyrite.storage.alembic_chain.alembic_config).
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
@@ -47,22 +54,55 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
+    # A connection handed over by the caller (alembic_chain.upgrade_to_head):
+    # run on it, so the upgrade shares the caller's engine, search_path and
+    # transaction.
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        _run_on(connection)
+        return
+    with _connectable().connect() as connection:
+        _run_on(connection)
+
+
+def _run_on(connection: Connection) -> None:
+    from pyrite.storage.alembic_chain import own_schema
+
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+        # alembic_version in this database's own schema, not whichever one
+        # the search_path shows first with such a table (#718).
+        version_table_schema=own_schema(connection),
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+def _connectable() -> Engine:
+    """The engine the URL names, through the driver choice the product makes.
+
+    A bare ``postgresql://`` URL must resolve to psycopg2 (the driver the
+    ``postgres`` extra installs) exactly as ``create_postgres_engine`` does
+    for every other engine Pyrite builds (#373) — through ``engine_from_config``
+    it resolved to SQLAlchemy's own default, which is psycopg 3 on 2.1, so
+    ``alembic upgrade`` against Postgres failed with ``No module named
+    'psycopg'`` before it could run a single revision (#718).
+    """
+    url = config.get_main_option("sqlalchemy.url")
+    if url is not None and make_url(url).drivername.partition("+")[0] in (
+        "postgresql",
+        "postgres",
+    ):
+        from pyrite.storage.backends.postgres_backend import create_postgres_engine
+
+        return create_postgres_engine(url, poolclass=pool.NullPool)
+    return engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
-
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            include_object=include_object,
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
 
 
 if context.is_offline_mode():

@@ -242,7 +242,11 @@ class TestTheDefaultRole:
         assert world["policy"].kb_default_role(REGISTRY_ONLY) == "read"
 
     def test_a_kb_nobody_knows_has_none(self, world):
-        assert world["policy"].kb_default_role(MISSING) is None
+        # "none", not None (the instance default): a name the load left out
+        # or that names no KB gives no access in the role check itself, not
+        # only through each route's existence check
+        # (tests/test_config_kb_default_role_is_the_files.py).
+        assert world["policy"].kb_default_role(MISSING) == "none"
 
     def test_a_registry_value_that_opens_a_kb_is_ignored_under_an_untrusted_config(
         self, world, monkeypatch

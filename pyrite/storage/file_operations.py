@@ -189,6 +189,13 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, Node, ScalarNode, SequenceNode
 
+from ..exceptions import (
+    RefusedValueError,
+    TextOrigin,
+    ValidationError,
+    outside_text,
+    with_origin,
+)
 from ..utils.frontmatter import (
     Frontmatter,
     Malformed,
@@ -197,15 +204,16 @@ from ..utils.frontmatter import (
     describe,
     split_frontmatter,
 )
-from ..utils.yaml import _is_yaml11_ambiguous
+from ..utils.yaml import _is_yaml11_ambiguous, check_yaml_limits
 
 # --- the public surface -----------------------------------------------------
 
 
-class OperationRefusedError(Exception):
+class OperationRefusedError(ValidationError):
     """The operation cannot be applied as asked, and nothing was changed.
 
-    ``reason`` says why, in words a caller can show to a person.
+    ``reason`` says why, in words a caller can show to a person: a Pyrite
+    refusal (``VALIDATION_FAILED``), so every surface shows it.
     """
 
     def __init__(self, reason: str, op: Any = None):
@@ -318,12 +326,19 @@ class Report:
         return any(r.outcome == "changed" for r in self.results)
 
 
-def apply(text: str, ops: list[Any], span: FrontmatterSpan | None) -> tuple[str, Report]:
+def apply(
+    text: str, ops: list[Any], span: FrontmatterSpan | None, *, origin: TextOrigin = None
+) -> tuple[str, Report]:
     """Apply ``ops`` in order to ``text``; return the new text and a report.
 
     A call that changes nothing returns ``text`` itself. Raises
     ``OperationRefusedError`` (and changes nothing) when an operation cannot be
     applied as asked.
+
+    ``origin``: whose bytes ``text`` is (``exceptions.kb_origin(name)`` for a
+    KB's file). The YAML parser's words about them (``_parse`` before any
+    edit, ``_final_check`` after) are shown to whoever that origin lets see
+    them; None, the default, keeps them the operator's.
     """
     ops = list(ops)
     if not ops:
@@ -332,7 +347,7 @@ def apply(text: str, ops: list[Any], span: FrontmatterSpan | None) -> tuple[str,
         raise OperationRefusedError(_why_no_frontmatter(text))
     for op in ops:
         _check_op(op)
-    original = _parse(text, span)
+    original = _parse(text, span, origin=origin)
     current = original
     results: list[OpResult] = []
     widened: list[str] = []
@@ -359,7 +374,7 @@ def apply(text: str, ops: list[Any], span: FrontmatterSpan | None) -> tuple[str,
     report = Report(tuple(results), tuple(widened))
     if current.text == text:
         return text, report
-    problem = _final_check(current, expected)
+    problem = _final_check(current, expected, origin=origin)
     if problem:
         raise OperationRefusedError(f"the result failed the post-check: {problem}")
     return current.text, report
@@ -519,13 +534,23 @@ def _yaml() -> YAML:
 
 @functools.lru_cache(maxsize=4096)
 def _scalar_of(text: str) -> Any:
-    """What ``text`` reads as when written bare as a YAML 1.2 scalar key."""
+    """What ``text`` reads as when written bare as a YAML 1.2 scalar key.
+
+    A probe (``tests/test_untrusted_yaml_is_bounded.py``): one line, read as
+    one key, and only a scalar key is taken. A collection key (a flow
+    sequence, which may hold anchors and aliases) is never converted
+    (``_plain`` would walk every alias), so the segment is its own text."""
+    if not text or not _printable(text):
+        return text
     try:
-        value = YAML().load(f"{text}: 0") if text else None
+        value = YAML().load(f"{text}: 0")
     except Exception:  # YAMLError; ValueError for ``2024-02-30``, a date that is none
         return text
     if isinstance(value, Mapping) and len(value) == 1:
-        return _plain(next(iter(value)))
+        key = next(iter(value))
+        if isinstance(key, Mapping | list | tuple | set | frozenset):
+            return text
+        return _plain(key)
     return text
 
 
@@ -645,6 +670,7 @@ def unmodellable_reason(text: str, span: FrontmatterSpan) -> tuple[str, int] | N
         return None
     y = _yaml()
     try:
+        check_yaml_limits(text[span.start : span.end])  # an alias bomb is not walked
         root = y.compose(text[span.start : span.end])
     except Exception:  # YAMLError; RecursionError on deep nesting (#972 round 1)
         return None
@@ -661,7 +687,9 @@ def unmodellable_reason(text: str, span: FrontmatterSpan) -> tuple[str, int] | N
 _DOES_NOT_PARSE = "the frontmatter does not parse: "
 
 
-def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | None] | None, Any]:
+def frontmatter_refusal(
+    root: Node | None, y: YAML, *, origin: TextOrigin = None
+) -> tuple[tuple[str, Node | None] | None, Any]:
     """THE rule for a frontmatter ``apply()`` refuses whole, the body write
     included, as ``(refusal, loaded)``: ``refusal`` is ``(reason, node)`` --
     the node the reason names (a key, or the root), or None when it names
@@ -712,10 +740,19 @@ def frontmatter_refusal(root: Node | None, y: YAML) -> tuple[tuple[str, Node | N
     duplicate = _duplicate_key_node(root, set())
     try:
         loaded, made = _construct(root, y)
-    except Exception as e:  # DuplicateKeyError, ValueError, RecursionError
+    except (YAMLError, ValueError, RecursionError) as e:  # the constructors, on the bytes
         if duplicate is not None:
             return (_DUPLICATE.format(duplicate.value), duplicate), None
-        return (f"{_DOES_NOT_PARSE}{e}{_BODY_TOO}", None), None
+        # The constructors are given only the text's bytes, so their words
+        # belong to whoever owns those bytes (``origin``: a KB's file).
+        return (
+            f"{_DOES_NOT_PARSE}{outside_text(with_origin(e, origin))}{_BODY_TOO}",
+            None,
+        ), None
+    except Exception as e:
+        if duplicate is not None:
+            return (_DUPLICATE.format(duplicate.value), duplicate), None
+        return (f"{_DOES_NOT_PARSE}{outside_text(e)}{_BODY_TOO}", None), None
     tagged = _tagged_scalar_key_node(root, made)
     if tagged is not None:
         return (_TAGGED_KEY, tagged), None
@@ -806,16 +843,23 @@ def _construct(root: Node, y: YAML) -> tuple[Any, dict[Node, Any]]:
     return data, made
 
 
-def _parse(text: str, span: FrontmatterSpan) -> _Doc:
+def _parse(text: str, span: FrontmatterSpan, *, origin: TextOrigin = None) -> _Doc:
     """Compose once and construct the values from the same nodes."""
     if not (0 <= span.start <= span.end <= span.body <= len(text)):
         raise OperationRefusedError(f"the frontmatter span {span} does not fit the text")
     yaml_text = text[span.start : span.end]
     y = _yaml()
     try:
+        check_yaml_limits(yaml_text)  # an alias bomb is refused, not walked
         root = y.compose(yaml_text)
-    except Exception as e:  # YAMLError; RecursionError on deep nesting
-        raise OperationRefusedError(f"{_DOES_NOT_PARSE}{e}{_BODY_TOO}") from e
+    except (YAMLError, RecursionError) as e:  # the parser, given only the bytes
+        # The file as it is on disk, before any edit: its bytes are the
+        # origin's (a KB's file: shown to a reader of that KB, D4).
+        raise OperationRefusedError(
+            f"{_DOES_NOT_PARSE}{outside_text(with_origin(e, origin))}{_BODY_TOO}"
+        ) from e
+    except Exception as e:
+        raise OperationRefusedError(f"{_DOES_NOT_PARSE}{outside_text(e)}{_BODY_TOO}") from e
     # Before construction: constructing a merge (``<<: *b``) removes that pair
     # from the node, so it cannot be found afterwards.
     anchored = frozenset(
@@ -823,7 +867,7 @@ def _parse(text: str, span: FrontmatterSpan) -> _Doc:
         for k, v in (root.value if isinstance(root, MappingNode) else [])
         if _has_anchor(k, set()) or _has_anchor(v, set())
     )
-    refusal, loaded = frontmatter_refusal(root, y)
+    refusal, loaded = frontmatter_refusal(root, y, origin=origin)
     if refusal is not None:
         raise OperationRefusedError(refusal[0])
     eol = "\r\n" if text[max(0, span.start - 2) : span.start] == "\r\n" else "\n"
@@ -1131,9 +1175,11 @@ def _segments(path: Any, op: Any = None) -> list[str | int]:
         elif isinstance(path, str):
             segs = parse_field_path(path)
         else:
-            raise ValueError(f"a path is a string or a tuple, not {type(path).__name__}")
+            raise RefusedValueError(f"a path is a string or a tuple, not {type(path).__name__}")
     except ValueError as e:
-        raise OperationRefusedError(str(e), op) from None
+        # The parser's own refusals are RefusedValueError, shown as Pyrite's
+        # text; any other ValueError is the operator's (ADR-0052 N3).
+        raise OperationRefusedError(outside_text(e), op) from None
     if not segs and not isinstance(op, AddSubkey):
         raise OperationRefusedError(f"the path {path!r} is empty", op)
     if segs and isinstance(segs[0], int):
@@ -1660,7 +1706,7 @@ def _unset_spans(doc: _Doc, trail: list) -> list[tuple[int, int]]:
     return [(doc.s(key), end)]
 
 
-def _final_check(current: _Doc, expected: dict) -> str | None:
+def _final_check(current: _Doc, expected: dict, *, origin: TextOrigin = None) -> str | None:
     """Once per call, a second line behind the per-operation check: the
     values and the body through the reader's own split (``load_frontmatter``),
     compared here without ``_same``. The bytes were checked per operation,
@@ -1668,9 +1714,11 @@ def _final_check(current: _Doc, expected: dict) -> str | None:
     from ..utils.frontmatter import load_frontmatter
 
     try:
-        parsed = load_frontmatter(current.text)
+        # The file with the caller's edit applied: a KB's bytes, with the
+        # caller's own among them (``origin``).
+        parsed = load_frontmatter(current.text, origin=origin)
     except Exception as e:  # FrontmatterError: the edit broke the YAML
-        return f"the reader cannot parse the result ({e})"
+        return f"the reader cannot parse the result ({outside_text(e)})"
     if parsed is None:
         return "the reader finds no frontmatter in the result"
     meta, body = parsed
