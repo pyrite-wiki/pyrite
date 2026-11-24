@@ -10,7 +10,13 @@ from collections.abc import Awaitable, Callable
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from ...exceptions import ValidationError, public_text, refusal_fields
+from ...exceptions import (
+    UpdateWouldNotLoadError,
+    ValidationError,
+    public_attribute,
+    public_text,
+    refusal_fields,
+)
 from ...services.body_bounds import MARKER_KEYS, ensure_not_truncated
 
 
@@ -18,8 +24,9 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     """Map a write-pipeline refusal to REST, keeping its own code.
 
     The service decides; this only picks the status. `ENTRY_EXISTS` is a
-    conflict (409); every other refusal is a bad request (400). Never
-    retryable: the same request fails the same way.
+    conflict (409). Unloadable files and unloadable updates return 422.
+    Other refusals return 400. Never retryable: the same request fails
+    the same way.
 
     ``exc.error_code`` is a class attribute on every ``PyriteError`` since
     ADR-0037 theme 2 -- the base ``ValidationError``'s is
@@ -43,17 +50,22 @@ def refusal_http(exc: ValidationError) -> HTTPException:
     # ``server/errors.py`` already copies them for the refusals it sees. One
     # mapper, three surfaces.
     detail.update(refusal_fields(exc))
-    suggestion = getattr(exc, "suggestion", None)
+    suggestion = public_attribute(exc, "suggestion")
     if suggestion:
         detail["hint"] = suggestion
-    declared = getattr(exc, "declared_types", None)
+    declared = public_attribute(exc, "declared_types")
     if declared is not None:
         detail["declared_types"] = declared
         detail.setdefault(
             "hint",
             f"Use an entry_type in [{', '.join(declared)}], or send allow_undeclared: true.",
         )
-    return HTTPException(status_code=409 if code == "ENTRY_EXISTS" else 400, detail=detail)
+    # A file its declared type cannot load is not a bad request: the same
+    # 422 as the central handler gives it (ADR-0042 8a).
+    status = {"ENTRY_EXISTS": 409, "ENTRY_UNREADABLE": 422}.get(code, 400)
+    if isinstance(exc, UpdateWouldNotLoadError):
+        status = 422
+    return HTTPException(status_code=status, detail=detail)
 
 
 async def refuses_truncated_body(request: Request) -> None:

@@ -143,7 +143,7 @@ def test_an_unknown_command_that_is_no_extension_keeps_the_help_hint():
     stdout, _, code = _invoke("pyrite", ["no-such-command-zz"])
     assert code == 2
     doc = json.loads(stdout)
-    assert doc["suggestion"] == "Try 'pyrite --help' for help."
+    assert doc["suggestion"].endswith("Try 'pyrite --help' for help.")
 
 
 def test_a_typo_inside_a_group_keeps_the_help_hint():
@@ -152,7 +152,7 @@ def test_a_typo_inside_a_group_keeps_the_help_hint():
     stdout, _, code = _invoke("pyrite", ["kb", "no-such-zz"])
     assert code == 2
     doc = json.loads(stdout)
-    assert doc["suggestion"] == "Try 'pyrite kb --help' for help."
+    assert doc["suggestion"].endswith("Try 'pyrite kb --help' for help.")
 
 
 def test_the_extension_hint_in_rich_format():
@@ -187,6 +187,13 @@ def test_extension_command_table_matches_the_plugins():
         for name in names:
             seen[name] = directory
     assert seen == _EXTENSION_COMMAND_INSTALLS
+
+
+def test_unknown_subcommand_names_the_groups_commands():
+    doc = _assert_refusal(*_invoke("pyrite", ["links", "validate"]), names="validate")
+    assert "pyrite links has:" in doc["suggestion"]
+    assert "check" in doc["suggestion"]
+    assert "--help" in doc["suggestion"]
 
 
 @pytest.mark.parametrize("root", list(ROOTS))

@@ -56,6 +56,41 @@ class PyritePlugin(Protocol):
         Returns:
             Dict mapping type name to Entry subclass.
             Example: {"investigation": InvestigationEntry}
+
+        A type's loader (``from_frontmatter``) should convert leniently
+        (``pyrite.utils.parse.safe_int``) or keep a value as written, and
+        leave the judgement to a validator, whose finding on a field a write
+        does not touch is a warning (ADR-0042 decision 8). A loader that
+        raises makes the file read-only through Pyrite until it is fixed by
+        hand: reads return the declared type without the refused fields, and
+        every write is refused with ``ENTRY_UNREADABLE`` (decision 8a).
+
+        A loader must accept a mapping of only ``type``, ``id`` and ``title``:
+        a partial read probes the loader with those base keys first, and a
+        loader that refuses them makes the read answer ``ENTRY_UNREADABLE``
+        instead of listing the refused fields (#1855).
+        """
+        ...
+
+    def get_type_mappings(self) -> dict[str, str]:
+        """
+        Return the core types this plugin stores as one of its own (#468).
+
+        Optional. Returns:
+            Dict mapping a core type name to one of this plugin's entry types.
+            Example: {"event": "investigation_event"}
+
+        A create that names the core type in a KB this plugin is active for
+        (``get_kb_types``) stores the plugin's type instead -- in a KB whose
+        ``kb.yaml`` declares types, only when it declares both. Nothing else
+        maps a type: subclassing a core class does NOT (a ``NoteEntry``
+        subclass that only reuses its fields leaves ``note`` alone). Checked
+        at load: the key must be a core type, the value one of this plugin's
+        ``get_entry_types``, the plugin must name at least one KB type, and
+        no two plugins active for an overlapping KB type may map the same
+        core type (refused, naming both). ``orient`` and ``kb_schema`` show
+        the pairs a KB applies as ``type_mappings``.
+        Needs the SCHEMA capability.
         """
         ...
 
@@ -286,6 +321,9 @@ class PyritePlugin(Protocol):
                     file may spell another way, e.g. {"participants": "actors"}.
                     The type's class reads the target; the platform resolves the
                     alias through pyrite.schema.field_aliases.field_aliases().
+                settled_statuses: list[str] - the statuses after which an entry of the
+                    type is no longer live work (e.g. ["done", "retired"]); `qa
+                    duplicates` skips them by default. Omit it and every entry is live.
                 protocols, guidelines, goals, evaluation_rubric - as in kb.yaml
         """
         ...

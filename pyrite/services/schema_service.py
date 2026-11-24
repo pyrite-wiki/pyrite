@@ -5,7 +5,7 @@ from typing import Any
 
 from pyrite.config import KBConfig, PyriteConfig
 from pyrite.exceptions import KBNotFoundError, ValidationError, outside_text
-from pyrite.utils.yaml import load_yaml_file
+from pyrite.utils.yaml import read_kb_yaml
 
 
 def migration_operations(before: dict[str, Any], after: dict[str, Any]) -> list[Any]:
@@ -53,10 +53,10 @@ class SchemaService:
         """Load kb.yaml, returning empty dict if missing. Read only inside the
         KB: a kb.yaml that is a link out of it, or a hard link, raises
         ``KBFileReadOutsideRootError`` (``OUTSIDE_KB_ROOT``), so no schema
-        command shows it or writes it back into the KB."""
-        if kb.kb_yaml_path.exists():
-            return load_yaml_file(kb.kb_yaml_path, kb_root=kb.path)
-        return {}
+        command shows it or writes it back into the KB. One that cannot be
+        loaded as a mapping raises ``KBConfigInvalidError`` before any write,
+        so ``add``, ``remove`` and ``set`` never rewrite it (#1547)."""
+        return read_kb_yaml(kb.path)
 
     def _save_kb_yaml(self, kb: KBConfig, data: dict[str, Any]) -> None:
         """Save kb.yaml and refresh in-memory config. A kb.yaml that is a link
@@ -80,7 +80,7 @@ class SchemaService:
         data = self._load_kb_yaml(kb)
         return {
             "kb_name": kb_name,
-            "types": data.get("types", {}),
+            "types": (data.get("types") or {}),
             "policies": data.get("policies", {}),
             "validation": data.get("validation", {}),
         }
@@ -100,7 +100,7 @@ class SchemaService:
         self._require_kb_directory(kb)
         data = self._load_kb_yaml(kb)
 
-        types = data.get("types", {})
+        types = data.get("types") or {}
         if type_name in types:
             return {"error": f"Type '{type_name}' already exists in KB '{kb_name}'"}
 
@@ -124,7 +124,7 @@ class SchemaService:
         self._require_kb_directory(kb)
         data = self._load_kb_yaml(kb)
 
-        types = data.get("types", {})
+        types = data.get("types") or {}
         if type_name not in types:
             return {"error": f"Type '{type_name}' not found in KB '{kb_name}'"}
 
@@ -159,7 +159,7 @@ class SchemaService:
 
         self._save_kb_yaml(kb, data)
 
-        type_count = len(data.get("types", {}))
+        type_count = len(data.get("types") or {})
         return {"set": True, "kb_name": kb_name, "type_count": type_count}
 
     def migrate_entries(

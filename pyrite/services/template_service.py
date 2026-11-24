@@ -146,7 +146,9 @@ class TemplateService:
         """
         root = self._kb_path(kb_name)
         path = root / "_templates" / f"{template_name}.md"
-        if not path.is_file():
+        # The KB's own probe (a link out is there, and refused by the read,
+        # whatever it points at), then a read through KBFiles.
+        if not KBFiles(root).present(path):
             raise FileNotFoundError(f"Template '{template_name}' not found in KB '{kb_name}'")
         return self._parse_template_file(path, root)
 

@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -30,7 +31,7 @@ from pyrite.exceptions import (
     ValidationError,
 )
 from pyrite.utils.private_files import create_private_file
-from pyrite.utils.yaml import dump_yaml_file, load_yaml_file
+from pyrite.utils.yaml import dump_yaml_file, load_yaml_file, read_kb_yaml
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,29 @@ class KBType(StrEnum):
 # set, reaching the canonical files only by review. Set by the operator in the
 # config file only (ADR-0039 decision 1) -- never in kb.yaml, never by a surface.
 LANDINGS = ("canonical", "review")
+
+#: The values a KB's ``default_role`` may hold. None (absent) is the instance
+#: default; "none" closes the KB to every caller without a grant.
+KB_DEFAULT_ROLES = ("none", "read", "write")
+
+
+def validate_kb_default_role(value: Any, where: str) -> str | None:
+    """The one check of a KB's ``default_role``, for every source.
+
+    The config file, the file the environment names, ``KBConfig`` built in
+    code, the index's registry row, the registry service and the REST admin
+    endpoint all ask here. Returns the value (None for absent) or raises
+    ``ConfigError`` naming `where`. Exact spellings only: the role check
+    hands a KB's default_role to every user with global access as their
+    role (``access_policy.kb_role`` step 3), so a value outside these is
+    never carried through, and no case or blank is guessed at.
+    """
+    if value is None or (isinstance(value, str) and value in KB_DEFAULT_ROLES):
+        return value
+    raise ConfigError(
+        f"{where}: default_role must be 'none', 'read' or 'write' (or absent for the "
+        f"instance default), not {value!r}"
+    )
 
 
 @dataclass
@@ -78,8 +102,14 @@ class KBConfig:
     types: dict[str, Any] | None = None
     policies: dict[str, Any] | None = None
 
-    # Internal cache — not serialized
+    # Internal cache — not serialized. ``_schema_stamp`` is the identity of
+    # the kb.yaml the cached schema was read from (``_kb_yaml_stamp``): a
+    # cache is served only while the file is still that file (#1547).
     _schema_cache: Any = field(default=None, init=False, repr=False)
+    _schema_stamp: Any = field(default=None, init=False, repr=False)
+    # The kb.yaml identity whose load failure this process has logged, so
+    # the parser's words reach its log once per file, not once per read.
+    _logged_stamp: Any = field(default=None, init=False, repr=False)
 
     def __post_init__(self):
         self.path = Path(self.path).expanduser().resolve()
@@ -87,6 +117,7 @@ class KBConfig:
         if hasattr(self.kb_type, "value"):
             self.kb_type = self.kb_type.value
         self._schema_cache = None
+        self.default_role = validate_kb_default_role(self.default_role, f"KB '{self.name}'")
         # A misspelt landing must not quietly mean canonical: it fails at load.
         if self.landing not in LANDINGS:
             raise ConfigError(
@@ -119,21 +150,108 @@ class KBConfig:
         return self.path / "kb.yaml"
 
     @property
-    def kb_schema(self) -> "Any":
-        """Lazily load and cache the KBSchema object for this KB."""
-        if self._schema_cache is None:
-            from .schema import KBSchema
+    def kb_yaml_present(self) -> bool:
+        """Whether this KB has a kb.yaml, as the KB answers it
+        (``KBFiles.present``): a kb.yaml that is a link out of the KB is there
+        whatever it points at, and the read refuses it (``OUTSIDE_KB_ROOT``),
+        so no answer depends on whether a file outside the KB exists."""
+        from .utils.kb_files import KBFiles
 
-            schema_path = self.path / "kb.yaml"
-            if schema_path.exists():
-                self._schema_cache = KBSchema.from_yaml(schema_path)
-            else:
-                self._schema_cache = KBSchema()
-        return self._schema_cache
+        return KBFiles(self.path).present(self.kb_yaml_path)
+
+    @property
+    def kb_schema(self) -> "Any":
+        """Lazily load and cache the KBSchema object for this KB.
+
+        From ``read_kb_yaml``: a kb.yaml that cannot be loaded raises
+        ``KBConfigInvalidError`` (never cached), so this KB is never read
+        as having no schema (#1547). The cache is kept only while kb.yaml is
+        the file it was read from (``_kb_yaml_stamp``): a long-running
+        process (a server) whose kb.yaml is edited, broken or repaired after
+        it loaded answers what the file is now, as a fresh process does."""
+        stamp = self._kb_yaml_stamp()
+        cached = self._schema_cache
+        if cached is not None and stamp == self._schema_stamp:
+            return cached
+        from .exceptions import KBConfigInvalidError
+        from .schema import KBSchema
+
+        try:
+            schema = KBSchema.from_dict(read_kb_yaml(self.path))
+        except KBConfigInvalidError as e:
+            self._schema_cache = None
+            self.log_config_invalid(e, stamp)
+            raise
+        # Built here and returned from here: another thread replacing the
+        # attribute meanwhile cannot make this call answer None.
+        self._schema_cache, self._schema_stamp = schema, stamp
+        return schema
+
+    def log_config_invalid(self, error: Any, stamp: Any = None) -> None:
+        """Write why this KB's kb.yaml does not load to this process's own log,
+        once per kb.yaml identity: the fixed text and the parser's words.
+
+        The log is the operator's, whatever the process (a CLI, ``pyrite-read``,
+        ``pyrite-server``), so the words are shown in full here
+        (``outside_text(local=True)``); no response carries them (ADR-0052 N3).
+        Called at config load (``load_kb_yaml``) and when ``kb_schema`` finds
+        the file broken later."""
+        from .exceptions import outside_text, public_text
+
+        if stamp is None:
+            stamp = self._kb_yaml_stamp()
+        if stamp is not None and stamp == self._logged_stamp:
+            return
+        self._logged_stamp = stamp
+        logger.warning(
+            "KB %s: %s The parser said: %s",
+            self.name,
+            public_text(error, already_logged=True),
+            outside_text(error.__cause__ or error, local=True, already_logged=True),
+        )
+
+    def _kb_yaml_stamp(self) -> tuple[int, ...] | None:
+        """The identity of kb.yaml now, for the schema cache only: inode,
+        size, and modification and change times in nanoseconds (an atomic
+        replace is a new inode; an in-place edit moves the times). None when
+        nothing can be stat'ed there. It decides only whether to read again;
+        what the KB answers is ``read_kb_yaml``'s."""
+        import os
+
+        try:
+            st = os.stat(self.kb_yaml_path)
+        except OSError:
+            return None
+        return (st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
     def invalidate_schema_cache(self) -> None:
         """Clear cached KBSchema — call after kb.yaml changes."""
         self._schema_cache = None
+        self._schema_stamp = None
+
+    def readability_error(self) -> Any:
+        """The refusal this KB's files answer now (``KB_YAML_REFUSALS``), or
+        None: ``check_readable``, asked live. ``KBFilesUnreadableError``
+        (``KB_UNREADABLE``), ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``,
+        its parser's error as ``__cause__``) or ``KBFileReadOutsideRootError``
+        (``OUTSIDE_KB_ROOT``). Read by ``pyrite kb list`` and ``unreadable``."""
+        from .utils.kb_files import KB_YAML_REFUSALS
+
+        try:
+            self.check_readable()
+        except KB_YAML_REFUSALS as e:
+            return e
+        return None
+
+    @property
+    def unreadable(self) -> str | None:
+        """The fixed text of ``readability_error()``, or None: asked now, so a
+        KB repaired or broken after the config loaded answers what its files
+        are (#1547). Logged by ``load_kb_yaml``; read by ``pyrite kb list``."""
+        from .exceptions import public_text
+
+        error = self.readability_error()
+        return None if error is None else public_text(error, already_logged=True)
 
     @property
     def local_db_path(self) -> Path:
@@ -142,6 +260,47 @@ class KBConfig:
         pyrite_dir.mkdir(exist_ok=True)
         return pyrite_dir / "index.db"
 
+    def check_readable(self) -> None:
+        """Raise ``KBFilesUnreadableError`` (``KB_UNREADABLE``) when this KB's
+        files cannot be read: its folder cannot be listed, whether it has a
+        kb.yaml cannot be told, or its kb.yaml is there and cannot be read.
+        A missing folder (or a path that is not one) is not this answer; its
+        callers already handle that. A kb.yaml that leads outside the KB (a
+        link out, a second hard link) raises ``KBFileReadOutsideRootError``
+        (``OUTSIDE_KB_ROOT``), as ``kb_schema`` does: the reconcile would
+        otherwise read every file against a schema it cannot have and
+        retire every row (#1547). Callers catch ``KB_YAML_REFUSALS``.
+
+        The gate in front of anything that would read the KB's absence of
+        files as a fact: the reconcile asks it before it may remove a row
+        (#1542), so a KB the process cannot read keeps its index rows.
+
+        A kb.yaml that can be read and cannot be loaded as a mapping raises
+        ``KBConfigInvalidError`` (``KB_CONFIG_INVALID``) here too, through
+        the one loader (``read_kb_yaml``): otherwise every file would parse
+        against no schema and the removal pass would retire every row
+        (#1547).
+        """
+        self._read_kb_yaml_or_raise()
+
+    def _read_kb_yaml_or_raise(self) -> dict[str, Any] | None:
+        """``check_readable``'s work, returning the kb.yaml mapping it loaded
+        (``{}`` with none), or None when the KB's folder is missing (or is
+        not a folder). A kb.yaml that leads outside the KB raises
+        ``KBFileOutsideRootError``, for the caller to decide."""
+        import os
+
+        from .utils.kb_files import KBFilesUnreadableError
+
+        try:
+            with os.scandir(self.path) as listing:
+                next(listing, None)
+        except (FileNotFoundError, NotADirectoryError):
+            return None
+        except OSError as e:
+            raise KBFilesUnreadableError() from e
+        return read_kb_yaml(self.path)  # KBPresenceUnknownError when it cannot tell
+
     def load_kb_yaml(self) -> bool:
         """Load kb.yaml if it exists. Returns True if loaded.
 
@@ -149,24 +308,49 @@ class KBConfig:
         that is a link out of the KB, or has more than one hard link, is not
         the KB's, and is left unloaded with a warning here, where every
         registered KB is loaded at once. ``kb_schema`` refuses it
-        (``OUTSIDE_KB_ROOT``) for the operations that need it."""
-        if self.kb_yaml_path.exists():
-            from .utils.kb_files import KBFileOutsideRootError
+        (``OUTSIDE_KB_ROOT``) for the operations that need it.
 
-            try:
-                data = load_yaml_file(self.kb_yaml_path, kb_root=self.path)
-            except KBFileOutsideRootError:
-                logger.warning(
-                    "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
-                    "of it, or a file with more than one hard link); not read",
-                    self.name,
-                )
-                return False
-            self.schema = data.get("schema")
-            self.types = data.get("types")
-            self.policies = data.get("policies")
-            return True
-        return False
+        Every registered KB is loaded here at once, so a KB whose files this
+        process cannot read (``check_readable``: a folder it may not list or
+        search, a kb.yaml it may not open) is logged by name; it never stops
+        the load, or one such KB would stop every command on every other KB
+        (#1542). Every operation on this KB that needs its files then stops
+        with ``KBFilesUnreadableError``.
+
+        A kb.yaml that can be read and cannot be loaded as a mapping is the
+        same at this point (#1547): logged by name with the parser's words,
+        and the load goes on. Nothing is recorded: ``unreadable``,
+        ``readability_error``, ``kb_schema`` and index health ask the file
+        again, so a KB broken or repaired later answers what it is now."""
+        from .exceptions import KBConfigInvalidError, KBUnreadableError, public_text
+        from .utils.kb_files import KBFileOutsideRootError
+
+        # Snapshots of kb.yaml, read by nothing in Pyrite today (kb_schema is
+        # the reader); never left holding an earlier file's values.
+        self.schema = self.types = self.policies = None
+        try:
+            data = self._read_kb_yaml_or_raise()
+        except KBFileOutsideRootError:
+            logger.warning(
+                "KB %s: kb.yaml may lead outside the KB's folder (a symbolic link out "
+                "of it, or a file with more than one hard link); not read",
+                self.name,
+            )
+            return False
+        except KBConfigInvalidError as e:
+            self.log_config_invalid(e)  # the parser's words, in this process's log
+            return False
+        except KBUnreadableError as e:
+            logger.warning(
+                "KB %s is unreadable: %s", self.name, public_text(e, already_logged=True)
+            )
+            return False
+        if data is None or (not data and not self.kb_yaml_present):
+            return False  # no folder, or no kb.yaml
+        self.schema = data.get("schema")
+        self.types = data.get("types")
+        self.policies = data.get("policies")
+        return True
 
     def validate(self) -> list[str]:
         """Validate KB configuration. Returns list of errors."""
@@ -501,6 +685,268 @@ def normalize_git_allowed_hosts(
     return hosts
 
 
+@dataclass(frozen=True)
+class GitCredential:
+    """One credential the operator grants network git (``git_credentials``).
+
+    It is offered to a network caller's git command only (the local CLI uses
+    the operator's own git setup and never reads these), for a remote on
+    `host` (``host`` or ``host:port``, as in ``git_allowed_hosts``) over the
+    entry's own transport (https for a token, ssh for a key), and, when `kb`
+    is set, only for that KB.
+
+    Scope (D-U1): an entry serves remotes already configured in a registered
+    KB's repository (the push of a KB, the sync of a subscribed clone). A URL
+    a caller names (subscribe, fork, export to a URL) gets the entry only
+    when one of `url_prefixes` covers it.
+
+    Exactly one source: `token_env` (the name of an environment variable
+    holding a token), `token_file` (a file holding one), or `ssh_key` (a
+    private key file, with `known_hosts` naming the host keys to trust; the
+    key must have no passphrase). A credential never allows a host: the host
+    must also be in ``git_allowed_hosts``.
+    """
+
+    host: str
+    kb: str | None = None
+    token_env: str | None = None
+    token_file: Path | None = None
+    ssh_key: Path | None = None
+    known_hosts: Path | None = None
+    username: str = "oauth2"
+    #: Repository URLs a caller may name that this entry still serves: each a
+    #: URL on `host` over the entry's transport, matched by whole path
+    #: segments (``https://host/team/`` covers ``https://host/team/r.git``,
+    #: never ``https://host/team-x/r`` or ``https://host/team``).
+    url_prefixes: tuple[str, ...] = ()
+
+    @property
+    def transport(self) -> str:
+        """``ssh`` for a key, ``https`` for a token."""
+        return "ssh" if self.ssh_key is not None else "https"
+
+    def token(self) -> str | None:
+        """The token, read when used (never kept), or None for an ssh key or a
+        source that holds nothing."""
+        if self.token_env:
+            value = os.environ.get(self.token_env, "").strip()
+            return value or None
+        if self.token_file:
+            try:
+                value = Path(self.token_file).read_text(encoding="utf-8").strip()
+            except OSError:
+                logger.warning("git_credentials: cannot read the token_file for %s", self.host)
+                return None
+            return value or None
+        return None
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"host": self.host}
+        if self.kb:
+            out["kb"] = self.kb
+        for name in ("token_env", "token_file", "ssh_key", "known_hosts"):
+            value = getattr(self, name)
+            if value:
+                out[name] = str(value)
+        if self.username != "oauth2":
+            out["username"] = self.username
+        if self.url_prefixes:
+            out["url_prefixes"] = list(self.url_prefixes)
+        return out
+
+
+_GIT_USERNAME_RE = re.compile(r"[A-Za-z0-9._-]+")
+
+
+def _credential_path(item: dict, key: str, where: str) -> Path | None:
+    raw = item.get(key)
+    if raw is None:
+        return None
+    resolved = Path(str(raw)).expanduser()
+    if not resolved.is_absolute():
+        raise ValueError(f"{where}.{key} must be an absolute path")
+    return resolved
+
+
+_ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def _url_prefix_host(prefix: str, transport: str) -> str | None:
+    """The ``host``/``host:port`` a `git_credentials` URL prefix names over
+    `transport`, or None when it is not a plain URL of that transport."""
+    if any(c.isspace() or ord(c) < 32 or c in "\\?#" for c in prefix):
+        return None
+    if transport == "https" or prefix.startswith("ssh://"):
+        try:
+            parts = urlsplit(prefix)
+            port = parts.port
+        except ValueError:
+            return None
+        if parts.scheme != transport or not parts.hostname or parts.password is not None:
+            return None
+        if transport == "https" and parts.username is not None:
+            return None
+        if port in (None, 22) and transport == "ssh":
+            port = None
+        host = parts.hostname.lower()
+        return host if port is None else f"{host}:{port}"
+    login, sep, _path = prefix.partition(":")
+    if not sep or "/" in login or "[" in login:
+        return None
+    host = login.rpartition("@")[2].lower()
+    return host or None
+
+
+def _url_prefixes(item: dict, host: str, transport: str, where: str) -> tuple[str, ...]:
+    raw = item.get("url_prefixes")
+    if raw is None:
+        return ()
+    if not isinstance(raw, (list, tuple)) or not all(isinstance(p, str) for p in raw):
+        raise ValueError(f"{where}.url_prefixes must be a list of repository URLs")
+    for prefix in raw:
+        if _url_prefix_host(prefix, transport) != host:
+            raise ValueError(
+                f"{where}.url_prefixes: {prefix!r} is not an {transport} URL on {host} "
+                "(an entry's prefixes name its own host and transport)"
+            )
+        path = urlsplit(prefix).path if "://" in prefix else prefix.partition(":")[2]
+        if "%" in path:
+            raise ValueError(
+                f"{where}.url_prefixes: {prefix!r} has a percent-encoded character ('%') "
+                "in its path; write the path plainly (a server may decode it into "
+                "another path)"
+            )
+        segments = [s for s in path.split("/") if s]
+        if any(s in (".", "..") for s in segments):
+            raise ValueError(f"{where}.url_prefixes: {prefix!r} has a '.' or '..' dot segment")
+        if not segments:
+            raise ValueError(
+                f"{where}.url_prefixes: {prefix!r} names no repository path, so it would "
+                "cover nothing. Name a path (for example https://host/team/), or omit "
+                "url_prefixes so the entry serves only remotes configured in a KB's repository"
+            )
+    return tuple(raw)
+
+
+def normalize_git_credentials(
+    value: Any, source: str = "settings.git_credentials"
+) -> list[GitCredential]:
+    """The validated ``git_credentials``: a list of mappings (config.yaml) or
+    `GitCredential` objects. A mistake is one error at load naming the entry,
+    never a credential that silently matches nothing."""
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"{source} must be a list of entries, got {_kind_of(value)}")
+    out: list[GitCredential] = []
+    for i, item in enumerate(value):
+        where = f"{source}[{i}]"
+        if isinstance(item, GitCredential):
+            item = item.to_dict()
+        if not isinstance(item, dict):
+            raise ValueError(f"{where} must be a mapping, got {_kind_of(item)}")
+        unknown = set(item) - {
+            "host",
+            "kb",
+            "token_env",
+            "token_file",
+            "ssh_key",
+            "known_hosts",
+            "username",
+            "url_prefixes",
+        }
+        if unknown:
+            raise ValueError(f"{where} has unknown keys: {', '.join(sorted(unknown))}")
+        [host] = normalize_git_allowed_hosts([item.get("host")], f"{where}.host") or [None]
+        sources = [k for k in ("token_env", "token_file", "ssh_key") if item.get(k)]
+        if len(sources) != 1:
+            raise ValueError(f"{where} needs exactly one of token_env, token_file, ssh_key")
+        kb = item.get("kb")
+        if kb is not None and (not isinstance(kb, str) or not kb.strip()):
+            raise ValueError(f"{where}.kb must be a KB name")
+        token_env = item.get("token_env")
+        if token_env is not None and not (
+            isinstance(token_env, str) and _ENV_NAME_RE.fullmatch(token_env)
+        ):
+            raise ValueError(f"{where}.token_env must be an environment variable name")
+        username = item.get("username", "oauth2")
+        if not isinstance(username, str) or not _GIT_USERNAME_RE.fullmatch(username):
+            raise ValueError(f"{where}.username must be a plain user name")
+
+        ssh_key, known_hosts = (
+            _credential_path(item, "ssh_key", where),
+            _credential_path(item, "known_hosts", where),
+        )
+        if ssh_key is not None and known_hosts is None:
+            raise ValueError(
+                f"{where}: an ssh_key needs known_hosts, the file of host keys to trust"
+            )
+        if ssh_key is None and known_hosts is not None:
+            raise ValueError(f"{where}: known_hosts is only for an ssh_key")
+        out.append(
+            GitCredential(
+                host=host,
+                kb=kb.strip() if kb else None,
+                token_env=token_env,
+                token_file=_credential_path(item, "token_file", where),
+                ssh_key=ssh_key,
+                known_hosts=known_hosts,
+                username=username,
+                url_prefixes=_url_prefixes(
+                    item, host, "ssh" if ssh_key is not None else "https", where
+                ),
+            )
+        )
+    return out
+
+
+def normalize_git_proxy(value: Any, source: str = "settings.git_proxy") -> str | None:
+    """``git_proxy``: an ``http://`` or ``https://`` proxy URL (a grant: it
+    may carry the proxy's own credential), or None for no proxy."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{source} must be a proxy URL, got {_kind_of(value)}")
+    text = value.strip()
+    try:
+        parts = urlsplit(text)
+        parts.port  # noqa: B018 (a bad port raises here)
+    except ValueError:
+        parts = None
+    if (
+        parts is None
+        or parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+        or any(c.isspace() for c in text)
+    ):
+        raise ValueError(f"{source} must be an http:// or https:// proxy URL (host[:port])")
+    return text
+
+
+@dataclass(frozen=True)
+class GitIdentity:
+    """``git_identity``: the name and email Pyrite's commits for a network
+    caller are made as (worktree commits, exports, merges)."""
+
+    name: str
+    email: str
+
+
+def normalize_git_identity(value: Any, source: str = "settings.git_identity") -> GitIdentity | None:
+    if value is None or isinstance(value, GitIdentity):
+        return value
+    if not isinstance(value, dict) or set(value) != {"name", "email"}:
+        raise ValueError(f"{source} must be a mapping with name and email")
+    name, email = value["name"], value["email"]
+    for key, text in (("name", name), ("email", email)):
+        if not isinstance(text, str) or not text.strip() or any(ord(c) < 32 for c in text):
+            raise ValueError(f"{source}.{key} must be one line of text")
+    return GitIdentity(name=name.strip(), email=email.strip())
+
+
 @dataclass
 class Settings:
     """Global application settings."""
@@ -537,6 +983,19 @@ class Settings:
     # only; an entry is a hostname, or host:port for a non-default port.
     # Env: PYRITE_GIT_ALLOWED_HOSTS (comma-separated).
     git_allowed_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_GIT_ALLOWED_HOSTS))
+    # Credentials the operator grants network git, by host (and optionally
+    # KB): the only credential a git command run for a network caller gets
+    # besides that caller's own GitHub token. Never read from the account's
+    # helpers, agent, netrc or global config (ADR-0052 N2). See GitCredential.
+    git_credentials: list[GitCredential] = field(default_factory=list)
+    # The identity commits made for a network caller carry. Unset: the
+    # account's global user.name/user.email, until 0.27.0 removes that
+    # fallback.
+    git_identity: GitIdentity | None = None
+    # The proxy network git and the GitHub API calls made for a network caller
+    # go through (an operator grant). Unset: no proxy; the account's proxy
+    # variables never apply to a network caller. Env: PYRITE_GIT_PROXY.
+    git_proxy: str | None = None
     api_key: str = ""  # Empty = auth disabled (backwards-compatible)
     api_keys: list[dict[str, str]] = field(default_factory=list)  # [{key_hash, role, label}]
     auth: AuthConfig = field(default_factory=AuthConfig)
@@ -589,6 +1048,9 @@ class Settings:
         self.workspace_path = Path(self.workspace_path).expanduser().resolve()
         self.kb_roots = normalize_kb_roots(self.kb_roots)
         self.git_allowed_hosts = normalize_git_allowed_hosts(self.git_allowed_hosts)
+        self.git_credentials = normalize_git_credentials(self.git_credentials)
+        self.git_identity = normalize_git_identity(self.git_identity)
+        self.git_proxy = normalize_git_proxy(self.git_proxy)
         self.cors_origins = cors_origin_list(self.cors_origins)
         if self.branding_dir is not None:
             self.branding_dir = Path(self.branding_dir).expanduser().resolve()
@@ -774,6 +1236,12 @@ class PyriteConfig:
                 description=kb_data.get("description") or "",
                 default_role=default_role,
             )
+        except ConfigError:
+            # A row holding a value the validator refuses (an older version,
+            # another tool) is never a role: the KB is left out, and the
+            # access policy answers "none" for a KB the load left out.
+            logger.warning("Registry KB %r has an invalid default_role; not loading it", name)
+            return None
         except (OSError, RuntimeError, ValueError):
             # A registry path that cannot be resolved (an unknown ~user, a
             # symlink loop) must not stop the load -- this runs while every
@@ -1040,6 +1508,22 @@ class PyriteConfig:
                 else {}
             ),
             **(
+                {"git_credentials": [c.to_dict() for c in self.settings.git_credentials]}
+                if self.settings.git_credentials
+                else {}
+            ),
+            **(
+                {
+                    "git_identity": {
+                        "name": self.settings.git_identity.name,
+                        "email": self.settings.git_identity.email,
+                    }
+                }
+                if self.settings.git_identity
+                else {}
+            ),
+            **({"git_proxy": self.settings.git_proxy} if self.settings.git_proxy else {}),
+            **(
                 {"kb_roots": [str(p) for p in self.settings.kb_roots]}
                 if self.settings.kb_roots
                 else {}
@@ -1213,6 +1697,9 @@ class PyriteConfig:
             git_allowed_hosts=settings_data.get(
                 "git_allowed_hosts", list(DEFAULT_GIT_ALLOWED_HOSTS)
             ),
+            git_credentials=settings_data.get("git_credentials") or [],
+            git_identity=settings_data.get("git_identity"),
+            git_proxy=settings_data.get("git_proxy"),
             kb_roots=settings_data.get("kb_roots") or [],
             api_key=settings_data.get("api_key", ""),
             api_keys=settings_data.get("api_keys", []),
@@ -1417,6 +1904,8 @@ def _apply_env_overrides(config: PyriteConfig) -> None:
         config.settings.git_allowed_hosts = normalize_git_allowed_hosts(
             val, source="PYRITE_GIT_ALLOWED_HOSTS"
         )
+    if val := env("PYRITE_GIT_PROXY"):
+        config.settings.git_proxy = normalize_git_proxy(val, source="PYRITE_GIT_PROXY")
     if val := env("PYRITE_API_KEY"):
         config.settings.api_key = val
     if val := env("PYRITE_AI_PROVIDER"):
@@ -1968,13 +2457,22 @@ def auto_discover_kbs(search_paths: list[Path] | None = None) -> list[KBConfig]:
         if not search_path.exists():
             continue
 
-        # Look for kb.yaml files
-        for kb_yaml in search_path.rglob("kb.yaml"):
+        # Look for kb.yaml files by name (``os.walk``): a kb.yaml that is a
+        # link is listed whether or not its target exists, on every Python
+        # (3.11's ``rglob`` with a literal name checked the target), and a
+        # folder that is a link out is not walked into.
+        found = (
+            Path(dirpath) / "kb.yaml"
+            for dirpath, dirnames, filenames in os.walk(search_path)
+            if "kb.yaml" in filenames or "kb.yaml" in dirnames
+        )
+        for kb_yaml in found:
             try:
                 # Read inside the folder it names as a KB: a kb.yaml that is
                 # a link out of it, or a hard link, is not that KB's (a
-                # subscribed repository's files are anyone's).
-                data = load_yaml_file(kb_yaml, kb_root=kb_yaml.parent)
+                # subscribed repository's files are anyone's). The one kb.yaml
+                # loader (#1547): one that does not load is skipped below.
+                data = read_kb_yaml(kb_yaml.parent)
 
                 name = data.get("name", kb_yaml.parent.name)
                 kb_type_str = data.get("kb_type", "generic")

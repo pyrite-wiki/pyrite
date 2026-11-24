@@ -81,7 +81,7 @@ NOT_AN_ENTRY_FILE: dict[tuple[str, str], str] = {
     (
         "pyrite/services/kb_registry_service.py",
         "KBRegistryService._apply_preset",
-    ): "a KB's kb.yaml template",
+    ): "a preset's kb.yaml and templates, through KBFiles.write_bytes (ABSENT)",
     ("pyrite/services/url_checker.py", "URLChecker.save_cache"): "the URL checker's cache",
     ("pyrite/cli/__init__.py", "generate_readme_cmd"): "a generated README, not an entry",
     ("pyrite/cli/extension_commands.py", "extension_init"): "an extension scaffold",

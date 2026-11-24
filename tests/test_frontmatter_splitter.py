@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from pyrite.exceptions import FrontmatterError
+from pyrite.services.acting import local_process
 
 
 def _mod():
@@ -208,8 +209,9 @@ def test_repository_reads_every_row_as_the_splitter_does(repo, tmp_path, case):
         return
     entry = repo._load_entry(_write(tmp_path, text))
     assert entry.body == body
-    # A mapping with no `type:` loads as a note; an empty one falls back to an event.
-    assert type(entry).__name__ == ("NoteEntry" if yaml_text.strip() else "EventEntry")
+    # A mapping with no `type:` loads as a note, and so does an empty one: the
+    # type the loader dispatches an untyped file to, never an event (#1261).
+    assert type(entry).__name__ == "NoteEntry"
 
 
 @pytest.mark.parametrize(
@@ -255,10 +257,12 @@ def test_schema_check_reads_quoted_dashes(tmp_path):
     assert body == "Body here."
 
 
+@pytest.mark.control(reason="unchanged for the local process, which the test now binds")
 def test_add_entry_from_file_reads_quoted_dashes(kb_service, tmp_path):
-    entry, result = kb_service.add_entry_from_file(
-        "test-events", _write(tmp_path, TRICKY), validate_only=True
-    )
+    with local_process():  # the CLI's `pyrite add`, the local process only
+        entry, result = kb_service.add_entry_from_file(
+            "test-events", _write(tmp_path, TRICKY), validate_only=True
+        )
     assert entry.title == "Rental --- Chicago"
     assert entry.body == "Body here."
 
@@ -269,7 +273,7 @@ def test_add_entry_from_file_reads_quoted_dashes(kb_service, tmp_path):
 def test_add_entry_from_file_unterminated_is_refused(kb_service, tmp_path):
     from pyrite.exceptions import ValidationError
 
-    with pytest.raises(ValidationError, match="closing"):
+    with local_process(), pytest.raises(ValidationError, match="closing"):
         kb_service.add_entry_from_file(
             "test-events", _write(tmp_path, "---\ntype: note\ntitle: A\n"), validate_only=True
         )
@@ -854,7 +858,8 @@ def _readers(tmp_path, kb_service):
         return ("refused", "errors") if errors else ("loaded", fm["title"], body)
 
     def add_from_file(text):
-        e, _ = kb_service.add_entry_from_file("test-events", path_of(text), validate_only=True)
+        with local_process():
+            e, _ = kb_service.add_entry_from_file("test-events", path_of(text), validate_only=True)
         return ("loaded", e.title, e.body)
 
     def extract(text):

@@ -3,6 +3,8 @@
 import json
 from typing import Any
 
+from pyrite.exceptions import caller_owned
+
 
 def import_json(data: str | bytes) -> list[dict[str, Any]]:
     """Parse a JSON array of entries into entry specs.
@@ -20,9 +22,15 @@ def import_json(data: str | bytes) -> list[dict[str, Any]]:
     `pyrite create` would have refused.
     """
     if isinstance(data, bytes):
-        data = data.decode("utf-8")
+        try:
+            data = data.decode("utf-8")
+        except UnicodeDecodeError as e:  # the caller's upload: its bytes, its detail
+            raise caller_owned(e) from None
 
-    parsed = json.loads(data)
+    try:
+        parsed = json.loads(data)
+    except ValueError as e:  # json's text quotes only the caller's upload
+        raise caller_owned(e) from None
 
     if isinstance(parsed, dict):
         # Single entry or wrapped format

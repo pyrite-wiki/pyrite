@@ -249,8 +249,8 @@ only these define `get_hooks`, plus two core hooks registered in
 | `before_save_author_check` (`before_save`) | social | refuses a non-author update (stays); on create sets `author_id` to the acting user (a write) | The refusal stays. "The acting principal" as a create-time default for `author_id` is declared in the type's schema and applied by create, the one place Pyrite writes whole files (ADR-0045) |
 | `_task_validate_transition` (`before_save`) | core | refuses an invalid status move (the `workflow` primitive of ADR-0014) | Unchanged: it only refuses |
 | `_parent_rollup` (`after_save`) | core (`task_service.py:1016`; `rollup_parent` at :594) | registered for every KB; decides from the index when every child of a parent is resolved, writes the parent's `status: done`, cascades to the grandparent, and swallows failures as warnings (the `rollup` primitive of ADR-0014) | **Derived at read time** (maintainer, 2026-10-02). A parent's completion is computed from its children wherever it is shown, as `sw_epics` already computes epic progress at query time. Nothing writes the parent's file as a side effect; the parent's `status` means what a person or an explicit operation set (ADR-0045 decision 7) |
-| `unblock_dependents` (not a hook) | core, `task_service.py:643` | when called, moves blocked tasks whose dependencies are all resolved to `in_progress` (writes other entries). No caller in `pyrite/` or `extensions/`, only tests | **Derived at read time** (decided the same way): blocked or ready is computed from the dependencies |
-| `aggregate_evidence_to_parent` (not a hook) | core, `task_service.py:684` | copies a child's evidence into the parent's `evidence` (writes the parent). No caller outside tests | **Derived at read time**: subtree evidence is computed from the children |
+| `unblock_dependents` (not a hook) | core, `task_service.py` | when called, moved blocked tasks whose dependencies are all resolved to `in_progress` (wrote other entries). Removed in 0.26.6 (#1847) | **Derived at read time** (decided the same way): blocked or ready is computed from the dependencies |
+| `aggregate_evidence_to_parent` (not a hook) | core, `task_service.py` | copied a child's evidence into the parent's `evidence` (wrote the parent). Removed in 0.26.6 (#1847) | **Derived at read time**: subtree evidence is computed from the children |
 | `_on_actor_saved`, `after_save_update_counts`, `after_delete_adjust_reputation` | cascade, social | invalidate a cache; write the plugin's own tables | Unchanged: they write no entry file |
 
 **What spike 2 found the hooks leave in real files** (52 KBs, hooks and plugin
@@ -543,9 +543,12 @@ file that does not parse (#777) and from a loaded entry that fails validation
 5. **The single-entry read** (see the decision 9 paragraph below) returns the
    entry as its declared type. It carries the fields the loader accepts and a
    `load_problems` list that names each refused field with the loader's
-   message. A refused field is absent from the fields (`null` in a REST
-   response model's fixed columns). It never appears as a default or as a
-   placeholder such as `[]` or `{}`. If the refusal cannot be isolated to
+   message. A refused field is absent from the fields: a REST response
+   model's scalar columns carry `null`, and its list and mapping columns
+   (`tags`, `participants`, `sources`, `metadata`) are left out of the
+   response. It never appears as a default or as a placeholder such as `[]`
+   or `{}`. (Amended 2026-11-11 by the maintainer to match the code and
+   `docs/json-contracts.md` after #1367; the decision is unchanged.) If the refusal cannot be isolated to
    fields (a base field, a cross-field rule, a missing key the loader
    requires), the read answers `ENTRY_UNREADABLE` instead. Lists, search and
    counts have no row for the file. `index sync` and `index health` list it

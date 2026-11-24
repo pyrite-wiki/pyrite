@@ -34,7 +34,7 @@ from pyrite.models import NoteEntry
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 from pyrite.storage.repository import KBRepository
-from tests.outcome_walk import leaves, root_app
+from tests.outcome_walk import leaves, param_choices, param_kind, root_app
 
 ROOTS = ("pyrite", "pyrite-read", "pyrite-admin")
 KB_PARAMS = {"kb", "kb_name", "source_kb", "target_kb", "center_kb", "kb_a", "kb_b"}
@@ -60,6 +60,9 @@ EXTRA_ARGS: dict[str, list[str]] = {
     "pyrite delete": ["--force"],
     "pyrite links bulk-create": ["{links}"],
     "pyrite import": ["--format", "markdown"],
+    # QUERY is optional (`--batch` replaces it), so the walk must fill it.
+    "pyrite search": ["x"],
+    "pyrite-read search": ["x"],
 }
 #: A positional argument that must be one of a command's own words.
 POSITIONAL: dict[tuple[str, str], str] = {("pyrite wiki review", "action"): "approve"}
@@ -165,11 +168,11 @@ def _argv(root: str, command: str, kb_param: str, probe: str, files: dict) -> li
         elif _FILE_LIKE.search(p.name):
             value = files["file"]
         else:
-            kind = getattr(p.type, "name", "")
+            kind = param_kind(p)
             if kind in ("integer", "float"):
                 value = "1"
-            elif getattr(p.type, "choices", None):
-                value = str(list(p.type.choices)[0])
+            elif kind == "choice":
+                value = param_choices(p)[0]
             else:
                 value = "x"
         if p.param_type_name == "argument":

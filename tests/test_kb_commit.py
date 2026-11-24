@@ -187,8 +187,13 @@ class TestGitServicePush:
             timeout=120,
         )
 
-        success, msg = GitService.push(kb_path)
-        assert success
+        # The operator's own push from the local process: exempt from the
+        # host rule (a network caller's push to a local path is refused).
+        from pyrite.services.acting import local_process
+
+        with local_process(True):
+            success, msg = GitService.push(kb_path, operator_push=True)
+        assert success, msg
 
 
 class TestGitServiceStatus:
@@ -353,6 +358,9 @@ class TestExportServiceCommit:
         )
         assert "skip.md" in status.stdout
 
+    @pytest.mark.control(
+        reason="the operator's own push was already unrestricted; pinned now that network pushes are held"
+    )
     def test_push_kb(self, git_kb, tmp_path):
         export_svc = git_kb["export_svc"]
         kb_path = git_kb["kb_path"]
@@ -369,8 +377,11 @@ class TestExportServiceCommit:
             timeout=120,
         )
 
-        result = export_svc.push_kb("test-kb")
-        assert result["success"]
+        from pyrite.services.acting import local_process
+
+        with local_process(True):  # `pyrite kb push` at the operator's terminal
+            result = export_svc.push_kb("test-kb")
+        assert result["success"], result
 
     def test_push_kb_no_remote(self, git_kb):
         export_svc = git_kb["export_svc"]

@@ -13,7 +13,7 @@ tags: [architecture, schema, views, ui, core]
 
 Make folders and queries into first-class collection objects with configurable views. `__collection.yaml` in any folder gives it identity, metadata, and view preferences. Virtual collections define queries instead of folder paths. Collection types (investigation package, kanban board, discussion thread) are defined via kb.yaml and plugins.
 
-See [ADR-0011](../adrs/0011-collections-and-views.md) for the full design.
+See [ADR-0011](../../adrs/0011-collections-and-views.md) for the full design.
 
 ## Subsumes
 

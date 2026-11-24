@@ -103,6 +103,110 @@ class TestCreateTask:
         assert row is not None
         assert row["title"] == "Indexed task"
 
+    def test_create_task_with_due_date(self, task_env):
+        svc = task_env["svc"]
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Due task",
+            due_date="2026-11-20",
+        )
+        assert result["created"] is True
+        assert result["due_date"] == "2026-11-20"
+
+        # Check DB index row
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
+        assert task is not None
+        assert task["due_date"] == "2026-11-20"
+
+        # Check find_overdue detects past due date
+        overdue = svc.find_overdue(as_of="2026-11-25", kb_name="test-tasks")
+        assert any(t["id"] == result["entry_id"] for t in overdue)
+
+    @pytest.mark.parametrize("bad_due", ["2026-02-30", "not-a-date", False, 0])
+    def test_create_task_invalid_due_date_raises_validation_error(self, task_env, bad_due):
+        from pyrite.exceptions import ValidationError
+
+        svc = task_env["svc"]
+        with pytest.raises(ValidationError) as exc_info:
+            svc.create_task(
+                kb_name="test-tasks",
+                title="Bad date task",
+                due_date=bad_due,
+            )
+        assert exc_info.value.error_code == "VALIDATION_FAILED"
+        assert "due_date" in str(exc_info.value).lower()
+
+    def test_create_task_with_links(self, task_env):
+        svc = task_env["svc"]
+        target = svc.create_task(kb_name="test-tasks", title="Target entry")
+        target_id = target["entry_id"]
+
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Linking task",
+            links=[{"target": target_id, "relation": "blocks"}],
+        )
+        assert result["created"] is True
+        assert result["linked"] == [{"target": target_id, "relation": "blocks"}]
+        assert result["failed_links"] == []
+        assert "links" not in result
+
+        # Verify kb_get returns links
+        entry = svc.kb_svc.get_entry(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
+        assert entry is not None
+        assert any(l["target_id"] == target_id for l in entry.get("links", []))
+
+        # Verify target entry shows the task in backlinks
+        backlinks = svc.db.get_backlinks(target_id, "test-tasks", readable_kbs=UNSCOPED)
+        assert any(b["id"] == result["entry_id"] for b in backlinks)
+
+    @pytest.mark.parametrize(
+        ("bad_links", "expected_err"),
+        [
+            ([{"target": ""}], "target"),
+            ([{"target": "t", "note": "extra"}], "note"),
+            ([{"target": "t", "target_kb": "extra"}], "target_kb"),
+            (["target:blocks"], "dictionary"),
+        ],
+    )
+    def test_create_task_invalid_link_spec_raises_validation_error(
+        self, task_env, bad_links, expected_err
+    ):
+        from pyrite.exceptions import ValidationError
+
+        svc = task_env["svc"]
+        with pytest.raises(ValidationError) as exc_info:
+            svc.create_task(
+                kb_name="test-tasks",
+                title="Bad link task",
+                links=bad_links,
+            )
+        assert exc_info.value.error_code == "VALIDATION_FAILED"
+        assert expected_err in str(exc_info.value).lower()
+        # Entry should not have been created
+        tasks = svc.list_tasks(kb_name="test-tasks")
+        assert not any(t["title"] == "Bad link task" for t in tasks)
+
+    def test_create_task_dangling_link_populates_failed_links_and_keeps_task(self, task_env):
+        svc = task_env["svc"]
+        result = svc.create_task(
+            kb_name="test-tasks",
+            title="Dangling link task",
+            links=[{"target": "missing-target", "relation": "blocks"}],
+        )
+        assert result["created"] is True
+        assert result["linked"] == []
+        assert len(result["failed_links"]) == 1
+        failed = result["failed_links"][0]
+        assert failed["target"] == "missing-target"
+        assert failed["relation"] == "blocks"
+        assert "Entry not found" in failed["error"]
+        assert "links" not in result
+
+        # Task was created and exists
+        task = svc.get_task(result["entry_id"], "test-tasks", readable_kbs=UNSCOPED)
+        assert task is not None
+
 
 class TestUpdateTask:
     def test_update_task(self, task_env):
@@ -234,32 +338,10 @@ class TestCancelledState:
         assert repo.load(parent_id).status == "in_progress"
         assert svc.derived_completion("test-tasks")[parent_id]["completion"]["complete"] is True
 
-    def test_cancelled_blocker_satisfies_dependency(self, task_env):
-        """A cancelled blocker is resolved-by-removal: unblock_dependents treats
-        it the same as a done blocker and releases the blocked dependent."""
-        svc = task_env["svc"]
-        blocker = svc.create_task(kb_name="test-tasks", title="Blocker")
-        blocker_id = blocker["entry_id"]
-        dependent = svc.create_task(
-            kb_name="test-tasks",
-            title="Dependent",
-            dependencies=[blocker_id],
-        )
-        dep_id = dependent["entry_id"]
-        # Walk dependent to blocked (open → claimed → in_progress → blocked).
-        svc.update_task(dep_id, "test-tasks", status="claimed", assignee="agent:a")
-        svc.update_task(dep_id, "test-tasks", status="in_progress")
-        svc.update_task(dep_id, "test-tasks", status="blocked")
-
-        # Cancel the blocker, then run the (explicit) unblock pass.
-        svc.update_task(blocker_id, "test-tasks", status="cancelled")
-        unblocked = svc.unblock_dependents(blocker_id, "test-tasks")
-
-        assert any(u["id"] == dep_id for u in unblocked), (
-            "a cancelled blocker should release its dependents"
-        )
-        repo = KBRepository(task_env["kb_config"])
-        assert repo.load(dep_id).status != "blocked"
+    def test_dead_task_service_writers_removed(self):
+        """Neither unblock_dependents nor aggregate_evidence_to_parent exists on TaskService (#1847)."""
+        assert not hasattr(TaskService, "unblock_dependents")
+        assert not hasattr(TaskService, "aggregate_evidence_to_parent")
 
 
 class TestResetTask:
@@ -509,6 +591,53 @@ class TestCheckpointTask:
         assert entry.agent_context["confidence"] == 0.7
         assert entry.agent_context["last_message"] == "Progress"
         assert "last_checkpoint" in entry.agent_context
+
+    def test_checkpoint_with_confidence_zero_overwrites_previous(self, task_env):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title="Zero confidence task")
+        entry_id = created["entry_id"]
+
+        svc.checkpoint_task(entry_id, "test-tasks", "First pass", confidence=0.8)
+        result = svc.checkpoint_task(
+            entry_id, "test-tasks", "Found a blocker, not confident", confidence=0
+        )
+        assert result["confidence"] == 0
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == 0
+        assert "**Confidence**: 0%" in entry.body
+
+    def test_checkpoint_without_confidence_records_none(self, task_env):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title="Omitted confidence task")
+        entry_id = created["entry_id"]
+
+        svc.checkpoint_task(entry_id, "test-tasks", "First pass", confidence=0.8)
+        result = svc.checkpoint_task(entry_id, "test-tasks", "Still going")
+        assert result["confidence"] is None
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == 0.8
+        assert entry.body.count("**Confidence**") == 1
+
+    @pytest.mark.parametrize(
+        ("confidence", "expected_line"),
+        [(1.0, "**Confidence**: 100%"), (0.01, "**Confidence**: 1%")],
+    )
+    def test_checkpoint_confidence_edge_values(self, task_env, confidence, expected_line):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title=f"Edge confidence task {confidence}")
+        entry_id = created["entry_id"]
+
+        result = svc.checkpoint_task(entry_id, "test-tasks", "Edge", confidence=confidence)
+        assert result["confidence"] == confidence
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == confidence
+        assert expected_line in entry.body
 
 
 class TestDerivedParentCompletion:

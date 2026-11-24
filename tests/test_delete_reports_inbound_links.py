@@ -168,3 +168,29 @@ def test_link_report_uses_the_index_snapshot(tmp_path, surface):
         assert path.read_text() == text
     finally:
         world.close()
+
+
+@pytest.mark.skipif(__import__("os").name == "nt", reason="symlinks")
+@pytest.mark.parametrize("surface", ["cli", "mcp", "rest"])
+def test_every_delete_surface_keeps_an_in_kb_link_and_names_it(tmp_path, surface):
+    """#1262: each real entry point (CLI `delete --format json`, MCP
+    `kb_delete`, REST `DELETE /api/entries/{id}`) removes the entry's real
+    file only, keeps the user's in-KB link to it, and returns it in
+    `links_left` and `warnings`."""
+    import os
+
+    world = make_world(tmp_path, linked=False)
+    try:
+        root = world.kb_path("target")
+        (root / "sub").mkdir()
+        (root / "sub" / "al.md").symlink_to(os.path.join("..", "victim.md"))
+
+        result = delete(world, surface)
+
+        assert result["deleted"] is True
+        assert not (root / "victim.md").exists()
+        assert os.readlink(root / "sub" / "al.md") == os.path.join("..", "victim.md")
+        assert result["links_left"] == [{"path": "sub/al.md", "target": "victim.md"}]
+        assert any("sub/al.md" in w for w in result["warnings"]), result["warnings"]
+    finally:
+        world.close()

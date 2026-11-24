@@ -129,6 +129,8 @@ import unicodedata
 from collections.abc import Iterator
 from pathlib import Path
 
+from ..exceptions import os_reason
+
 try:
     import fcntl
 except ImportError:  # Windows: unsupported, see the module docstring
@@ -221,9 +223,7 @@ def _read_gitfile(dot_git: str) -> str:
         with open(dot_git, encoding="utf-8") as f:
             text = f.read(4096)
     except OSError as e:
-        raise LockDirError(
-            f"cannot read the git file {dot_git} ({e.strerror or type(e).__name__})"
-        ) from e
+        raise LockDirError(f"cannot read the git file {dot_git} ({os_reason(e)})") from e
     if not text.startswith("gitdir: "):
         raise LockDirError(f"{dot_git} is not a valid git file (no 'gitdir: ' line), as git says")
     target = text[len("gitdir: ") :].rstrip()
@@ -354,13 +354,11 @@ def _open_child_dir(parent_fd: int, parent: Path, name: str, git_dir_mode: int) 
     except FileExistsError:
         created = False
     except OSError as e:
-        raise _unsafe(path, f"cannot create it ({e.strerror or type(e).__name__})") from e
+        raise _unsafe(path, f"cannot create it ({os_reason(e)})") from e
     try:
         fd = os.open(name, _DIR_FLAGS, dir_fd=parent_fd)
     except OSError as e:
-        raise _unsafe(
-            path, f"cannot open it as a directory ({e.strerror or type(e).__name__})"
-        ) from e
+        raise _unsafe(path, f"cannot open it as a directory ({os_reason(e)})") from e
     try:
         if created:
             os.fchmod(fd, stat.S_IMODE(git_dir_mode) & 0o3777)  # umask-independent
@@ -390,9 +388,7 @@ def _open_lock_dir(lock_dir: Path) -> tuple[int, int]:
     try:
         current = os.open(git_dir, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     except OSError as e:
-        raise _unsafe(
-            lock_dir, f"cannot open the git dir {git_dir} ({e.strerror or type(e).__name__})"
-        ) from e
+        raise _unsafe(lock_dir, f"cannot open the git dir {git_dir} ({os_reason(e)})") from e
     try:
         git_mode = os.fstat(current).st_mode
         parent = git_dir
@@ -421,12 +417,10 @@ def _open_stripe(lock_dir: Path, stripe: int) -> int:
             except OSError as e:
                 raise _unsafe(
                     lock_dir,
-                    f"stripe file {name} cannot be opened ({e.strerror or type(e).__name__})",
+                    f"stripe file {name} cannot be opened ({os_reason(e)})",
                 ) from e
         except OSError as e:
-            raise _unsafe(
-                lock_dir, f"stripe file {name} cannot be created ({e.strerror or type(e).__name__})"
-            ) from e
+            raise _unsafe(lock_dir, f"stripe file {name} cannot be created ({os_reason(e)})") from e
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             os.close(fd)
             raise _unsafe(lock_dir, f"stripe file {name} is not a regular file")
@@ -445,7 +439,7 @@ _BUSY = {errno.EWOULDBLOCK, errno.EAGAIN}
 def _no_flock(lock_dir: Path, e: OSError) -> LockDirError:
     return _unsafe(
         lock_dir,
-        f"its filesystem does not support flock ({e.strerror or type(e).__name__}); a git dir on a "
+        f"its filesystem does not support flock ({os_reason(e)}); a git dir on a "
         "network filesystem may need lockd, see pyrite.utils.file_lock",
     )
 

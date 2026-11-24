@@ -1,0 +1,1 @@
+- On a case-insensitive filesystem (macOS APFS, Windows NTFS), creating, moving, or reconciling an entry into a folder that already exists under another letter case now reports that folder's on-disk spelling in the entry's `file_path` and in the index row (#1624).

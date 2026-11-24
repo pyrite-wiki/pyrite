@@ -403,27 +403,45 @@ class TestOneHookContractModule:
 class TestValidateWritePrefersMessage:
     """Coordinator should-fix 4: KBService._validate_write (~207) built its
     error string from field/rule/expected/got and ignored `message` when a
-    validator supplied one. A validator whose item has no `rule` (like
-    journalism-investigation's importance-range check, `{"field": "importance",
-    "message": "Importance must be 1-10, got: 99"}`) fell into the generic
+    validator supplied one. A validator whose item has no `rule` (a plugin
+    validator returning `{"field": "importance", "message": "..."}`, as
+    journalism-investigation's importance check did until #1537 moved that
+    range rule into the model) fell into the generic
     `f"{field}: {rule} (expected {expected}, got {got!r})"` branch, which
     with rule/expected/got all absent renders literally as
     "importance: (expected None, got None)" -- losing the validator's actual
-    message. `message`, when present, must be preferred."""
+    message. `message`, when present, must be preferred.
 
-    def test_importance_error_message_is_not_lost(self, tmp_path):
-        if "journalism_investigation" not in _installed_plugin_names():
-            pytest.skip("journalism-investigation extension not installed in this environment")
+    The test registers its own plugin whose validator returns exactly that
+    rule-less item: no installed plugin returns one any more, and the model
+    now answers first for importance."""
 
+    def test_a_rule_less_validator_message_is_not_lost(self, tmp_path):
         from pyrite.config import KBConfig, PyriteConfig, Settings
         from pyrite.exceptions import SchemaViolationError
+        from pyrite.plugins import get_registry
         from pyrite.services.kb_service import KBService
         from pyrite.storage.database import PyriteDB
 
-        kb_path = tmp_path / "ji-kb"
+        class RuleLessPlugin:
+            name = "rule_less_test_plugin"
+            capabilities = {Capability.STORAGE}
+
+            def get_kb_types(self):
+                return ["rule-less-test"]
+
+            def get_validators(self):
+                return [
+                    lambda entry_type, fields, ctx: [
+                        {"field": "mood", "message": "Mood must be cheerful, got: grim"}
+                    ]
+                ]
+
+        reg = get_registry()
+        reg.register(RuleLessPlugin())
+        kb_path = tmp_path / "rl-kb"
         kb_path.mkdir()
-        (kb_path / "entities").mkdir()
-        kb_config = KBConfig(name="test-ji", path=kb_path, kb_type="journalism-investigation")
+        kb_config = KBConfig(name="test-rl", path=kb_path, kb_type="rule-less-test")
         config = PyriteConfig(
             knowledge_bases=[kb_config], settings=Settings(index_path=tmp_path / "index.db")
         )
@@ -431,21 +449,16 @@ class TestValidateWritePrefersMessage:
         svc = KBService(config, db)
         try:
             with pytest.raises(SchemaViolationError) as exc_info:
-                svc.create_entry(
-                    "test-ji",
-                    "bad-person",
-                    "A Real Person",
-                    "person",
-                    allow_undeclared=True,
-                    importance=99,
-                )
+                svc.create_entry("test-rl", "bad-note", "A note", "note", allow_undeclared=True)
             message = str(exc_info.value)
-            assert "Importance must be 1-10, got: 99" in message, (
+            assert "Mood must be cheerful, got: grim" in message, (
                 f"expected the validator's own message in the error, got: {message!r}"
             )
             assert "expected None, got None" not in message
         finally:
             db.close()
+            reg._plugins.pop(RuleLessPlugin.name, None)
+            reg._conformance_cache.pop(RuleLessPlugin.name, None)
 
 
 class TestPluginKBTaskUpdateNoTracebackNoSilentSkip:
@@ -512,12 +525,14 @@ class TestPluginKBTaskUpdateNoTracebackNoSilentSkip:
             db.close()
 
     def test_plugin_validator_error_is_non_zero_not_silent(self, tmp_path):
-        """A real plugin-specific validation error (importance out of the
-        1-10 range -- a rule only the plugin validator enforces, isolating
-        it from create_entry's own generic title/date checks) raises
-        SchemaViolationError -- the exception the CLI's task commands catch
-        and turn into a non-zero exit -- rather than being silently
-        swallowed by a signature-mismatch fallback."""
+        """A real plugin-specific validation error (a `payment` transaction
+        with no `amount` -- a rule only the journalism validator enforces;
+        the model has no opinion on it, so the error can only come from the
+        plugin) raises SchemaViolationError -- the exception the CLI's task
+        commands catch and turn into a non-zero exit -- rather than being
+        silently swallowed by a signature-mismatch fallback. (It was
+        `importance=99` until #1537 moved that range rule into the model,
+        which refuses before any plugin validator runs.)"""
         if "journalism_investigation" not in _installed_plugin_names():
             pytest.skip("journalism-investigation extension not installed in this environment")
 
@@ -528,15 +543,18 @@ class TestPluginKBTaskUpdateNoTracebackNoSilentSkip:
             with pytest.raises(SchemaViolationError) as exc_info:
                 svc.kb_svc.create_entry(
                     "test-ji",
-                    "bad-person",
-                    "A Real Person",
-                    "person",
+                    "bad-payment",
+                    "A payment",
+                    "transaction",
                     allow_undeclared=True,
-                    importance=99,
+                    date="2026-01-02",
+                    transaction_type="payment",
+                    sender="a",
+                    receiver="b",
                 )
             assert isinstance(exc_info.value, PyriteError)  # what task_commands.py catches
-            assert any(e.get("field") == "importance" for e in exc_info.value.errors), (
-                f"expected an importance-range error, got: {exc_info.value.errors}"
+            assert any(e.get("field") == "amount" for e in exc_info.value.errors), (
+                f"expected an amount-required error, got: {exc_info.value.errors}"
             )
         finally:
             db.close()

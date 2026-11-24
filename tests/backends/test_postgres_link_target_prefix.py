@@ -2,9 +2,9 @@
 
 `link.target_prefix` (the `kb:` prefix as the file wrote it) is new in #980,
 and the Postgres link insert sets it. `create_all` creates a missing table but
-never alters an existing one, and the alembic chain stops at 006 (#718), so
-`ensure_schema()`, which every Postgres startup runs, is what must add the
-column. Without it, the first link write on an existing database fails with
+never alters an existing one, so `ensure_schema()`, which every Postgres
+startup runs, is what must add the column (since #718, by running the alembic
+chain, whose revision 012 adds it). Without it, the first link write on an existing database fails with
 `column "target_prefix" of relation "link" does not exist`.
 """
 
@@ -46,6 +46,8 @@ def pre_980_engine():
     ensure_schema(engine)
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE link DROP COLUMN target_prefix"))
+        # A database from before #718 was never stamped: nothing ran alembic.
+        conn.execute(text("DROP TABLE alembic_version"))
         conn.execute(
             text(
                 "INSERT INTO kb (name, kb_type, path, description) "

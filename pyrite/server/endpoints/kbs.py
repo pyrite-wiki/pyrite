@@ -127,7 +127,7 @@ def get_kb_schema(
     kb_config = svc.require_kb(kb_name)
 
     schema = kb_config.kb_schema
-    return schema.to_agent_schema()
+    return schema.to_agent_schema(kb_type=kb_config.kb_type)
 
 
 @router.get("/kbs/{kb_name}/orient", dependencies=[Depends(authorize(Action.KB_READ, KB))])

@@ -14,11 +14,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from pyrite.utils.egress import github_client
 from pyrite.utils.private_files import ensure_private_dir, tighten_file, write_private_text
 from pyrite.utils.yaml import dump_yaml_text, load_yaml_file
 
 try:
-    import httpx
+    import httpx  # noqa: F401 (availability; clients come from utils.egress)
 
     HAS_HTTPX = True
 except ImportError:
@@ -218,7 +219,7 @@ def start_oauth_flow(
 
     # Exchange code for token
     try:
-        with httpx.Client() as client:
+        with github_client() as client:
             response = client.post(
                 GITHUB_TOKEN_URL,
                 data={
@@ -252,7 +253,7 @@ def start_oauth_flow(
 
     # Get user info
     try:
-        with httpx.Client() as client:
+        with github_client() as client:
             user_response = client.get(
                 f"{GITHUB_API_URL}/user",
                 headers={
@@ -285,7 +286,7 @@ def check_github_auth() -> tuple[bool, str]:
         return True, "Token present (httpx not installed, cannot verify)"
 
     try:
-        with httpx.Client() as client:
+        with github_client() as client:
             response = client.get(
                 f"{GITHUB_API_URL}/user",
                 headers={
@@ -315,9 +316,10 @@ def get_github_token() -> str | None:
     return None
 
 
-def get_github_user_info(token: str) -> dict | None:
+def get_github_user_info(token: str, proxy: str | None = None) -> dict | None:
     """
-    Get GitHub user info from a token.
+    Get GitHub user info from a token (the caller's own); `proxy` is the
+    operator's ``git_proxy`` (``egress.github_client``).
 
     Returns dict with: login, id, name, email, avatar_url
     Or None if the request fails.
@@ -326,7 +328,7 @@ def get_github_user_info(token: str) -> dict | None:
         return None
 
     try:
-        with httpx.Client() as client:
+        with github_client(proxy=proxy) as client:
             response = client.get(
                 f"{GITHUB_API_URL}/user",
                 headers={

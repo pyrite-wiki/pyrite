@@ -31,11 +31,6 @@ from ..schemas import (
 router = APIRouter(tags=["Collections"])
 
 
-def _parse_metadata(raw) -> dict:
-    """Parse metadata which may be a JSON string or dict."""
-    return parse_metadata(raw)
-
-
 @router.get("/collections/types")
 @limiter.limit("100/minute")
 def get_collection_types(request: Request):
@@ -73,7 +68,7 @@ def list_collections(
 
     collections = []
     for r in results:
-        meta = _parse_metadata(r.get("metadata"))
+        meta = parse_metadata(r.get("metadata"))
         collections.append(
             CollectionResponse(
                 id=r["id"],

@@ -372,6 +372,16 @@ def build_world(
             readable_kbs=None,
             writable_kbs=None,
         ),
+        # A key that does not verify: refused (401), never the anonymous
+        # visitor, whatever `anonymous_tier` says (#1754).
+        "bad_key": Principal(
+            "bad_key",
+            "api_key",
+            {"X-API-Key": "characterization-key-nobody-configured"},
+            {},
+            readable_kbs=frozenset(),
+            writable_kbs=frozenset(),
+        ),
     }
 
     # -- sessions: seeded through AuthService, the way tests/auth_seed.py's

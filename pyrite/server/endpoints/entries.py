@@ -12,11 +12,14 @@ from ...config import PyriteConfig
 from ...exceptions import (
     AccessDenied,
     ConflictError,
+    EntryLoadError,
     EntryNotFoundError,
     KBReadOnlyError,
+    KBUnreadableError,
     PyriteError,
     StorageError,
     ValidationError,
+    outside_text,
     public_text,
 )
 from ...services.access_policy import KB, AccessPolicy, Action, AnyKB, ReadScope
@@ -102,6 +105,7 @@ def list_entries(
         offset=offset,
         status=status,
         min_importance=min_importance,
+        include_warnings=True,
     )
     total = svc.count_entries(
         kb_name=kb,
@@ -421,7 +425,7 @@ def batch_read_entries(
     if not scope.unscoped:
         # Items in KBs the caller may not read are reported as not found.
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
-    results = svc.get_entries(ids)
+    results = svc.get_entries(ids, include_warnings=True)
 
     # `[]` is no projection. A non-empty list that cleans to nothing (`[""]`,
     # `[" "]`) is still a projection, as it was before the list went through
@@ -603,7 +607,11 @@ async def import_entries(
         None, description="Format: json, markdown, csv (auto-detected from extension if omitted)"
     ),
     allow_undeclared: bool = Query(
-        False, description="Allow entry types the KB's kb.yaml does not declare"
+        False,
+        description="Allow an entry_type the KB does not declare. Only a KB whose "
+        "kb.yaml declares types refuses others (core types included); "
+        "`pyrite index health` then lists the entry. A KB that declares no "
+        "types accepts any type.",
     ),
     stream: bool = Query(
         False,
@@ -659,10 +667,10 @@ async def import_entries(
         parsed = await anyio.to_thread.run_sync(
             lambda: list(importer(content, stream=True)) if stream else importer(content)
         )
-    except Exception:
-        # The exception's text is the operator's, not the caller's: it can
-        # quote internals (paths, parser state). It goes to the log; the
-        # caller gets Pyrite's own message.
+    except Exception as e:
+        # The importer marks what its parser says about the upload as the
+        # caller's; anything else it raised is the operator's, logged
+        # here, and answered with Pyrite's own words (ADR-0052 N3).
         logger.warning(
             "Import into %r: the uploaded %s file %r did not parse",
             kb,
@@ -675,7 +683,8 @@ async def import_entries(
             detail={
                 "code": "PARSE_ERROR",
                 "message": (
-                    f"The file could not be read as {fmt}. Check that it is UTF-8 "
+                    f"The file could not be read as {fmt}: "
+                    f"{outside_text(e, already_logged=True)}. Check that it is UTF-8 "
                     f"text in the {fmt} import format."
                 ),
                 "retryable": False,
@@ -778,8 +787,12 @@ def get_entry(
             },
         )
 
-    result.setdefault("sources", [])
-    result.setdefault("tags", [])
+    # A column the file's type refused (ADR-0042 8a) is left out of the reply,
+    # never a default and never null: the model's `[]` or `{}` would read as
+    # the file's value, and a client that indexes `.length` on a list must
+    # not meet null. Every other column keeps the value the read gave it, or
+    # the model's default (round 4, B2).
+    refused = apply_refused_columns(result)
 
     # Apply field projection. One rule for every read surface (#193): the
     # identity pair always survives, and keys the entry does not have are not
@@ -795,10 +808,46 @@ def get_entry(
     neg = negotiate_response(request, result, single_entry=True)
     if neg is not None:
         return neg
-    return EntryResponse(**result)
+    return entry_response(result, refused)
 
 
 _CREATE_DEFAULTED = frozenset({"participants", "tags", "metadata"})
+
+#: The EntryResponse columns that default to a placeholder (``[]``, ``{}``).
+_DEFAULTED_COLUMNS = ("tags", "participants", "sources", "metadata")
+
+
+def apply_refused_columns(result: dict) -> set[str]:
+    """Apply the refused-column rule to a single-entry read dict.
+
+    A ``load_problems`` entry names a column the file's type refused
+    (ADR-0042 8a); when it is one of the columns ``EntryResponse`` defaults
+    (``_DEFAULTED_COLUMNS``), the reply leaves it out, never a default and
+    never null. Skips the empty-list default for a refused ``sources`` or
+    ``tags`` and returns the refused set, so the caller can drop those keys
+    from the dumped response body. ``metadata`` and ``participants`` take no
+    default here; the dump step drops them when refused.
+    """
+    refused = {
+        p["field"] for p in result.get("load_problems") or () if p["field"] in _DEFAULTED_COLUMNS
+    }
+    for key in ("sources", "tags"):
+        if key not in refused:
+            result.setdefault(key, [])
+    return refused
+
+
+def entry_response(result: dict, refused: set[str]) -> EntryResponse | JSONResponse:
+    """Render a single-entry read, leaving refused columns out.
+
+    The dumped ``EntryResponse`` fills every defaulted column, so a refused
+    one is dropped from the dumped body: ``[]`` or ``{}`` would read as the
+    file's value.
+    """
+    if refused:
+        body = EntryResponse(**result).model_dump(mode="json")
+        return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
+    return EntryResponse(**result)
 
 
 @router.post(
@@ -857,8 +906,10 @@ def create_entry(
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
     except ValidationError as e:
         raise refusal_http(e)
-    except AccessDenied:
-        raise  # the central handler's 403 FORBIDDEN
+    except (AccessDenied, KBUnreadableError):
+        # FORBIDDEN 403, and KB_UNREADABLE (#1542): the central handler's
+        # answer, the same on every verb, not this handler's catch-all.
+        raise
     except (PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "CREATE_FAILED", "message": public_text(e, log=logger)}
@@ -1048,6 +1099,10 @@ def delete_entry(
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
         raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except EntryLoadError as e:
+        raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
+    except KBUnreadableError:
+        raise  # KB_UNREADABLE from the central handler, as on every verb (#1542)
     except (ValidationError, PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "DELETE_FAILED", "message": public_text(e)}

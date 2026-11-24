@@ -48,6 +48,7 @@ from ..models.base import _timestamp_instant
 from ..utils.atomic_write import ABSENT, FileChanged
 from ..utils.file_lock import LOCK_TIMEOUT
 from ..utils.kb_files import KBFiles
+from . import entry_paths
 
 __all__ = [
     "FileChanged",
@@ -159,7 +160,12 @@ def create_entry_text(
     it: two creates racing on one path give one file and one refusal in every
     KB kind (#391; the #974 cold read found the check-then-replace form let
     both succeed).
+
+    ``path`` must be one the index walk lists (``entry_paths``, #1552): a
+    path it skips is refused with ``VALIDATION_FAILED`` and nothing written,
+    the backstop behind the writers that ask first.
     """
+    entry_paths.require_listed(root, path)
     return KBFiles(root).write_bytes(path, text.encode("utf-8"), expect=ABSENT)
 
 
@@ -190,7 +196,11 @@ def move_entry_text(
     symbolic link is refused, never followed to its target and removed
     there; so is a hard-linked source, and either path leaving the root.
     ``dst``'s folder is made after those checks, beneath the root.
+
+    ``dst`` must be one the index walk lists (``entry_paths``, #1552), or the
+    move is refused with ``VALIDATION_FAILED`` and both paths stay as they were.
     """
+    entry_paths.require_listed(root, dst)
     return KBFiles(root).move_bytes(
         src, expect, dst, text.encode("utf-8"), lock_timeout=lock_timeout
     )

@@ -60,7 +60,13 @@ def cached_report(
 ) -> Any:
     """``compute()``'s report, reused while the index of ``kb_names`` is
     unchanged and younger than ``ttl``. ``name`` says which report (it and the
-    two sets key the cache); ``None`` for a set means unscoped."""
+    two sets key the cache); ``None`` for a set means unscoped.
+
+    The key does not hold ``is_local_process()``, though a report can depend
+    on it (the software KB's component ``path:`` check runs only for the local
+    process). That is safe only while no process serves both kinds of caller:
+    the CLI is local, the server never is. A process that serves both must add
+    the flag to the key."""
     key = (
         str(qa.db.db_path),
         name,

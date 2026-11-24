@@ -10,6 +10,7 @@ import httpx
 from bs4 import BeautifulSoup
 
 from ..exceptions import ClipperTooLargeError
+from ..utils.public_destination import PinnedAddresses, check_url_shape, pinned_async_transport
 from ..utils.public_destination import check_url_safe as _check_url_safe
 
 logger = logging.getLogger(__name__)
@@ -18,17 +19,25 @@ logger = logging.getLogger(__name__)
 MAX_CLIP_BYTES = 5 * 1024 * 1024
 
 
-async def _reject_blocked_request(request: httpx.Request) -> None:
-    """Validate every request in the chain, redirect hops included (#219).
+def _reject_blocked_request(pins: PinnedAddresses):
+    """A request hook that validates every request in the chain, redirect
+    hops included (#219), and pins the addresses it judged.
 
     httpx awaits a request hook before each request it sends, so a redirect to
     a blocked address is refused rather than followed, and the response the
     attacker aimed for is never fetched. The refusal is the same
     ``ClipperBlockedHostError`` a directly blocked URL raises, so a caller
-    cannot tell "blocked directly" from "blocked after a redirect".
+    cannot tell "blocked directly" from "blocked after a redirect". The
+    addresses the check judged are recorded in ``pins``; the transport dials
+    only those, so the hop connects where the check looked.
     """
-    # Name resolution blocks; keep it off the event loop.
-    await anyio.to_thread.run_sync(_check_url_safe, str(request.url))
+
+    async def hook(request: httpx.Request) -> None:
+        url = str(request.url)
+        # Name resolution blocks; keep it off the event loop.
+        pins.record(url, await anyio.to_thread.run_sync(_check_url_safe, url))
+
+    return hook
 
 
 @dataclass
@@ -98,10 +107,12 @@ class ClipperService:
         Raises:
             ClipperBlockedHostError: if ``url`` uses a non-http(s) scheme
                 or resolves to a loopback / link-local / RFC1918 private /
-                reserved address. The check runs before the first request, and
-                again for every redirect hop via ``_reject_blocked_request``.
+                reserved address. The check runs before the first request and
+                before every redirect hop, via ``_reject_blocked_request``, and
+                each connection goes to an address that check judged.
         """
-        await anyio.to_thread.run_sync(_check_url_safe, url)
+        check_url_shape(url)  # the scheme and host; the hook resolves, once
+        pins = PinnedAddresses()
 
         # One deadline for the whole fetch: the client's timeout is per read,
         # and a server that trickles bytes would otherwise hold it open.
@@ -111,7 +122,12 @@ class ClipperService:
                 follow_redirects=True,
                 # Only codings `_read_capped` decodes within the cap.
                 headers={"User-Agent": "Pyrite-Clipper/1.0", "Accept-Encoding": "gzip, deflate"},
-                event_hooks={"request": [_reject_blocked_request]},
+                event_hooks={"request": [_reject_blocked_request(pins)]},
+                transport=pinned_async_transport(pins),
+                # The URL is the caller's: nothing of the server account's
+                # environment applies to it (no proxy variable, which can
+                # carry a proxy credential; no netrc). ADR-0052 N2.
+                trust_env=False,
             ) as client:
                 async with client.stream("GET", url) as response:
                     response.raise_for_status()

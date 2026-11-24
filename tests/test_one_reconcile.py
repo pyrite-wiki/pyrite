@@ -303,8 +303,13 @@ def test_non_regular_entry_is_reported_before_parse(env, sync):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink creation is not reliable on Windows")
+@pytest.mark.control(reason="a link to a file the walk skips is followed and indexed, as before")
 def test_symlink_to_regular_markdown_remains_indexable(env):
-    target = env.write("real.md", _note("real", "Real"))
+    """A link is followed to the regular file it names, not skipped as
+    non-regular. The target sits where the walk does not look, so the link is
+    the only walked name; a link to a file the walk also lists is an alias,
+    indexed at its target (#1262, tests/test_in_kb_link_is_an_alias.py)."""
+    target = env.write("_templates/real.md", _note("real", "Real"))
     (env.root / "alias.md").symlink_to(target)
 
     result = env.im.sync_incremental(KB)
@@ -722,3 +727,30 @@ def test_progress_is_reported_once_at_the_end_even_for_an_empty_kb(env, path):
     else:
         env.im.sync_incremental(KB, progress_callback=lambda c, t: calls.append((c, t)))
     assert calls == [(0, 0)]
+
+
+def test_attribution_since_commit_goes_on_past_a_folder_it_cannot_search(env):
+    """git names a changed file inside a folder this process cannot search:
+    ``KBFiles.present`` cannot tell whether it is there (#1542). That file is
+    not forced; the sync goes on and attributes the rest, as it did before
+    f8cbbe1d made the probe raise."""
+    from pyrite.services.git_service import GitService
+
+    _git(env.root, "init", "-q", "-b", "main")
+    a = env.write("a.md", _note("a", "A"))
+    b = env.write("shut/b.md", _note("b", "B"))
+    _git(env.root, "add", "-A")
+    _git(env.root, "commit", "-qm", "one")
+    old_head = _git(env.root, "rev-parse", "HEAD")
+    a.write_text(_note("a", "A", body="edited"))
+    b.write_text(_note("b", "B", body="edited"))
+    _git(env.root, "commit", "-qam", "two")
+    shut = env.root / "shut"
+    shut.chmod(0o600)
+    try:
+        if os.access(shut, os.X_OK):
+            pytest.skip(f"running as a user (uid {os.getuid()}) who can search a mode-600 folder")
+        assert env.im.index_with_attribution(KB, GitService(), since_commit=old_head) >= 1
+        assert sorted(v["message"] for v in env.db.get_entry_versions("a", KB)) == ["one", "two"]
+    finally:
+        shut.chmod(0o755)

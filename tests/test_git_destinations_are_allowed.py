@@ -16,6 +16,7 @@ import pytest
 
 from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
 from pyrite.services.git_service import GitService
+from pyrite.utils.git_hardening import git_env
 
 try:
     from pyrite.services.git_service import RemoteNotAllowedError
@@ -79,7 +80,7 @@ def git_rewrites_github_to_a_local_path(tmp_path, monkeypatch):
 
     The account's global config applies only to the operator's own process: a
     network caller's command does not read it at all
-    (``git_service._account_isolation_env``), so these run as the operator."""
+    (``git_hardening.git_env``), so these run as the operator."""
     from pyrite.services.acting import local_process
 
     gitconfig = tmp_path / "gitconfig"
@@ -467,14 +468,13 @@ def _git(cwd: Path, *args: str) -> None:
         check=True,
         capture_output=True,
         timeout=60,
-        env=GitService.subprocess_env(
-            {
-                "GIT_AUTHOR_NAME": "t",
-                "GIT_AUTHOR_EMAIL": "t@example.org",
-                "GIT_COMMITTER_NAME": "t",
-                "GIT_COMMITTER_EMAIL": "t@example.org",
-            }
-        ),
+        env={
+            **git_env(),
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@example.org",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@example.org",
+        },
     )
 
 
@@ -766,9 +766,12 @@ class TestSubscribeIsBound:
         assert result["success"] is False
         assert result["error_code"] == "REMOTE_NOT_ALLOWED"
 
-    @patch("pyrite.services.repo_service.get_github_token", return_value="tok")
-    def test_fork_refuses_before_calling_github(self, _tok, repo_env):
+    @pytest.mark.control(
+        reason="already held; now given the caller's own token, not the operator's stored one"
+    )
+    def test_fork_refuses_before_calling_github(self, repo_env):
         svc, config, _ = repo_env
+        svc._github_token = "tok"  # the caller's own GitHub token
         config.settings.git_allowed_hosts = ["git.example.org"]
         with patch.object(GitService, "fork_repo") as fork:
             result = svc.fork_and_subscribe("https://github.com/owner/repo")
@@ -776,9 +779,12 @@ class TestSubscribeIsBound:
         assert result["error_code"] == "REMOTE_NOT_ALLOWED"
         fork.assert_not_called()
 
-    @patch("pyrite.services.repo_service.get_github_token", return_value="tok")
-    def test_the_fork_clone_url_is_held_to_the_rule_too(self, _tok, repo_env):
+    @pytest.mark.control(
+        reason="already held; now given the caller's own token, not the operator's stored one"
+    )
+    def test_the_fork_clone_url_is_held_to_the_rule_too(self, repo_env):
         svc, config, _ = repo_env
+        svc._github_token = "tok"  # the caller's own GitHub token
         fork = (True, {"clone_url": "git@github.com:me/repo.git", "full_name": "me/repo"})
         with (
             patch.object(GitService, "fork_repo", return_value=fork),

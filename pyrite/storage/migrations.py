@@ -18,7 +18,7 @@ from ..exceptions import outside_text
 logger = logging.getLogger(__name__)
 
 # Current schema version
-CURRENT_VERSION = 29
+CURRENT_VERSION = 30
 
 
 @dataclass
@@ -547,6 +547,18 @@ MIGRATIONS: list[Migration] = [
         -- SQLite < 3.35 does not support DROP COLUMN; the column remains but is unused.
         """,
     ),
+    Migration(
+        version=30,
+        description="Add link.target_path and link.target_resolved: Markdown links to entry files are link rows (#1723)",
+        # ALTER handled conditionally in _apply_v30() since the column may
+        # already exist from ORM create_all. The recorded file stat is nulled
+        # so the next sync re-reads every file once and writes its Markdown
+        # link rows, reporting nothing changed (the v27 route, decision D3).
+        up="",
+        down="""
+        -- SQLite < 3.35 does not support DROP COLUMN; the column remains but is unused.
+        """,
+    ),
 ]
 
 
@@ -947,6 +959,42 @@ class MigrationManager:
         existing = {row[1] for row in self.conn.execute("PRAGMA table_info(entry)").fetchall()}
         if "aliases" not in existing:
             self.conn.execute("ALTER TABLE entry ADD COLUMN aliases TEXT")
+        self.conn.commit()
+
+    def _apply_v30(self) -> None:
+        """Add ``link.target_path`` and mark every entry for one re-read (#1723).
+
+        A file whose stat matches its row is never read again
+        (``index._file_changed``), so without this a plain ``index sync``
+        after the upgrade would never write the Markdown link rows of an
+        unchanged file. A NULL stat is re-read once and its hash, unchanged,
+        reports nothing (the v27 precedent). Done whether or not the column
+        was already there: ``create_all`` or the schema repair may have added
+        it before this ran, and the rows still lack the links.
+        """
+        link_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='link'"
+        ).fetchone()
+        if link_exists:
+            existing = {row[1] for row in self.conn.execute("PRAGMA table_info(link)").fetchall()}
+            if "target_path" not in existing:
+                self.conn.execute("ALTER TABLE link ADD COLUMN target_path TEXT")
+            if "target_resolved" not in existing:
+                self.conn.execute("ALTER TABLE link ADD COLUMN target_resolved INTEGER")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)"
+            )
+        entry_exists = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='entry'"
+        ).fetchone()
+        if entry_exists:
+            columns = {row[1] for row in self.conn.execute("PRAGMA table_info(entry)").fetchall()}
+            # The resolver looks the entry at a file up on every write.
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)"
+            )
+            if {"file_mtime_ns", "file_size"} <= columns:
+                self.conn.execute("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL")
         self.conn.commit()
 
     def rollback(self, target_version: int = 0) -> list[Migration]:

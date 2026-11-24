@@ -80,7 +80,7 @@ import stat
 from collections.abc import Iterator
 from pathlib import Path
 
-from ..exceptions import ValidationError
+from ..exceptions import KBUnreadableError, ValidationError
 from .atomic_write import ABSENT, FileChanged, HardLinked
 from .containment import inside_or_warn
 from .file_lock import LOCK_TIMEOUT, NotInGitRepository, check_timeout, file_lock
@@ -91,7 +91,10 @@ __all__ = [
     "KBFileIsLinkError",
     "KBFileOutsideRootError",
     "KBFiles",
+    "KBFilesUnreadableError",
     "KBFolderChanged",
+    "KBPresenceUnknownError",
+    "KB_YAML_REFUSALS",
     "OwnerNotKeptError",
 ]
 
@@ -106,6 +109,13 @@ _HAS_DIR_FD = (
 )
 _DIR_FLAGS = getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 _NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+# The ``os.stat`` errors ``KBFiles.present`` answers "absent" for: nothing is
+# there (ENOENT), a file stands where a folder would (ENOTDIR), the name
+# cannot be looked up (EBADF), a link loop (ELOOP), and a name no file can
+# have (ENAMETOOLONG). Any other errno is "could not tell"
+# (``KBPresenceUnknownError``): a folder the process cannot search, an I/O
+# error, a stale mount.
+_ABSENT_ERRNOS = {errno.ENOENT, errno.ENOTDIR, errno.EBADF, errno.ELOOP, errno.ENAMETOOLONG}
 _UNSUPPORTED = {errno.ENOTSUP, errno.ENOSYS, getattr(errno, "EOPNOTSUPP", errno.ENOTSUP)}
 
 
@@ -151,6 +161,20 @@ class KBFileReadOutsideRootError(KBFileOutsideRootError):
         )
 
 
+#: The per-KB refusals a read of a KB's kb.yaml can raise (``read_kb_yaml``,
+#: ``KBConfig.kb_schema``, ``KBConfig.check_readable``): ``KB_UNREADABLE``
+#: (the OS refused), ``KB_CONFIG_INVALID`` (it does not load as a mapping)
+#: and ``OUTSIDE_KB_ROOT`` (a link out of the KB, or a second hard link). A
+#: walk over KBs catches exactly these, names the KB with ``error_code`` and
+#: goes on; a call that names only that KB answers the refusal (#1547).
+#: ``KBFileOutsideRootError`` is a ``ValidationError``, not a
+#: ``KBUnreadableError``, hence a tuple.
+KB_YAML_REFUSALS: tuple[type[KBUnreadableError], type[KBFileOutsideRootError]] = (
+    KBUnreadableError,
+    KBFileOutsideRootError,
+)
+
+
 class KBFolderChanged(FileChanged):
     """The folder opened is not the one the caller checked (``expect_folder``):
     a folder was replaced between the check and the write; nothing written."""
@@ -165,6 +189,42 @@ class OwnerNotKeptError(Exception):
         super().__init__(f"cannot preserve owner {uid} and group {gid}")
         self.uid = uid
         self.gid = gid
+
+
+class KBFilesUnreadableError(KBUnreadableError):
+    """A KB's files cannot be read: the OS refused (a KB folder the process
+    cannot list or search, a ``kb.yaml`` it cannot open, an I/O error), so
+    Pyrite cannot say what the KB holds (#1542).
+
+    One answer whatever the cause and wherever it is raised: one code
+    (``KB_UNREADABLE``), never retryable, and a fixed message that names no
+    path, no errno and no OS text, so a network caller learns nothing about
+    the server's filesystem from it. The ``OSError`` is kept as ``__cause__``
+    for a local report that names the file (index health's
+    ``unreadable_files``). A KB in this state is never read as empty or as
+    having no schema: whatever needs its files stops with this error, and
+    nothing derived from them (its index rows) is removed.
+    """
+
+    MESSAGE = (
+        "Pyrite could not read this knowledge base's files: the operating "
+        "system refused (for example, a folder or file Pyrite may not open)."
+    )
+    # No ``public_message``: ``str(exc)`` is always ``MESSAGE`` (the
+    # constructor takes no text), so it masks nothing and every transport
+    # shows it through ``public_text`` as it is. A class that sets one must
+    # be on tests/test_public_message_logged_once.py's reviewed list.
+    retryable = False
+
+    def __init__(self) -> None:
+        super().__init__(self.MESSAGE)
+
+
+class KBPresenceUnknownError(KBFilesUnreadableError):
+    """``KBFiles.present`` could not tell whether a path is there (a folder
+    the process cannot search, an I/O error, a stale mount), so neither
+    "there" nor "absent" would be true. The same code and message as every
+    ``KBFilesUnreadableError``."""
 
 
 class KBFileIsLinkError(ValidationError):
@@ -545,11 +605,21 @@ class KBFiles:
     def contains(self, path: str | os.PathLike[str]) -> bool:
         """Whether ``path`` resolves inside the root (no I/O beyond resolving),
         against the root as resolved for this write."""
+        return self.resolved(path) is not None
+
+    def resolved(self, path: str | os.PathLike[str]) -> Path | None:
+        """Where ``path`` leads, spelled under ``self.root`` (the root as the
+        KB names it, not its real path), or None when it leads out of the
+        root or cannot be resolved. The one answer to "does this name lead
+        out of the KB" (``contains``); no I/O beyond resolving, and nothing
+        is opened. A dangling link resolves to the missing name it points
+        at. Used to find which KB file an in-KB link names (#1262)."""
         try:
             real = os.path.realpath(self._absolute(path))
         except (OSError, ValueError, RuntimeError):
-            return False
-        return _parts_below(self.real_root, real) is not None
+            return None
+        parts = _parts_below(self.real_root, real)
+        return None if parts is None else self.root.joinpath(*parts)
 
     def check(self, path: str | os.PathLike[str], what: str = "file") -> bool:
         """``contains``, logging once per file when not."""
@@ -661,6 +731,62 @@ class KBFiles:
             raise
         except KBFileOutsideRootError as e:
             raise KBFileReadOutsideRootError() from e
+
+    def present(self, path: str | os.PathLike[str]) -> bool:
+        """Whether ``path`` is taken, as this KB answers it: the probe for a
+        caller that then reads, writes or lists through ``KBFiles``
+        (ADR-0052 N1, N4).
+
+        It answers True for a path that resolves outside the root (a link
+        out, dangling or not, or a folder on the way that is one): the read
+        or write that follows refuses it (``OUTSIDE_KB_ROOT``), so that
+        refusal is the answer whichever way the link points, and never
+        "absent" because a file outside is missing. For a path that resolves
+        inside, it answers whether that path exists, which only the KB's own
+        files decide. ``Path.exists`` follows a link out, and so answers what
+        lies outside.
+
+        A name no file can have (a component longer than the filesystem
+        allows, ENAMETOOLONG) is absent. Where the OS will not say (a folder
+        this process cannot search, an I/O error) the answer is
+        ``KBPresenceUnknownError`` (code ``KB_UNREADABLE``, never retryable,
+        one fixed message): each caller handles it or lets it stop the
+        operation (#1542).
+
+        Limit: where a path resolves is decided by ``os.path.realpath``,
+        which follows every link on the way. A link out of the KB whose
+        target outside is itself a link back into the KB resolves inside, so
+        that answer depends on the outside link (the same limit applies to
+        ``read_bytes`` and to every write).
+        """
+        if not self.contains(path):
+            return True
+        # ``os.stat`` itself, not ``os.path.exists`` (which answers False for
+        # every error, so a folder this process cannot search would read as
+        # "absent" and index health would call the file missing) and not
+        # ``Path.exists`` (whose set of absent errnos changes between Python
+        # versions). The answer is three-way: True, False, or
+        # ``KBPresenceUnknownError``; no raw ``OSError`` leaves here.
+        try:
+            os.stat(self._absolute(path))
+        except OSError as e:
+            if e.errno in _ABSENT_ERRNOS:
+                return False
+            raise KBPresenceUnknownError() from e
+        return True
+
+    def make_dirs(self, path: str | os.PathLike[str]) -> None:
+        """Make the folder ``path`` and any missing folders above it,
+        beneath the root, each opened without following a link
+        (``_open_dir(create=True)``, as a write makes a file's folder). A
+        path that resolves outside the root, or a folder on the way swapped
+        for a link, is ``KBFileOutsideRootError`` and nothing is made,
+        whatever lies outside."""
+        parts = self._rel_resolved(path)
+        if not _HAS_DIR_FD:
+            Path(self.real_root, *parts).mkdir(parents=True, exist_ok=True)
+            return
+        os.close(self._open_dir(parts, create=True))
 
     # -- the write rules ----------------------------------------------------
 

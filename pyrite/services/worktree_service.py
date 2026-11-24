@@ -23,6 +23,7 @@ from pyrite.exceptions import (
     ValidationError,
 )
 from pyrite.storage.database import PyriteDB
+from pyrite.utils.git_hardening import git_env
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class WorktreeService:
                 cwd=str(kb_config.path),
                 capture_output=True,
                 text=True,
-                env=GitService.subprocess_env(),
+                env=git_env(),
             )
             if result.returncode == 0:
                 return Path(result.stdout.strip())
@@ -290,6 +291,7 @@ class WorktreeService:
                 worktree_path,
                 message=f"Submit changes from {wt.username}",
                 paths=None,
+                identity=self.config.settings.git_identity,
             )
             if not committed:
                 logger.error("Worktree submit commit failed: %s", result.get("error"))
@@ -335,7 +337,9 @@ class WorktreeService:
             return False, "No committed worktree changes to merge; reject this empty submission"
 
         # Merge user branch into main
-        success, msg = GitService.merge_branch(repo_path, wt.branch, into="main")
+        success, msg = GitService.merge_branch(
+            repo_path, wt.branch, into="main", identity=self.config.settings.git_identity
+        )
         if not success:
             return False, msg
 
@@ -388,14 +392,12 @@ class WorktreeService:
         # Reset branch to main
         import subprocess
 
-        from pyrite.services.git_service import GitService
-
         subprocess.run(
             ["git", "reset", "--hard", "main"],
             cwd=str(worktree_path),
             capture_output=True,
             text=True,
-            env=GitService.subprocess_env(),
+            env=git_env(),
         )
 
         # Clear diff index

@@ -3,6 +3,7 @@
 from datetime import UTC, date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from ...exceptions import KBNotFoundError
 from ...services.access_policy import KB, AccessPolicy, Action, ReadScope
@@ -16,6 +17,7 @@ from ..api import (
 )
 from ..authz import authorize, read_scope
 from ..schemas import DailyDatesResponse, EntryResponse
+from .entries import apply_refused_columns, entry_response
 
 router = APIRouter(tags=["Daily Notes"])
 
@@ -59,12 +61,13 @@ def list_daily_dates(
 
 def _load_existing_daily_note(
     svc: KBService, entry_id: str, kb: str, readable_kbs: set[str] | None
-) -> EntryResponse | None:
+) -> EntryResponse | JSONResponse | None:
     """Return the daily note if it's already indexed or present on disk
     (indexing it first in the latter case). None if it doesn't exist yet.
 
     Its backlinks may come from any KB, so they are bounded by the caller's
-    readable set (P-R4)."""
+    readable set (P-R4). A column the file's type refused is left out, never
+    a default, exactly like the single-entry read (ADR-0042 8a, #1490)."""
     existing = svc.get_entry(entry_id, kb, readable_kbs=readable_kbs)
     if not existing:
         loaded = svc.load_entry_from_disk(entry_id, kb)
@@ -74,11 +77,10 @@ def _load_existing_daily_note(
 
     if not existing:
         return None
-    existing.setdefault("sources", [])
-    existing.setdefault("tags", [])
+    refused = apply_refused_columns(existing)
     existing.setdefault("outlinks", [])
     existing.setdefault("backlinks", [])
-    return EntryResponse(**existing)
+    return entry_response(existing, refused)
 
 
 def _create_daily_note(

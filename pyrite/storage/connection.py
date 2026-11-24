@@ -429,12 +429,18 @@ class ConnectionMixin:
 
     def _load_extensions(self):
         """Try to load sqlite-vec extension for vector search."""
+        from ..exceptions import HeldFault, held_fault
+
         self.vec_available = False
-        self.vec_load_error: Exception | None = None
+        # Held, not the exception: the search warning reads it on every call,
+        # REST and MCP included, and its text (an install path, a dlopen
+        # message) is the operator's. A HeldFault shows it to the local
+        # process only, decided when the warning is built (ADR-0052 N3).
+        self.vec_load_error: HeldFault | None = None
         try:
             import sqlite_vec
         except Exception as exc:
-            self.vec_load_error = exc
+            self.vec_load_error = held_fault(exc)
             logger.info(
                 "sqlite-vec extension not available: %s: %s",
                 type(exc).__name__,
@@ -458,7 +464,7 @@ class ConnectionMixin:
                     load_error = exc
 
         if load_error is not None:
-            self.vec_load_error = load_error
+            self.vec_load_error = held_fault(load_error)
             logger.info(
                 "sqlite-vec extension not available: %s: %s",
                 type(load_error).__name__,

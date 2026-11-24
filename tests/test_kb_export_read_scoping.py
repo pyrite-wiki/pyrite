@@ -70,19 +70,9 @@ def operator_allows_local_push_targets(monkeypatch):
     here, and only in the tests that ask for this fixture, the host rule and
     git's transport allowlist admit local paths, standing in for an operator
     who allowed the target."""
-    from pyrite.services import git_service
+    from tests._git_plans import allow_local_destinations
 
-    monkeypatch.setattr(
-        git_service.GitService, "check_remote_allowed", staticmethod(lambda *a, **k: None)
-    )
-    monkeypatch.setattr(
-        git_service.GitService, "_check_remote_urls", staticmethod(lambda *a, **k: None)
-    )
-    monkeypatch.setattr(
-        git_service,
-        "_NETWORK_GUARD_ENV",
-        {**git_service._NETWORK_GUARD_ENV, "GIT_ALLOW_PROTOCOL": "https:file"},
-    )
+    allow_local_destinations(monkeypatch)
 
 
 @pytest.fixture

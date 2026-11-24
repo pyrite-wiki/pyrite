@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -97,7 +97,7 @@ def is_local_process() -> bool:
     `OPERATOR` says who a write acts for; this says where the call comes
     from. Rules that depend on reach rather than role ask this: registering
     a KB path (``settings.kb_roots``) and which git credentials a network
-    operation may use (``GitService._credentials``)."""
+    operation may use (``git_hardening.git_env``, ``GitService._network_plan``)."""
     return _LOCAL_PROCESS.get()
 
 
@@ -124,3 +124,36 @@ def acting_as(value: Acting) -> Iterator[None]:
         yield
     finally:
         _ACTING.reset(token)
+
+
+#: Which KBs the acting caller holds a read grant on, asked lazily: a check
+#: ``name -> bool``, or None when nothing is bound (a job, a hook, an embedded
+#: caller). The surfaces bind it with the acting account (REST
+#: ``api.bind_acting_account``, MCP ``_dispatch_tool``); it decides whether
+#: text quoting a KB's bytes may be shown to the caller
+#: (``exceptions.kb_owned``, maintainer decision D4).
+_READ_GRANT: contextvars.ContextVar[Callable[[str], bool] | None] = contextvars.ContextVar(
+    "pyrite_read_grant", default=None
+)
+
+
+def may_read_kb(kb_name: str) -> bool:
+    """Whether the acting caller holds a read grant on ``kb_name``. False when
+    no surface bound one: deny by default."""
+    check = _READ_GRANT.get()
+    return bool(check is not None and check(kb_name))
+
+
+def bind_read_grant(check: Callable[[str], bool] | None) -> None:
+    """Bind ``check`` for the rest of the current context (one request's task)."""
+    _READ_GRANT.set(check)
+
+
+@contextlib.contextmanager
+def read_grant(check: Callable[[str], bool] | None) -> Iterator[None]:
+    """Bind ``check`` (see ``may_read_kb``) for the duration of the block."""
+    token = _READ_GRANT.set(check)
+    try:
+        yield
+    finally:
+        _READ_GRANT.reset(token)

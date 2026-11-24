@@ -67,6 +67,18 @@ contracts are alpha.
 9. **A small supported surface.** What is supported is listed and works as
    documented. The rest is marked experimental. A doc that teaches a command
    is run as that command's test.
+10. **One primary user per surface.** A change to a surface is judged first
+    for that surface's user. The CLI is agent-first and human-usable:
+    predictable output when it is not on a terminal, meaningful exit codes,
+    and it composes with Unix tools. MCP is for agents only: bounded reads,
+    lean schemas, remote auth. REST is for coding agents: strict JSON
+    contracts and one error envelope. The web UI is for human readers:
+    browsing a KB and presenting it publicly.
+11. **Explore, then compile.** Try a new pattern with a frontier model. Harden
+    what stabilises into a cheap workflow or deterministic code: a test, an
+    AST guard, a ratchet. Retire the scaffolding as cheaper models improve.
+    Pyrite is the engine that makes this possible, not a workflow
+    prescription (see "What Pyrite is not"): orchestration stays out of core.
 
 ## Questions to ask of any ticket or change
 
@@ -77,6 +89,9 @@ contracts are alpha.
 - Is it an entry (users, by grant) or configuration (the operator)?
 - Where is the one place this rule is enforced, and what fails if code goes
   around it?
+- Which surface's primary user does this serve, and does it serve them first?
+- Is this exploration that should stay a script, or a stable pattern ready to
+  harden into code or a test?
 - Is the ticket a symptom of a model nobody has stated? State the model
   before fixing the instance. A ticket's suggested fix is evidence, not the
   plan.
@@ -90,6 +105,9 @@ contracts are alpha.
   index, which catches up with the files after a write or a hand edit; a
   single-entry read reads the file. A result may lag a change made a moment
   ago: the index may lag the files.
+- Not a workflow prescription. Pyrite is an engine: it stores, indexes and
+  validates what agents write. How agents are orchestrated stays outside core,
+  in extensions and in the operator's own scripts.
 - Not a replacement for git. Changes are shared as commits, branches, patches
   and pull requests; Pyrite's own conflict handling covers only local edits
   between commits.
@@ -166,9 +184,9 @@ code follows it; check, and treat a mismatch as the work to do.
 - Entry classes and protocol mixins serialise themselves (principle 6).
 - KBs can exist only as database rows; grants and secrets are not in a
   reviewable config file (principle 7).
-- Network reach is enforced per call site for reads, git and response text,
-  and the ssh agent and identities stay reachable to a network git command
-  until N2 lands (ADR-0052).
+- Network reach is enforced per call site for reads and response text
+  until N1 and N3's next step land (ADR-0052); git's environment is decided
+  from the reach at one point (N2).
 - Several rules are enforced per call site (principle 8).
 - The supported-surface list is approved but not yet reflected in the
   README, `--help` and tool descriptions, and experimental tests are not yet

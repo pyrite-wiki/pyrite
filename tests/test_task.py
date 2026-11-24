@@ -669,7 +669,49 @@ class TestHooks:
         # open → done is not a valid transition — raises a typed, helpful error
         from pyrite.exceptions import ValidationError
 
-        with pytest.raises(ValidationError, match="Cannot move task from 'open' to 'done'"):
+        with pytest.raises(
+            ValidationError, match="Cannot move task from 'open' to 'done'"
+        ) as exc_info:
+            _task_validate_transition(entry, ctx)
+        assert "from any unfinished state" in str(exc_info.value)
+
+    @pytest.mark.parametrize("old_status", ["open", "claimed", "in_progress", "blocked", "review"])
+    def test_before_save_allows_cancelling_from_unfinished_states(self, old_status):
+        from unittest.mock import MagicMock
+        from pyrite.plugins.context import PluginContext
+        from pyrite.services.task_service import _task_validate_transition
+
+        entry = TaskEntry(id="t1", title="Test", status="cancelled")
+        ctx = PluginContext(
+            config=MagicMock(),
+            db=MagicMock(),
+            kb_name="test",
+            operation="update",
+            kb_type="task",
+            extra={"old_status": old_status},
+        )
+        result = _task_validate_transition(entry, ctx)
+        assert result.status == "cancelled"
+
+    @pytest.mark.parametrize("old_status", ["done", "failed"])
+    def test_before_save_rejects_cancelling_from_terminal_states(self, old_status):
+        from unittest.mock import MagicMock
+        from pyrite.exceptions import ValidationError
+        from pyrite.plugins.context import PluginContext
+        from pyrite.services.task_service import _task_validate_transition
+
+        entry = TaskEntry(id="t1", title="Test", status="cancelled")
+        ctx = PluginContext(
+            config=MagicMock(),
+            db=MagicMock(),
+            kb_name="test",
+            operation="update",
+            kb_type="task",
+            extra={"old_status": old_status},
+        )
+        with pytest.raises(
+            ValidationError, match=f"Cannot move task from '{old_status}' to 'cancelled'"
+        ):
             _task_validate_transition(entry, ctx)
 
     def test_before_save_allows_valid_transition(self):
@@ -738,6 +780,17 @@ class TestMCPToolSchemas:
         assert tags["items"] == {"type": "string"}
         assert "tags" not in schema["required"]
 
+    def test_task_create_schema_includes_optional_due_date_and_links(self):
+        schema = WRITE_TOOLS["task_create"]["inputSchema"]
+        props = schema["properties"]
+        assert "due_date" in props
+        assert props["due_date"]["type"] == "string"
+        assert "due_date" not in schema["required"]
+        assert "links" in props
+        assert props["links"]["type"] == "array"
+        assert "links" not in schema["required"]
+        assert props["links"]["items"]["additionalProperties"] is False
+
     def test_task_claim_requires_the_task_and_kb(self):
         # The assignee defaults to the signed-in caller, so the schema
         # cannot require it; the handler requires it when there is no caller.
@@ -749,6 +802,39 @@ class TestMCPToolSchemas:
         schema = WRITE_TOOLS["task_decompose"]["inputSchema"]
         assert "parent_id" in schema["required"]
         assert "children" in schema["required"]
+
+    def test_task_status_enums_equal_task_statuses(self):
+        """Principle 8: task status enums in MCP tools are built from TASK_STATUSES (#1504)."""
+        assert WRITE_TOOLS["task_update"]["inputSchema"]["properties"]["status"]["enum"] == list(
+            TASK_STATUSES
+        )
+        assert READ_TOOLS["task_list"]["inputSchema"]["properties"]["status"]["enum"] == list(
+            TASK_STATUSES
+        )
+        assert (
+            "cancelled" in WRITE_TOOLS["task_update"]["inputSchema"]["properties"]["status"]["enum"]
+        )
+        assert "cancelled" in READ_TOOLS["task_list"]["inputSchema"]["properties"]["status"]["enum"]
+
+    def test_task_update_and_list_validate_cancelled_status(self):
+        """MCP schemas accept 'cancelled' under jsonschema validation (#1504)."""
+        from jsonschema import validate
+
+        update_args = {"task_id": "test-task", "kb_name": "test-kb", "status": "cancelled"}
+        validate(update_args, WRITE_TOOLS["task_update"]["inputSchema"])
+
+        list_args = {"status": "cancelled"}
+        validate(list_args, READ_TOOLS["task_list"]["inputSchema"])
+
+    def test_task_update_description_mentions_transitions_and_task_claim(self):
+        """The task_update description explains transitions, task_claim, and cancellation (#1504)."""
+        desc = WRITE_TOOLS["task_update"]["description"]
+        assert "task_claim" in desc
+        assert "open" in desc
+        assert "claimed" in desc
+        assert "in_progress" in desc
+        assert "cancelled" in desc
+        assert "unfinished state" in desc
 
 
 # =========================================================================
@@ -859,3 +945,84 @@ class TestMCPTaskCreateTags:
         assert not entry.tags
         frontmatter = entry.to_frontmatter()
         assert "tags" not in frontmatter or not frontmatter.get("tags")
+
+    def test_task_create_handler_writes_due_date(self, tmp_path):
+        from pyrite.storage.repository import KBRepository
+
+        server, kb_config = self._server(tmp_path)
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Due task via MCP",
+                "due_date": "2026-12-31",
+            }
+        )
+        assert result.get("created") is True
+        assert result.get("due_date") == "2026-12-31"
+        entry = KBRepository(kb_config).load(result["entry_id"])
+        assert entry.due_date == "2026-12-31"
+
+        # Verify due_date through task_status
+        status_res = server._task_status({"task_id": result["entry_id"], "kb_name": "test-tasks"})
+        assert status_res.get("due_date") == "2026-12-31"
+
+    @pytest.mark.parametrize("bad_due", ["not-a-date", "2026-02-30", False, 0])
+    def test_task_create_handler_invalid_due_date_refusal(self, tmp_path, bad_due):
+        server, kb_config = self._server(tmp_path)
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Bad date via MCP",
+                "due_date": bad_due,
+            }
+        )
+        assert result.get("error_code") == "VALIDATION_FAILED"
+        assert "due_date" in result.get("error", "").lower()
+
+    def test_task_create_handler_attaches_links(self, tmp_path):
+        server, kb_config = self._server(tmp_path)
+        t1 = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Target task",
+            }
+        )
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Linked task via MCP",
+                "links": [{"target": t1["entry_id"], "relation": "blocks"}],
+            }
+        )
+        get_res = server._kb_get({"entry_id": result["entry_id"], "kb_name": "test-tasks"})
+        assert result.get("created") is True
+        assert "links" not in result
+        assert result.get("linked") == [{"target": t1["entry_id"], "relation": "blocks"}]
+        assert result.get("failed_links") == []
+
+        entry = get_res.get("entry", {})
+        assert any(l["target_id"] == t1["entry_id"] for l in entry.get("links", []))
+
+        backlinks_res = server._kb_backlinks({"entry_id": t1["entry_id"], "kb_name": "test-tasks"})
+        assert any(b["id"] == result["entry_id"] for b in backlinks_res.get("backlinks", []))
+
+    @pytest.mark.parametrize(
+        ("bad_links", "expected_err"),
+        [
+            ([{"target": ""}], "target"),
+            ([{"target": "t", "note": "extra"}], "note"),
+            ([{"target": "t", "target_kb": "extra"}], "target_kb"),
+            (["target:blocks"], "dictionary"),
+        ],
+    )
+    def test_task_create_handler_invalid_link_refusal(self, tmp_path, bad_links, expected_err):
+        server, kb_config = self._server(tmp_path)
+        result = server._task_create(
+            {
+                "kb_name": "test-tasks",
+                "title": "Bad link task",
+                "links": bad_links,
+            }
+        )
+        assert result.get("error_code") == "VALIDATION_FAILED"
+        assert expected_err in result.get("error", "").lower()

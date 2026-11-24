@@ -7,9 +7,8 @@ Provides functions for:
 
 from typing import Any
 
-from pyrite.exceptions import PyriteError, refusal_fields
+from pyrite.exceptions import PyriteError, public_text, refusal_fields
 from pyrite.schema import generate_entry_id
-from pyrite.utils.errors import public_text
 
 from .queries import (
     ENTITY_TYPE_ALIASES,

@@ -1,0 +1,1 @@
+- Remove dead `TaskService` writers `unblock_dependents` and `aggregate_evidence_to_parent`, which have no callers on any surface and wrote entries other than the target entry (#1847).

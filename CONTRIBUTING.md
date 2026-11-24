@@ -14,6 +14,7 @@ project is worth their time.
 
 - Python 3.11+ (3.13 recommended)
 - Git
+- Node.js 22.17 or later, only to build or test the web UI in `web/` (SvelteKit 3; `web/package.json` `engines`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ### Initial Setup
@@ -48,7 +49,9 @@ pre-commit install
 scripts/setup-checkout.sh
 pyrite kb list   # the `pyrite` KB path must be this checkout's kb/
 
-# Verify imports resolve to this checkout, including every extension
+# Verify imports resolve to this checkout, including every extension. Pytest
+# repeats this check at startup, so a manually created or tool-created worktree
+# fails before tests run if its editable installs point at another checkout.
 .venv/bin/python scripts/check_checkout_imports.py
 
 # Verify installation
@@ -57,6 +60,12 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+Each checkout must use its own environment. Run `scripts/setup-checkout.sh`
+for a manually created or tool-created worktree before testing. The pytest
+guard reports the package and both checkout paths when it refuses a run. An
+environment that intentionally uses non-editable installs may set
+`PYRITE_SKIP_CHECKOUT_IMPORTS=1` for that run.
 
 #### The dependency lock
 
@@ -391,6 +400,14 @@ experimental tests it left out. A new test of an experimental surface needs
 no marker if its path is mapped; a new file for one needs a line in
 `tests/experimental_surface.py`.
 
+**Ratchets.** To remove a row from a list that may only shrink, delete its line:
+there is no count to edit, so two pull requests that remove different rows
+merge. A row is added only by a commit whose final paragraph carries
+`Ratchet-raise: <list> <reason>`; the CI step `scripts/check_ratchets_only_shrink.py
+--range` refuses the pull request otherwise. This applies to `NOT_YET` in
+`tests/test_cli_numeric_options_declare_a_range.py` today; #1608 converts the
+other pinned lists.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
@@ -504,8 +521,10 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 
 - Tests live in `tests/`; extension tests in `extensions/<name>/tests/`
 - Name test files `test_*.py`
-- A `fix:` commit must include a test that fails without the fix (a hook checks
-  that it touches `tests/`)
+- A `fix:` commit must include a test that fails without the fix (the local
+  commit-msg hook checks that a `fix:` commit touches `tests/`). In CI, the pull
+  request as a whole is judged: a branch with a `test:` commit followed by a
+  `fix:` commit passes because pull requests are squashed when merged to `dev`.
 - Use pytest fixtures for common setup (`tmp_kb`, isolated plugin registry);
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
@@ -551,9 +570,8 @@ Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration un
   only and moves by fast-forward to a commit that already passed CI.
 - Branch from `dev`, open the PR against `dev`. Name the branch for what it
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
-  `process/*` (tooling and workflow). Never push to `dev`. Rebase is the default merge
-  method (it keeps your commits and their messages); squash is fine for a
-  branch whose history is noise.
+  `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
+  each pull request into a single commit on `dev` by default.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
@@ -607,6 +625,9 @@ before you write much, and the draft is visible to everyone else looking at
 the issue. The plan scales with the change: for a `good first issue` one
 sentence is enough ("I'll add `id`/`kb_name` to the three projections and a
 test per command").
+
+An issue assigned to a maintainer is not open for contributors; pick one
+labelled `help wanted` or `good first issue`.
 
 A claim with no PR after 5 days lapses. Two people on one issue is fine — the
 first PR that meets the acceptance criteria merges, and we credit the other
@@ -699,6 +720,8 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
   Anyone can file one; use the templates. Issues labelled
   [`good first issue`](https://github.com/pyrite-wiki/pyrite/labels/good%20first%20issue)
   are small, well-specified and a fine place to start.
+  An issue assigned to a maintainer is not open for contributors; pick one
+  labelled `help wanted` or `good first issue`.
 - **The roadmap → `kb/`** in this repo: epics, planned work and architecture
   decisions, browsable with the tool itself:
 

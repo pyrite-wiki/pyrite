@@ -569,3 +569,196 @@ class TestWorktreeDB:
         finally:
             main_db.close()
             diff_db.close()
+
+
+def _upsert_full(db: PyriteDB, entry_id: str, kb_name: str, title: str, **extra) -> None:
+    """Upsert a complete entry row, with any derived rows in ``extra``
+    (``_refs``, ``_edge_endpoints``), the way a write through a backend
+    carries them."""
+    _ensure_kb(db, kb_name)
+    entry_data = {
+        "id": entry_id,
+        "kb_name": kb_name,
+        "entry_type": extra.get("entry_type", "note"),
+        "title": title,
+        "body": "",
+        "summary": "",
+        "file_path": f"/test/{entry_id}.md",
+        "date": None,
+        "importance": 5,
+        "status": None,
+        "location": None,
+        "assignee": None,
+        "assigned_at": None,
+        "priority": None,
+        "due_date": None,
+        "start_date": None,
+        "end_date": None,
+        "coordinates": None,
+        "lifecycle": "active",
+        "metadata": {},
+        "tags": [],
+        "sources": [],
+        "links": [],
+        "created_at": "2026-01-01T00:00:00",
+        "updated_at": "2026-01-01T00:00:00",
+        "created_by": None,
+        "modified_by": None,
+    }
+    entry_data.update(extra)
+    db._backend.upsert_entry(entry_data)
+
+
+_REF = {"target_id": "t1", "target_kb": "test", "field_name": "related"}
+_ENDPOINTS = [
+    {
+        "role": "source",
+        "field_name": "employee",
+        "endpoint_id": "person-1",
+        "endpoint_kb": "test",
+        "edge_type": "employment",
+    },
+    {
+        "role": "target",
+        "field_name": "employer",
+        "endpoint_id": "company-1",
+        "endpoint_kb": "test",
+        "edge_type": "employment",
+    },
+]
+
+
+class TestOverlayRefsAndEdges:
+    """Derived rows (entry_ref, edge_endpoint) are written only to the diff,
+    so the overlay's reads answer from the diff for an entry the diff holds
+    (#1733): a ref written through the overlay is visible, and one the diff
+    removed does not reappear from main."""
+
+    def test_ref_written_to_diff_is_read_back(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "t1", "test", "Target in Main")
+            _upsert_full(diff_db, "s1", "test", "Source in Diff", _refs=[_REF])
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            rows = overlay.get_refs_from("s1", "test")
+            assert [(r["id"], r["kb_name"]) for r in rows] == [("t1", "test")]
+            # The target exists only in main: its title is filled from main,
+            # where the diff's own join found no row.
+            assert rows[0]["title"] == "Target in Main"
+            assert [r["id"] for r in overlay.get_refs_to("t1", "test")] == ["s1"]
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_ref_removed_in_diff_is_not_resurrected_from_main(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "t1", "test", "Target in Main")
+            _upsert_full(main_db, "s1", "test", "Source", _refs=[_REF])
+            # The diff holds the entry with the ref removed.
+            _upsert_full(diff_db, "s1", "test", "Source Edited", _refs=[])
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            assert overlay.get_refs_from("s1", "test") == []
+            assert overlay.get_refs_to("t1", "test") == []
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_main_ref_reads_unchanged_when_diff_holds_nothing(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "t1", "test", "Target in Main")
+            _upsert_full(main_db, "s1", "test", "Source", _refs=[_REF])
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            assert [r["id"] for r in overlay.get_refs_from("s1", "test")] == ["t1"]
+            assert [r["id"] for r in overlay.get_refs_to("t1", "test")] == ["s1"]
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_edge_written_to_diff_is_read_back(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "person-1", "test", "Person One")
+            _insert_entry(main_db, "company-1", "test", "Company One")
+            _upsert_full(
+                diff_db,
+                "edge-1",
+                "test",
+                "Edge in Diff",
+                entry_type="employment",
+                _edge_endpoints=_ENDPOINTS,
+            )
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            rows = overlay.get_edge_endpoints("edge-1", "test")
+            assert {(r["role"], r["endpoint_id"]) for r in rows} == {
+                ("source", "person-1"),
+                ("target", "company-1"),
+            }
+            # Endpoints exist only in main: titles filled from main.
+            assert {r["endpoint_id"]: r["title"] for r in rows} == {
+                "person-1": "Person One",
+                "company-1": "Company One",
+            }
+            assert [r["id"] for r in overlay.get_edges_by_endpoint("person-1", "test")] == [
+                "edge-1"
+            ]
+            assert [
+                r["id"] for r in overlay.get_edges_between("person-1", "company-1", "test")
+            ] == ["edge-1"]
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_edge_removed_in_diff_is_not_resurrected_from_main(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "person-1", "test", "Person One")
+            _insert_entry(main_db, "company-1", "test", "Company One")
+            _upsert_full(
+                main_db,
+                "edge-1",
+                "test",
+                "Edge",
+                entry_type="employment",
+                _edge_endpoints=_ENDPOINTS,
+            )
+            _upsert_full(
+                diff_db,
+                "edge-1",
+                "test",
+                "Edge Edited",
+                entry_type="employment",
+                _edge_endpoints=[],
+            )
+
+            overlay = OverlaySearchBackend(main_db._backend, diff_db._backend)
+            assert overlay.get_edge_endpoints("edge-1", "test") == []
+            assert overlay.get_edges_by_endpoint("person-1", "test") == []
+            assert overlay.get_edges_between("person-1", "company-1", "test") == []
+        finally:
+            main_db.close()
+            diff_db.close()
+
+    def test_worktree_db_reads_refs_through_the_overlay(self, tmp_path):
+        main_db = _make_db(tmp_path / "main.db")
+        diff_db = _make_db(tmp_path / "diff.db")
+        try:
+            _insert_entry(main_db, "t1", "test", "Target in Main")
+            _upsert_full(diff_db, "s1", "test", "Source in Diff", _refs=[_REF])
+
+            wdb = WorktreeDB(main_db, diff_db)
+            assert [r["id"] for r in wdb.get_refs_from("s1", "test")] == ["t1"]
+            assert [r["id"] for r in wdb.get_refs_to("t1", "test")] == ["s1"]
+        finally:
+            main_db.close()
+            diff_db.close()

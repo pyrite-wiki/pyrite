@@ -145,11 +145,29 @@ def _hand_edit(root: Path) -> None:
     (root / "loose.md").write_text(
         "---\nid: loose\ntitle: Loose\nstatus: active\naliases: [Alt Name, Other]\n"
         "tags: [hand]\n---\nPoints at [[demo:renamed]] and [[renamed#Details]] "
-        "and [[source|the source]].\n",
+        "and [[source|the source]], and [the source](source.md#Top).\n",
         encoding="utf-8",
     )
     (root / "gone.md").write_text(
         "---\nid: gone\ntitle: Gone\ntype: note\n---\nRemoved below.\n", encoding="utf-8"
+    )
+    # Issue #1354: exercise files-only rebuilds across identity and link edges.
+    (root / "no-id.md").write_text(
+        "---\ntitle: No explicit ID\ntype: note\n---\nA file without id frontmatter.\n",
+        encoding="utf-8",
+    )
+    (root / "duplicate-a.md").write_text(
+        "---\nid: duplicate\ntitle: Duplicate A\ntype: note\n---\nFirst duplicate ID.\n",
+        encoding="utf-8",
+    )
+    (root / "duplicate-b.md").write_text(
+        "---\nid: duplicate\ntitle: Duplicate B\ntype: note\n---\nSecond duplicate ID.\n",
+        encoding="utf-8",
+    )
+    (root / "missing-link.md").write_text(
+        "---\nid: missing-link\ntitle: Missing link\ntype: note\n---\n"
+        "Points to [[later-target]] before it exists.\n",
+        encoding="utf-8",
     )
 
 
@@ -170,7 +188,10 @@ def test_incremental_session_equals_a_files_only_rebuild(tmp_path):
         "date: 2025-02-03\nimportance: 8\nrelated: source\n"
         "created_at: 2025-01-01T00:00:00+00:00\nupdated_at: 2025-01-02T00:00:00+00:00\n"
         "sources:\n  - title: Primary source\n    url: https://example.invalid/source\n"
-        "---\nSee [[target]]\n\nEvidence paragraph. ^evidence\n",
+        # A Markdown link to a file written later (the service writes a note
+        # under notes/), and one to a file that is never there (#1723).
+        "---\nSee [[target]], [the target](notes/target.md) and [gone](missing.md)\n\n"
+        "Evidence paragraph. ^evidence\n",
         encoding="utf-8",
     )
     path = tmp_path / "index.db"
@@ -202,6 +223,12 @@ def test_incremental_session_equals_a_files_only_rebuild(tmp_path):
         _hand_edit(root)
         (root / "gone.md").unlink()
         IndexManager(db, config).sync_incremental("demo")
+        # The missing target is created only after the first incremental pass.
+        (root / "later-target.md").write_text(
+            "---\nid: later-target\ntitle: Later target\ntype: note\n---\nCreated later.\n",
+            encoding="utf-8",
+        )
+        IndexManager(db, config).sync_incremental("demo")
 
         incremental = snapshot(path)
         assert {row["id"] for row in incremental["entry"]} == {
@@ -209,7 +236,17 @@ def test_incremental_session_equals_a_files_only_rebuild(tmp_path):
             "source",
             "relation",
             "loose",
+            "no-explicit-id",
+            "duplicate",
+            "missing-link",
+            "later-target",
         }
+        duplicate = next(row for row in incremental["entry"] if row["id"] == "duplicate")
+        assert duplicate["file_path"].endswith("duplicate-a.md")
+        assert any(
+            row["source_id"] == "missing-link" and row["target_id"] == "later-target"
+            for row in incremental["link"]
+        )
         assert incremental["entry_tag"]
         assert incremental["link"]
         for table in ("source", "entry_ref", "block", "edge_endpoint", "fts"):

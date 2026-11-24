@@ -6,9 +6,18 @@ Provides a lightweight package for running the Pyrite MCP server without the ful
 
 ## Installation
 
+`pyrite-mcp` is not published on PyPI. Install it and Pyrite from the same
+release tag, the way the [main README](../README.md) installs Pyrite:
+
 ```bash
-pip install pyrite-mcp
+pip install "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4" \
+  "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=pyrite-mcp"
 ```
+
+Name both. pyrite-mcp's own requirement is `pyrite` at the same release git
+tag, not a version range, but naming both in one command keeps pip from ever
+looking the name up on PyPI, where the `pyrite` name is not this project's
+(ADR-0025).
 
 ## Usage
 

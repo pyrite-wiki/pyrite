@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyrite"
-version = "0.26.2"
+version = "0.26.4"
 description = "Knowledge-as-Code for you and your agents"
 readme = "README.md"
 license = {text = "MIT"}
@@ -67,7 +67,7 @@ server = [
     "cryptography>=50.0.0",  # minimum patched version (auth_service.py imports it)
 ]
 cli = [
-    "typer[all]>=0.12.3,<0.29",  # 0.29.0 (2026-11-09) breaks CLI introspection; #1432
+    "typer[all]>=0.12.3",
     "rich>=13.7.1",
 ]
 ai = [
@@ -81,6 +81,8 @@ semantic = [
 postgres = [
     "psycopg2-binary>=2.9.0",
     "pgvector>=0.3.0",
+    # ensure_schema runs the alembic chain on every startup (#718).
+    "alembic>=1.13.0",
 ]
 dev = [
     # Pinned exactly (#128): CI resolved pytest 9.1.1 on 3.12 and 9.0.2 on

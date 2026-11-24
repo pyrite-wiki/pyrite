@@ -22,7 +22,8 @@ from pathlib import Path
 import pytest
 
 from pyrite.services import git_service
-from pyrite.services.git_service import GitService, _git_env
+from pyrite.services.git_service import GitService
+from tests._git_plans import plan_for
 
 DIRTY = "https://someone:tok3n@github.com/o/r.git"
 CLEAN = "https://github.com/o/r.git"
@@ -154,11 +155,12 @@ def server_account_helper(tmp_path, monkeypatch):
     monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
 
 
-def _fill(creds, url: str) -> str:
-    """What git's credential machinery answers for ``url`` under ``creds``:
-    the same lookup a clone, pull or push makes."""
+def _fill(plan, url: str) -> str:
+    """What git's credential machinery answers for ``url`` under ``plan``:
+    the same lookup a clone, pull or push makes, in the environment the
+    current reach gets (call it inside the reach's binding)."""
     host = url.split("/")[2]
-    env = _git_env({**git_service._NETWORK_GUARD_ENV, **creds.env}, config=creds.config)
+    env = git_service._network_git_env(plan)
     r = subprocess.run(
         ["git", "credential", "fill"],
         input=f"protocol=https\nhost={host}\n\n",
@@ -183,16 +185,14 @@ def test_a_network_callers_command_never_gets_the_server_accounts_credential(
     server_account_helper, token, url
 ):
     with local_process(False):
-        creds = GitService._credentials(token, [url])
-    assert "FROM-THE-SERVER-ACCOUNT" not in _fill(creds, url)
+        assert "FROM-THE-SERVER-ACCOUNT" not in _fill(plan_for(token, [url]), url)
 
 
 @pytest.mark.control(reason="a caller's own token on GitHub is what it authenticates with")
 def test_a_network_callers_token_is_its_credential(server_account_helper):
     url = "https://github.com/o/r.git"
     with local_process(False):
-        creds = GitService._credentials("caller-token", [url])
-    out = _fill(creds, url)
+        out = _fill(plan_for("caller-token", [url]), url)
     assert "caller-token" in out and "FROM-THE-SERVER-ACCOUNT" not in out
 
 
@@ -200,8 +200,7 @@ def test_a_network_callers_token_is_its_credential(server_account_helper):
 def test_the_operator_at_the_cli_keeps_their_own_helpers(server_account_helper):
     url = "https://github.com/o/r.git"
     with local_process(True):
-        creds = GitService._credentials(None, [url])
-    assert "FROM-THE-SERVER-ACCOUNT" in _fill(creds, url)
+        assert "FROM-THE-SERVER-ACCOUNT" in _fill(plan_for(None, [url]), url)
 
 
 @pytest.mark.parametrize("op", ["clone", "pull", "push"])
@@ -244,3 +243,56 @@ def test_a_workspace_path_spelled_in_another_case_is_still_scrubbed(tmp_path):
         pytest.skip("the filesystem here is case-sensitive")
     assert GitService.scrub_remote_credentials(other_case) == 1
     assert _git(ws, "config", "--local", "remote.origin.url") == CLEAN
+
+
+# -- 3. a network caller's push (ADR-0052 N2) ------------------------------------------
+
+
+def _pushable(tmp_path: Path, url: str) -> Path:
+    ws = _repo(tmp_path / "ws", url)
+    _git(
+        ws, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "0"
+    )
+    return ws
+
+
+def _record_git(monkeypatch) -> list[tuple[list[str], dict]]:
+    """Every subprocess git_service starts, with its environment; the push
+    itself is stopped before it reaches the network."""
+    seen: list[tuple[list[str], dict]] = []
+    real = subprocess.run
+
+    def run(cmd, *a, **k):
+        seen.append((list(cmd), dict(k.get("env") or {})))
+        if "push" in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", "fatal: stopped by the test")
+        return real(cmd, *a, **k)
+
+    monkeypatch.setattr(git_service.subprocess, "run", run)
+    return seen
+
+
+def test_a_network_callers_push_never_reaches_the_ssh_agent(tmp_path, monkeypatch):
+    """The server account's ssh agent socket is in its environment; no git
+    process started for a network caller's push finds it."""
+    monkeypatch.setenv("SSH_AUTH_SOCK", str(tmp_path / "agent.sock"))
+    ws = _pushable(tmp_path, CLEAN)
+    seen = _record_git(monkeypatch)
+    with local_process(False):
+        GitService.push(ws, branch="main", allowed_hosts=["github.com"])
+    assert seen, "no git process ran"
+    leaked = [" ".join(cmd) for cmd, env in seen if "SSH_AUTH_SOCK" in env]
+    assert leaked == []
+
+
+def test_an_unset_allowlist_means_the_default_on_push(tmp_path, monkeypatch):
+    """``allowed_hosts=None`` is the default list (github.com) on a push as on
+    every other git operation: a push for a network caller to another host
+    is refused before git runs."""
+    ws = _pushable(tmp_path, "https://git.example.org/o/r.git")
+    seen = _record_git(monkeypatch)
+    with local_process(False):
+        ok, message = GitService.push(ws, branch="main")
+    assert not ok
+    assert [cmd for cmd, _ in seen if "push" in cmd] == []
+    assert "git_allowed_hosts" in message

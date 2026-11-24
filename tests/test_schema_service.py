@@ -31,8 +31,9 @@ class FakeKBConfig:
     def kb_yaml_path(self) -> Path:
         return self.path / "kb.yaml"
 
-    # The read-only rule is the real KBConfig's, not a copy of it.
+    # The read-only rule and the kb.yaml probe are the real KBConfig's.
     refuse_writes = KBConfig.refuse_writes
+    kb_yaml_present = KBConfig.kb_yaml_present
 
     def load_kb_yaml(self) -> bool:
         if self.kb_yaml_path.exists():

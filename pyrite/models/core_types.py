@@ -19,7 +19,6 @@ from ..schema import (
     generate_entry_id,
     generate_event_id,
     validate_date,
-    validate_importance,
 )
 from ..utils.frontmatter import load_frontmatter, yaml_start
 from ..utils.parse import safe_int
@@ -198,9 +197,10 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
     def validation_errors(self) -> list[dict[str, Any]]:
         """Event rules as structured rows (#1284), each naming its field."""
         errors = super().validation_errors()
+        date_rows: list[dict[str, Any]] = []
 
         if not self.date:
-            errors.append(
+            date_rows.append(
                 {
                     "field": "date",
                     "rule": "required",
@@ -209,7 +209,7 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
                 }
             )
         elif not validate_date(self.date):
-            errors.append(
+            date_rows.append(
                 {
                     "field": "date",
                     "rule": "format",
@@ -218,18 +218,10 @@ class EventEntry(Temporal, Locatable, Statusable, Entry):
                 }
             )
 
-        # Validate the file's value when loading fell back to a default.
-        importance = self.unrepresented_frontmatter().get("importance", self.importance)
-        if not validate_importance(importance):
-            errors.append(
-                {
-                    "field": "importance",
-                    "rule": "range",
-                    "message": f"Importance must be 1-10, got: {importance}",
-                    "expected": "1-10",
-                }
-            )
-
+        # The date row sits before the base class's importance row (#1537), the
+        # order an event's refusal has always had.
+        at = next((i for i, e in enumerate(errors) if e.get("field") == "importance"), len(errors))
+        errors[at:at] = date_rows
         return errors
 
     @classmethod

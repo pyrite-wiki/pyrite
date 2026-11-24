@@ -437,9 +437,29 @@ def _print_click_error(error: Any, fmt: str) -> None:
     is_usage = _is_a(error, "UsageError")
     message = error.format_message()
     ctx = getattr(error, "ctx", None)
-    suggestion = _extension_install_hint(ctx, message)
-    if suggestion is None:
-        suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
+    suggestion = f"Try '{ctx.command_path} --help' for help." if ctx is not None else None
+    # Typer 0.29 flattens click's NoSuchCommand into a plain UsageError, so
+    # recognise it by its message rather than by the exception class.
+    if is_usage and ctx is not None and message.startswith("No such command "):
+        install_line = _extension_install_hint(ctx, message)
+        if install_line is not None:
+            # A first-party extension command that is not installed: say how
+            # to install it (#1457); the commands the root has would not help.
+            suggestion = install_line
+        else:
+            # A missing subcommand on a group: name the commands that do exist,
+            # so the refusal points at something runnable instead of only
+            # --help.
+            names = [
+                name
+                for name in ctx.command.list_commands(ctx)
+                if not getattr(ctx.command.get_command(ctx, name), "hidden", False)
+            ]
+            if names:
+                suggestion = (
+                    f"{ctx.command_path} has: {', '.join(names)}. "
+                    f"Try '{ctx.command_path} --help' for help."
+                )
     payload = {
         "outcome": REFUSED,
         **build_error(message, "USAGE_ERROR" if is_usage else "ERROR", suggestion=suggestion),
@@ -562,11 +582,15 @@ class _BodyGuard:
         #: The format asked for, read when the body starts: the body cannot
         #: change the format its answer is printed in.
         self.format: str | None = None
+        #: The command declared ``OUTPUT_FORMAT_UNASKED`` and no format was
+        #: asked for: its outcome is printed as text, a refusal in the
+        #: default format (#1691).
+        self.unasked = False
         self._watch: _StdoutWatch | None = None
 
     def watch_body_of(self, ctx: Any) -> None:
         """Called by the shared option's callback, while click is parsing."""
-        from ..cli.output import declares_shared_format, requested_format
+        from ..cli.output import UNASKED_META_KEY, declares_shared_format, requested_format
 
         command = ctx.command
         body = getattr(command.callback, _BODY, command.callback)
@@ -577,6 +601,7 @@ class _BodyGuard:
         def entered(*args: Any, **kwargs: Any) -> Any:
             if not self.entered:
                 self.format = requested_format(ctx)
+                self.unasked = self.format is None and bool(ctx.meta.get(UNASKED_META_KEY))
             self._enter()
             self.returned = _NOT_RETURNED
             self.returned = body(*args, **kwargs)
@@ -825,7 +850,14 @@ class PyriteCLIGroup(TyperGroup):
         try:
             # Still watched: serialising a payload can print or raise too.
             try:
-                answer = self._decide(guard, fmt, result, raised)
+                answer = self._decide(
+                    guard,
+                    fmt,
+                    result,
+                    raised,
+                    self._outcome_format(guard, fmt),
+                    self._refusal_format(guard, fmt, raised),
+                )
             except KeyboardInterrupt:
                 raise
             except BaseException as exc:
@@ -854,17 +886,49 @@ class PyriteCLIGroup(TyperGroup):
         return result
 
     @staticmethod
-    def _decide(guard: _BodyGuard, fmt: str, result: Any, raised: BaseException | None) -> _Answer:
+    def _outcome_format(guard: _BodyGuard, fmt: str) -> str:
+        """The format a returned outcome is printed in: ``fmt``, unless the
+        command declared ``OUTPUT_FORMAT_UNASKED`` and no format was asked for,
+        when it is text for a person (a refusal stays in ``fmt``, #1691)."""
+        from ..cli.output import UNASKED_OUTCOME_FORMAT
+
+        return UNASKED_OUTCOME_FORMAT if guard.unasked else fmt
+
+    @staticmethod
+    def _refusal_format(guard: _BodyGuard, fmt: str, raised: BaseException | None) -> str:
+        """The format a refusal is printed in: ``fmt``, unless the command
+        declared ``OUTPUT_FORMAT_UNASKED`` and no format was asked for. Then it
+        is the shape the command printed before it joined the contract: its own
+        refusals as one ``ERROR [CODE]`` line, and a storage fault, which only
+        this root printed, in ``fmt`` (the JSON error shape) (#1691)."""
+        from ..cli.output import UNASKED_REFUSAL_FORMAT
+        from ..exceptions import StorageError
+
+        if guard.unasked and not isinstance(raised, StorageError):
+            return UNASKED_REFUSAL_FORMAT
+        return fmt
+
+    @staticmethod
+    def _decide(
+        guard: _BodyGuard,
+        fmt: str,
+        result: Any,
+        raised: BaseException | None,
+        outcome_fmt: str | None = None,
+        refusal_fmt: str | None = None,
+    ) -> _Answer:
         """The allow-list. Each branch names something accepted; the last
-        lines are everything else."""
+        lines are everything else. A refusal is printed in ``refusal_fmt``,
+        a returned outcome in ``outcome_fmt``, each ``fmt`` unless given;
+        anything else (``NO_OUTCOME``) in ``fmt``."""
         from ..cli.outcome import Outcome
 
         if isinstance(raised, KeyboardInterrupt):
             raise raised
         if isinstance(raised, PyriteError | ValueError):
-            return _error_answer(_refusal_payload(raised), fmt)
+            return _error_answer(_refusal_payload(raised), refusal_fmt or fmt)
         if raised is None and type(result) is Outcome and result is guard.returned:
-            return _outcome_answer(result, fmt)
+            return _outcome_answer(result, outcome_fmt or fmt)
 
         if raised is not None:
             logger.debug("CLI command raised %s", type(raised).__name__, exc_info=raised)

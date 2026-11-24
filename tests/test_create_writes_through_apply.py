@@ -26,6 +26,7 @@ import pytest
 from typer.testing import CliRunner
 
 from pyrite.cli import app as cli_app
+from pyrite.services.acting import local_process
 from pyrite.config import KBConfig, PyriteConfig, Settings
 from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
@@ -167,6 +168,7 @@ def test_bulk_create_writes_the_types_values(tmp_path: Path):
         assert_file_holds_the_types_values(config, repo.load(item["entry_id"]))
 
 
+@pytest.mark.control(reason="unchanged for the local process, which the test now binds")
 def test_add_entry_from_file_writes_the_types_values(tmp_path: Path):
     config = _config(tmp_path)
     src = tmp_path / "incoming.md"
@@ -174,7 +176,8 @@ def test_add_entry_from_file_writes_the_types_values(tmp_path: Path):
         "---\nid: added\ntitle: Added\ntype: note\ntags: [x]\nnote: kept\n---\n\nFrom a file.\n",
         encoding="utf-8",
     )
-    entry, _info = _with_service(config, lambda svc: svc.add_entry_from_file(KB, src))
+    with local_process():  # the CLI's `pyrite add`, the local process only
+        entry, _info = _with_service(config, lambda svc: svc.add_entry_from_file(KB, src))
     assert_file_holds_the_types_values(config, entry)
 
 
