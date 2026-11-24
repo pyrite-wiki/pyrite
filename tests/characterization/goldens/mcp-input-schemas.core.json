@@ -745,6 +745,7 @@
           },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -2286,6 +2287,7 @@
           },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
+            "minimum": 0,
             "type": "integer"
           }
         },
@@ -3405,6 +3407,7 @@
           },
           "recent_limit": {
             "description": "Number of recent entries to include (default 5)",
+            "minimum": 0,
             "type": "integer"
           }
         },

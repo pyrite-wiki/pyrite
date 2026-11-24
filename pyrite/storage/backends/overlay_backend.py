@@ -10,6 +10,7 @@ own pending edits overlaid on the shared main index.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -886,7 +887,7 @@ def _refusal(name: str, why: str) -> Exception:
     )
 
 
-def _refuse(name: str, why: str):
+def _refuse(name: str, why: str) -> Callable[..., Any]:
     def refused(*args: Any, **kwargs: Any) -> Any:
         from pyrite.exceptions import ChangeSetRecordRefusedError
 

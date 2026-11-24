@@ -369,7 +369,6 @@ UNCLASSIFIED: dict[tuple[str, str], str] = {
 NOT_YET: set[tuple[str, str]] = {
     #
     # pyrite/cli/browse_commands.py
-    ("pyrite orient", "recent"),
     #
     #
     # pyrite/cli/collection_commands.py
