@@ -1144,6 +1144,7 @@ READ_ONLY = [
     "pyrite sw epics",
     "pyrite sw log",
     "pyrite sw milestones",
+    "pyrite sw relations",
     "pyrite sw review-queue",
     "pyrite sw standards",
     "pyrite sw validations",
