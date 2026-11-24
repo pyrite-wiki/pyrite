@@ -140,7 +140,9 @@ No component doc covers the process. Paths: `.github/workflows/`,
 `tests/test_release_rehearsal.py` (the verified-commit rule at its three
 surfaces; the lookup's failure modes are one list, `tests/verified_commit_cases.py`),
 `tests/test_task_claim_concurrency.py` (the xdist-safe pattern the pre-push
-suite needs), `tests/test_readme_install_tag.py`, `tests/test_pyrite_mcp_install.py`,
+suite needs), `tests/test_readme_install_tag.py`, `tests/test_pyrite_mcp_install.py` (one version:
+`pyrite-mcp`'s version, dependency tag and README tags equal `pyproject.toml`'s; the
+release script's precondition asks the same of the requested version),
 `tests/test_readme.py`.
 
 ## Known gaps
