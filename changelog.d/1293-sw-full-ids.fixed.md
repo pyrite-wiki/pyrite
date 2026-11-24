@@ -1,1 +1,0 @@
-- `pyrite sw backlog`, `epics`, `epic`, `adrs`, and `components` now print full entry IDs in Rich output without slicing or truncation, and `sw components --format json` rows carry `id` and `kb_name` (#1293).

@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from ..services.read_shaping import IDENTITY_FIELDS
+from ..services.read_shaping import ENTRY_WARNINGS_KEY, IDENTITY_FIELDS
 
 
 def projected_columns(fields: list[str]) -> list[str]:
@@ -59,6 +59,14 @@ def projected_markdown(rows: list[dict], fields: list[str]) -> str:
         "".join("| --- " for _ in columns) + "|",
     ]
     lines.extend("| " + " | ".join(escaped(row.get(key)) for key in columns) + " |" for row in rows)
+    notes = [
+        f"> Warning ({row['id']}): {warning}" if row.get("id") else f"> Warning: {warning}"
+        for row in rows
+        for warning in (row.get(ENTRY_WARNINGS_KEY) or ())
+    ]
+    if notes:
+        lines.append("")
+        lines.extend(notes)
     return "\n".join(lines)
 
 

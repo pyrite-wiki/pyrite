@@ -25,13 +25,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import HTTPException, WebSocket
+from fastapi import WebSocket
 from starlette.requests import HTTPConnection
 
 from ..config import PyriteConfig
-from ..services.access_policy import AccessPolicy, Principal, resolve_api_key_role
+from ..services.access_policy import AccessPolicy, Principal
 from ..services.credential_events import CredentialChange
 from ..storage.database import PyriteDB
+from .client_key import client_key
 from .request_guard import request_origin_admitted
 
 logger = logging.getLogger(__name__)
@@ -58,6 +59,20 @@ CREDENTIAL_CLOSE_CODE = 1008
 EXPIRY_SWEEP_SECONDS = 60.0
 
 
+# Sockets opened with no credential (anonymous visitors) are capped: each
+# holds a connection and a scope for as long as it stays open, and nothing
+# ties it to a revocable session. Credentialed sockets are not counted.
+MAX_ANONYMOUS_SOCKETS = 100
+
+# One client's share of that budget, so a single client cannot fill it and
+# stop live updates for every other visitor. A client is keyed as the rate
+# limiter keys it (`client_key`): the hashed remote address.
+MAX_ANONYMOUS_SOCKETS_PER_CLIENT = 5
+
+# Service Restart / Try Again Later: refused for capacity, not credentials.
+CAP_CLOSE_CODE = 1013
+
+
 @dataclass
 class SocketScope:
     """What a socket may read, and the credential it was opened with.
@@ -72,6 +87,8 @@ class SocketScope:
     user_id: int | None = None
     session_hash: str | None = None
     expires_at: datetime | None = None
+    anonymous: bool = False
+    client: str | None = None  # `client_key` of an anonymous socket's remote address
 
     @property
     def revocable(self) -> bool:
@@ -156,50 +173,49 @@ def resolve_socket_scope(conn: HTTPConnection, config: PyriteConfig, db: PyriteD
     session that admitted it, if any.
 
     Synchronous and may touch the DB (session lookup, grants): run it off the
-    event loop. Outcomes match REST's ``verify_api_key``:
+    event loop. The credential is decided by the one resolver REST and
+    ``/mcp`` ask (``server/credentials.py``, #1754), reading the ``api_key``
+    query parameter too, since a browser cannot set headers on a WebSocket:
 
-    - an operator API key (header, or the ``api_key`` query parameter, since
-      a browser cannot set headers on a WebSocket) -- unscoped;
+    - an operator API key -- unscoped;
     - a valid session (cookie, or Bearer) -- scoped to that user;
-    - no usable credential, auth enabled with an ``anonymous_tier`` -- scoped
-      to what an anonymous visitor may read;
     - auth disabled and no keys configured -- unscoped (the default local
       install, unchanged);
+    - a credential presented that does not verify -- ``HandshakeRejectedError``,
+      whatever ``anonymous_tier`` says;
+    - no credential, auth enabled with an ``anonymous_tier`` -- scoped to what
+      an anonymous visitor may read;
     - otherwise ``HandshakeRejectedError``.
 
-    Identity comes from ``mcp_routes._resolve_credential`` and the rule from
-    the access policy (``AccessPolicy.read_scope``) -- no third
-    implementation of either.
+    The rule comes from the access policy (``AccessPolicy.read_scope``) -- no
+    second implementation of either.
     """
-    from .mcp_routes import _resolve_credential
+    from .credentials import Outcome, resolve_credential
 
     settings = config.settings
     policy = AccessPolicy(config, db)
+    resolution = resolve_credential(conn, config, policy, query_key=True)
 
-    # An operator key, which `resolve_api_key_role` accepts only when keys are
-    # configured or auth is disabled (#331).
-    key = conn.query_params.get("api_key")
-    if key and resolve_api_key_role(key, config) is not None:
-        return SocketScope(readable=None)
-
-    try:
-        ctx = _resolve_credential(conn, config, db, policy)
-    except HTTPException:
-        ctx = None
-
-    if ctx is not None and ctx.get("user_id") is not None:
-        return SocketScope(
-            readable=policy.read_scope(Principal.user(ctx["user_id"], ctx["role"])).as_set(),
-            user_id=ctx["user_id"],
-            session_hash=ctx.get("session_hash"),
-            expires_at=ctx.get("session_expires_at"),
-        )
-    if ctx is not None:
+    if resolution.outcome is Outcome.VERIFIED:
+        ctx = resolution.principal
+        if ctx.get("user_id") is not None:
+            return SocketScope(
+                readable=policy.read_scope(Principal.user(ctx["user_id"], ctx["role"])).as_set(),
+                user_id=ctx["user_id"],
+                session_hash=ctx.get("session_hash"),
+                expires_at=ctx.get("session_expires_at"),
+            )
         return SocketScope(readable=None)  # an operator key, or auth disabled with no keys
 
-    if settings.auth.enabled and settings.auth.anonymous_tier:
+    if (
+        resolution.outcome is Outcome.NONE
+        and settings.auth.enabled
+        and settings.auth.anonymous_tier
+    ):
         return SocketScope(
-            readable=policy.read_scope(Principal.anonymous(settings.auth.anonymous_tier)).as_set()
+            readable=policy.read_scope(Principal.anonymous(settings.auth.anonymous_tier)).as_set(),
+            anonymous=True,
+            client=client_key(conn),
         )
     raise HandshakeRejectedError
 
@@ -235,10 +251,21 @@ class ConnectionManager:
         check and the registration have no ``await`` between them, so no
         change can slip past both.
         """
+        if self._anonymous_full(scope):
+            logger.info(
+                "Refused /ws: an anonymous socket limit is reached (%d anonymous sockets open)",
+                self.anonymous_count,
+            )
+            await ws.close(code=CAP_CLOSE_CODE)
+            return False
         await ws.accept()
         if epoch is not None and self._epochs.stale(scope, epoch):
             logger.info("Closed /ws: its scope changed during the handshake")
             await self._close_quietly(ws)
+            return False
+        if self._anonymous_full(scope):
+            # Handshakes that were all under way when the cap was reached.
+            await self._close_quietly(ws, code=CAP_CLOSE_CODE, reason="too many connections")
             return False
         self._connections[ws] = scope
         logger.debug("WebSocket connected, total: %d", len(self._connections))
@@ -280,9 +307,11 @@ class ConnectionManager:
         task.add_done_callback(self._pending_closes.discard)
 
     @staticmethod
-    async def _close_quietly(ws: WebSocket) -> None:
+    async def _close_quietly(
+        ws: WebSocket, code: int = CREDENTIAL_CLOSE_CODE, reason: str = "credential changed"
+    ) -> None:
         try:
-            await ws.close(code=CREDENTIAL_CLOSE_CODE, reason="credential changed")
+            await ws.close(code=code, reason=reason)
         except Exception:
             # Already gone: the client closed first, or the send failed.
             logger.debug("Close of a revoked socket failed", exc_info=True)
@@ -325,6 +354,24 @@ class ConnectionManager:
         for ws in expired:
             if ws in self._connections:
                 self._close(ws)
+
+    def _anonymous_full(self, scope: SocketScope) -> bool:
+        """Is the anonymous budget spent, or this scope's client's share of it?
+        A scope with no client key (a test double) has no share."""
+        if not scope.anonymous:
+            return False
+        if self.anonymous_count >= MAX_ANONYMOUS_SOCKETS:
+            return True
+        if scope.client is None:
+            return False
+        held = sum(
+            1 for c in self._connections.values() if c.anonymous and c.client == scope.client
+        )
+        return held >= MAX_ANONYMOUS_SOCKETS_PER_CLIENT
+
+    @property
+    def anonymous_count(self) -> int:
+        return sum(1 for scope in self._connections.values() if scope.anonymous)
 
     @property
     def connection_count(self) -> int:

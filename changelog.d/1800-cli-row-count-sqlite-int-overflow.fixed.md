@@ -1,0 +1,1 @@
+- Reject row-count limit and offset option values exceeding SQLite's 64-bit integer range as usage errors (#1800).

@@ -214,7 +214,13 @@ def seeded_kbs(seeded_data_dir) -> list[dict]:
 @pytest.fixture(scope="module")
 def live_server(seeded_data_dir, seeded_kbs):
     """A `pyrite-server` process serving the seeded KB, torn down after."""
-    server = start_server(seeded_data_dir, kbs=seeded_kbs)
+    # Since 0.26.2 a network caller may register a KB path only under a
+    # configured kb_root (fail closed); the data dir is the one folder this
+    # server accepts new KBs in. The refusal with no roots is pinned by
+    # tests/test_kb_roots_limit_network_registration.py.
+    server = start_server(
+        seeded_data_dir, kbs=seeded_kbs, settings={"kb_roots": [str(seeded_data_dir)]}
+    )
     # wait=true: without it the endpoint queues a background job and returns
     # immediately, so a search right after would race the indexer.
     resp = server.client.post("/api/index/sync?wait=true")

@@ -209,7 +209,7 @@ class TestToAgentSchema:
     def test_core_types_include_metadata(self):
         """to_agent_schema() should include metadata for core types."""
         schema = KBSchema()
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         for type_name in CORE_TYPES:
             type_info = agent["types"][type_name]
             assert "ai_instructions" in type_info, f"{type_name}: missing ai_instructions"
@@ -230,7 +230,7 @@ class TestToAgentSchema:
                 }
             }
         )
-        agent = schema.to_agent_schema()
+        agent = schema.to_agent_schema(kb_type="generic")
         custom = agent["types"]["custom"]
         assert custom["ai_instructions"] == "Custom instructions"
         assert custom["field_descriptions"] == {"x": "The x field"}

@@ -8,6 +8,8 @@ from pyrite_journalism_investigation.ftm import (
     pyrite_to_ftm,
 )
 
+from pyrite.config import KBConfig, PyriteConfig, Settings
+from pyrite.services.kb_service import KBService
 from pyrite.storage.database import PyriteDB
 
 # =========================================================================
@@ -16,13 +18,23 @@ from pyrite.storage.database import PyriteDB
 
 
 @pytest.fixture
-def db(tmp_path):
+def svc(tmp_path):
+    """A KBService over one investigation KB: the batch writes go through it."""
     kb_path = tmp_path / "test-kb"
     kb_path.mkdir()
+    config = PyriteConfig(
+        knowledge_bases=[KBConfig(name="test", path=kb_path, kb_type="journalism-investigation")],
+        settings=Settings(index_path=tmp_path / "index.db"),
+    )
     db = PyriteDB(tmp_path / "index.db")
     db.register_kb("test", "journalism-investigation", str(kb_path))
-    yield db
+    yield KBService(config, db)
     db.close()
+
+
+@pytest.fixture
+def db(svc):
+    return svc.db
 
 
 # =========================================================================
@@ -399,7 +411,7 @@ class TestPyriteToFtm:
 
 
 class TestImportFtm:
-    def test_import_batch(self, db):
+    def test_import_batch(self, svc, db):
         """Import a batch of FtM entities into the KB."""
         entities = [
             {
@@ -424,7 +436,7 @@ class TestImportFtm:
                 },
             },
         ]
-        result = import_ftm(db, "test", entities)
+        result = import_ftm(svc, "test", entities)
         assert result["imported"] == 3
         assert result["skipped"] == 0
         assert result["unmapped"] == 0
@@ -436,37 +448,37 @@ class TestImportFtm:
         assert entry is not None
         assert entry["title"] == "Alice"
 
-    def test_import_skips_unmapped_schemas(self, db):
+    def test_import_skips_unmapped_schemas(self, svc, db):
         """Unmappable schemas are skipped and counted."""
         entities = [
             {"id": "p-1", "schema": "Person", "properties": {"name": ["Alice"]}},
             {"id": "x-1", "schema": "Airplane", "properties": {"name": ["Jet"]}},
         ]
-        result = import_ftm(db, "test", entities)
+        result = import_ftm(svc, "test", entities)
         assert result["imported"] == 1
         assert result["unmapped"] == 1
         assert "Airplane" in result["unmapped_schemas"]
 
-    def test_import_skips_duplicates(self, db):
+    def test_import_skips_duplicates(self, svc, db):
         """Entities with existing IDs are skipped."""
         entities = [
             {"id": "p-1", "schema": "Person", "properties": {"name": ["Alice"]}},
         ]
         # First import
-        result1 = import_ftm(db, "test", entities)
+        result1 = import_ftm(svc, "test", entities)
         assert result1["imported"] == 1
 
         # Second import — duplicate
-        result2 = import_ftm(db, "test", entities)
+        result2 = import_ftm(svc, "test", entities)
         assert result2["imported"] == 0
         assert result2["skipped"] == 1
 
-    def test_import_dry_run(self, db):
+    def test_import_dry_run(self, svc, db):
         """Dry run reports what would happen without persisting."""
         entities = [
             {"id": "p-1", "schema": "Person", "properties": {"name": ["Alice"]}},
         ]
-        result = import_ftm(db, "test", entities, dry_run=True)
+        result = import_ftm(svc, "test", entities, dry_run=True)
         assert result["imported"] == 1  # count of what would be imported
         assert len(result["entries"]) == 1
         assert result["entries"][0]["status"] == "would_import"

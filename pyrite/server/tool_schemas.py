@@ -16,6 +16,7 @@ deployment whose ceiling is 20,000 has been misled by its own tool schema.
 import copy
 from typing import Any
 
+from ..models.task import TASK_STATUSES
 from ..services.search_service import HOW_TO_READ_MATCH
 
 
@@ -49,7 +50,7 @@ READ_TOOLS = {
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "kb_search": {
-        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
+        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "searched", the entry parts the legs that ran read ([] when none ran; a semantic-only search lists "body_prefix" with "body_prefix_chars": only the start of a body is embedded; tags and field values are not indexed, so a miss on one is not an absence; the contract is item 11 in the docstring of SearchService.search); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
         + HOW_TO_READ_MATCH
         + ' "none" is only said when the search ran as asked: if the semantic leg did not run the verdict is weak at worst. The results are returned whatever the verdict, and the verdict is the same on every page. The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
         "inputSchema": {
@@ -251,10 +252,12 @@ READ_TOOLS = {
                 },
                 "limit": {
                     "type": "integer",
+                    "minimum": 1,
                     "description": "Maximum tags to return (default 100)",
                 },
                 "offset": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Pagination offset (default 0)",
                 },
             },
@@ -434,13 +437,30 @@ READ_TOOLS = {
         },
     },
     "kb_recent": {
-        "description": "Get recently changed entries. Use to see what's new or changed in a KB. Thin wrapper over list-entries sorted by updated_at desc.",
+        "description": (
+            "Get recently changed entries, newest first, with list pagination. "
+            "`since` bounds updated_at (inclusive) before `limit` applies: the answer "
+            "holds up to `limit` entries updated at or after it, `has_more` says whether "
+            "more of them exist, and `offset` fetches the next page. Deleted entries are "
+            "not reported. `updated_at` is the time Pyrite last indexed the entry until "
+            "#670 lands."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kb_name": {"type": "string", "description": "KB to query (optional)"},
                 "entry_type": {"type": "string", "description": "Filter by entry type"},
-                "limit": {"type": "integer", "description": "Max entries to return (default 20)"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "Max entries to return (default 20, max 200)",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Pagination offset into the entries matching the filters (default 0)",
+                },
                 "since": {
                     "type": "string",
                     "description": (
@@ -614,15 +634,7 @@ READ_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name (optional)"},
                 "status": {
                     "type": "string",
-                    "enum": [
-                        "open",
-                        "claimed",
-                        "in_progress",
-                        "blocked",
-                        "review",
-                        "done",
-                        "failed",
-                    ],
+                    "enum": list(TASK_STATUSES),
                     "description": "Filter by task status",
                 },
                 "assignee": {
@@ -632,6 +644,27 @@ READ_TOOLS = {
                 "parent": {
                     "type": "string",
                     "description": "Filter by parent task ID",
+                },
+                "dispatchable": {
+                    "type": "boolean",
+                    "description": "Only tasks a worker can take now (for a caller who may claim, "
+                    "each one is a task_claim accepts): open, unassigned, unparked, "
+                    "dependencies resolved, no children; highest priority first, then oldest. "
+                    "Adds `counts` (per reason) and `excluded` (each open task left out, with "
+                    "its reason).",
+                },
+                "parked": {
+                    "type": "boolean",
+                    "description": "true: only parked tasks (parked_awaiting or retest_after "
+                    "set, due rechecks and person parks included); false: only unparked ones. "
+                    "Rows gain park_kind, retest_after and park_state "
+                    "(none/parked/due/person).",
+                },
+                "fields": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Return only these fields per task. `id` and `kb_name` are "
+                    "always included.",
                 },
             },
             "required": [],
@@ -798,7 +831,7 @@ WRITE_TOOLS = {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Participants involved (for events)",
+                    "description": "Participants involved (for events; written to the file as `actors`)",
                 },
                 "role": {
                     "type": "string",
@@ -814,10 +847,17 @@ WRITE_TOOLS = {
                 },
                 "allow_undeclared": {
                     "type": "boolean",
-                    "description": "Allow an entry_type the KB's kb.yaml does not declare (refused otherwise, core types included). The entry will be flagged by index health.",
+                    "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
                 },
             },
             "required": ["kb_name", "entry_type", "title"],
+            # A type's own fields (an event's `actors`, an ADR's `status`) are
+            # top-level arguments: `metadata.k` is only a second spelling of
+            # field `k` (#994, decision A). They depend on entry_type, so this
+            # schema cannot list them, and the dispatcher's unknown-key refusal
+            # skips this tool (#1758). Refusing a key the TYPE does not declare
+            # (`fields`, #1522) is the write pipeline's to decide.
+            "additionalProperties": True,
         },
     },
     "kb_bulk_create": {
@@ -861,7 +901,7 @@ WRITE_TOOLS = {
                 },
                 "allow_undeclared": {
                     "type": "boolean",
-                    "description": "Allow entry types the KB's kb.yaml does not declare (each such item is refused otherwise).",
+                    "description": "Allow an entry_type the KB does not declare. Only a KB whose kb.yaml declares types refuses others (core types included); `pyrite index health` then lists the entry. A KB that declares no types accepts any type.",
                 },
             },
             "required": ["kb_name", "entries"],
@@ -885,7 +925,7 @@ WRITE_TOOLS = {
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Participants involved (for events)",
+                    "description": "Participants involved (for events; written to the file as `actors`)",
                 },
                 "metadata": {
                     "type": "object",
@@ -917,6 +957,11 @@ WRITE_TOOLS = {
                 },
             },
             "required": ["entry_id", "kb_name"],
+            # A field the entry type does not declare is stored as a custom
+            # field (see the description), so any top-level key is an
+            # argument: the dispatcher's unknown-key refusal skips this tool
+            # (#1758).
+            "additionalProperties": True,
         },
     },
     "kb_delete": {
@@ -984,7 +1029,7 @@ WRITE_TOOLS = {
                 },
                 "assignee": {
                     "type": "string",
-                    "description": "Assignee (e.g. agent:claude-code-7a3f)",
+                    "description": "Assignee, optional; over a signed-in session it must be you (leave it out; any other value is refused) (e.g. agent:claude-code-7a3f)",
                 },
                 "body": {"type": "string", "description": "Task description"},
                 "dependencies": {
@@ -997,12 +1042,41 @@ WRITE_TOOLS = {
                     "items": {"type": "string"},
                     "description": "Tags for the new task",
                 },
+                "due_date": {
+                    "type": "string",
+                    "description": "Due date in YYYY-MM-DD format. Enables kb_find_overdue to detect past-due tasks.",
+                },
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": {
+                                "type": "string",
+                                "description": "Target entry ID",
+                            },
+                            "relation": {
+                                "type": "string",
+                                "description": "Relationship type (default: related_to)",
+                            },
+                        },
+                        "required": ["target"],
+                        "additionalProperties": False,
+                    },
+                    "description": "Links to other entries. Each link is {target, relation?}. Added after the task is created; a link whose target does not exist fails individually without rejecting the task.",
+                },
             },
             "required": ["kb_name", "title"],
         },
     },
     "task_update": {
-        "description": "Update task fields (status, assignee, priority).",
+        "description": (
+            "Update task fields (status, assignee, priority). Allowed status transitions: "
+            "open -> claimed (use task_claim) -> in_progress -> done / failed / blocked / review; "
+            "blocked and review back to in_progress; "
+            "cancelled from any unfinished state (open, claimed, in_progress, blocked, review); "
+            "failed -> open needs a reason."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1010,18 +1084,13 @@ WRITE_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name"},
                 "status": {
                     "type": "string",
-                    "enum": [
-                        "open",
-                        "claimed",
-                        "in_progress",
-                        "blocked",
-                        "review",
-                        "done",
-                        "failed",
-                    ],
+                    "enum": list(TASK_STATUSES),
                     "description": "New status",
                 },
-                "assignee": {"type": "string", "description": "New assignee"},
+                "assignee": {
+                    "type": "string",
+                    "description": "New assignee; over a signed-in session it must be you (leave it out; any other value is refused); empty clears it",
+                },
                 "priority": {
                     "type": "integer",
                     "description": "New priority 1-10",
@@ -1041,10 +1110,126 @@ WRITE_TOOLS = {
                 "kb_name": {"type": "string", "description": "KB name"},
                 "assignee": {
                     "type": "string",
-                    "description": "Assignee (e.g. agent:claude-code-7a3f)",
+                    "description": "Who claims the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
                 },
             },
-            "required": ["task_id", "kb_name", "assignee"],
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_start": {
+        "description": (
+            "Claim and start an open task in one atomic write: open -> claimed -> in_progress, "
+            "both edges recorded in its status_change_log. Decided by the same compare-and-set "
+            "as task_claim: a lost start returns claimed=false and current_status, and changes "
+            "nothing. A task you already claimed is moved on to in_progress. Returns the task "
+            "with its body and its parent {id, title, body}."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "assignee": {
+                    "type": "string",
+                    "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_park": {
+        "description": (
+            "Park a task: what it waits on (reason), who must act (kind: person keeps it from "
+            "agents; external, the default, gives it back on its date) and when to recheck "
+            "(retest_after, YYYY-MM-DD). One write; a new park replaces the old one; the status "
+            "does not change. A task another caller holds is refused unless you hold it or pass "
+            "the operator override; a done or cancelled task is not parked. task_list dispatchable leaves it out until the date, then lists it "
+            "with recheck: true (or under due_rechecks when it is not open)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "reason": {"type": "string", "description": "What the task waits on"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["person", "external"],
+                    "description": "person: a person must act, never handed back to agents; "
+                    "external (default): the world, back to agents on retest_after",
+                },
+                "retest_after": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD: from this date an external park is due",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+                },
+            },
+            "required": ["task_id", "kb_name", "reason"],
+        },
+    },
+    "task_unpark": {
+        "description": (
+            "Unpark a task: remove parked_awaiting, park_kind and retest_after (the keys, never "
+            "an empty value) in one write. The status does not change; a task that is not parked "
+            "is left as it is (removed: []). A task another caller holds is refused unless you "
+            "hold it or pass the operator override."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "by": {
+                    "type": "string",
+                    "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_finish": {
+        "description": (
+            "Move a held task to done in one write, recording one status_change_log item per "
+            "edge. Finish requires the caller to hold the task (be its assignee); operators have "
+            "an explicit override (operator_override). Without walk only a direct edge (in_progress -> done, review -> done); with "
+            "walk=true it passes through every intermediate state of the task workflow (claimed -> "
+            "in_progress -> done, blocked -> in_progress -> done). A refusal names the path."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "walk": {
+                    "type": "boolean",
+                    "description": "Pass through every intermediate state of the task workflow to done (the KB's declared state_machine where it has one, else the core table)",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Reason for the change: set as status_reason and on each log item",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Who is finishing it; finish requires the caller to hold the task (be its assignee). Over a signed-in session it must be you (leave it out: you are the caller); with no signed-in user, name the holder",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "Operators only (an operator key, stdio): finish a task the caller does not hold; recorded as by: operator, override: true. Never implied",
+                },
+            },
+            "required": ["task_id", "kb_name"],
         },
     },
     "task_decompose": {
@@ -1062,7 +1247,10 @@ WRITE_TOOLS = {
                             "title": {"type": "string"},
                             "body": {"type": "string"},
                             "priority": {"type": "integer", "minimum": 1, "maximum": 10},
-                            "assignee": {"type": "string"},
+                            "assignee": {
+                                "type": "string",
+                                "description": "Optional; over a signed-in session it must be you",
+                            },
                         },
                         "required": ["title"],
                     },
@@ -1146,6 +1334,18 @@ ADMIN_TOOLS = {
                     "type": "boolean",
                     "description": "Run in background (returns job_id for polling). Default: false",
                     "default": False,
+                },
+                "confirm": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "After the sync, say for each entry id or KB-relative path whether it is "
+                        "indexed and searchable: a `confirm` block with one row per name (status "
+                        "indexed, not_indexed, not_found, malformed, duplicate or skipped; schema "
+                        "findings; embedding embedded, queued or unavailable) and `outcome` done "
+                        "or partial. An empty list confirms every entry the sync added or changed. "
+                        "Needs kb_name; refused with background."
+                    ),
                 },
             },
             "required": [],
@@ -1277,3 +1477,10 @@ ADMIN_TOOLS = {
         },
     },
 }
+
+#: Every name the core registers, at any tier. A plugin tool under one of
+#: these names is refused at registration (ADR-0040 §3): the core tool,
+#: with its tier and its scoping, is the one served.
+CORE_TOOL_NAMES: frozenset[str] = (
+    frozenset(READ_TOOLS) | frozenset(WRITE_TOOLS) | frozenset(ADMIN_TOOLS)
+)

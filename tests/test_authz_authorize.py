@@ -109,15 +109,17 @@ def test_one_declaration_is_one_dependency():
     declares it on its router and again as a parameter runs it once and the
     §5 guard counts it once."""
     assert authz.authorize(Action.KB_READ, KB) is authz.authorize(Action.KB_READ, KB)
+    assert authz.authorize(Action.KB_WRITE, KB) is authz.authorize(Action.KB_WRITE, KB)
     assert authz.authorize(Action.KB_READ, KB) is not authz.authorize(Action.KB_READ, AnyKB)
+    assert authz.authorize(Action.KB_WRITE, KB) is not authz.authorize(Action.KB_READ, KB)
 
 
 @pytest.mark.parametrize(
     ("action", "resource"),
-    [(Action.KB_WRITE, KB), (Action.INSTANCE_ADMIN, AnyKB), (Action.KB_READ, Row)],
+    [(Action.INSTANCE_ADMIN, AnyKB), (Action.KB_READ, Row)],
 )
 def test_a_declaration_this_theme_does_not_decide_fails_when_declared(action, resource):
-    """Writes (3b) and instance routes (3c) are not decided here yet: asking
+    """Row-resolved writes and instance routes (3c) are not decided here yet: asking
     for one fails when the route is declared, never on a request."""
     with pytest.raises(NotImplementedError):
         authz.authorize(action, resource)

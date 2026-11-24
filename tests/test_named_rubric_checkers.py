@@ -250,7 +250,7 @@ def test_cli_reports_misconfigured_checkers(tmp_path):
         assert checker in issue["message"]
         assert detail in issue["message"]
         assert item in issue["message"]
-        assert "ValueError" in issue["message"]
+        assert "Error" not in issue["message"]  # the checker's own words, no class name
     violations = [issue for issue in result["issues"] if issue["rule"] == "rubric_violation"]
     assert [issue["rubric_item"] for issue in violations] == ["Has a Problem section"]
     assert before == {path.name: path.read_bytes() for path in kb.iterdir()}

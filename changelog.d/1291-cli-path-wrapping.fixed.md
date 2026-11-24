@@ -1,1 +1,0 @@
-- CLI path labels and file lists keep long paths on a single line, including spaces and literal brackets, across the core and extension CLIs (#1291).

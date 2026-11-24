@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from ..services.read_shaping import ENTRY_WARNINGS_KEY
 from .tabular import projected_markdown, projected_rows
 
 
@@ -53,8 +54,13 @@ def _entry_to_markdown(entry: dict) -> str:
                 value = CommentedSeq(value)
                 value.fa.set_flow_style()
             header[key] = value
+    yaml_block = dump_yaml(header)
+    warnings = entry.get(ENTRY_WARNINGS_KEY) or ()
+    if warnings:
+        comments = "\n".join(f"# Warning: {' '.join(str(w).splitlines())}" for w in warnings)
+        yaml_block = f"{yaml_block}\n{comments}" if yaml_block else comments
     body = entry.get("body") or ""
-    return "---\n" + dump_yaml(header) + "\n---\n\n" + body
+    return f"---\n{yaml_block}\n---\n\n{body}"
 
 
 def _entry_list_to_markdown(data: dict) -> str:
@@ -68,6 +74,8 @@ def _entry_list_to_markdown(data: dict) -> str:
             if e.get("tags"):
                 tags = e["tags"] if isinstance(e["tags"], list) else [e["tags"]]
                 lines.append(f"Tags: {', '.join(tags)}")
+            for warning in e.get(ENTRY_WARNINGS_KEY) or ():
+                lines.append(f"Warning: {warning}")
             lines.append("")
     return "\n".join(lines)
 
@@ -83,6 +91,8 @@ def _search_results_to_markdown(data: dict) -> str:
             lines.append(f"- **{r.get('title', r.get('id', ''))}** ({r.get('kb_name', '')})")
             if r.get("snippet"):
                 lines.append(f"  {r['snippet']}")
+            for warning in r.get(ENTRY_WARNINGS_KEY) or ():
+                lines.append(f"  Warning: {warning}")
     return "\n".join(lines)
 
 

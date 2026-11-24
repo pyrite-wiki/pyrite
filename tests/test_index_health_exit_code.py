@@ -92,6 +92,28 @@ class TestEveryHealthKeyIsDocumented:
             "stale rows": sorted(rows - reported),
         }
 
+    def test_removed_extensions_action_does_not_suggest_reinstall(self):
+        """The removed extension cannot be reinstalled (#1477).
+
+        The action must advise changing kb_type or declaring the types in kb.yaml,
+        and not advise reinstalling an extension that no longer exists.
+        """
+        docs = (Path(__file__).resolve().parent.parent / "docs" / "json-contracts.md").read_text(
+            encoding="utf-8"
+        )
+        section = docs.split("**`index health` keys.**", 1)[1].split("\n**", 1)[0]
+        action = None
+        for line in section.splitlines():
+            if line.startswith("| `removed_extensions` |"):
+                parts = [p.strip() for p in line.split("|")]
+                action = parts[4]
+                break
+
+        assert action is not None, "removed_extensions row not found in index health table"
+        assert "reinstall" not in action.lower()
+        assert "kb_type" in action
+        assert "`types:`" in action
+
 
 class TestExitCodeReflectsStatus:
     def test_healthy_index_exits_zero(self, two_kb_env):
@@ -384,6 +406,33 @@ class TestFolderTheProcessCannotSearch:
             assert data["unreadable_files"][0]["error"].startswith("PermissionError")
             assert data["status"] == "unhealthy"
             assert result.exit_code == 1
+        finally:
+            sub.chmod(0o755)
+
+    @pytest.mark.parametrize("mode", [0o600, 0o000], ids=["no-search-bit", "no-access"])
+    def test_the_kbs_presence_probe_does_not_call_an_unreachable_file_absent(self, tmp_path, mode):
+        """`KBFiles.present` answers "could not tell" where the path cannot be
+        searched, as one typed error (#1542), never "absent": that would make
+        index health report the file missing. Python 3.11 and 3.12 walk past
+        the folder silently, so on them this probe is the only place the
+        folder is noticed; `os.path.exists` answers False for it on every
+        version."""
+        import os
+
+        from pyrite.exceptions import PyriteError
+        from pyrite.utils.kb_files import KBFiles
+
+        sub = tmp_path / "sub"
+        sub.mkdir()
+        (sub / "d.md").write_text("d\n", encoding="utf-8")
+        sub.chmod(mode)
+        try:
+            if os.access(sub / "d.md", os.R_OK):
+                pytest.skip(f"running as a user that can read through a mode-{mode:o} folder")
+            with pytest.raises(PyriteError) as caught:
+                KBFiles(tmp_path).present(sub / "d.md")
+            assert type(caught.value).__name__ == "KBPresenceUnknownError"
+            assert KBFiles(tmp_path).present(tmp_path / "gone.md") is False
         finally:
             sub.chmod(0o755)
 

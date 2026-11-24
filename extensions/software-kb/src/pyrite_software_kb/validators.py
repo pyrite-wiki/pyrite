@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Any
 
+from pyrite.services.acting import is_local_process
+
 from .entry_types import (
     ADR_STATUSES,
     BACKLOG_EFFORTS,
@@ -154,7 +156,11 @@ def _validate_component(
                 "severity": "warning",
             }
         )
-    elif context and context.get("kb_path"):
+    elif context and context.get("kb_path") and is_local_process():
+        # Only for the operator's own process (ADR-0052 N4). ``path:`` is
+        # entry data and may name any place on the server's disk (absolute,
+        # or ``..`` out of the KB): whether it exists is not the KB's to say
+        # to a network caller, who gets no ``path`` finding either way.
         kb_root = Path(context["kb_path"])
         found = False
         # Walk up from KB root (max 4 levels) since component paths

@@ -113,7 +113,14 @@ class MyExtensionPlugin:
                 "locates_entry": {"id_args": ["item_id"], "entry_type": "my_type"},
                 "handler": self._mcp_item_handler,  # args["kb_name"] is set
             }
+        # Names are `<prefix>_*`: a core tool's name, or one another plugin
+        # registered first, is refused at registration.
         return tools
+
+    # A tool that records a person (who voted, reviewed, claimed) declares the
+    # argument in its tool dict: `PERSON_ARGUMENTS: {"who": CALLER}` from
+    # `pyrite.plugins.identity` (alpha). The dispatcher sets it from the
+    # session before the handler runs; the handler just reads `args["who"]`.
 
     def get_relationship_types(self) -> dict[str, dict]:
         return {
@@ -169,6 +176,18 @@ class MyExtensionPlugin:
         """Receive PluginContext with DB, config, services."""
         self._ctx = ctx
 ```
+
+### MCP write tools work in `kb_name`: `default_kb`
+
+A plugin tool registered above the read tier reads its KB from
+`args["kb_name"]` and nowhere else; the dispatcher sets it to a KB its read,
+write, read-only and landing checks ran on, or refuses the call.
+A tool whose KB may be omitted declares `"default_kb": self._default_kb` beside
+its `handler`: `(args, readable_kbs) -> str | None`, asked **before** the
+checks, answering only with a KB in `readable_kbs` (None means unscoped). No
+answer, and a call with no `kb_name` is refused. Never fall back to a default
+inside the handler. `tests/test_plugin_write_tools_work_in_the_checked_kb.py`
+drives every registered plugin write tool under every KB argument name.
 
 ### MCP tools that take an entry id: `locates_entry`
 

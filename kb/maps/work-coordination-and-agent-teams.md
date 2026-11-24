@@ -90,8 +90,8 @@ Components [[task-service]], [[software-kb-extension]], [[rubric-checkers]],
 - Leases, `retention`, the link rule and the state-table registry are
   [[adr-0029]] work for 0.26 and absent; stale-claim handling still relies on
   the maintainer's orchestration loop (outside this repo).
-- Hooks write parent status and `unblock_dependents` and evidence aggregation
-  have no callers outside tests; ADR-0045 makes them derived (accepted).
+- Hooks write parent status; `unblock_dependents` and evidence aggregation were
+  removed in 0.26.6 (#1847) and ADR-0045 makes them derived (accepted).
 - The `status:` word names three things across [[adr-0028]], [[adr-0020]] and a
   milestone ([[adr-0030]] open question 1).
 - The alpha supported-surface entry (proposed) marks `task` and the `task_*`

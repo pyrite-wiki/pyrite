@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from ..exceptions import PyriteError, ValidationError
+from ..exceptions import KBReadOnlyError, PyriteError, ValidationError
 from ..utils.errors import cli_error, cli_error_from
 from .context import cli_context
 from .output import output_format_choice
@@ -123,7 +123,10 @@ def _pin(kb_config, kb_name: str, rename: list[str], output_format: str, *, writ
     except ValidationError as e:
         cli_error(str(e), _err_format(output_format), error_code="INVALID_RENAME")
     if write:
-        return id_pin_service.apply(found, the_plan)
+        try:
+            return id_pin_service.apply(found, the_plan)
+        except KBReadOnlyError as e:
+            cli_error_from(e, _err_format(output_format))
     return id_pin_service.check(found, the_plan)
 
 

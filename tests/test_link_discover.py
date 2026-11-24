@@ -305,3 +305,29 @@ class TestDiscoverCLI:
             app, ["links", "discover", "nonexistent", "-k", "kb-a", "--format", "json"]
         )
         assert result.exit_code == 1
+
+    @pytest.mark.parametrize("bad_limit", ["0", "-1"])
+    def test_cli_discover_limit_below_one_is_usage_error(
+        self, discover_env, monkeypatch, bad_limit
+    ):
+        monkeypatch.setattr(
+            "pyrite.cli.link_commands.get_config_and_db",
+            lambda: (discover_env["config"], discover_env["db"]),
+        )
+        # Prevent db.close() from being called by the function
+        discover_env["db"].close = lambda: None
+
+        result = runner.invoke(
+            app,
+            [
+                "links",
+                "discover",
+                "trust-mechanisms",
+                "-k",
+                "kb-a",
+                "--limit",
+                bad_limit,
+            ],
+        )
+        assert result.exit_code == 2
+        assert "Invalid value for '--limit'" in result.output

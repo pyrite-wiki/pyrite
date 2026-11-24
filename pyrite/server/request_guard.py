@@ -139,10 +139,14 @@ def cookie_authenticated(conn: HTTPConnection, config: PyriteConfig) -> bool:
     """Could this request be authenticated by the session cookie?
 
     True when it carries the session cookie, unless an ``X-API-Key`` header
-    authenticates it first -- REST and ``/mcp`` both try that header before
-    the cookie, and a page cannot set it on a cross-origin request without a
-    CORS preflight. A key that does not resolve falls through to the cookie,
-    so it exempts nothing. Other key locations do not exempt: the
+    authenticates it first -- REST and ``/mcp`` both read that header before
+    the cookie (``server/credentials.py``), and a page cannot set it on a
+    cross-origin request without a CORS preflight. A key that does not
+    resolve exempts nothing: it no longer falls through to the cookie, the
+    request is refused with 401 on its own account (#1754), and this guard
+    still treats the request as cookie-signed-in. Other key locations do not
+    exempt (an ``Authorization: Bearer`` key is read before ``X-API-Key`` but
+    is not an exemption here, which only makes this guard stricter): the
     ``api_key`` query parameter is one a foreign page can put in a URL, and
     ``/mcp`` would still authenticate such a request by its cookie. The
     cookie itself is not verified here: a request that carries one is

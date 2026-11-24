@@ -363,16 +363,28 @@ STANDARD = (
 @pytest.fixture
 def software_plugin():
     pytest.importorskip("pyrite_software_kb.cli")
-    from pyrite.plugins.registry import PluginRegistry
+    from pyrite.plugins import get_registry
     from pyrite_software_kb.plugin import SoftwareKBPlugin
 
-    PluginRegistry().register(SoftwareKBPlugin())
+    registry = get_registry()
+    plugin = SoftwareKBPlugin()
+    previous = registry._plugins.get(plugin.name)
+    registry.register(plugin)
+    cli_app._plugins_mounted = False
+    try:
+        yield plugin
+    finally:
+        if previous is None:
+            registry._plugins.pop(plugin.name, None)
+        else:
+            registry._plugins[plugin.name] = previous
+        cli_app._plugins_mounted = False
 
 
-def _migrate_standards(config: PyriteConfig) -> str:
+def _migrate_standards(config: PyriteConfig, *, exit_code: int = 0) -> str:
     with patch("pyrite_software_kb.cli.load_config", return_value=config):
         result = CliRunner().invoke(cli_app, ["sw", "migrate-standards", "--apply", "-k", KB])
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == exit_code, result.output
     return result.output
 
 
@@ -392,6 +404,50 @@ def test_migrate_standards_sets_the_type_unsets_enforced_and_keeps_the_rest(
     assert "type: programmatic_validation   # legacy type\r\n" in after, after
     assert "enforced" not in after, after
     assert_only_changed(before, after, [Set("type", "programmatic_validation"), Unset("enforced")])
+
+
+@pytest.mark.parametrize("subdir", ["standards", "elsewhere"], ids=["moved", "in-place"])
+def test_migrate_standards_never_writes_a_file_its_type_can_no_longer_load(
+    tmp_path: Path, software_plugin, subdir
+):
+    # ADR-0042 8a: the migration is driven by index rows, and a row can be
+    # older than the file. A file hand-edited into something `standard` cannot
+    # load since the last sync keeps its bytes (neither moved nor rewritten),
+    # and the run says it skipped it.
+    config, kb_path = _kb(tmp_path, {f"{subdir}/s.md": STANDARD}, kb_type="software")
+    path = kb_path / subdir / "s.md"
+    path.write_text(STANDARD.replace("title: S   # keep", "title: [a, b]"), encoding="utf-8")
+    before = path.read_bytes()
+
+    out = _migrate_standards(config, exit_code=1)
+
+    assert path.read_bytes() == before
+    assert sorted(p.relative_to(kb_path).as_posix() for p in kb_path.rglob("*.md")) == [
+        f"{subdir}/s.md"
+    ]
+    assert "title must be a string" in out.replace("\n", " "), out
+
+
+def test_migrate_standards_reports_and_skips_when_move_is_refused(tmp_path: Path, software_plugin):
+    import sqlite3
+
+    # #1625 item 3: sw_migrate_standards catches ValidationError from a refused move,
+    # reports the skip, and exits with 1.
+    config, kb_path = _kb(tmp_path, {"standards/s.md": STANDARD}, kb_type="software")
+    readme_path = kb_path / "standards" / "README.md"
+    (kb_path / "standards" / "s.md").rename(readme_path)
+    before = readme_path.read_bytes()
+
+    with sqlite3.connect(config.settings.index_path) as conn:
+        conn.execute("UPDATE entry SET file_path = ? WHERE id = 's'", (str(readme_path),))
+        conn.commit()
+
+    out = _migrate_standards(config, exit_code=1)
+
+    assert readme_path.read_bytes() == before
+    assert not (kb_path / "validations" / "README.md").exists()
+    assert "Skip" in out
+    assert "the index walk does not list that path" in out
 
 
 # --------------------------------------------------------------------------
@@ -437,7 +493,7 @@ def test_a_rename_is_refused_only_for_the_entry_renamed(
     repo = KBRepository(config.knowledge_bases[0])
 
     plan = repo.rename("old-one", "new-one", dry_run=True)
-    assert plan["renamed"] and plan["dry_run"], plan
+    assert not plan["renamed"] and plan["dry_run"], plan
     assert _text(linker) == before
 
     result = repo.rename("old-one", "new-one")
@@ -537,7 +593,7 @@ def test_a_rename_completes_and_lists_every_linker_it_could_not_patch(
     repo = KBRepository(config.knowledge_bases[0])
 
     plan = repo.rename("old-one", "new-one", dry_run=True)
-    assert plan["renamed"] and plan["dry_run"], plan
+    assert not plan["renamed"] and plan["dry_run"], plan
     assert faulty.read_bytes() == before and all("[[old-one]]" in _text(p) for p in healthy)
 
     result = repo.rename("old-one", "new-one")

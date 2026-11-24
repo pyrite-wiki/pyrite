@@ -15,7 +15,16 @@ import struct
 from typing import Any, ClassVar
 
 from ..models import Link
-from .base_backend import BaseBackend, LinkKey, _link_rows
+from ..virtual_tables import FTS_COLUMNS, fts_columns_read
+from .base_backend import (
+    BaseBackend,
+    DeclaredFieldTypes,
+    LinkKey,
+    _link_rows,
+    _row_key,
+    shape_entry_row,
+    shape_entry_rows,
+)
 from .capabilities import BackendCapability
 from .protocol import DEFAULT_MIN_SIMILARITY, SemanticRows, similarity_from
 
@@ -35,6 +44,11 @@ NON_EMPTY_SQL = (
     " AND (TRIM(COALESCE(e.body, ''), char(32, 9, 10, 13)) != ''"
     " OR TRIM(COALESCE(e.summary, ''), char(32, 9, 10, 13)) != '')"
 )
+
+
+#: ``snippet()`` takes a column number: the body's, in the one tuple that declares
+#: the table's columns.
+_BODY_COLUMN = FTS_COLUMNS.index("body")
 
 
 class SQLiteBackend(BaseBackend):
@@ -181,17 +195,27 @@ class SQLiteBackend(BaseBackend):
     # _sync_links (diff-based — SQLite-specific)
     # =====================================================================
 
-    def _sync_links(self, entry_id: str, kb_name: str, links: list[dict[str, Any]]) -> None:
+    def _sync_links(
+        self,
+        entry_id: str,
+        kb_name: str,
+        links: list[dict[str, Any]],
+        *,
+        keep_path_rows: bool = False,
+    ) -> None:
         # One row per written link, keyed by (target, kb, relation, prefix) as
         # the TEXT the columns hold (`_link_rows`, #927, #1009).
         desired = _link_rows(kb_name, links)
 
         # Load existing links from DB
-        existing = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name).all()
+        query = self._session.query(Link).filter_by(source_id=entry_id, source_kb=kb_name)
+        if keep_path_rows:
+            query = query.filter(Link.target_path.is_(None))
+        existing = query.all()
 
         existing_keys: dict[LinkKey, Link] = {}
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
+            key = _row_key(row)
             # First row wins the slot: a hand file can hold both `target: 2024`
             # and `target: '2024'`, which are one key once stored, and the
             # spares are deleted below rather than left to accumulate (#927).
@@ -209,7 +233,7 @@ class SQLiteBackend(BaseBackend):
                     row.inverse_relation = attrs["inverse_relation"]
             else:
                 # Insert new link
-                target_id, target_kb, relation, target_prefix = key
+                target_id, target_kb, relation, target_prefix, target_path = key
                 self._session.add(
                     Link(
                         source_id=entry_id,
@@ -221,6 +245,7 @@ class SQLiteBackend(BaseBackend):
                         note=attrs["note"],
                         # The prefix as the file wrote it, beside the resolved KB (#980).
                         target_prefix=target_prefix,
+                        target_path=target_path,
                     )
                 )
 
@@ -230,13 +255,22 @@ class SQLiteBackend(BaseBackend):
         # into one dict slot, so the other was never compared and never
         # deleted, and every sync added another (#927).
         for row in existing:
-            key = (row.target_id, row.target_kb, row.relation, row.target_prefix)
+            key = _row_key(row)
             if key not in desired or id(row) not in claimed:
                 self._session.delete(row)
 
     # =====================================================================
     # Full-text search (FTS5)
     # =====================================================================
+
+    def keyword_searched_parts(self, query: str) -> list[str]:
+        """The entry parts a keyword search for ``query`` reads (#1757).
+
+        An unqualified FTS5 MATCH reads every ``entry_fts`` column; a column
+        filter in ``query`` (``title:hawk``) narrows it to the named columns.
+        Field values and tags are not columns, so they are never named.
+        """
+        return fts_columns_read(query)
 
     def search(
         self,
@@ -264,12 +298,12 @@ class SQLiteBackend(BaseBackend):
                 e.file_path, e.date, e.importance, e.status, e.location,
                 e.lifecycle, e.metadata, e.created_at, e.updated_at, e.indexed_at,
                 e.created_by, e.modified_by,
-                snippet(entry_fts, 4, '<mark>', '</mark>', '...', 32) as snippet,
+                snippet(entry_fts, @BODY_COLUMN@, '<mark>', '</mark>', '...', 32) as snippet,
                 bm25(entry_fts) as rank
             FROM entry_fts
             JOIN entry e ON entry_fts.rowid = e.rowid
             WHERE entry_fts MATCH ?
-        """
+        """.replace("@BODY_COLUMN@", str(_BODY_COLUMN))
         params: list[Any] = [query]
         if lifecycle:
             sql += " AND e.lifecycle = ?"
@@ -306,9 +340,11 @@ class SQLiteBackend(BaseBackend):
             params.append(date_to)
         if tags:
             tag_placeholders = ",".join(["?"] * len(tags))
+            # By (id, kb_name): an id is unique within one KB only, so an id
+            # alone matched another KB's entry's tags.
             sql += f"""
-                AND e.id IN (
-                    SELECT et.entry_id FROM entry_tag et
+                AND (e.id, e.kb_name) IN (
+                    SELECT et.entry_id, et.kb_name FROM entry_tag et
                     JOIN tag t ON et.tag_id = t.id
                     WHERE t.name IN ({tag_placeholders})
                     GROUP BY et.entry_id, et.kb_name
@@ -335,7 +371,7 @@ class SQLiteBackend(BaseBackend):
         params.extend([limit, offset])
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     def search_by_tag(
         self, tag: str, kb_name: str | None = None, limit: int = 50
@@ -354,7 +390,7 @@ class SQLiteBackend(BaseBackend):
         params.append(limit)
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     def search_by_date_range(
         self,
@@ -372,7 +408,7 @@ class SQLiteBackend(BaseBackend):
         params.append(limit)
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     def search_by_tag_prefix(
         self, prefix: str, kb_name: str | None = None, limit: int = 50
@@ -391,7 +427,7 @@ class SQLiteBackend(BaseBackend):
         params.append(limit)
         with self._raw_cursor() as cur:
             rows = cur.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        return shape_entry_rows(rows, self._session)
 
     # =====================================================================
     # Semantic search (sqlite-vec embeddings)
@@ -561,6 +597,7 @@ class SQLiteBackend(BaseBackend):
         # the budget to survive a post-KNN filter).
         k = min(limit * 2, _SQLITE_VEC_MAX_K)
         results = SemanticRows()
+        declared = DeclaredFieldTypes(self._session)
         while True:
             with self._raw_cursor() as cur:
                 rows = cur.execute(sql, [blob, k, *candidate_params, *params]).fetchall()
@@ -575,7 +612,7 @@ class SQLiteBackend(BaseBackend):
                 if similarity is None or 1.0 - cosine_distance < min_similarity:
                     continue
                 entry["similarity"] = similarity
-                results.append(entry)
+                results.append(shape_entry_row(entry, declared))
                 if len(results) >= limit:
                     break
             if len(results) >= limit or k >= _SQLITE_VEC_MAX_K:
@@ -701,9 +738,11 @@ class SQLiteBackend(BaseBackend):
             params.append(date_to)
         if tags:
             placeholders = ",".join(["?"] * len(tags))
+            # By (id, kb_name): an id is unique within one KB only, so an id
+            # alone matched another KB's entry's tags.
             sql += f"""
-                AND e.id IN (
-                    SELECT et.entry_id FROM entry_tag et
+                AND (e.id, e.kb_name) IN (
+                    SELECT et.entry_id, et.kb_name FROM entry_tag et
                     JOIN tag t ON et.tag_id = t.id
                     WHERE t.name IN ({placeholders})
                     GROUP BY et.entry_id, et.kb_name

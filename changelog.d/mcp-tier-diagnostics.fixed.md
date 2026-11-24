@@ -1,1 +1,0 @@
-- MCP now distinguishes tools that require a higher tier from unknown tool names. Refusals include the required tier and advice suited to local or HTTP connections (#1276).

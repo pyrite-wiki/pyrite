@@ -1,6 +1,6 @@
 """Plugin tools learn nothing about a KB the caller cannot read (P-R4, P-R5).
 
-Private #39 names `zettel_graph`, `investigation_network` (and `cascade_network`, deleted with cascade)
+The tools: `zettel_graph`, `investigation_network` (and `cascade_network`, deleted with cascade)
 and the software-kb tools that read link data (`sw_check_ready`,
 `sw_context_for_item`, `sw_epic_detail`, ...). Each takes the named KB
 through the MCP chokepoint, which checks it, but the links it follows lead
@@ -175,8 +175,21 @@ def scope(w):
 
 
 def _call(w, tool, args, readable, writable=None):
+    # A scoped call is a signed-in user's: person arguments (assignee,
+    # reviewer) come from that principal, so they are not passed.
+    principal = None
+    if readable is not None:
+        from pyrite.services.access_policy import Principal
+
+        principal = Principal.user(1, "write")
+        args = {k: v for k, v in args.items() if k not in ("assignee", "reviewer")}
     return w.dispatch_tool(
-        tool, args, client_kind="local", readable_kbs=readable, writable_kbs=writable
+        tool,
+        args,
+        client_kind="local",
+        readable_kbs=readable,
+        writable_kbs=writable,
+        principal=principal,
     )
 
 

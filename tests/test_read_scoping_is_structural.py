@@ -26,7 +26,7 @@ in `SECONDARY_KB_PARAMETERS` with what is known about it. The entries that
 used to be listed there are resolved rather than recorded now: `source_kb`
 and `target_kb` (`links.py`) joined `KB_PARAM_NAMES` in #186, and
 `center_kb` (`/api/graph`) joined it when a private centre was found to
-answer differently from a missing one (private #57).
+answer differently from a missing one.
 
 **What the walk cannot see -- recorded, not reviewed.** It visits
 `APIRoute`s under `/api` only. Two surfaces are therefore absent rather
@@ -163,6 +163,10 @@ ALLOWLIST: dict[tuple[str, str], str] = {
         "per user, so it can only reorder the caller's own rows"
     ),
     ("POST", "/api/tasks/{task_id}/claim"): "write route: requires_kb_tier('write') subsumes read",
+    ("POST", "/api/tasks/{task_id}/start"): "write route: requires_kb_tier('write') subsumes read",
+    ("POST", "/api/tasks/{task_id}/finish"): (
+        "write route: requires_kb_tier('write') via authorize(Action.KB_WRITE, KB) subsumes read"
+    ),
     ("POST", "/api/reviews"): "write route: requires_kb_tier('write') subsumes read",
     ("DELETE", "/api/reviews/{review_id}"): "write route: requires_kb_tier('write') subsumes read",
     # -- part 2: meta/admin surfaces ------------------------------------

@@ -47,13 +47,33 @@ class TestTypeSchemaFilePattern:
         result = schema.resolve_filename(entry)
         assert result == "event--2026-03-30--test.md"
 
-    def test_missing_date_uses_empty_string(self):
+    def test_missing_date_falls_back_to_the_default_filename(self):
         schema = TypeSchema(name="note", file_pattern="{date}--{slug}.md")
         from pyrite.models.factory import build_entry
 
         entry = build_entry("note", title="No Date Note", body="")
+        assert schema.resolve_filename(entry) is None
+
+    def test_date_placeholder_reads_metadata_for_generic_types(self):
+        # A kb.yaml-declared type (GenericEntry) keeps `date` in metadata,
+        # not on the entry; `{date}` must resolve from there instead of
+        # formatting an empty string into the name (#1467).
+        schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
+        from pyrite.models.factory import build_entry
+
+        entry = build_entry("timeline_event", title="Upgrade Notes", body="", date="2026-11-12")
         result = schema.resolve_filename(entry)
-        assert result == "--no-date-note.md"
+        assert result == "2026-11-12--upgrade-notes.md"
+
+    def test_generic_entry_without_any_date_falls_back_to_the_id_name(self):
+        # The other half of #1467: a kb.yaml-only type whose metadata has no
+        # `date` either must fall back to the plain `<id>.md` name (the None
+        # return), not format an empty `{date}` into `--<slug>.md`.
+        schema = TypeSchema(name="timeline_event", file_pattern="{date}--{slug}.md")
+        from pyrite.models.factory import build_entry
+
+        entry = build_entry("timeline_event", title="Undated", body="")
+        assert schema.resolve_filename(entry) is None
 
     def test_to_dict_includes_file_pattern(self):
         schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")
@@ -228,15 +248,17 @@ class TestResolveFilenameEntryFieldPlaceholders:
             schema.resolve_filename(entry)
 
     @pytest.mark.control(
-        reason="the refusal is unchanged; the fixture's method moved from the deleted Entry.save to Entry.load (#955 P4)"
+        reason="the refusal is unchanged; the fixture's method moved from the deleted Entry.save "
+        "and Entry.load to Entry.add_link (#955 P4)"
     )
     def test_non_data_attribute_placeholder_is_refused(self):
-        """#391 cold read item 4: `{load}` (a method, not a data field)
+        """#391 cold read item 4: `{add_link}` (a method, not a data field)
         currently puts a bound-method repr in the filename -- refused.
-        (It was `{save}` until #955 B6 P4 deleted `Entry.save`.)"""
+        (It was `{save}` until #955 B6 P4 deleted `Entry.save`, then `{load}`
+        until `Entry.load`, a raw reader of any path, was deleted.)"""
         from pyrite.exceptions import ValidationError
 
-        schema = TypeSchema(name="adr", file_pattern="{load}.md")
+        schema = TypeSchema(name="adr", file_pattern="{add_link}.md")
         entry = self._adr_entry()
         with pytest.raises(ValidationError):
             schema.resolve_filename(entry)
@@ -269,3 +291,226 @@ class TestResolveFilenameEntryFieldPlaceholders:
         schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")
         entry = build_entry("event", title="ICE Raid Downtown", body="", date="2026-03-30")
         assert schema.resolve_filename(entry) == "2026-03-30--ice-raid-downtown.md"
+
+
+class TestCreateEntryMedium:
+    """The #1467 repro end to end through `KBService.create_entry`, the
+    pipeline `pyrite create -f` and MCP `kb_create` share: a kb.yaml-declared
+    `timeline_event` with `file_pattern: "{date}--{slug}.md"` must land as
+    `2026-11-12--test-d.md`, not `--test-d.md`."""
+
+    KB_YAML = """\
+name: tl
+types:
+  timeline_event:
+    subdirectory: ""
+    file_pattern: "{date}--{slug}.md"
+    required: [title, date]
+    fields:
+      date: {type: date}
+"""
+
+    def _make_kb(self, tmp_path):
+        from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+        from pyrite.storage.database import PyriteDB
+
+        kb_path = tmp_path / "tl"
+        kb_path.mkdir()
+        (kb_path / "kb.yaml").write_text(self.KB_YAML, encoding="utf-8")
+        db_path = tmp_path / "index.db"
+        PyriteDB(db_path).close()
+        kb_config = KBConfig(name="tl", path=kb_path, kb_type=KBType.GENERIC)
+        config = PyriteConfig(
+            knowledge_bases=[kb_config],
+            settings=Settings(index_path=db_path, auto_embed=False),
+        )
+        return config, kb_path
+
+    def test_create_writes_the_dated_name(self, tmp_path):
+        from pyrite.services.kb_service import KBService
+        from pyrite.storage.database import PyriteDB
+
+        config, kb_path = self._make_kb(tmp_path)
+        db = PyriteDB(config.settings.index_path)
+        svc = KBService(config, db)
+        try:
+            svc.create_entry("tl", "test-d", "Test D", "timeline_event", "", date="2026-11-12")
+        finally:
+            db.close()
+        assert (kb_path / "2026-11-12--test-d.md").exists(), sorted(
+            p.name for p in kb_path.iterdir()
+        )
+        assert not (kb_path / "--test-d.md").exists(), "the empty-date name must not exist"
+
+    def test_create_refuses_private_field_placeholder(self, tmp_path):
+        """#1639: an entry write under a pattern naming a private field raises
+        ValidationError (VALIDATION_FAILED)."""
+        from pyrite.config import KBConfig, KBType, PyriteConfig, Settings
+        from pyrite.exceptions import ValidationError
+        from pyrite.services.kb_service import KBService
+        from pyrite.storage.database import PyriteDB
+
+        kb_yaml = """\
+name: tl
+types:
+  timeline_event:
+    subdirectory: ""
+    file_pattern: "{_schema_version}.md"
+"""
+        kb_path = tmp_path / "tl_priv"
+        kb_path.mkdir()
+        (kb_path / "kb.yaml").write_text(kb_yaml, encoding="utf-8")
+        db_path = tmp_path / "index_priv.db"
+        PyriteDB(db_path).close()
+
+        kb_config = KBConfig(name="tl", path=kb_path, kb_type=KBType.GENERIC)
+        config = PyriteConfig(
+            knowledge_bases=[kb_config],
+            settings=Settings(index_path=db_path, auto_embed=False),
+        )
+        db = PyriteDB(config.settings.index_path)
+        svc = KBService(config, db)
+        try:
+            with pytest.raises(ValidationError) as exc_info:
+                svc.create_entry("tl", "test-priv", "Test Priv", "timeline_event", "")
+            assert exc_info.value.error_code == "VALIDATION_FAILED"
+            assert "private field" in str(exc_info.value)
+        finally:
+            db.close()
+
+
+def _collect_entry_private_field_pairs():
+    import dataclasses
+
+    from pyrite.models.base import Entry
+    import pyrite.models.core_types  # noqa: F401
+    import pyrite.models.generic  # noqa: F401
+    import pyrite.models.task  # noqa: F401
+
+    try:
+        import pyrite_software_kb.entry_types  # noqa: F401
+    except ImportError:
+        pass
+
+    def _subclasses(c):
+        subs = set(c.__subclasses__())
+        for s in list(subs):
+            subs.update(_subclasses(s))
+        return subs
+
+    all_classes = {Entry} | _subclasses(Entry)
+    pairs = []
+    for cls in sorted(all_classes, key=lambda c: (c.__module__, c.__qualname__)):
+        if not cls.__module__.startswith(("pyrite.", "pyrite_")):
+            continue
+        if not dataclasses.is_dataclass(cls):
+            continue
+        for f in dataclasses.fields(cls):
+            if f.name.startswith("_"):
+                pairs.append((cls, f.name))
+    return pairs
+
+
+def _build_test_entry(cls):
+    import dataclasses
+    import inspect
+
+    target_cls = cls
+    if inspect.isabstract(cls):
+
+        class Concrete(cls):
+            @property
+            def entry_type(self):
+                return "entry"
+
+            @classmethod
+            def from_frontmatter(cls, *a, **k):
+                pass
+
+            def to_frontmatter(self):
+                return ""
+
+        Concrete.__name__ = f"Concrete{cls.__name__}"
+        target_cls = Concrete
+
+    kwargs = {}
+    for f in dataclasses.fields(cls):
+        if f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING:
+            continue
+        if f.name == "id":
+            kwargs["id"] = "test-id"
+        elif f.name == "title":
+            kwargs["title"] = "Test Title"
+        elif f.name == "_entry_type":
+            kwargs["_entry_type"] = "note"
+        elif f.name == "entry_type":
+            kwargs["entry_type"] = "note"
+        else:
+            kwargs[f.name] = "dummy"
+    return target_cls(**kwargs)
+
+
+_ENTRY_PRIVATE_FIELD_PAIRS = _collect_entry_private_field_pairs()
+assert len(_ENTRY_PRIVATE_FIELD_PAIRS) > 0, "collected entry private field pairs must not be empty"
+
+
+@pytest.mark.parametrize(
+    ("cls", "field_name"),
+    _ENTRY_PRIVATE_FIELD_PAIRS,
+    ids=[f"{cls.__qualname__}-{field_name}" for cls, field_name in _ENTRY_PRIVATE_FIELD_PAIRS],
+)
+def test_private_field_placeholder_is_refused(cls, field_name):
+    """#1639: placeholders naming private fields of the entry (e.g.
+    _schema_version, _create_fields, _entry_type) must be refused with
+    ValidationError rather than resolved into file names."""
+    from pyrite.exceptions import ValidationError
+
+    inst = _build_test_entry(cls)
+    schema = TypeSchema(name="t", file_pattern=f"{{{field_name}}}.md")
+    with pytest.raises(ValidationError, match="which is a private field of entry"):
+        schema.resolve_filename(inst)
+
+
+@pytest.mark.control(reason="public data fields continue to resolve into filenames")
+def test_public_field_placeholder_still_resolves():
+    from pyrite_software_kb.entry_types import ADREntry
+
+    entry = ADREntry(id="adr-0007", title="Use PostgreSQL", adr_number=7)
+    schema = TypeSchema(name="adr", file_pattern="adr-{adr_number}.md")
+    assert schema.resolve_filename(entry) == "adr-7.md"
+
+
+@pytest.mark.control(
+    reason="kb.yaml-declared types resolve _-prefixed metadata keys like _draft from metadata"
+)
+def test_private_prefixed_metadata_key_on_generic_entry_still_resolves():
+    from pyrite.models.generic import GenericEntry
+
+    generic = GenericEntry(
+        id="draft-1",
+        title="Draft Note",
+        _entry_type="note",
+        metadata={"_draft": "true"},
+    )
+    schema = TypeSchema(name="note", file_pattern="{_draft}--{slug}.md")
+    assert schema.resolve_filename(generic) == "true--draft-1.md"
+
+
+@pytest.mark.control(
+    reason="absent _-prefixed names fall back to default filename rather than refusing"
+)
+def test_absent_private_prefixed_placeholder_falls_back_to_none():
+    from pyrite_software_kb.entry_types import ADREntry
+
+    entry = ADREntry(id="adr-0007", title="Use PostgreSQL")
+    schema = TypeSchema(name="adr", file_pattern="{_absent_name}.md")
+    assert schema.resolve_filename(entry) is None
+
+
+@pytest.mark.control(reason="{date}--{slug}.md pattern resolution is unchanged")
+def test_date_slug_pattern_is_unchanged():
+    from pyrite.models.factory import build_entry
+
+    event = build_entry("event", title="ICE Raid Downtown", body="", date="2026-03-30")
+    schema = TypeSchema(name="event", file_pattern="{date}--{slug}.md")
+    assert schema.resolve_filename(event) == "2026-03-30--ice-raid-downtown.md"

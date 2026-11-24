@@ -266,8 +266,14 @@ def test_every_plugin_id_tool_declares_locates_entry(server):
 
 
 def _call(ctx, tool, args, *, readable=None, writable=None):
+    """A scoped call is an operator key's: scoped by its role, with no
+    account, so a person argument is the label it names. A scoped
+    call with no principal at all records no one and is refused."""
+    from pyrite.services.access_policy import Principal
+
+    principal = Principal.from_api_key("write") if readable is not None else None
     return ctx["server"]._dispatch_tool(
-        tool, args, readable_kbs=readable, writable_kbs=writable or readable
+        tool, args, readable_kbs=readable, writable_kbs=writable or readable, principal=principal
     )
 
 
@@ -781,7 +787,19 @@ def _write_case_tools() -> list[str]:
     return sorted(t for t, c in CASES.items() if c.writes_file or c.table)
 
 
-@pytest.mark.parametrize("arg", ["kb", None], ids=["other-arg-named", "nothing-named"])
+@pytest.mark.parametrize(
+    "arg",
+    [
+        pytest.param("kb", id="other-arg-named"),
+        pytest.param(
+            None,
+            id="nothing-named",
+            marks=pytest.mark.control(
+                reason="unchanged by #1758: only the other-arg-named case asserts the refusal"
+            ),
+        ),
+    ],
+)
 @pytest.mark.parametrize("tool", _write_case_tools())
 def test_a_write_that_succeeds_lands_in_the_checked_kb(server, monkeypatch, tool, arg):
     """The success side of the property: a scoped caller who may read A and B
@@ -804,6 +822,17 @@ def test_a_write_that_succeeds_lands_in_the_checked_kb(server, monkeypatch, tool
     args = case.args(ids["one"]) if arg is None else {**case.args(ids["one"]), arg: KB_B}
     result = _call(server, tool, args, readable={KB_A, KB_B}, writable={KB_B})
 
+    if arg is not None and arg not in srv.tools[tool]["inputSchema"].get("properties", {}):
+        # A KB named under an argument this write tool does not declare is
+        # never the handler's KB (it works in kb_name), so the call would
+        # succeed with it dropped: it is refused before any lookup or write
+        # instead (#1758, round 1 on #1774).
+        assert result.get("error_code") == "VALIDATION_FAILED", result
+        assert [row["field"] for row in result["errors"]] == [arg], result
+        assert _files(server) == before, result
+        if case.table:
+            assert _rows(server, case.table) == [], result
+        return
     assert _resolved(result), result
     assert KB_B in checked, checked
     if case.table:

@@ -155,9 +155,14 @@ def test_cli_surfaces_drift_as_warning_not_failure(drift, fmt):
 
 
 BROKEN_KB_YAML = {
-    "types-null": "name: one\ntypes: null\n",
-    "types-list": "name: one\ntypes: [a, b]\n",
-    "invalid-yaml": "name: one\ntypes: {research-note: [\n",
+    # Unusable shapes (#1547, #1591): a schema block that is not a mapping or a
+    # kb.yaml that does not parse is KB_CONFIG_INVALID, so index health is
+    # unhealthy and exits 1.
+    "types-list": ("name: one\ntypes: [a, b]\n", False),
+    "invalid-yaml": ("name: one\ntypes: {research-note: [\n", False),
+    # types: null declares no types (#1591): no schema error, exit 0, status
+    # reflects existing type name drift rather than an unhealthy schema.
+    "types-null": ("name: one\ntypes: null\n", True),
 }
 
 
@@ -178,27 +183,41 @@ def test_health_answers_for_a_kb_whose_schema_fails_to_load(drift, shape, surfac
     the report for every other KB."""
     _, config = drift
     kb = config.get_kb("one")
-    kb.kb_yaml_path.write_text(BROKEN_KB_YAML[shape], encoding="utf-8")
+    content, healthy = BROKEN_KB_YAML[shape]
+    kb.kb_yaml_path.write_text(content, encoding="utf-8")
     kb.invalidate_schema_cache()
     with patch("pyrite.cli.context.load_config", return_value=config):
         result = CliRunner().invoke(app, [*HEALTH_SURFACES[surface], "--format", fmt])
     assert result.exception is None or isinstance(result.exception, SystemExit), repr(
         result.exception
     )
-    assert result.exit_code == 0, result.output
+    # A kb.yaml that does not parse (#1547) or a schema block that is not a mapping
+    # (#1591) leaves the KB unusable (KB_CONFIG_INVALID): index health is unhealthy
+    # and exits 1. A null types block declares no types (#1591): no schema error, exit 0.
+    expected_exit = 0 if healthy else (1 if surface.startswith("index") else 0)
+    assert result.exit_code == expected_exit, result.output
     if fmt == "json":
         data = json.loads(result.stdout)
-        assert [e["kb"] for e in data["schema_errors"]] == ["one"]
-        assert data["schema_errors"][0]["error"]
+        if healthy:
+            assert not data["schema_errors"]
+            if surface.startswith("index"):
+                assert data["status"] != "unhealthy"
+        else:
+            assert [e["kb"] for e in data["schema_errors"]] == ["one"]
+            assert data["schema_errors"][0]["error"]
+            if surface.startswith("index"):
+                assert data["status"] == "unhealthy"
+                assert data["checks"]["schema_errors"] == data["schema_errors"]
         group = next(g for g in data["type_name_drift"] if g["kb"] == "one")
         spellings = group["spellings"]
         assert {s["type"] for s in spellings} == {"research-note", "research_note", "research note"}
         assert not any(s["declared"] for s in spellings)
         if surface.startswith("index"):
-            assert data["status"] == "warning"
-            assert data["checks"]["schema_errors"] == data["schema_errors"]
             # No declared types means unrestricted (#595): nothing is
             # undeclared; the failed load shows in schema_errors above.
             assert not [r for r in data["undeclared_types"] if r["kb"] == "one"]
     else:
-        assert "kb.yaml failed to load" in result.stdout
+        if healthy:
+            assert "kb.yaml failed to load" not in result.stdout
+        else:
+            assert "kb.yaml failed to load" in result.stdout

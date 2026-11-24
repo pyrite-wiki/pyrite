@@ -1,4 +1,4 @@
-"""A config save never writes a value the environment supplied (private #73).
+"""A config save never writes a value the environment supplied.
 
 `save_config` serialised the whole in-memory config, environment overrides
 included: `PYRITE_API_KEY`, an OAuth client secret, the port, a data-dir

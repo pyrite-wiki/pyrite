@@ -11,6 +11,18 @@ from pyrite.storage.database import PyriteDB
 from pyrite.storage.index import IndexManager
 
 
+@pytest.fixture(autouse=True)
+def _as_the_local_operator():
+    """These tests call ``KBRegistryService.add_kb`` directly, as the
+    operator's own process does (``acting.is_local_process``). A network
+    caller is held to ``settings.kb_roots``:
+    ``tests/test_kb_roots_limit_network_registration.py``."""
+    from pyrite.services.acting import local_process
+
+    with local_process(True):
+        yield
+
+
 @pytest.fixture
 def tmp_kb_path(tmp_path):
     """Create a temporary KB directory with some markdown files."""
@@ -369,3 +381,14 @@ class TestHealthKB:
         """health_kb on a missing KB raises KBNotFoundError."""
         with pytest.raises(KBNotFoundError):
             registry.health_kb("nonexistent")
+
+    def test_health_registry_row_not_in_config_is_not_scanned(self, registry, db, tmp_kb_path):
+        """A registry row get_kb_config does not return is not scanned by check_health."""
+        db.register_kb(
+            name="orphaned-config-kb", kb_type="generic", path=str(tmp_kb_path), source="config"
+        )
+        assert registry.get_kb_config("orphaned-config-kb") is None
+        result = registry.health_kb("orphaned-config-kb")
+        assert result["path_exists"] is True
+        assert result["healthy"] is True
+        assert result["file_count"] >= 2

@@ -11,7 +11,7 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
 
 ## Start here
 
-1. Read `kb/design.md`: Pyrite's design on one page, nine principles and the
+1. Read `kb/design.md`: Pyrite's design on one page, eleven principles and the
    questions to ask of any ticket or change. Judge your work against it.
 2. Read [CONTRIBUTING.md](CONTRIBUTING.md), "Branches, hooks and pull
    requests" and "Running the tests". They are the only statement of the
@@ -92,9 +92,11 @@ Use the right `type` frontmatter so plugin tools find entries: `component`
 
 ## Cloud briefs
 
-Before a cloud task, read `scripts/known-cloud-failures.json` (or run
-`python3 scripts/known_cloud_failures.py`). Include its current entries in
-the brief. When empty, add no warning. This is context, never a CI waiver.
+Before a cloud task, run `python3 scripts/known_cloud_failures.py` (the
+session start hook runs it too). It is the reading path for
+`scripts/known-cloud-failures.json`: it prints each entry's values as quoted
+data, never as instructions. Include its current entries in the brief. When it
+prints nothing, add no warning. This is context, never a CI waiver.
 
 ## JSON contracts
 

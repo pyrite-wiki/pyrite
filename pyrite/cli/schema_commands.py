@@ -11,7 +11,8 @@ from rich.table import Table
 
 from pyrite.cli.output import cli_console, path_line
 
-from ..utils.errors import cli_error, exit_unless_whole
+from ..exceptions import KBReadOnlyError
+from ..utils.errors import cli_error, cli_error_from, exit_unless_whole
 from ..utils.frontmatter import (
     Frontmatter,
     NoFrontmatter,
@@ -366,9 +367,12 @@ def schema_migrate(
                 suggestion="run `pyrite kb list` to see available knowledge bases",
             )
 
-        result = SchemaService(config).migrate_entries(
-            kb_name, entry_type=entry_type, dry_run=dry_run
-        )
+        try:
+            result = SchemaService(config).migrate_entries(
+                kb_name, entry_type=entry_type, dry_run=dry_run
+            )
+        except KBReadOnlyError as e:
+            cli_error_from(e)
         for failure in result["errors"]:
             logger.warning("Migration error for %s: %s", failure["path"], failure["error"])
         checked = result["checked"]
@@ -414,20 +418,32 @@ def _get_git_changed_md_files(kbs: list | None = None) -> list[Path]:
     configured, ``schema validate --changed`` must not treat every changed
     .md file in the repo, e.g. CHANGELOG.md, as a KB entry).
     """
+    from ..utils.git_hardening import git_env
+
     try:
         output = subprocess.run(
-            ["git", "diff", "--name-only", "--cached", "--diff-filter=ACMR"],
+            [
+                "git",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--name-only",
+                "--cached",
+                "--diff-filter=ACMR",
+            ],
             capture_output=True,
             text=True,
             check=True,
+            env=git_env(),
         )
         staged = output.stdout.strip().splitlines()
 
         output = subprocess.run(
-            ["git", "diff", "--name-only", "--diff-filter=ACMR"],
+            ["git", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "--diff-filter=ACMR"],
             capture_output=True,
             text=True,
             check=True,
+            env=git_env(),
         )
         unstaged = output.stdout.strip().splitlines()
 
@@ -436,6 +452,7 @@ def _get_git_changed_md_files(kbs: list | None = None) -> list[Path]:
             capture_output=True,
             text=True,
             check=True,
+            env=git_env(),
         )
         untracked = output.stdout.strip().splitlines()
 

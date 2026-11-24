@@ -1020,14 +1020,30 @@ class TestQAAssess:
             result = runner.invoke(app, ["qa", "assess", "test-events"])
             assert result.exit_code in (0, 1)
 
-    def test_qa_assess_specific_entry(self, admin_env):
+    @pytest.mark.parametrize("output_format", ["json", "rich"])
+    def test_qa_assess_specific_entry(self, admin_env, output_format):
+        kb_path = admin_env["events_kb"].path
+        before = {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()}
         with _patch_config(admin_env):
             result = runner.invoke(
                 app,
-                ["qa", "assess", "test-events", "--entry", "nonexistent-id"],
+                [
+                    "qa",
+                    "assess",
+                    "test-events",
+                    "--entry",
+                    "nonexistent-id",
+                    "--format",
+                    output_format,
+                ],
             )
-            # May fail because entry doesn't exist; should not crash
-            assert result.exit_code in (0, 1)
+        assert result.exit_code == 1, result.output
+        assert "Entry 'nonexistent-id' not found" in result.output
+        if output_format == "json":
+            assert _parse_json(result.output)["error_code"] == "ENTRY_NOT_FOUND"
+        else:
+            assert "ERROR [ENTRY_NOT_FOUND]" in result.output
+        assert {p: p.read_bytes() for p in kb_path.rglob("*") if p.is_file()} == before
 
     def test_qa_assess_json(self, admin_env):
         with _patch_config(admin_env):

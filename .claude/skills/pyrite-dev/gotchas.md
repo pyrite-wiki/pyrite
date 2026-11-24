@@ -141,6 +141,8 @@ def from_frontmatter(cls, meta, body):
 
 If you forget a base field, it silently gets the dataclass default (often empty string or None), and the data appears to "vanish" on roundtrip.
 
+**Do not raise on a value a validator could report** (`int(meta["rank"])` on `rank: .inf`). A loader that raises makes the file read-only through Pyrite: reads return your type without the refused fields (`load_problems`), and every write is refused with `ENTRY_UNREADABLE` until the user fixes the file by hand (ADR-0042 decision 8a). Convert leniently (`pyrite.utils.parse.safe_int`) or keep the value as written, and report it from a validator instead. The opposite design, a model built with your default in place of the refused value, was tried twice in #1311 and let a hook-guarded write land: a dataclass cannot be missing a field, so every consumer of such a model has to know which values are fake.
+
 ## MCP Tool Handlers: Import Inside Handler
 
 MCP tool handlers run in a separate context. Import pyrite modules inside the handler, not at the top of the plugin file:
@@ -201,16 +203,35 @@ When defining relationship types in `get_relationship_types()`, always define bo
 
 `get_inverse_relation()` in `schema.py` will look up the inverse, and it must exist in the merged relationship types.
 
-## _resolve_entry_type Silently Maps Core Types to Plugin Subtypes
+## A create stores the type named; only get_type_mappings() maps one
 
-When you call `kb_create(type="event")`, the entry type gets silently resolved to a plugin subtype (e.g., `investigation_event` in a journalism-investigation KB) if a plugin active for that KB type provides one. This happens in `kb_service.py:_resolve_entry_type()`.
+A create stores the type named by the caller; nothing is mapped by subclassing. A type is mapped only when a plugin explicitly declares it via `get_type_mappings()` (e.g. `journalism-investigation` maps `event → investigation_event` and `document → document_source`), and, when the KB's `kb.yaml` declares types, only if it declares the target type (the core type need not be declared). For tests: `build_entry()` of a core type returns the core class unless the KB applies an explicit mapping. See [Pyrite Plugin Protocol](../../../kb/components/pyrite-plugin-protocol.md) for the contract.
 
-**Consequences:**
-- `type(entry).__name__` won't be `Event` — it'll be `InvestigationEventEntry`
-- The entry's dataclass fields come from the plugin class, not the core class
-- `isinstance(entry, Event)` still works (inheritance), but exact type checks fail
+## A new CLI option: the tests that walk every command
 
-**When this bites you:** Writing tests that construct entries directly vs going through `build_entry()`. Direct construction uses the core class; the factory uses the resolved plugin class. Behavior differs if the plugin overrides `from_frontmatter` or adds custom fields.
+When adding or modifying a CLI command or option, several tests walk every registered command and option across Pyrite and all installed extensions. The tests that import `tests/outcome_walk.py` or walk the command registry include:
+- `tests/test_a_kb_yaml_answers_the_same_everywhere.py`
+- `tests/test_a_kb_yaml_that_does_not_load.py`
+- `tests/test_cli_format_refuses_unknown.py`
+- `tests/test_cli_input_paths.py`
+- `tests/test_cli_numeric_options_declare_a_range.py`
+- `tests/test_cli_outcome.py`
+- `tests/test_cli_usage_error_plain.py`
+- `tests/test_doc_kb_lifecycle_skill.py`
+- `tests/test_help_texts_render.py`
+- `tests/test_kb_walk_cli.py`
+- `tests/test_outcome_boundaries.py`
+- `tests/test_outcome_walk_params.py`
+- `tests/test_public_message_logged_once.py`
+- `tests/test_requested_effect_exit_code.py`
+
+In particular, `tests/test_cli_numeric_options_declare_a_range.py` enforces the numeric-range ratchet ([#1541](https://github.com/pyrite-wiki/pyrite/issues/1541)): every `int` or `float` option or argument must declare a range (`min=` or `max=`).
+- Page counts: `min=1` (or `min=0` where 0 documents "all")
+- Offsets, days, limits, and TTLs: `min=0`
+- Importance and priority: `min=1, max=10`
+- Ports: `min=1, max=65535`
+
+If an option legitimately cannot be bounded, it must be listed in `UNBOUNDED` with a documented reason. `NOT_YET` holds legacy options pending ranges; it may shrink but never grow (the test's docstring says how that is enforced). `UNCLASSIFIED` is for options where a custom `click_type=` or `parser=` hides the numeric type from static reflection (such as `qa duplicates --threshold`).
 
 ## build_entry: Unknown kwargs Go to metadata, Not Top-Level Frontmatter
 
@@ -252,11 +273,11 @@ db.execute_sql("SELECT * FROM entry WHERE id = ?", (entry_id,))
 
 **When this bites you:** Adding a new search mode or modifying the hybrid pipeline. Always ensure both legs fetch enough to cover `offset + limit`.
 
-## `list_files()` Skips Files with "template" in the Filename
+## The Index Walk Skips `README.md`, Dot-Folders and `_templates/` (Any Case)
 
-`KBRepository.list_files()` (repository.py:244) filters out any `.md` file whose name contains the substring `"template"`. This is a broad substring check, not a prefix/suffix match.
+The index walk (`pyrite/storage/entry_paths.py`; `KBRepository.list_files()` in `repository.py` uses it) skips a `README.md` in any letter case, any path part that starts with a dot, and a folder named `_templates` in any letter case (`_Templates`, `_TEMPLATES`). It does not look at the word "template" anywhere else in a name: `templated-foo.md` is indexed (#1552).
 
-**When this bites you:** Creating KB entries with filenames like `templated-foo.md`, `template-bar.md`, or `path-templates.md`. They silently won't be indexed. Rename to avoid the word entirely (e.g., `dynamic-foo.md`).
+**When this bites you:** A file you wrote under one of those names will not be indexed. If it states an `id:`, `pyrite index health` names it under `unlisted_entry_files` with reason `readme`, `hidden` or `templates`. Rename it to a name the walk lists, keep the `id:` line, then run `pyrite index sync`. Writes through Pyrite refuse a path the walk would skip.
 
 ## Closing a Backlog Item: Use `status=done` (and the History of the `kb/notes/` Misplacement)
 
@@ -286,22 +307,12 @@ KB presets first (`PluginRegistry.get_type_default_subdirectory`), so new items 
 When closing an item you still `git mv` it to `kb/backlog/done/` yourself — that is a
 convention, not something the type's subdirectory encodes.
 
-**Trap 3 — `-f` is not a substitute for a dedicated flag on list-typed fields (#231).**
-`-f status=done` is correct and is the pattern CLAUDE.md shows, so the hand reaches for
-`-f tags=a,b` next. It does not work, and it does not tell you:
-
-```
-$ pyrite update <id> -k pyrite -f tags=mcp,agent-ux
-{"updated": true, ...}                 # looks fine
-$ pyrite get <id> -k pyrite --format json | jq .tags
-["m","c","p",",","a","g","e","n","t","-","u","x"]     # the CHARACTERS
-```
-
-`-f` stores the raw string (`tags: mcp,agent-ux`, not a YAML list), and the reader then
-iterates it as a sequence. The entry drops out of `pyrite tags`, out of tag-filtered
-search and out of every `sw` view keyed on a tag, silently. Use `--tags "a,b"`, which
-parses properly. Assume the same for any other list-typed field reachable through `-f`
-(`participants`, `aliases`, `actors`). Repair by re-running with `--tags`.
+**Trap 3 — list-typed fields and `-f` (#231, #1502).** `-f status=done` is correct, but
+`-f tags=a,b` once stored the characters of the string (the entry then dropped out of
+`pyrite tags`, tag-filtered search and every `sw` view keyed on a tag, silently). Now `-f tags=...`
+is refused (exit 2, `USAGE_ERROR`, nothing written): use `--tags a,b`, or `--append tags=x`, one
+tag per flag. `-f` never splits on commas: for a declared list field a scalar becomes a one-item
+list, and several values go as `-f 'k=["a","b"]'`.
 
 **Always read the entry back** after a CLI update that touched a list field:
 `pyrite get <id> -k pyrite --format json` shows what the index will actually serve, which
@@ -599,3 +610,50 @@ taken as deliberate. Reading a field more leniently (a task's word
 `priority`, `tags: Foo` as `['Foo']`) is safe for the file for the same
 reason: the kept-key rule writes the file's own value back until the field
 is assigned.
+
+## A rewrite of a stacked branch commits stale files unless you check the base moved
+
+When a branch is stacked on another branch that other sessions push to, the base
+can move while you work, and a rewrite then turns the new base commits into
+reverts. Three ways it has happened (three times in the security batches):
+
+- `git reset --soft <base>` followed by `git add <explicit paths>` after the
+  shared base ref had advanced: the working tree still held the old base's
+  content for the files you touched, and committing them whole reverted the
+  newer base commits in those files.
+- `git apply --3way` stages every file it touches. A later `git add <paths>` and
+  `git commit` of "one group" commits everything the patch staged, so six
+  planned commits became one. Run `git reset -q` after `git apply --3way`, then
+  commit by explicit paths.
+- `git fetch` in any worktree moves the remote-tracking refs for all of them.
+
+Before a rewrite: `git fetch <remote>` and `git merge-base --is-ancestor
+<base> HEAD`; after it: `git diff <base> HEAD --stat` must list only your
+files, and `git diff <old-head> HEAD` must be empty. If the base moved,
+re-apply your diff (`git diff <old-base> <old-head>`) onto the new base rather
+than resetting onto it with a stale working tree.
+
+## A New Error Class or Message: Run the Source-Reading Tests
+
+Some tests read the source tree instead of driving a surface, and a branch's
+own behaviour tests never touch them; CI is the first place they fail. A
+change that adds an exception class, a refusal message, a key in a result,
+or a catch-all exclusion must run them before the push (#1542 round 2: two
+went red in CI after two rounds of local runs and a cold read):
+
+- `tests/test_response_text_is_pyrites.py`: a caught exception's text may
+  reach a response, a raise or a result dict only through `public_text(...)`
+  (ADR-0052 N3), even when it is your own error's fixed `MESSAGE`.
+- `tests/test_public_message_logged_once.py`: a class that sets
+  `public_message` must be on its reviewed masking list. A class whose
+  `str()` is already fixed does not set one.
+- `tests/test_json_contracts_transitions.py` (a new code needs a row in
+  `docs/json-contracts.md` and in `_STATUS_BY_CODE`),
+  `tests/test_requested_effect_exit_code.py` (a command that now prints a
+  failure must exit non-zero and name its guard),
+  `tests/test_kb_reads_are_one_function.py` (a new probe or read is
+  classified by hand), and `tests/characterization/` (goldens for MCP
+  result keys; regenerate serially with
+  `PYRITE_CHARACTERIZATION_REGENERATE=1`).
+
+To find the rest: `grep -lE 'ast\.parse|rglob\("\*\.py"\)|inspect\.getsource' tests/*.py`.

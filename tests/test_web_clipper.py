@@ -66,63 +66,101 @@ class TestClipperEndpoint:
 
 
 class TestClipperService:
-    """Test ClipperService HTML processing."""
+    """ClipperService HTML processing, through ``clip_url`` (title, description, Markdown)."""
 
-    def test_clipper_service_extracts_title(self):
-        """Title extracted from HTML."""
-        from pyrite.services.clipper import _extract_title
+    @staticmethod
+    def _clip(monkeypatch, html, **kwargs):
+        import asyncio
 
+        import httpx
+
+        from pyrite.services.clipper import ClipperService
+
+        _serve(monkeypatch, lambda request: httpx.Response(200, text=html))
+        return asyncio.run(ClipperService().clip_url("https://example.com/p", **kwargs))
+
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clipper_service_extracts_title(self, monkeypatch):
         html = "<html><head><title>My Page</title></head><body></body></html>"
-        assert _extract_title(html) == "My Page"
+        assert self._clip(monkeypatch, html).title == "My Page"
 
-    def test_clipper_service_extracts_title_empty(self):
-        """Empty title returns empty string."""
-        from pyrite.services.clipper import _extract_title
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clipper_service_extracts_title_empty(self, monkeypatch):
+        """No title: the URL stands in for it."""
+        result = self._clip(monkeypatch, "<html><body>no title</body></html>")
+        assert result.title == "https://example.com/p"
 
-        assert _extract_title("<html><body>no title</body></html>") == ""
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clipper_service_strips_scripts(self, monkeypatch):
+        body = self._clip(monkeypatch, '<p>Hello</p><script>alert("x")</script><p>World</p>').body
+        assert "alert" not in body
+        assert "Hello" in body
+        assert "World" in body
 
-    def test_clipper_service_strips_scripts(self):
-        """Script tags are removed."""
-        from pyrite.services.clipper import _strip_elements
-
-        html = '<p>Hello</p><script>alert("x")</script><p>World</p>'
-        cleaned = _strip_elements(html)
-        assert "<script" not in cleaned
-        assert "Hello" in cleaned
-        assert "World" in cleaned
-
-    def test_clipper_service_strips_nav(self):
-        """Nav, footer, header elements are removed."""
-        from pyrite.services.clipper import _strip_elements
-
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clipper_service_strips_nav(self, monkeypatch):
         html = "<nav>menu</nav><main><p>Content</p></main><footer>foot</footer>"
-        cleaned = _strip_elements(html)
-        assert "<nav" not in cleaned
-        assert "<footer" not in cleaned
-        assert "Content" in cleaned
+        body = self._clip(monkeypatch, html).body
+        assert "menu" not in body
+        assert "foot" not in body
+        assert "Content" in body
 
-    def test_clipper_service_extracts_description(self):
-        """Meta description extracted."""
-        from pyrite.services.clipper import _extract_description
-
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clipper_service_extracts_description(self, monkeypatch):
         html = '<meta name="description" content="A great article">'
-        assert _extract_description(html) == "A great article"
+        assert self._clip(monkeypatch, html).description == "A great article"
 
-    def test_clipper_service_extracts_og_description(self):
-        """OG description fallback."""
-        from pyrite.services.clipper import _extract_description
-
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clipper_service_extracts_og_description(self, monkeypatch):
         html = '<meta property="og:description" content="OG desc">'
-        assert _extract_description(html) == "OG desc"
+        assert self._clip(monkeypatch, html).description == "OG desc"
+
+
+def _serve(monkeypatch, handler):
+    """Answer the clipper's requests with ``handler``; every name resolves public."""
+    import socket
+
+    import httpx
+
+    real = httpx.AsyncClient
+
+    def factory(**kwargs):
+        kwargs["transport"] = httpx.MockTransport(handler)
+        return real(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda host, port, *a, **k: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))
+        ],
+    )
 
 
 class TestClipUrl:
-    """Test full clip_url with mocked HTTP."""
+    """Test full clip_url with a mocked transport."""
 
-    def test_clip_url_fetches_and_converts(self):
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clip_url_fetches_and_converts(self, monkeypatch):
         """clip_url fetches HTML, extracts title and body as Markdown."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
+
+        import httpx
 
         from pyrite.services.clipper import ClipperService
 
@@ -139,71 +177,47 @@ class TestClipUrl:
         <footer>Footer</footer>
         </body>
         </html>"""
+        _serve(monkeypatch, lambda request: httpx.Response(200, text=html))
 
-        mock_response = MagicMock()
-        mock_response.text = html
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("pyrite.services.clipper.httpx.AsyncClient", return_value=mock_client):
-            svc = ClipperService()
-            result = asyncio.run(svc.clip_url("https://example.com/article"))
+        result = asyncio.run(ClipperService().clip_url("https://example.com/article"))
 
         assert result.title == "Test Article"
         assert result.source_url == "https://example.com/article"
         assert result.description == "A test article about testing."
         assert "article content" in result.body
-        assert "<nav" not in result.body
-        assert "<footer" not in result.body
+        assert "Menu" not in result.body
+        assert "Footer" not in result.body
 
-    def test_clip_url_with_title_override(self):
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clip_url_with_title_override(self, monkeypatch):
         """clip_url uses provided title instead of HTML title."""
         import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        from pyrite.services.clipper import ClipperService
-
-        html = "<html><head><title>Original</title></head><body><p>Content</p></body></html>"
-
-        mock_response = MagicMock()
-        mock_response.text = html
-        mock_response.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("pyrite.services.clipper.httpx.AsyncClient", return_value=mock_client):
-            svc = ClipperService()
-            result = asyncio.run(svc.clip_url("https://example.com", title="Custom Title"))
-
-        assert result.title == "Custom Title"
-
-    def test_clip_url_http_error(self):
-        """clip_url raises on HTTP error."""
-        import asyncio
-        from unittest.mock import AsyncMock, MagicMock, patch
 
         import httpx
 
         from pyrite.services.clipper import ClipperService
 
-        mock_response = MagicMock()
-        mock_response.raise_for_status = MagicMock(
-            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
-        )
+        html = "<html><head><title>Original</title></head><body><p>Content</p></body></html>"
+        _serve(monkeypatch, lambda request: httpx.Response(200, text=html))
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
+        result = asyncio.run(ClipperService().clip_url("https://example.com", title="Custom Title"))
 
-        with patch("pyrite.services.clipper.httpx.AsyncClient", return_value=mock_client):
-            svc = ClipperService()
-            with pytest.raises(httpx.HTTPStatusError):
-                asyncio.run(svc.clip_url("https://example.com/404"))
+        assert result.title == "Custom Title"
+
+    @pytest.mark.control(
+        reason="control: clip_url's output is unchanged; these moved from private helpers to the entry point"
+    )
+    def test_clip_url_http_error(self, monkeypatch):
+        """clip_url raises on HTTP error."""
+        import asyncio
+
+        import httpx
+
+        from pyrite.services.clipper import ClipperService
+
+        _serve(monkeypatch, lambda request: httpx.Response(404, text="gone"))
+
+        with pytest.raises(httpx.HTTPStatusError):
+            asyncio.run(ClipperService().clip_url("https://example.com/404"))

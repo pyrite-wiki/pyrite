@@ -195,6 +195,15 @@ RELATIONSHIP_TYPES: dict[str, dict[str, Any]] = {
     # Body wikilink references
     "wikilink": {"inverse": "wikilinked_by", "description": "Inline wikilink reference"},
     "wikilinked_by": {"inverse": "wikilink", "description": "Referenced by inline wikilink"},
+    # Body Markdown links to entry files (#1723)
+    "markdown_link": {
+        "inverse": "markdown_linked_by",
+        "description": "Markdown link to the entry's file",
+    },
+    "markdown_linked_by": {
+        "inverse": "markdown_link",
+        "description": "Linked to by a Markdown link",
+    },
 }
 
 
