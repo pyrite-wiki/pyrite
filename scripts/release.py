@@ -21,7 +21,8 @@ change the world come after every check:
                        yet (locally, on origin, or as a GitHub release) and
                        `origin/main` is an ancestor of the SHA, so step d can
                        only ever fast-forward; the version in pyproject.toml is
-                       <version>; README install tags match <version>; so do
+                       <version>; README install tags match <version> (so does
+                       extensions/software-kb/README.md, when it exists); so do
                        pyrite-mcp's version, its `pyrite @ git+...@v<tag>`
                        dependency and its README's tags (when `pyrite-mcp/` exists);
                        `uv lock --check` passes (a version bump leaves uv.lock
@@ -367,6 +368,16 @@ def check_readme_install_tag(repo: Path, version: str) -> None:
     except FileNotFoundError:
         raise ReleaseError("README.md is missing; cannot check the install tag.") from None
     problem = _install_tag_problem("README.md", readme, version)
+    if problem:
+        raise ReleaseError(problem)
+    # The software-kb extension's README pins the same tag. A checkout without
+    # the extension has nothing to check (as with pyrite-mcp/).
+    name = "extensions/software-kb/README.md"
+    try:
+        extension = (repo / name).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return
+    problem = _install_tag_problem(name, extension, version)
     if problem:
         raise ReleaseError(problem)
 
