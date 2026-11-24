@@ -225,7 +225,7 @@ item and reads the same. A blocker is unresolved until it
 is `done`, `retired` or `wont_do`; when it settles, the block lifts with no
 other step.
 
-What each command does with a blocked item, as dev behaves today:
+What each command does with a blocked item, as of v0.26.4:
 
 | Command | Blocked item |
 |---|---|
