@@ -201,6 +201,24 @@ class SearchResponse(BaseModel):
 # =============================================================================
 
 
+def _document_partial_entry_read(schema: dict[str, Any]) -> None:
+    # The endpoint supplies these details as extra keys on partial reads.
+    # Document them without adding a field to the response model.
+    properties = schema["properties"]
+    fields = ("field", "rule", "severity", "message")
+    properties["load_problems"] = {
+        "type": "array",
+        "description": "Present only when the file's type could not load every field.",
+        "items": {
+            "type": "object",
+            "properties": {field: {"type": "string"} for field in fields},
+            "required": list(fields),
+        },
+    }
+    for column in ("tags", "participants", "sources", "metadata"):
+        properties[column]["description"] = "Absent when load_problems names this column."
+
+
 class EntryResponse(BaseModel):
     """Full entry response.
 
@@ -239,6 +257,12 @@ class EntryResponse(BaseModel):
     # SHA-256 of the file bytes the read parsed (ADR-0042 decision 9); None
     # for an entry with no file.
     content_hash: str | None = None
+
+
+class SingleEntryResponse(EntryResponse):
+    """OpenAPI response for a single-entry read, which can return a partial entry."""
+
+    model_config = ConfigDict(json_schema_extra=_document_partial_entry_read)
 
 
 # =============================================================================

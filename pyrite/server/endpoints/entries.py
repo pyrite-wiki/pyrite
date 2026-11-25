@@ -51,6 +51,7 @@ from ..schemas import (
     ResolveBatchRequest,
     ResolveBatchResponse,
     ResolveResponse,
+    SingleEntryResponse,
     UpdateEntryRequest,
     UpdateResponse,
     WantedPage,
@@ -734,7 +735,7 @@ async def import_entries(
 # =============================================================================
 
 
-@router.get("/entries/{entry_id}", response_model=EntryResponse)
+@router.get("/entries/{entry_id}", response_model=SingleEntryResponse)
 @limiter.limit("100/minute")
 def get_entry(
     request: Request,
@@ -837,17 +838,17 @@ def apply_refused_columns(result: dict) -> set[str]:
     return refused
 
 
-def entry_response(result: dict, refused: set[str]) -> EntryResponse | JSONResponse:
+def entry_response(result: dict, refused: set[str]) -> SingleEntryResponse | JSONResponse:
     """Render a single-entry read, leaving refused columns out.
 
-    The dumped ``EntryResponse`` fills every defaulted column, so a refused
+    The dumped ``SingleEntryResponse`` fills every defaulted column, so a refused
     one is dropped from the dumped body: ``[]`` or ``{}`` would read as the
     file's value.
     """
     if refused:
-        body = EntryResponse(**result).model_dump(mode="json")
+        body = SingleEntryResponse(**result).model_dump(mode="json")
         return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
-    return EntryResponse(**result)
+    return SingleEntryResponse(**result)
 
 
 @router.post(
