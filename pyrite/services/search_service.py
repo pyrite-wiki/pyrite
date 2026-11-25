@@ -610,6 +610,12 @@ class SearchService:
         apply: a single term (nothing to relax), an empty query, or a query the
         user already wrote with explicit operators or quoted phrases (we honor
         their intent rather than widening it).
+
+        Lowercase stop words are left out of the retry. An OR join of "who is
+        the design work" would otherwise match any entry containing "is" and
+        report a keyword hit where the caller's terms never appeared (#1509).
+        As in `build_or_query`, capitalised tokens such as "IT" and "US" are
+        kept: those are acronyms, not stop words.
         """
         if not query or not query.strip():
             return None
@@ -619,6 +625,9 @@ class SearchService:
             return None
         terms = query.split()
         if len(terms) < 2:
+            return None
+        terms = [term for term in terms if not (term.lower() in _STOP_WORDS and not term.isupper())]
+        if not terms:
             return None
         quoted_terms = [re.sub(r"(\S*[^\w\s]\S*)", r'"\1"', term) for term in terms]
         return " OR ".join(quoted_terms)

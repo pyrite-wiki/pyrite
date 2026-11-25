@@ -400,6 +400,14 @@ class TestKeywordRegimes:
         assert (resp["match"], resp["keyword_match"]) == ("none", "none")
         assert resp["results"] == []
 
+    def test_a_stopword_only_overlap_is_not_a_match(self, db, svc):
+        # The entry shares "who", "is" and "the" with the query. Those are
+        # stop words: the OR-relaxed retry must not turn them into a hit.
+        add_entry(db, "a", body="who is the")
+        resp = response(svc, "who is doing the design work", mode="keyword")
+        assert (resp["match"], resp["keyword_match"]) == ("none", "none")
+        assert resp["results"] == []
+
     def test_a_caller_written_or_is_not_every_term(self, db, svc):
         add_entry(db, "a", body="kestrel hovering")
         resp = response(svc, "kestrel OR submarine", mode="keyword")
