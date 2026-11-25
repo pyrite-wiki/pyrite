@@ -1,0 +1,1 @@
+- The getting-started guide now shows how to share a knowledge base, export a Quartz site and prepare a NotebookLM bundle. The site export help lists the frontmatter it keeps (#1285).
