@@ -8,11 +8,12 @@ not to the raw file. Every value an entry carries that the brief prints
 so each prints on a line of its own that starts with the field's name and
 "(data):", as one JSON string, with control characters and newlines flattened
 and its length capped: none of it can start a line of the brief or carry a
-terminal escape (#1369). A registry that is missing, cannot be parsed
-(nesting too deep included), or is not a list of entries with those three
-string fields prints a notice line and the trailer line, exits with status 2
-and no traceback; the session start hook then prints its own warning and goes
-on.
+terminal escape (#1369). A registry that is missing, exists but cannot be
+read (a directory, no read permission), cannot be parsed (nesting too deep
+included), or is not a list of entries with those three string fields prints a
+notice line that says which, and the trailer line, exits with status 2 and no
+traceback; only the malformed notice describes the expected shape. The
+session start hook then prints its own warning and goes on.
 """
 
 import json
@@ -41,7 +42,7 @@ def _entries(path: Path) -> list[dict[str, str]] | None:
     try:
         failures = json.loads(path.read_bytes().decode("utf-8"))
     except OSError:
-        # The file is missing or unreadable, not malformed.
+        # Missing or unreadable, not malformed: render() tells the two apart.
         raise
     except (UnicodeDecodeError, ValueError, RecursionError):
         # RecursionError: a registry nested deeper than json can parse.
@@ -61,17 +62,23 @@ MALFORMED = (
     f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
 )
 
-MISSING = (
-    "Known cloud-only failures: the registry is missing and was not read "
-    f"(expected a JSON list of entries with string {', '.join(FIELDS)}).\n{TRAILER}\n"
-)
+MISSING = f"Known cloud-only failures: the registry is missing and was not read.\n{TRAILER}\n"
+
+UNREADABLE = f"Known cloud-only failures: the registry exists but could not be read.\n{TRAILER}\n"
+
+#: Every notice that means the registry was not read; the script exits 2 on each.
+NOTICES = (MALFORMED, MISSING, UNREADABLE)
 
 
 def render(path) -> str:
     try:
         failures = _entries(Path(path))
-    except OSError:
+    except FileNotFoundError:
         return MISSING
+    except OSError:
+        # A directory, no read permission, or any other OSError: the file is
+        # there, so "missing" would be false.
+        return UNREADABLE
     if failures is None:
         return MALFORMED
     if not failures:
@@ -96,4 +103,4 @@ if __name__ == "__main__":
     )
     text = render(path)
     sys.stdout.write(text)
-    sys.exit(2 if text in (MALFORMED, MISSING) else 0)
+    sys.exit(2 if text in NOTICES else 0)
