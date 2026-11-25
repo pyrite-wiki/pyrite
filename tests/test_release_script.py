@@ -319,6 +319,30 @@ class TestReadmeInstallTag:
         with pytest.raises(release.ReleaseError, match="README.md.*missing"):
             release.check_readme_install_tag(repo, "0.24.2")
 
+    def _software_kb_readme(self, repo, tag):
+        path = repo / "extensions" / "software-kb" / "README.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            f'pip install "pyrite-software-kb @ git+https://github.com/pyrite-wiki/pyrite@v{tag}'
+            '#subdirectory=extensions/software-kb"\n'
+        )
+
+    def test_software_kb_readme_with_the_version_passes(self, repo):
+        self._software_kb_readme(repo, "0.24.2")
+        release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_a_stale_software_kb_readme_tag_names_the_file_and_both_versions(self, repo):
+        self._software_kb_readme(repo, "0.24.1")
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_readme_install_tag(repo, "0.24.2")
+        message = str(excinfo.value)
+        assert "extensions/software-kb/README.md" in message
+        assert "v0.24.1" in message and "0.24.2" in message
+
+    def test_a_checkout_without_the_extension_has_nothing_to_check(self, repo):
+        assert not (repo / "extensions").exists()
+        release.check_readme_install_tag(repo, "0.24.2")
+
 
 class TestPyriteMcpMatchesRelease:
     """`pyrite-mcp` carries Pyrite's version (#1582): its own version, the tag

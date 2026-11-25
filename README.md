@@ -209,7 +209,7 @@ Five extensions ship:
 
 | Extension | Purpose | Key Types |
 |-----------|---------|-----------|
-| **software-kb** | Software project management | ADRs, components, backlog items, standards, runbooks |
+| **software-kb** | Software project management ([guide](extensions/software-kb/README.md)) | ADRs, components, backlog items, standards, runbooks |
 | **zettelkasten** *(example plugin)* | CEQRC maturity workflow | Notes with maturity progression |
 | **encyclopedia** *(example plugin)* | Articles with review workflow | Articles, reviews, voting |
 | **social** *(example plugin)* | Engagement tracking | Social interactions |
