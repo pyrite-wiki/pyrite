@@ -133,8 +133,8 @@ def test_a_refused_field_is_absent_from_every_read_and_named(
     assert problem["rule"] == "load"
     # The loader's own text for the local process; a network read gets it only
     # when the loader raised a PyriteError, else Pyrite's withheld text (0.26.2).
-    # `pyrite-read` is local too, but binds no local process yet (#1460).
-    if surface == "cli":
+    # `pyrite-read` is local too, and binds local_process (#1460).
+    if surface in ("cli", "pyrite-read"):
         assert spec.loader in problem["message"]
     else:
         assert spec.loader in problem["message"] or OUTSIDE_TEXT_WITHHELD in problem["message"], (
