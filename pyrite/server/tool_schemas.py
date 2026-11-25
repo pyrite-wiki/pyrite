@@ -50,7 +50,7 @@ READ_TOOLS = {
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "kb_search": {
-        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "searched", the entry parts the legs that ran read ([] when none ran; a semantic-only search lists "body_prefix" with "body_prefix_chars": only the start of a body is embedded; tags and field values are not indexed, so a miss on one is not an absence; the contract is item 11 in the docstring of SearchService.search); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
+        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Keyword search reads entry titles and bodies only; tags and field values are not searched, so use the `tag` filter for tags. Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "searched", the entry parts the legs that ran read ([] when none ran; a semantic-only search lists "body_prefix" with "body_prefix_chars": only the start of a body is embedded; tags and field values are not indexed, so a miss on one is not an absence; the contract is item 11 in the docstring of SearchService.search); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
         + HOW_TO_READ_MATCH
         + ' "none" is only said when the search ran as asked: if the semantic leg did not run the verdict is weak at worst. The results are returned whatever the verdict, and the verdict is the same on every page. The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
         "inputSchema": {
@@ -294,6 +294,7 @@ READ_TOOLS = {
                 },
                 "recent_limit": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Number of recent entries to include (default 5)",
                 },
                 "detail": {
@@ -437,13 +438,30 @@ READ_TOOLS = {
         },
     },
     "kb_recent": {
-        "description": "Get recently changed entries. Use to see what's new or changed in a KB. Thin wrapper over list-entries sorted by updated_at desc.",
+        "description": (
+            "Get recently changed entries, newest first, with list pagination. "
+            "`since` bounds updated_at (inclusive) before `limit` applies: the answer "
+            "holds up to `limit` entries updated at or after it, `has_more` says whether "
+            "more of them exist, and `offset` fetches the next page. Deleted entries are "
+            "not reported. `updated_at` is the time Pyrite last indexed the entry until "
+            "#670 lands."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kb_name": {"type": "string", "description": "KB to query (optional)"},
                 "entry_type": {"type": "string", "description": "Filter by entry type"},
-                "limit": {"type": "integer", "description": "Max entries to return (default 20)"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "Max entries to return (default 20, max 200)",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Pagination offset into the entries matching the filters (default 0)",
+                },
                 "since": {
                     "type": "string",
                     "description": (
@@ -635,6 +653,13 @@ READ_TOOLS = {
                     "dependencies resolved, no children; highest priority first, then oldest. "
                     "Adds `counts` (per reason) and `excluded` (each open task left out, with "
                     "its reason).",
+                },
+                "parked": {
+                    "type": "boolean",
+                    "description": "true: only parked tasks (parked_awaiting or retest_after "
+                    "set, due rechecks and person parks included); false: only unparked ones. "
+                    "Rows gain park_kind, retest_after and park_state "
+                    "(none/parked/due/person).",
                 },
                 "fields": {
                     "type": "array",
@@ -1108,6 +1133,68 @@ WRITE_TOOLS = {
                 "assignee": {
                     "type": "string",
                     "description": "Who starts the task: over a signed-in session it must be you (leave it out; any other value is refused); required with no signed-in user (e.g. agent:claude-code-7a3f)",
+                },
+            },
+            "required": ["task_id", "kb_name"],
+        },
+    },
+    "task_park": {
+        "description": (
+            "Park a task: what it waits on (reason), who must act (kind: person keeps it from "
+            "agents; external, the default, gives it back on its date) and when to recheck "
+            "(retest_after, YYYY-MM-DD). One write; a new park replaces the old one; the status "
+            "does not change. A task another caller holds is refused unless you hold it or pass "
+            "the operator override; a done or cancelled task is not parked. task_list dispatchable leaves it out until the date, then lists it "
+            "with recheck: true (or under due_rechecks when it is not open)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "reason": {"type": "string", "description": "What the task waits on"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["person", "external"],
+                    "description": "person: a person must act, never handed back to agents; "
+                    "external (default): the world, back to agents on retest_after",
+                },
+                "retest_after": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD: from this date an external park is due",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
+                },
+            },
+            "required": ["task_id", "kb_name", "reason"],
+        },
+    },
+    "task_unpark": {
+        "description": (
+            "Unpark a task: remove parked_awaiting, park_kind and retest_after (the keys, never "
+            "an empty value) in one write. The status does not change; a task that is not parked "
+            "is left as it is (removed: []). A task another caller holds is refused unless you "
+            "hold it or pass the operator override."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string", "description": "Task entry ID"},
+                "kb_name": {"type": "string", "description": "KB name"},
+                "by": {
+                    "type": "string",
+                    "description": "Who is acting: over a signed-in session it must be you (leave it out); with no signed-in user, the task's holder. A task another caller holds is refused (the holder rule task_finish follows); a task no one holds may be acted on by anyone",
+                },
+                "operator_override": {
+                    "type": "boolean",
+                    "description": "As the operator, act on a task you do not hold (the explicit override task_finish has); refused for anyone else",
                 },
             },
             "required": ["task_id", "kb_name"],

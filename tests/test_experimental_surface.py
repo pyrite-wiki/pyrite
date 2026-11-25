@@ -331,6 +331,8 @@ def scratch_project(tmp_path):
 
 def _pytest(root, *args):
     env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    # The scratch project tests collection and has no Pyrite packages to check.
+    env["PYRITE_SKIP_CHECKOUT_IMPORTS"] = "1"
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", *args],
         cwd=root,

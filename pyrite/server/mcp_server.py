@@ -51,7 +51,7 @@ from ..plugins.identity import (
     person_key,
     resolve_person_arguments,
 )
-from ..schema import filter_updated_since, parse_since
+from ..schema import parse_since
 from ..services.access_policy import ROLES, Principal, named_kb
 from ..services.acting import (
     OPERATOR,
@@ -436,11 +436,13 @@ CORE_PERSON_ARGUMENTS: dict[str, dict[str, str]] = {
     "task_claim": {"assignee": CALLER},
     "task_start": {"assignee": CALLER},
     "task_finish": {"by": OPTIONAL},
+    "task_park": {"by": OPTIONAL},
+    "task_unpark": {"by": OPTIONAL},
     "task_create": {"assignee": OPTIONAL},
     "task_update": {"assignee": OPTIONAL},
     "task_decompose": {"children[].assignee": OPTIONAL},
 }
-CORE_ACTING_KEYWORD = frozenset({"task_update", "task_finish"})
+CORE_ACTING_KEYWORD = frozenset({"task_update", "task_finish", "task_park", "task_unpark"})
 
 #: Admin actions that write no file of the KB they name, so a read-only KB
 #: still takes them: tool -> its actions (None: every call). Everything else
@@ -791,7 +793,8 @@ class PyriteMCPServer:
         bound = current_target()
         if bound is None:
             return self._svc
-        return bound.service("kb", KBService)
+        svc: KBService = bound.service("kb", KBService)
+        return svc
 
     @svc.setter
     def svc(self, value: KBService) -> None:
@@ -1420,7 +1423,7 @@ class PyriteMCPServer:
         if readable_kbs is not None:
             # Items in KBs the caller may not read are reported as not found.
             ids = [(eid, kb) for eid, kb in ids if kb in readable_kbs]
-        results = self.svc.get_entries(ids)
+        results = self.svc.get_entries(ids, include_warnings=True)
 
         # The per-body ceiling does not bound a response: 50 entries at the
         # ceiling is a megabyte. fill_budget spends PYRITE_BODY_RESPONSE_BUDGET
@@ -1475,6 +1478,7 @@ class PyriteMCPServer:
             sort_order=sort_order,
             limit=limit,
             offset=offset,
+            include_warnings=True,
         )
         total = self.svc.count_entries(
             kb_name=kb_name, kb_names=kb_names, entry_type=entry_type, tag=tag
@@ -1528,28 +1532,35 @@ class PyriteMCPServer:
     def _kb_recent(
         self, args: dict[str, Any], *, readable_kbs: set[str] | None = None
     ) -> dict[str, Any]:
-        """Get recently changed entries."""
+        """Get recently changed entries, newest first, with list pagination.
+
+        `since` is applied before `limit` (in `KBService.recent`), so the page
+        holds up to `limit` entries updated at or after it and `has_more` is
+        counted over that filtered set — a partial answer never looks whole
+        (#1859).
+        """
         kb_name = args.get("kb_name")
         entry_type = args.get("entry_type")
-        limit = min(args.get("limit", 20), 200)
+        # Out-of-range values are clamped to the declared bounds and the
+        # clamped values are echoed, so the envelope never reports an offset
+        # or limit the answer was not computed with.
+        limit = min(max(int(args.get("limit", 20)), 0), 200)
+        offset = max(int(args.get("offset", 0)), 0)
         # A value that cannot be read is refused, never compared as a string
         # and answered with an empty list (#1268). `since` is parsed here so
         # the refusal names the parameter before any entries are fetched.
         since = parse_since(args.get("since"))
         fields = args.get("fields")
 
-        entries = self.svc.list_entries(
+        entries, total = self.svc.recent(
             kb_name=kb_name,
             kb_names=None if kb_name else readable_kbs,
             entry_type=entry_type,
-            sort_by="updated_at",
-            sort_order="desc",
+            since=since,
             limit=limit,
+            offset=offset,
+            include_warnings=True,
         )
-
-        # Filter by the instant `since` names, the same way the CLI does.
-        if since is not None:
-            entries = filter_updated_since(entries, since)
 
         # Same unbounded-browse shape as kb_list_entries (ADR-0034 rule 3).
         entries = self.body_bounds.fill_budget(entries)
@@ -1559,6 +1570,10 @@ class PyriteMCPServer:
         return {
             "entries": entries,
             "count": len(entries),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total,
         }
 
     def _kb_qa_assess(
@@ -2028,6 +2043,7 @@ class PyriteMCPServer:
             assignee=args.get("assignee"),
             parent=args.get("parent"),
             dispatchable=bool(args.get("dispatchable")),
+            parked=None if args.get("parked") is None else bool(args["parked"]),
             fields=parse_fields_param(args.get("fields")),
         )
         return listing
@@ -2252,6 +2268,34 @@ class PyriteMCPServer:
         )
         return result
 
+    def _task_park(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
+        """Park a task (`TaskService.park_task`, #1688): the service's dict,
+        the shape `task park` prints. Park follows the holder rule finish
+        follows: the caller is `by` (a person argument), else the signed-in
+        caller (`acting`); the operator has `operator_override: true`."""
+        result: dict[str, Any] = self.task_svc.park_task(
+            args["task_id"],
+            args["kb_name"],
+            args.get("reason") or "",
+            kind=args.get("kind"),
+            retest_after=args.get("retest_after"),
+            by=args.get("by") or acting or "",
+            operator_override=args.get("operator_override") is True,
+        )
+        return result
+
+    def _task_unpark(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
+        """Unpark a task (`TaskService.unpark_task`, #1688): the three park
+        keys removed; the service's dict, the shape `task unpark` prints. The
+        holder rule as for `task_park`."""
+        result: dict[str, Any] = self.task_svc.unpark_task(
+            args["task_id"],
+            args["kb_name"],
+            by=args.get("by") or acting or "",
+            operator_override=args.get("operator_override") is True,
+        )
+        return result
+
     def _task_finish(self, args: dict[str, Any], *, acting: str | None = None) -> dict[str, Any]:
         """Move a held task to done in one write (`TaskService.finish_task`,
         #1685). Finish requires the caller to hold the task: the caller is `by`
@@ -2296,7 +2340,7 @@ class PyriteMCPServer:
                 task_id=args["task_id"],
                 kb_name=args["kb_name"],
                 message=args["message"],
-                confidence=args.get("confidence", 0.0),
+                confidence=args.get("confidence"),
                 partial_evidence=args.get("partial_evidence"),
             )
         except EntryLoadError as e:
@@ -2353,6 +2397,7 @@ class PyriteMCPServer:
             # Folders it could not list, rows kept (#1546): a count, never a
             # path, over the network (``network_shape``).
             "unreadable_folders": shaped["unreadable_folders"],
+            "unreadable_files": shaped["unreadable_files"],
         }
         if confirm is not None:
             answer["confirm"] = shaped["confirm"]
@@ -2549,7 +2594,7 @@ class PyriteMCPServer:
             result = self.registry.reindex_kb(name)
             from ..services.index_health import network_shape
 
-            # Folders it could not list as a count, never a path (#1546).
+            # Unreadable folders and files are reported as counts.
             return {"reindexed": True, "name": name, **network_shape(result)}
         except KBNotFoundError as e:
             return _error("NOT_FOUND", str(e))
@@ -2968,7 +3013,9 @@ class PyriteMCPServer:
             refusal = _kb_refusal(self.svc, kb_name, readable_kbs)
             if refusal is not None:
                 return refusal
-            entries = self.svc.list_entries(kb_name=kb_name, limit=MAX_RESOURCE_LIST_ENTRIES)
+            entries = self.svc.list_entries(
+                kb_name=kb_name, limit=MAX_RESOURCE_LIST_ENTRIES, include_warnings=True
+            )
             return {
                 "contents": [
                     {

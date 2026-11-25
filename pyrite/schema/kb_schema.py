@@ -76,11 +76,11 @@ class KBSchema:
         """Create from dictionary."""
         types = {}
         ignored_declarations = []
-        for type_name, type_data in data.get("types", {}).items():
+        for type_name, type_data in (data.get("types") or {}).items():
             if isinstance(type_data, dict):
                 # Parse rich field definitions if present
                 fields = {}
-                for field_name, field_data in type_data.get("fields", {}).items():
+                for field_name, field_data in (type_data.get("fields") or {}).items():
                     if isinstance(field_data, dict):
                         fields[field_name] = FieldSchema.from_dict(field_name, field_data)
 
@@ -109,7 +109,7 @@ class KBSchema:
                         del fields[col_name]
 
                 endpoints = {}
-                for role, ep_data in type_data.get("endpoints", {}).items():
+                for role, ep_data in (type_data.get("endpoints") or {}).items():
                     if isinstance(ep_data, dict):
                         endpoints[role] = EndpointSpec(
                             field=ep_data.get("field", ""),

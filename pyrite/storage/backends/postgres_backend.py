@@ -29,14 +29,15 @@ from .protocol import DEFAULT_MIN_SIMILARITY, similarity_from
 
 logger = logging.getLogger(__name__)
 
-# The Postgres backend is experimental in 0.25.x (#718): the alembic chain stops
-# at revision 006, so an existing Postgres database cannot take a column added
-# since. Said once per process, from the one place the backend is built, so the
-# CLI, the REST server and the MCP server all get it without a per-command change.
+# The Postgres backend is experimental (#718): nothing in the product selects it
+# yet (`search_backend` and `database_url` are read nowhere). Its schema now
+# upgrades through the alembic chain, which `ensure_schema` runs. Said
+# once per process, from the one place the backend is built, so the CLI, the
+# REST server and the MCP server all get it without a per-command change.
 EXPERIMENTAL_ACK_ENV = "PYRITE_POSTGRES_EXPERIMENTAL_ACK"
 _EXPERIMENTAL_NOTICE = (
-    "The Postgres backend is experimental in Pyrite 0.25.x: an existing Postgres "
-    "database may not upgrade between releases. "
+    "The Postgres backend is experimental: nothing in Pyrite selects it yet, and its "
+    "schema upgrades only when ensure_schema() runs the alembic chain. "
     "Details: https://github.com/pyrite-wiki/pyrite/issues/718 "
     f"(set {EXPERIMENTAL_ACK_ENV}=1 to silence this notice)"
 )
@@ -155,55 +156,41 @@ def create_postgres_engine(url: str | URL, **kwargs: Any) -> Engine:
 
 
 def ensure_schema(engine) -> None:
-    """Create pgvector extension, FTS column, embedding column, and indexes.
+    """Bring the database to this build's schema, then add the Postgres-only objects.
 
-    Idempotent — safe to call on every startup.
+    Idempotent, safe to call on every startup. Two steps:
+
+    1. ``alembic upgrade head`` (``alembic_chain.upgrade_to_head``): every table,
+       column and index the models and SQLite's migrations declare, with the
+       data steps that belong to them (#718). Until #718 this function also
+       added ``entry.aliases``, ``link.target_prefix``, ``link.target_path``,
+       ``link.target_resolved``, their indexes and the v30 re-read itself, a
+       third schema mechanism. Revision 012 owns them now. A database nobody
+       stamped (every Postgres database built before this) upgrades from the
+       base of the chain, and each guarded step skips what it already has.
+    2. What only Postgres has, and so no revision mirrors: pgvector, the
+       ``fts_vector`` and ``embedding`` columns, the GIN index on
+       ``fts_vector`` and the FTS trigger. ``embedding`` has no index: semantic
+       search is an exact scan (#1821), and revision 013 drops the HNSW index
+       earlier releases built (#1822).
     """
+    from ..alembic_chain import upgrade_to_head
+
+    with engine.begin() as conn:
+        upgrade_to_head(conn)
     with engine.connect() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS fts_vector tsvector"))
         conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS embedding vector(384)"))
-        # The entry's `aliases` as a JSON list (#1001, #1011): create_all never alters
-        # an existing table, so a database from before it gets the column here.
-        conn.execute(text("ALTER TABLE entry ADD COLUMN IF NOT EXISTS aliases TEXT"))
-        # The link's `kb:` prefix as written (#980): create_all never alters an
-        # existing table, so a database from before it gets the column here.
-        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_prefix TEXT"))
-        # The path a Markdown link names (#1723), the same way. A database
-        # from before it holds no Markdown link rows for files whose stat is
-        # unchanged, and a sync never re-reads those: so when the column is
-        # new here, the recorded stat is cleared and the next sync reads every
-        # file once (SQLite's migration v30 does the same, decision D3).
-        had_target_path = conn.execute(
-            text(
-                "SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()"
-                " AND table_name = 'link' AND column_name = 'target_path'"
-            )
-        ).first()
-        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_path TEXT"))
-        # Whether a Markdown link row's path matched an entry file; added with
-        # target_path (one release), so the re-read below covers both.
-        conn.execute(text("ALTER TABLE link ADD COLUMN IF NOT EXISTS target_resolved INTEGER"))
-        if had_target_path is None:
-            conn.execute(text("UPDATE entry SET file_mtime_ns = NULL, file_size = NULL"))
-        conn.execute(
-            text("CREATE INDEX IF NOT EXISTS idx_link_target_path ON link (target_kb, target_path)")
-        )
-        conn.execute(
-            text("CREATE INDEX IF NOT EXISTS idx_entry_kb_file_path ON entry (kb_name, file_path)")
-        )
         # GIN index for FTS
         conn.execute(
             text("CREATE INDEX IF NOT EXISTS idx_entry_fts ON entry USING gin(fts_vector)")
         )
-        # IVFFlat index for vector KNN (requires rows to exist; falls back to seq scan if empty)
-        # Use HNSW for small corpora — no training needed
-        conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_entry_embedding "
-                "ON entry USING hnsw(embedding vector_cosine_ops)"
-            )
-        )
+        # No index on ``embedding``. Semantic search is an exact scan whose
+        # sort key no index can supply (#1401, #1821), so an HNSW index served
+        # no query and cost every write. Revision 013 drops the one earlier
+        # releases built here (#1822); creating it again here would undo that
+        # drop on every start.
         # Trigger to auto-update fts_vector on INSERT/UPDATE
         conn.execute(
             text(f"""
@@ -669,7 +656,21 @@ class PostgresBackend(BaseBackend):
         sql += " AND (e.embedding <=> CAST(:vec3 AS vector)) <= :max_cosine_distance"
         params["vec3"] = vec_str
         params["max_cosine_distance"] = 1.0 - min_similarity
-        sql += " ORDER BY e.embedding <=> CAST(:vec2 AS vector) LIMIT :limit"
+        # Exact KNN, the only path (#1401, #1822). An approximate index would
+        # return at most its candidate window (hnsw.ef_search, 40) before the
+        # WHERE runs, so a selective filter could empty the result without
+        # saying so; that is why earlier releases' HNSW index on embedding was
+        # dropped (revision 013) and nothing creates one now.
+        #
+        # ``(... <=> ...) + 0`` is a different expression from the ``<=>``
+        # operator, so no index could supply this sort key even if one were
+        # added by hand, on any Postgres version and as any key position (PG17
+        # lets an index supply the first key and an Incremental Sort the rest;
+        # a tiebreaker alone kept the index out only up to PG16). The rows are
+        # therefore every row the WHERE admits, sorted, and the LIMIT applies
+        # after filtering, as the docstring promises. (kb_name, id), the primary key, makes the order
+        # total: equal distances keep the same rows on every run.
+        sql += " ORDER BY (e.embedding <=> CAST(:vec2 AS vector)) + 0, e.kb_name, e.id LIMIT :limit"
         params["vec2"] = vec_str
         params["limit"] = limit
 

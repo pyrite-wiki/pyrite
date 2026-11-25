@@ -253,6 +253,10 @@ def _as_text(value: Any) -> Any:
         return value
     if isinstance(value, bool):
         return str(int(value))
+    if isinstance(value, float):
+        from .crud import float_text
+
+        return float_text(value)
     return str(value)
 
 
@@ -1012,15 +1016,18 @@ class IndexManager:
                     for role, endpoint_spec in type_schema.endpoints.items():
                         value = fm.get(endpoint_spec.field)
                         if value and isinstance(value, str):
-                            # Strip wikilink brackets if present: [[target]] -> target
-                            endpoint_id = _strip_wikilink_brackets(value)
+                            # The endpoint names its entry by the object-ref
+                            # rule: brackets stripped, and a registered
+                            # ``prefix:`` puts the endpoint in that KB (the
+                            # full name, ADR-0049), not the edge's own (#1733).
+                            endpoint_id, endpoint_kb = self._object_ref_target(value, kb_name)
                             if endpoint_id:
                                 edge_endpoints.append(
                                     {
                                         "role": role,
                                         "field_name": endpoint_spec.field,
                                         "endpoint_id": endpoint_id,
-                                        "endpoint_kb": kb_name,
+                                        "endpoint_kb": endpoint_kb,
                                         "edge_type": entry_type_name,
                                     }
                                 )
@@ -1777,8 +1784,12 @@ class IndexManager:
         self.db.unregister_kb(kb_name)
 
     def is_empty(self) -> bool:
-        """True when the index holds no entries at all."""
-        return self.db.count_entries() == 0
+        """True when the index holds no entries at all.
+
+        Archived entries count: an index holding only archived entries is
+        not empty, so `pyrite search` does not rebuild it on every call.
+        """
+        return self.db.count_entries(include_archived=True) == 0
 
     def get_index_stats(self, kb_names: set[str] | None = None) -> dict[str, Any]:
         """Get statistics about the index.

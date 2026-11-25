@@ -112,9 +112,11 @@ def change_set_target(
     if diff_db is None:
         raise LandingRefusedError(f"KB '{kb_name}': the change set has no index")
     # WorktreeDB is the overlay that stands in for a PyriteDB (duck-typed).
-    # Rows main still holds name main's files: read only inside main's folder.
+    # Rows main still holds name main's files, and diff rows name the user's
+    # working copy: read only inside those granted folders.
     main_kb = config.get_kb(kb_name)
-    roots = {kb_name: (main_kb.path,)} if main_kb is not None else {}
+    granted = tuple(p for p in (user_kb.path, main_kb.path if main_kb is not None else None) if p)
+    roots = {kb_name: granted} if granted else {}
     return target_config, cast("PyriteDB", WorktreeDB(db, diff_db, kb_roots=roots))
 
 

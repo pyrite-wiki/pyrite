@@ -80,7 +80,7 @@ class SchemaService:
         data = self._load_kb_yaml(kb)
         return {
             "kb_name": kb_name,
-            "types": data.get("types", {}),
+            "types": (data.get("types") or {}),
             "policies": data.get("policies", {}),
             "validation": data.get("validation", {}),
         }
@@ -109,7 +109,7 @@ class SchemaService:
         self._require_kb_directory(kb)
         data = self._load_kb_yaml(kb)
 
-        types = data.get("types", {})
+        types = data.get("types") or {}
         if type_name in types:
             return {"error": f"Type '{type_name}' already exists in KB '{kb_name}'"}
 
@@ -134,7 +134,7 @@ class SchemaService:
         self._require_kb_directory(kb)
         data = self._load_kb_yaml(kb)
 
-        types = data.get("types", {})
+        types = data.get("types") or {}
         if type_name not in types:
             return {"error": f"Type '{type_name}' not found in KB '{kb_name}'"}
 
@@ -170,7 +170,7 @@ class SchemaService:
 
         self._save_kb_yaml(kb, data)
 
-        type_count = len(data.get("types", {}))
+        type_count = len(data.get("types") or {})
         return {"set": True, "kb_name": kb_name, "type_count": type_count}
 
     def migrate_entries(

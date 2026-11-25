@@ -116,7 +116,9 @@ class TestSearchService:
             ("trump AND biden", None),  # explicit operator: leave it alone
             ("trump OR biden", None),  # already OR: leave it alone
             ('"family separation"', None),  # quoted phrase: leave it alone
-            ("a b c d", "a OR b OR c OR d"),
+            ("w x y z", "w OR x OR y OR z"),
+            ("a b c d", "b OR c OR d"),  # lowercase "a" is a stop word
+            ("a an the", None),  # all stop words: nothing left to relax
         ],
         ids=[
             "three-terms-to-or",
@@ -126,6 +128,8 @@ class TestSearchService:
             "explicit-or-noop",
             "quoted-phrase-noop",
             "four-terms-to-or",
+            "four-terms-stop-word-dropped",
+            "all-stop-words-noop",
         ],
     )
     def test_relax_to_or(self, input_query, expected):

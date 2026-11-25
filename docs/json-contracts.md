@@ -1236,7 +1236,7 @@ the findings still in the document (`missing_targets`, `total_references`,
 
 The three return one body, built by `TaskService.task_listing`:
 `{"count", "tasks"}` (the CLI adds `outcome`), newest task first. A zero-row
-list is `done` (ADR-0046). Two optional arguments, each absent by default, and
+list is `done` (ADR-0046). Three optional arguments, each absent by default, and
 without them the body is unchanged:
 
 - **`--fields a,b`** (MCP `fields: ["a","b"]`, REST `?fields=a,b`) projects
@@ -1253,7 +1253,10 @@ without them the body is unchanged:
    "counts": {"dispatchable": 2, "not_open": 5, "empty_status": 0, "orphaned": 0,
               "has_children": 1, "assigned": 1, "parked": 3, "blocked": 2,
               "unreadable": 0},
-   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}]}
+   "excluded": [{"id": "write-intro", "kb_name": "test-kb", "reason": "assigned"}],
+   "due_rechecks": [{"id": "await-ruling", "kb_name": "test-kb", "status": "in_progress",
+                     "priority": 7, "assignee": "agent:x", "parked_awaiting": "ruling",
+                     "park_kind": "", "retest_after": "2026-12-10"}]}
   ```
 
   `counts` has every key, even at zero, and sums to the tasks the other
@@ -1270,12 +1273,76 @@ without them the body is unchanged:
   | `orphaned` | its index row's file is gone |
   | `has_children` | has child tasks (`parent`, or legacy `parent_task`); the children are listed instead |
   | `assigned` | names any assignee |
-  | `parked` | `parked_awaiting` says why it waits; empty, whitespace, `''` and `null` do not park, and the body is never read |
+  | `parked` | its park state (`parked_state`, #1688) is `parked` or `person`: `parked_awaiting` gives a reason or `retest_after` is set, and the park is not yet due (a `person` park never is). Empty, whitespace, `''` and `null` reasons do not park, and the body is never read. For a row every other check would list, the claim's loader reads the file, so a park written after the last `index sync` still excludes it, judged by the same rule on the file's `parked_awaiting`, `park_kind` and `retest_after` (a file park whose `retest_after` has come is due, not parked). An index row that already says parked stays parked until the next sync, even when the file no longer does |
   | `blocked` | a dependency is unresolved (`done` and `cancelled` resolve, by effective status), names no task, or is a `kb:id` in a KB this listing does not read |
   | `unreadable` | passes every check above, but the claim's loader does not load its file (its YAML broke after indexing, or its type refuses it) |
 
+  A listed task whose park has come due (an external park whose
+  `retest_after` is today or earlier) carries `recheck: true`, `park_kind`
+  and `retest_after`. `due_rechecks` lists every other live task (effective
+  status not `done`, `cancelled` or `failed`) whose park is due -- in
+  progress, claimed, blocked, or open but excluded for another reason --
+  ordered by priority (highest first), then `retest_after`, then KB and id.
+  A `person` park is never in it. Today is read once per call; the
+  predicate itself never reads the clock.
+
   With `--fields`, the CLI names on stderr any field no task carries (as
   `search` does); nothing is refused.
+- **`--parked` / `--unparked`** (MCP `parked: true|false`, REST
+  `?parked=true|false`, #1688) keeps the tasks whose park state is anything
+  but `none` (due rechecks and person parks included), or exactly `none`.
+  Each row gains `park_kind` (as written, `""` when absent), `retest_after`
+  (a date as `YYYY-MM-DD`, other text as written, `""` when absent) and
+  `park_state`: `none`, `parked`, `due` or `person`. A `park_kind` absent or
+  empty counts as `external`; any value but `person`/`external` is read as
+  `person`.
+
+## Task park: `task park`, `task unpark`, `task_park`, `task_unpark`
+
+`task park <id> -k <kb> --reason R [--kind person|external] [--retest-after
+YYYY-MM-DD] [--by WHO] [--operator-override]` (MCP `task_park {task_id,
+kb_name, reason, kind?, retest_after?, by?, operator_override?}`, write tier) sets `parked_awaiting` and sets or removes
+`park_kind` and `retest_after` in one write: a park replaces the previous
+one whole. The status never changes. The result, the same on both surfaces
+(the CLI adds `outcome: done`):
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "parked_awaiting": "foia-response", "park_kind": "", "retest_after": "2099-01-01",
+ "park_state": "parked"}
+```
+
+Refusals write nothing and answer `VALIDATION_FAILED`: a reason that is empty,
+whitespace or quote marks; a kind other than `person` or `external`; a
+`retest_after` that is not exactly `YYYY-MM-DD` and a real date; an entry that
+is not a task; a task whose status is `done` or `cancelled` (the operator
+override does not change that).
+
+Park and unpark follow the holder rule `task finish` follows: a task another
+caller holds is refused with `FORBIDDEN` and nothing is written. The caller is
+`--by` (MCP: `by`, else the signed-in account) and must be the task's
+assignee; the operator (the CLI, stdio MCP, an operator key) may act on a task
+it does not hold with `--operator-override` (MCP `operator_override: true`),
+which is refused for anyone else. A task no one holds may be parked or
+unparked by anyone. REST has no park or unpark route.
+
+A missing task is `NOT_FOUND` on the CLI and `ENTRY_NOT_FOUND` on MCP.
+
+`task unpark <id> -k <kb> [--by WHO] [--operator-override]` (MCP `task_unpark
+{task_id, kb_name, by?, operator_override?}`) removes the
+three keys, never leaving an empty value, in one write (keys spelled under
+`metadata:` too: a block that held only park keys goes with them); a task with none of
+them is left byte-for-byte as it was, and the outcome is still `done`. A `done`
+or `cancelled` task may be unparked, which clears a stale park:
+
+```json
+{"task_id": "await-records", "kb_name": "test-kb", "status": "open",
+ "removed": ["parked_awaiting", "park_kind", "retest_after"]}
+```
+
+`qa validate` reports (rule `task_park`, severity `warning`, never a rewrite)
+a `park_kind` other than `person`/`external`, a `retest_after` that names no
+date, and a `retest_after` with no `parked_awaiting`.
 
 ## Link discovery: what is left out
 
@@ -1394,17 +1461,40 @@ per-result `legs`. `distance` is not in the default. The page-level keys below
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
 
-**`entry_warnings`** (#1761). A row, and a `get` result, whose file holds a
-value its reading does not show faithfully carries `entry_warnings`, a list of
-sentences. Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
+**`entry_warnings`** (#1761, #1805). These entry readers carry `entry_warnings`,
+a list of sentences, when the entry's file holds a value its reading does not
+show faithfully:
+
+- **CLI** (JSON/YAML, with and without `--fields`): `get`, `search` (including
+  `search --batch`), `list-entries`, `batch-read`, `recent`, and
+  `pyrite-read get`.
+- **MCP** (with and without `fields`): `kb_get`, `kb_search`, `kb_batch_read`,
+  `kb_list_entries`, `kb_recent`, and the `pyrite://kbs/{name}/entries`
+  resource.
+- **REST**: `GET /api/entries` (takes no `fields`), plus
+  `GET /api/entries/{id}`, `POST /api/entries/batch`, and `GET /api/search`
+  (with and without `fields`).
+
+Other surfaces stay silent: `timeline` (REST, CLI, MCP), export commands and
+routes, `orient`, `generate_readme`, and internal service callers default to
+not reading entry files for warnings unless they opt in.
+
+Today that is a scalar `importance` the rule refuses (`7.5`, `0`,
 `11`, `"high"`, `.nan`): readers keep showing the legacy whole number, and the
 sentence names the file's value. An accepted spelling (`5.0`, `"05"`), a missing
 key, and a mapping or list value (which `qa validate` reports as
 `reserved_key_collision`) add nothing. It is not the page-level `warnings` ("a
 leg was skipped"): that key is on the response, this one is on the entry. It is
-absent when there is nothing to say. CSV has no place for it and writes one
-`warning: <id>: <sentence>` line per entry to stderr. A search page of N rows
-opens N entry files to look (a stated limit, not a bound).
+absent when there is nothing to say. Worktree overlay rows are read through the
+owning KB's `KBFiles` (never outside a root granted by the caller's checkout).
+Human formats print the same sentence: Rich prints a `Warning:` line after the
+rendered output, single-entry Markdown writes `# Warning:` YAML comments in the
+frontmatter (so `pyrite import` round-trips cleanly without adding warning text
+to the body), list and search Markdown include `Warning:` lines, projected
+Markdown tables append `> Warning:` blockquotes after the table, and CSV has no
+place for it and writes one `warning: <id>: <sentence>` line per entry to
+stderr. A list, batch, or search page of N rows opens N entry files to look (a
+stated limit, not a bound).
 
 To get more: `--fields '*'` (or `PYRITE_SEARCH_FIELDS='*'`) is the whole row
 as before #54 (`body` still needs `--include-body`), a named list
@@ -1465,8 +1555,12 @@ projection (`test_a_slot_equals_the_single_search` compares them). A slot that w
 query over the length cap, an unknown KB, an unknown key, a bad value) has
 `query`, `count: 0`, `results: []` and the canonical error shape
 (`error`, `error_code`, `retryable`, `suggestion`), and does not fail its
-siblings. Text that is not valid UTF-8 (a lone surrogate) is such a refusal,
-`VALIDATION_FAILED`. Only a refusal (a `PyriteError`) fills a slot; an unexpected
+siblings. Text that is not valid UTF-8 — a lone surrogate escape in JSON
+(such as `"\ud800"`), or non-UTF-8 bytes read from stdin (`-`) under a C
+locale (`LC_ALL=C` with `surrogateescape`, where Python decodes them as
+surrogates instead of raising at read time) — is such a per-slot refusal,
+`VALIDATION_FAILED` (exit 3 when sibling slots run, exit 1 when every slot
+is refused). Only a refusal (a `PyriteError`) fills a slot; an unexpected
 fault is not caught per slot and ends the command. The exit code says how it went (ADR-0046): 0 when every slot ran, 3
 (`partial`) when some were refused, 1 (`nothing`) when all were. A batch of
 none is `{"count": 0, "searches": []}`, exit 0.
@@ -1475,7 +1569,10 @@ The batch as a whole is refused, exit 1 with the error shape and no `searches`,
 when the file is missing (`NOT_FOUND`), is not UTF-8, cannot be read (an
 `OSError`), is not JSON, is not a list, or holds more than 50 queries
 (`VALIDATION_FAILED`; the cap `batch-read` has); stdin (`-`) is refused the
-same way, never with a traceback. Warnings and the trace go to stderr,
+same way (exit 1) when Python rejects non-UTF-8 bytes on read (a UTF-8 locale)
+or the input is not a valid JSON list, never with a traceback — whereas under
+`LC_ALL=C` (`surrogateescape`), non-UTF-8 bytes inside a query object reach
+per-slot validation above (exit 3 partial, exit 1 when all slots are refused). Warnings and the trace go to stderr,
 prefixed with the query's position. The stale-index warning appears once for
 the whole batch and covers every KB, not only the ones the queries name.
 
@@ -1588,14 +1685,18 @@ REST `GET`):
 |---|---|---|---|
 | `search` | neither | `has_more` (no `total`) | neither |
 | `list_entries` | `has_more` + `total` | `has_more` + `total` | `total`, no `has_more` |
-| `recent` | neither | neither | no REST route |
+| `recent` | `has_more` + `total` | `has_more` + `total` | no REST route |
 | `tags` | neither | `has_more` (no `total`) | neither |
 | `backlinks` | `total`, no `has_more` | `has_more` (no `total`) | no REST route |
 
 Where present, `has_more` means the page was full (`len(page) == limit`
-for CLI/MCP `tags`/`recent`, or `offset + limit < total` where a total is
+for CLI/MCP `tags`, or `offset + limit < total` where a total is
 computed) — a signal to fetch the next page, not an exact remaining
-count. Don't assume either key exists; check for it.
+count. For `recent` (CLI and MCP) the `total` is counted over the entries
+the filters admit — `since` included — before `limit` applies, so with
+`since` every entry updated at or after it is reachable by `offset`
+paging and `has_more` is true exactly when more of them exist (#1859).
+Don't assume either key exists; check for it.
 
 The result array's key also differs by transport for the same logical
 call: CLI `backlinks` → `entries`, MCP `kb_backlinks` → `backlinks`; CLI
@@ -1829,18 +1930,19 @@ KB (`KB_NOT_FOUND`). The file write records two `status_change_log` items,
 `{date, from, to, by}`: open → claimed and claimed → in_progress, `by` the
 assignee.
 
-`task finish` (CLI) and `task_finish` (MCP) return `TaskService.finish_task`'s
-dict: `{"finished": true, "task_id", "status": "done", "path": ["claimed",
-"in_progress", "done"], "status_reason", "by", "override"}`, with one
-`status_change_log` item
-per edge of `path` (`comment` is the reason, when one was given).
+`task finish` (CLI), `task_finish` (MCP) and `POST /api/tasks/{id}/finish`
+(REST, query `?kb=<kb>`, JSON body `{walk?, reason?, by?, operator_override?}`)
+return `TaskService.finish_task`'s dict: `{"finished": true, "task_id",
+"status": "done", "path": ["claimed", "in_progress", "done"], "status_reason",
+"by", "override"}`, with one `status_change_log` item per edge of `path`
+(`comment` is the reason, when one was given).
 
 Finish requires the caller to hold the task; operators have an explicit
-override. The caller is `--by` (MCP: `by`, else the signed-in account) and
-must be the task's assignee; the items record it as `by`. The operator (the
-CLI, stdio MCP, an operator key) may finish a task it does not hold with
-`--operator-override` (MCP `operator_override: true`): the items record `by:
-"operator"` and `override: true`, and the result `"by": "operator",
+override. The caller is `--by` (MCP/REST: `by`, else the signed-in account)
+and must be the task's assignee; the items record it as `by`. The operator
+(the CLI, stdio MCP, an operator key) may finish a task it does not hold with
+`--operator-override` (MCP/REST `operator_override: true`): the items record
+`by: "operator"` and `override: true`, and the result `"by": "operator",
 "override": true`. The override is never implied by a missing or empty
 caller, and is refused for anyone but the operator.
 
@@ -1863,9 +1965,9 @@ A refusal writes nothing and is (CLI exit 1):
 - `ENTRY_NOT_FOUND`: no task with that id in the KB.
 - `ENTRY_UNREADABLE`: a file its type cannot load.
 
-The holder rule guards `task finish` on the CLI and MCP. REST has no finish
-route yet (see #1745); the generic `PATCH /api/entries/{id}` is unchanged and
-is not `task finish`.
+The holder rule guards `task finish` on the CLI, MCP and REST
+(`POST /api/tasks/{id}/finish`); the generic `PATCH /api/entries/{id}` is
+unchanged and is not `task finish`.
 
 ## Entry row shape
 
@@ -1889,15 +1991,29 @@ this type:
 How a column field reads. A field declared a `number` reads as a number when
 the stored text is a plain ASCII whole number or decimal, with an optional
 leading minus (`7`, `2.5`, `-7`, `-1.5`): no plus sign, no surrounding space,
-no leading zero, no exponent, no digits from other scripts. Any other text
-(`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
+no leading zero, no exponent, no digits from other scripts, and a decimal only
+when that text is the number's own `repr` (`7.50` and `0.10` stay text). Any
+other text (`"007"`, `"+7"`, `"-0"`, `"1e3"`, `high`) reads as that text. A task's `priority` is declared a number, and its column holds
 the task model's integer (`coerce_task_priority`: a word on the 1 to 10
 scale, any other non-integer the default 5), so every spelling of it reads
 as that integer and `task_list` and `kb_get` agree. A field declared a
 `checkbox` reads the stored `1`, `0`, `true` or `false` as a boolean. Every
-other field, and one the type does not declare, reads as text. A
-whole-valued decimal (`7.0`) reads as `7.0` on SQLite and as `7` on
-Postgres.
+other field, and one the type does not declare, reads as text. Every backend
+stores a float in an indexed TEXT column as the text the current YAML loader
+round-trips: ruamel's spelling of a finite `ScalarFloat`, or Python's `repr`
+for any other float. That text is the file's spelling when the loader
+reproduces it (`7.0`, `7.50`, `0.10`, `0.00001`, `1e-05`, `1.5e10`, `.5`,
+`+7.0`, `007.5`, `1E5`, `7.`). A reproduced spelling whose stored text is the
+number's own `repr` (`7.0`) still reads as that JSON number on both SQLite
+and Postgres. A reproduced spelling whose stored text is not that `repr`
+(`7.50`, `0.00001`, `1e-05`, `1.5e10`) reads as that string on every reader
+and backend. A spelling the loader does not reproduce is stored and read as
+the loader's text, not the file's: `1_000.5` is stored and read as `01000.5`.
+Writing that loader text back, on a field declared `number`, leaves the
+file's bytes unchanged (the write compares the same loader text, so echoing
+`7.50` or `01000.5` does not respell the file, #1697). This no-op is not
+every declared `number`: the cases below still rewrite the file. A field the
+type does not declare is not covered by it.
 
 What a caller reads, sent back as that one field (MCP `kb_update`,
 `pyrite update -f`, REST PATCH), leaves the file as it was, except in
@@ -1922,13 +2038,6 @@ writes anything.
 - A YAML boolean in a field declared a number: `priority: true` reads 1
   (and `false` reads 0), and writing that back stores the number
   (`priority: 1`; earlier releases stored the quoted text `"1"`).
-- A number the index spells with an exponent, in a field declared a number:
-  `priority: 0.00001` reads as the index's text for it, which the strict
-  rule keeps as text, and writing that back stores that text quoted. The
-  spelling depends on the reader: `kb_get` returns `"1e-05"` and the list
-  readers (`kb_list_entries`) `"1.0e-05"`, so a write-back stores
-  `priority: "1e-05"` or `priority: "1.0e-05"`. Very large or very small
-  numbers (`1.5e300`, `100000000000000000.0`) take the same path.
 
 `kb_timeline` returns `date` and `location` as stored text: its rows carry
 no `entry_type`, so no declaration applies. The type-specific tools
@@ -2227,8 +2336,14 @@ The identity fields `id`, then `kb_name`, are always retained, followed by
 requested fields in the supplied order, with duplicates removed. JSON and
 YAML omit requested keys absent from a record rather than inventing values.
 The one key a projection adds is `entry_warnings`, when the record has it, on
-every surface above: a projection never hides that the reading is not the
-file's.
+every projected entry reader above (CLI `get`, `search`, `list-entries`,
+`batch-read`, `recent`; MCP `kb_get`, `kb_search`, `kb_batch_read`,
+`kb_list_entries`, `kb_recent`; REST `GET /api/entries/{id}`,
+`POST /api/entries/batch`, `GET /api/search`): a projection never hides that
+the reading is not the file's. In projected CSV, Markdown, and Rich the
+requested columns stay unchanged and the warning sentence is emitted alongside
+the output (stderr for CSV; `> Warning` / `Warning:` lines after the table for
+Markdown and Rich).
 
 CSV, Markdown, and Rich retain every requested column, even when all records
 lack that field; absent and null values are empty cells. A single entry
@@ -2407,13 +2522,14 @@ not parse still loses its row, as before.
   keys. Each counts as failed for `exit_unless_whole`: `3` when a KB synced,
   `1` when none did.
 - **Over the network.** REST `POST /api/index/sync?wait=true`, REST `POST
-  /api/kbs/{name}/reindex`, MCP `kb_index_sync`, MCP `kb_registry_reindex`,
+  /api/kbs/{name}/reindex`, MCP `kb_index_sync` and MCP `kb_registry_reindex`
+  carry `unreadable_folders` and `unreadable_files` as integer counts. Neither
+  count exposes paths or operating-system error text. Reindex omits unreadable
+  files from its `malformed` list. The shared formatter for these fields is
+  `pyrite.services.index_health.network_shape`.
   REST `GET /api/kbs/{name}/health` and MCP `kb_registry_health` carry
-  `unreadable_folders` as a count (an integer), never a path and never the
-  OS's words, and do not carry `unreadable_files` (following the
-  maintainer's 2026-11-17 decision for `unlisted_entry_files`;
-  `pyrite.services.index_health.network_shape` is the one place that decides
-  it). Network health's `healthy` is `false`.
+  `unreadable_folders` only, omitting `unreadable_files`. Network health's
+  `healthy` is `false`.
 - **Health.** `pyrite index health` names each folder in
   `unreadable_folders` and each file in `unreadable_files`, and is
   `unhealthy`, exit `1`.
@@ -2513,6 +2629,24 @@ reconciled), and `embedded` when the sync embedded any) plus `outcome`. `changed
 for each row added, updated or removed (`IndexManager.sync_incremental` and
 `reconcile_kb` return it too). The exit codes are unchanged.
 
+## Postgres startup refusals
+
+`ensure_schema` (the Postgres backend's startup step, #718) raises
+`POSTGRES_SCHEMA_SHADOWED` (`PostgresSchemaShadowedError`, a `StorageError`,
+`retryable: false`) before it writes anything when the connection's own schema
+(`current_schema()`) holds no Pyrite tables but a schema later on its
+`search_path` does. Upgrading would build a new, empty instance in the first
+schema, and every query would read it instead of the existing one. The usual
+cause is the default `"$user", public` once an empty `"$user"` schema exists.
+The message names both schemas, says how to reach the existing instance (put
+its schema first on the `search_path`, or drop the empty one), and names the
+opt-in: `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE=1` creates the new instance in the
+empty schema on purpose. A schema "holds Pyrite tables" when it has `entry` or
+`kb`. With no Pyrite tables anywhere on the `search_path` (a fresh install), or
+with an instance already in the current schema, startup is not refused.
+Nothing in the product selects the Postgres backend yet, so no CLI, MCP or REST
+response carries this code today.
+
 ## Operational contracts
 
 Not JSON shapes, but part of the same "don't relearn this the hard way"
@@ -2542,8 +2676,16 @@ is the error shape above in one line.
 
 Renaming an entry changes its id while preserving its filename and folder.
 A subsequent update or delete resolves the new id in the existing file.
+A `pyrite rename --dry-run` preview reports the requested `new_id` and the
+retained `file_path` relative to the KB. Its JSON result has `dry_run: true`
+and `renamed: false`, and its rich output shows the retained path.
 Updates preserve deliberate placement, including the KB root; a schema with
 a templated subdirectory may still move the file when its folder fields change.
+The `file_path` reported by writes (in create replies, index rows, and update
+move targets) is the path the file has on disk, spelled as the disk spells it (#1624).
+On a case-insensitive filesystem (such as APFS on macOS or NTFS on Windows),
+creating, templated moving, or reconciling an entry into a folder that already exists
+under another letter case preserves and reports the folder's existing on-disk spelling.
 
 ## QA results: only what ran
 

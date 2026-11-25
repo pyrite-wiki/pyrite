@@ -321,6 +321,8 @@ MCP_NO_ENTRY_ROWS = {
     "task_update": "write",
     "task_claim": "write",
     "task_finish": "write: returns the status path walked",
+    "task_park": "write: returns the park written",
+    "task_unpark": "write: returns the keys removed",
     "task_checkpoint": "write",
     "task_decompose": "write",
     "sw_create_adr": "write",
@@ -1033,16 +1035,13 @@ SERVICES_ENTRY_SQL = {
     ("pyrite/services/task_service.py", "derived_completion"): (
         "feeds the KB's task rows to derive_completion and returns its per-task statuses, not rows"
     ),
-    ("pyrite/services/task_service.py", "_classify_for_dispatch"): (
-        "reads created_at, file_path and dependencies for tasks list_tasks "
-        "already shaped; returns those dicts paired with dispatch reasons"
+    # The query moved out of _classify_for_dispatch, which reads its result (#1688).
+    ("pyrite/services/task_service.py", "_index_extras"): (
+        "reads status, created_at, file_path and dependencies for tasks list_tasks "
+        "already shaped, keyed by (kb, id) for the dispatch classifier; not rows"
     ),
     ("pyrite/services/task_service.py", "start_task"): (
         "a write: reads the assignee column to start a task; returns the start outcome, not a row"
-    ),
-    ("pyrite/services/task_service.py", "unblock_dependents"): (
-        "a write: scans blocked tasks' metadata and transitions the ones it "
-        "unblocks; returns their ids and titles"
     ),
     ("pyrite/services/task_service.py", "get_subtree"): (
         "returns the task tree's node dicts: its query extracts parent and "
@@ -1507,8 +1506,6 @@ STATED_WRITE_BACKS = [
     ("task", "priority", "high", "priority: 7"),
     ("task", "priority", "P1", "priority: 5"),
     ("task", "priority", '"007"', "priority: 7"),
-    # Text the strict rule keeps comes back quoted, as on `dev`.
-    ("chore", "priority", "0.00001", 'priority: "1e-05"'),
     # A declared checkbox reads its quoted text as a bool and stores the bool.
     ("flag", "status", '"true"', "status: true"),
     ("flag", "status", '"false"', "status: false"),
@@ -1606,3 +1603,263 @@ def test_qa_reports_a_task_priority_written_back_as_the_models_integer(rt_world,
         if i["entry_id"] == "q-task" and i.get("field") == "priority"
     }
     assert rule in rules, (spelling, rules)
+
+
+# ---------------------------------------------------------------------------
+# Author-spelled decimals/exponents and 7.0 parity (#1697, option (a))
+# ---------------------------------------------------------------------------
+
+AUTHOR_SPELLED_FLOATS = ("0.00001", "1e-05", "1.5e10", "7.50", "-0.00001")
+
+
+@pytest.mark.parametrize("surface", SURFACES)
+@pytest.mark.parametrize("spelling", AUTHOR_SPELLED_FLOATS)
+def test_author_spelled_floats_match_across_readers_and_write_back_unchanged(
+    rt_world, surface, spelling
+):
+    """#1697 (maintainer decision (a)): for author-spelled decimals and
+    exponents whose text Python's ``repr`` does not reproduce, every reader
+    (``kb_get``, ``kb_list_entries``, search, REST list, CLI list) returns the
+    exact author-written string, and writing that value back leaves the file's
+    bytes unchanged."""
+    w, emp = rt_world
+    chore_path = emp / "chores/c-exp.md"
+    chore_path.write_text(
+        f"---\nid: c-exp\ntype: chore\ntitle: Exp {spelling}\nstatus: open\n"
+        f"priority: {spelling}\n---\nzebra exp\n"
+    )
+    dated_path = emp / "dated/d-exp.md"
+    dated_path.parent.mkdir(parents=True, exist_ok=True)
+    dated_path.write_text(
+        f"---\nid: d-exp\ntype: dated\ntitle: Dated {spelling}\ndate: {spelling}\n---\nzebra exp\n"
+    )
+    w.index(KB)
+    before = chore_path.read_bytes()
+
+    readers = {
+        "kb_get": _mcp(w, "kb_get", {"kb_name": KB, "entry_id": "c-exp"})["entry"]["priority"],
+        "kb_list_entries": {
+            r["id"]: r["priority"] for r in _mcp(w, "kb_list_entries", {"kb_name": KB})["entries"]
+        }["c-exp"],
+        "backend_search_date": {
+            r["id"]: r["date"] for r in w.db.backend.search("zebra", kb_name=KB)
+        }["d-exp"],
+        "kb_search_date": {
+            r["id"]: r["date"]
+            for r in _mcp(w, "kb_search", {"kb_name": KB, "query": "zebra", "fields": ["date"]})[
+                "results"
+            ]
+        }["d-exp"],
+        "rest_list": {
+            r["id"]: r["priority"]
+            for r in _rest(w, "get", "/api/entries", params={"kb": KB})["entries"]
+        }["c-exp"],
+        "cli_list": {
+            r["id"]: r["priority"] for r in _cli_json(w, "list-entries", "-k", KB)["entries"]
+        }["c-exp"],
+    }
+    for reader, got in readers.items():
+        assert got == spelling and isinstance(got, str), (reader, spelling, got)
+
+    # Write back the value read from a list row on this surface.
+    _write_priority(w, surface, "c-exp", readers["kb_list_entries"])
+    assert chore_path.read_bytes() == before, (surface, spelling, chore_path.read_text())
+
+
+def test_bindable_binds_floats_as_text_so_every_backend_keeps_spelling():
+    """Binding a float (including ``7.0`` and ruamel ``ScalarFloat``s) in
+    indexed TEXT columns as text prevents Postgres from printing ``7.0`` as
+    ``"7"`` and SQLite from formatting ``0.00001`` as ``"1.0e-05"`` while
+    leaving non-TEXT numeric values untouched (#1697)."""
+    from pyrite.storage.crud import bindable
+    from pyrite.utils.yaml import load_yaml
+
+    loaded = load_yaml("priority: 0.00001\ndate: 1e-05\nstatus: 1.5e10\nlocation: 7.0\n")
+    bound = bindable({"due_date": 7.0, "score": 2.5, **loaded})
+    assert bound["due_date"] == "7.0" and isinstance(bound["due_date"], str)
+    assert bound["priority"] == "0.00001" and isinstance(bound["priority"], str)
+    assert bound["date"] == "1e-05" and isinstance(bound["date"], str)
+    assert bound["status"] == "1.5e10" and isinstance(bound["status"], str)
+    assert bound["location"] == "7.0" and isinstance(bound["location"], str)
+    assert bound["score"] == 2.5 and type(bound["score"]) is float
+
+
+def test_loader_text_replaces_a_spelling_the_yaml_parser_does_not_round_trip():
+    """docs/json-contracts.md: indexed float text is the current YAML loader's
+    round-trip, not every source spelling. ``1_000.5`` loads as a finite
+    ``ScalarFloat`` and comes back ``01000.5``, including through the declared
+    number read. Pinned so the contract cannot claim the file's spelling
+    always survives."""
+    from pyrite.storage.backends.base_backend import read_declared_number
+    from pyrite.storage.crud import float_text
+    from pyrite.utils.yaml import load_yaml
+
+    loaded = load_yaml("priority: 1_000.5\n")
+    rendered = float_text(loaded["priority"])
+    assert rendered == "01000.5"
+    assert rendered != "1_000.5"
+    assert read_declared_number(rendered) == "01000.5"
+
+
+@pytest.mark.control(
+    reason="plain integers and repr-round-tripping floats already read as numbers on dev; "
+    "pinned so author-spelling preservation never turns normal numbers into strings"
+)
+@pytest.mark.parametrize(("spelling", "expected"), [("7", 7), ("2.5", 2.5), ("7.0", 7.0)])
+def test_normal_number_controls_stay_numeric_and_write_back_unchanged(rt_world, spelling, expected):
+    w, emp = rt_world
+    path = emp / "chores/c-ctrl.md"
+    path.write_text(
+        f"---\nid: c-ctrl\ntype: chore\ntitle: Ctrl {spelling}\nstatus: open\n"
+        f"priority: {spelling}\n---\nzebra ctrl\n"
+    )
+    w.index(KB)
+    before = path.read_bytes()
+
+    got_get = _mcp(w, "kb_get", {"kb_name": KB, "entry_id": "c-ctrl"})["entry"]["priority"]
+    got_list = {
+        r["id"]: r["priority"] for r in _mcp(w, "kb_list_entries", {"kb_name": KB})["entries"]
+    }["c-ctrl"]
+    got_rest = {
+        r["id"]: r["priority"]
+        for r in _rest(w, "get", "/api/entries", params={"kb": KB})["entries"]
+    }["c-ctrl"]
+    got_cli = {r["id"]: r["priority"] for r in _cli_json(w, "list-entries", "-k", KB)["entries"]}[
+        "c-ctrl"
+    ]
+    for got in (got_get, got_list, got_rest, got_cli):
+        assert got == expected and type(got) is type(expected), (spelling, got)
+
+    _write_priority(w, "mcp", "c-ctrl", got_list)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.pg
+def test_postgres_reads_and_writes_back_whole_valued_float_7_0(tmp_path):
+    """#1697: Postgres stores ``7.0`` as ``"7.0"`` in the indexed TEXT column,
+    so every backend reader returns ``7.0`` (float) and a write-back leaves the
+    file byte-identical. Skipped when ``PYRITE_TEST_PG_URL`` is not configured."""
+    from tests.backends.conftest import _require_pg, _setup_pg_backend, _teardown_postgres
+
+    _require_pg()
+    from pyrite.storage.crud import bindable
+    from pyrite.storage.file_operations import FrontmatterSpan, Set, apply
+    from pyrite.utils.frontmatter import Frontmatter, split_frontmatter
+    from pyrite.utils.yaml import load_yaml
+
+    kb_path = tmp_path / KB
+    (kb_path / "chores").mkdir(parents=True)
+    (kb_path / "kb.yaml").write_text(KB_YAML)
+    path = kb_path / "chores/c-seven.md"
+    content = (
+        "---\nid: c-seven\ntype: chore\ntitle: Seven\nstatus: open\npriority: 7.0\n---\nzebra\n"
+    )
+    path.write_text(content)
+    before = path.read_bytes()
+    fm = load_yaml(content.split("---\n")[1])
+    be, engine, session = _setup_pg_backend((KB, "generic", str(kb_path), ""))
+    try:
+        be.upsert_entry(
+            bindable(
+                {
+                    "id": "c-seven",
+                    "kb_name": KB,
+                    "entry_type": "chore",
+                    "title": "Seven",
+                    "body": "zebra",
+                    "summary": "",
+                    "date": "2020-06-01",
+                    "priority": fm["priority"],
+                    "tags": [],
+                    "sources": [],
+                    "links": [],
+                    "metadata": {},
+                }
+            )
+        )
+        for reader, row in (
+            ("get_entry", be.get_entry("c-seven", KB)),
+            ("list_entries", be.list_entries(kb_name=KB, entry_type="chore")[0]),
+            ("search", be.search("zebra", kb_name=KB)[0]),
+        ):
+            assert row is not None
+            if reader == "search" and "priority" not in row:
+                # Postgres `search` selects a narrower column list than
+                # `get_entry`/`list_entries` and carries no `priority`, the
+                # same convention `_rows_check` follows. The two readers that
+                # do carry it are still required to (the next assert).
+                continue
+            assert "priority" in row, (reader, sorted(row))
+            got = row["priority"]
+            assert got == 7.0 and type(got) is float, (reader, got)
+            split = split_frontmatter(path.read_text())
+            assert isinstance(split, Frontmatter)
+            span = FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
+            new_text, _ = apply(path.read_text(), [Set(("priority",), got)], span)
+            assert new_text.encode("utf-8") == before
+    finally:
+        _teardown_postgres(engine, session)
+
+
+@pytest.mark.pg
+@pytest.mark.parametrize("spelling", ["7.50", "0.00001", "1e-05"])
+@pytest.mark.parametrize("surface", SURFACES)
+def test_postgres_keeps_author_spelled_float_text_and_writes_back_unchanged(
+    rt_world, surface, spelling
+):
+    """#1697 (decision (a)): a float whose spelling ``repr`` does not
+    reproduce is bound as the author's text, so Postgres reads it back as that
+    exact string (a raw float binding stores ``7.50`` as ``7.5``, ``1e-05`` as
+    ``0.00001``), and sending the value read back through the service leaves
+    the file byte-identical. Unlike the ``7.0`` case, this fails when
+    ``bindable`` binds the raw float."""
+    from tests.backends.conftest import _require_pg, _setup_pg_backend, _teardown_postgres
+
+    _require_pg()
+    from pyrite.storage.crud import bindable
+    from pyrite.utils.yaml import load_yaml
+
+    w, emp = rt_world
+    path = emp / "chores/c-spelled.md"
+    content = (
+        "---\nid: c-spelled\ntype: chore\ntitle: Spelled\nstatus: open\n"
+        f"priority: {spelling}\n---\nzebra\n"
+    )
+    path.write_text(content)
+    w.index(KB)
+    before = path.read_bytes()
+    fm = load_yaml(content.split("---\n")[1])
+    be, engine, session = _setup_pg_backend((KB, "generic", str(emp), ""))
+    try:
+        be.upsert_entry(
+            bindable(
+                {
+                    "id": "c-spelled",
+                    "kb_name": KB,
+                    "entry_type": "chore",
+                    "title": "Spelled",
+                    "body": "zebra",
+                    "summary": "",
+                    "date": "2020-06-01",
+                    "priority": fm["priority"],
+                    "tags": [],
+                    "sources": [],
+                    "links": [],
+                    "metadata": {},
+                }
+            )
+        )
+        rows = {
+            "get_entry": be.get_entry("c-spelled", KB),
+            "list_entries": next(
+                r for r in be.list_entries(kb_name=KB, entry_type="chore") if r["id"] == "c-spelled"
+            ),
+        }
+        for reader, row in rows.items():
+            assert row is not None
+            got = row["priority"]
+            assert got == spelling and type(got) is str, (reader, spelling, got)
+        _write_priority(w, surface, "c-spelled", rows["list_entries"]["priority"])
+        assert path.read_bytes() == before, (surface, spelling, path.read_text())
+    finally:
+        _teardown_postgres(engine, session)

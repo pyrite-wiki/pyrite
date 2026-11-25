@@ -63,7 +63,9 @@ from tests.characterization.world import MISSING, NO_DEFAULT_ROLE, PRIVATE, READ
 
 GOLDEN_NAME = "rest"
 KB_STATES = (READABLE, PRIVATE, MISSING, NO_DEFAULT_ROLE)
-PINNED_REST_OPERATION_COUNT = 75  # 74 until #1685 added POST /api/tasks/{task_id}/start
+PINNED_REST_OPERATION_COUNT = (
+    76  # 75 until #1745 added POST /api/tasks/{task_id}/finish; 74 until #1685
+)
 
 
 def _golden_routes_for(principal_name: str, golden: dict) -> set[tuple[str, str]]:

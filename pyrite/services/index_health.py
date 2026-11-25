@@ -90,12 +90,10 @@ def network_shape(result: dict[str, Any]) -> dict[str, Any]:
     """What a network caller (REST, MCP) gets of a reconcile or health
     result's could-not-reach keys: the one place that decides it (#1546).
 
-    ``unreadable_folders`` becomes a count, never a path (the maintainer's
-    2026-11-17 decision for #1552's ``unlisted_entry_files``, followed here
-    as the default); the local CLI names each folder. ``unreadable_files``
-    on a reconcile result is the local CLI's (each file is also under its
-    ``malformed``, and the exit code counts it), so it is not carried. To give
-    network callers rows instead, change only this function.
+    Folders and files the reconcile could not read become counts. The
+    local CLI names them, and its ``malformed`` rows also include the unreadable
+    files. Drop those specific rows from the network result so reindex
+    reports unreadable files by count only.
 
     A ``confirm`` block (``index sync --confirm``, #1691) is shaped the same
     way, row by row (``_network_confirm_row``): a file the walk does not index
@@ -105,7 +103,14 @@ def network_shape(result: dict[str, Any]) -> dict[str, Any]:
     """
     shaped = dict(result)
     shaped["unreadable_folders"] = len(result.get("unreadable_folders") or [])
-    shaped.pop("unreadable_files", None)
+    if "unreadable_files" in result:
+        unreadable_files = result["unreadable_files"]
+        shaped["unreadable_files"] = len(unreadable_files)
+        if unreadable_files and "malformed" in result:
+            unreadable_paths = {row["path"] for row in unreadable_files}
+            shaped["malformed"] = [
+                row for row in result["malformed"] if row["path"] not in unreadable_paths
+            ]
     if isinstance(result.get("confirm"), dict):
         block = result["confirm"]
         shaped["confirm"] = {
@@ -125,8 +130,7 @@ def _network_confirm_row(row: dict[str, Any]) -> dict[str, Any]:
       holds.
     - ``duplicate``: ``paths`` (every file claiming the id) is left out; the
       row keeps the indexed file's ``path``, which an entry read gives too.
-    - a ``malformed`` file that could not be read: its ``path`` is left out,
-      as ``unreadable_files`` is.
+    - a ``malformed`` file that could not be read: its ``path`` is left out.
 
     The status, ``confirmed`` and the counts do not change: a skipped row is
     never confirmed, and neither is a ``not_found`` one.

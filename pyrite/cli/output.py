@@ -257,6 +257,27 @@ def note_entry_warnings(data: Any) -> None:
             print(f"warning: {row.get('id', '')}: {warning}", file=sys.stderr)
 
 
+def print_rich_entry_warnings(console: Console, data: Any) -> None:
+    """Print entry-level warnings in Rich output, safely escaped (#1805)."""
+    from ..services.read_shaping import ENTRY_WARNINGS_KEY
+
+    if not isinstance(data, dict):
+        return
+    is_list = isinstance(data.get("results"), list) or isinstance(data.get("entries"), list)
+    rows = (data.get("results") or data.get("entries")) if is_list else [data]
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        for warning in row.get(ENTRY_WARNINGS_KEY) or ():
+            prefix = f"{row['id']}: " if is_list and row.get("id") else ""
+            console.print(
+                Text.assemble(
+                    Text("Warning: ", style="yellow"),
+                    Text(f"{prefix}{warning}"),
+                )
+            )
+
+
 def backlinks_table(entry_id: str, links: list[dict]):
     """The `backlinks` table, shared by `pyrite` and `pyrite-read` so the two
     cannot drift.

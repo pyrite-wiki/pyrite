@@ -51,6 +51,7 @@ from ..schemas import (
     ResolveBatchRequest,
     ResolveBatchResponse,
     ResolveResponse,
+    SingleEntryResponse,
     UpdateEntryRequest,
     UpdateResponse,
     WantedPage,
@@ -105,6 +106,7 @@ def list_entries(
         offset=offset,
         status=status,
         min_importance=min_importance,
+        include_warnings=True,
     )
     total = svc.count_entries(
         kb_name=kb,
@@ -424,7 +426,7 @@ def batch_read_entries(
     if not scope.unscoped:
         # Items in KBs the caller may not read are reported as not found.
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
-    results = svc.get_entries(ids)
+    results = svc.get_entries(ids, include_warnings=True)
 
     # `[]` is no projection. A non-empty list that cleans to nothing (`[""]`,
     # `[" "]`) is still a projection, as it was before the list went through
@@ -733,7 +735,7 @@ async def import_entries(
 # =============================================================================
 
 
-@router.get("/entries/{entry_id}", response_model=EntryResponse)
+@router.get("/entries/{entry_id}", response_model=SingleEntryResponse)
 @limiter.limit("100/minute")
 def get_entry(
     request: Request,
@@ -836,17 +838,17 @@ def apply_refused_columns(result: dict) -> set[str]:
     return refused
 
 
-def entry_response(result: dict, refused: set[str]) -> EntryResponse | JSONResponse:
+def entry_response(result: dict, refused: set[str]) -> SingleEntryResponse | JSONResponse:
     """Render a single-entry read, leaving refused columns out.
 
-    The dumped ``EntryResponse`` fills every defaulted column, so a refused
+    The dumped ``SingleEntryResponse`` fills every defaulted column, so a refused
     one is dropped from the dumped body: ``[]`` or ``{}`` would read as the
     file's value.
     """
     if refused:
-        body = EntryResponse(**result).model_dump(mode="json")
+        body = SingleEntryResponse(**result).model_dump(mode="json")
         return JSONResponse(content={k: v for k, v in body.items() if k not in refused})
-    return EntryResponse(**result)
+    return SingleEntryResponse(**result)
 
 
 @router.post(

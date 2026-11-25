@@ -338,32 +338,10 @@ class TestCancelledState:
         assert repo.load(parent_id).status == "in_progress"
         assert svc.derived_completion("test-tasks")[parent_id]["completion"]["complete"] is True
 
-    def test_cancelled_blocker_satisfies_dependency(self, task_env):
-        """A cancelled blocker is resolved-by-removal: unblock_dependents treats
-        it the same as a done blocker and releases the blocked dependent."""
-        svc = task_env["svc"]
-        blocker = svc.create_task(kb_name="test-tasks", title="Blocker")
-        blocker_id = blocker["entry_id"]
-        dependent = svc.create_task(
-            kb_name="test-tasks",
-            title="Dependent",
-            dependencies=[blocker_id],
-        )
-        dep_id = dependent["entry_id"]
-        # Walk dependent to blocked (open → claimed → in_progress → blocked).
-        svc.update_task(dep_id, "test-tasks", status="claimed", assignee="agent:a")
-        svc.update_task(dep_id, "test-tasks", status="in_progress")
-        svc.update_task(dep_id, "test-tasks", status="blocked")
-
-        # Cancel the blocker, then run the (explicit) unblock pass.
-        svc.update_task(blocker_id, "test-tasks", status="cancelled")
-        unblocked = svc.unblock_dependents(blocker_id, "test-tasks")
-
-        assert any(u["id"] == dep_id for u in unblocked), (
-            "a cancelled blocker should release its dependents"
-        )
-        repo = KBRepository(task_env["kb_config"])
-        assert repo.load(dep_id).status != "blocked"
+    def test_dead_task_service_writers_removed(self):
+        """Neither unblock_dependents nor aggregate_evidence_to_parent exists on TaskService (#1847)."""
+        assert not hasattr(TaskService, "unblock_dependents")
+        assert not hasattr(TaskService, "aggregate_evidence_to_parent")
 
 
 class TestResetTask:
@@ -613,6 +591,53 @@ class TestCheckpointTask:
         assert entry.agent_context["confidence"] == 0.7
         assert entry.agent_context["last_message"] == "Progress"
         assert "last_checkpoint" in entry.agent_context
+
+    def test_checkpoint_with_confidence_zero_overwrites_previous(self, task_env):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title="Zero confidence task")
+        entry_id = created["entry_id"]
+
+        svc.checkpoint_task(entry_id, "test-tasks", "First pass", confidence=0.8)
+        result = svc.checkpoint_task(
+            entry_id, "test-tasks", "Found a blocker, not confident", confidence=0
+        )
+        assert result["confidence"] == 0
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == 0
+        assert "**Confidence**: 0%" in entry.body
+
+    def test_checkpoint_without_confidence_records_none(self, task_env):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title="Omitted confidence task")
+        entry_id = created["entry_id"]
+
+        svc.checkpoint_task(entry_id, "test-tasks", "First pass", confidence=0.8)
+        result = svc.checkpoint_task(entry_id, "test-tasks", "Still going")
+        assert result["confidence"] is None
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == 0.8
+        assert entry.body.count("**Confidence**") == 1
+
+    @pytest.mark.parametrize(
+        ("confidence", "expected_line"),
+        [(1.0, "**Confidence**: 100%"), (0.01, "**Confidence**: 1%")],
+    )
+    def test_checkpoint_confidence_edge_values(self, task_env, confidence, expected_line):
+        svc = task_env["svc"]
+        created = svc.create_task(kb_name="test-tasks", title=f"Edge confidence task {confidence}")
+        entry_id = created["entry_id"]
+
+        result = svc.checkpoint_task(entry_id, "test-tasks", "Edge", confidence=confidence)
+        assert result["confidence"] == confidence
+
+        repo = KBRepository(task_env["kb_config"])
+        entry = repo.load(entry_id)
+        assert entry.agent_context["confidence"] == confidence
+        assert expected_line in entry.body
 
 
 class TestDerivedParentCompletion:

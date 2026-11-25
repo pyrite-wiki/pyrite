@@ -7787,6 +7787,48 @@
     },
     "status": 200
   },
+  "POST /api/tasks/{task_id}/finish | write_key | missing-kb": {
+    "body": {
+      "detail": {
+        "code": "KB_NOT_FOUND",
+        "did_you_mean": [],
+        "hint": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
+        "message": "KB 'missing-kb' not found",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/finish | write_key | no-default-role-kb": {
+    "body": {
+      "detail": {
+        "code": "ENTRY_NOT_FOUND",
+        "message": "Task 'does-not-exist-task' not found in KB 'no-default-role-kb'",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/finish | write_key | private-kb": {
+    "body": {
+      "detail": {
+        "code": "ENTRY_NOT_FOUND",
+        "message": "Task 'does-not-exist-task' not found in KB 'private-kb'",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
+  "POST /api/tasks/{task_id}/finish | write_key | readable-kb": {
+    "body": {
+      "detail": {
+        "code": "ENTRY_NOT_FOUND",
+        "message": "Task 'does-not-exist-task' not found in KB 'readable-kb'",
+        "retryable": false
+      }
+    },
+    "status": 404
+  },
   "POST /api/tasks/{task_id}/start | write_key | missing-kb": {
     "body": {
       "detail": {
