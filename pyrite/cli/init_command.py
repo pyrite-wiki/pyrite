@@ -603,6 +603,26 @@ def _template_help() -> str:
     return f"Template: {', '.join(available_templates())}"
 
 
+def _say_if_software_kb_is_missing(template: str) -> None:
+    """One line on stderr when the software template is made without the
+    extension whose ``pyrite sw`` commands it is meant for (#1457). stderr, so
+    the JSON or CSV document on stdout is unchanged; nothing when the
+    extension is importable."""
+    if template != "software":
+        return
+    import importlib.util
+
+    if importlib.util.find_spec("pyrite_software_kb") is not None:
+        return
+    from ..utils.errors import extension_install_line
+
+    typer.echo(
+        "Note: the `pyrite sw` commands come from the software-kb extension, which is "
+        f"not installed. {extension_install_line('software-kb')}",
+        err=True,
+    )
+
+
 def init_kb(
     template: str = typer.Option(
         ...,
@@ -752,6 +772,8 @@ def init_kb(
         if type_names:
             console.print(f"  Types: {', '.join(type_names)}")
         console.print(f"  Entries indexed: {entries_indexed}")
+
+    _say_if_software_kb_is_missing(template)
 
     if index_error:
         # The KB exists and is registered; the index is what is missing (#526).

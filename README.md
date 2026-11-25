@@ -382,6 +382,17 @@ pip install -e extensions/social
 pip install -e extensions/journalism-investigation
 ```
 
+No clone (you installed from a release tag)? Install the extension from the same
+tag, with the same version as Pyrite itself:
+
+```bash
+pip install "pyrite-software-kb @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/software-kb"
+pip install "pyrite-zettelkasten @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/zettelkasten"
+pip install "pyrite-encyclopedia @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/encyclopedia"
+pip install "pyrite-social @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/social"
+pip install "pyrite-journalism-investigation @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/journalism-investigation"
+```
+
 (`zettelkasten`, `encyclopedia` and `social` are example plugins — see
 [Plugin Protocol](#plugin-protocol) above.)
 
