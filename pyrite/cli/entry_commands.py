@@ -161,21 +161,87 @@ def _read_stdin() -> str:
     return sys.stdin.read()
 
 
-def _parse_field_value(value: str) -> Any:
-    """Parse a ``--field`` value's syntax. The CLI knows no schema: whether a
-    field holds a list is the service's to decide (#1502, ``FieldSchema.coerce``).
+def _field_type_for(kb_config: Any, entry_type: str | None, field_name: str) -> str | None:
+    """Return the declared type for a field, including core-type metadata."""
+    if not entry_type or kb_config is None:
+        return None
 
-    Parsing order:
-      1. JSON (strings, arrays, and objects): ``"a, b"``, ``[1,2]``, or ``{"k": "v"}``
-      2. Integer: ``42``
-      3. Float: ``3.14``
-      4. Boolean: ``true``/``false``
-      5. Plain string (fallback), commas and all: ``a,b`` is one value.
+    from ..schema.type_mapping import resolve_entry_type
 
-    Several values are sent as a JSON array, ``-f 'k=["a","b"]'``.
+    resolved_type = resolve_entry_type(entry_type, kb_config.kb_type, kb_config.kb_schema)
+    type_fields = kb_config.kb_schema.type_fields(resolved_type)
+    if field_name in type_fields:
+        ft = type_fields[field_name].field_type
+        return str(ft) if ft is not None else None
+
+    from ..schema.field_aliases import field_aliases
+
+    target = field_aliases(resolved_type).get(field_name, field_name)
+    if target in type_fields:
+        ft = type_fields[target].field_type
+        return str(ft) if ft is not None else None
+
+    from ..schema import CORE_TYPES
+    from ..schema.field_aliases import field_aliases
+
+    core_fields = CORE_TYPES.get(entry_type, {}).get("fields", {})
+    # `participants` (the attribute name `create` accepts) is an alias of the
+    # file key `actors`: it parses as the target does.
+    name = field_aliases(entry_type).get(field_name, field_name) if entry_type else field_name
+    spelled = core_fields.get(field_name) or core_fields.get(name)
+    if spelled:
+        from ..schema.kb_schema import _core_field_type
+
+        cft = _core_field_type(spelled)
+        return str(cft) if cft is not None else None
+    return None
+
+
+def _parse_field_value(value: str, field_type: str | None = None) -> Any:
+    """Parse a ``--field`` value using its declared type when available (#1672).
+
+    When a field has a declared text-like type (``text``, ``string``,
+    ``object-ref``): the value is kept exactly as typed (#1672), preventing
+    numeric-looking text (such as ``1.10``, ``02134``, ``1e5``, ``true``)
+    from being converted into floats, ints, or booleans. A quoted JSON string
+    (``"..."``) is unpacked if it decodes as a string.
+
+    When declared date-like (``date``, ``datetime``): kept as string (unpacked
+    from JSON quotes if given).
+
+    All other fields (including select, number, checkbox, and undeclared fields)
+    fall through to dev's parser (#1502):
+      1. JSON (strings, arrays, and objects)
+      2. Integer
+      3. Float
+      4. Boolean
+      5. Plain string, never split on commas (#1502: `City A, Inc.` is one value)
     """
     stripped = value.strip()
 
+    # 1. Text-like declared fields: store exactly as typed (#1672)
+    if field_type in {"text", "string", "object-ref"}:
+        if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
+            try:
+                unpacked = _json.loads(stripped)
+                if isinstance(unpacked, str):
+                    return unpacked
+            except _json.JSONDecodeError:
+                pass
+        return value
+
+    # 2. Date-like declared fields
+    if field_type in {"date", "datetime"}:
+        if stripped.startswith('"') and stripped.endswith('"') and len(stripped) >= 2:
+            try:
+                unpacked = _json.loads(stripped)
+                if isinstance(unpacked, str):
+                    return unpacked
+            except _json.JSONDecodeError:
+                pass
+        return stripped
+
+    # Fallback to dev's parser (#1502):
     # 1. JSON strings, arrays, or objects
     if stripped.startswith(('"', "[", "{")):
         try:
@@ -260,7 +326,12 @@ def _item_flag(flag: str) -> Callable[[str], str]:
     return parse
 
 
-def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
+def _parse_field_flags(
+    pairs: list[str],
+    *,
+    kb_config: Any = None,
+    entry_type: str | None = None,
+) -> dict[str, Any]:
     """``-f key=value`` pairs of ``create``/``update`` as ``{key: value}``.
 
     A key named twice is refused: keeping one of the values would drop the
@@ -282,7 +353,8 @@ def _parse_field_flags(pairs: list[str]) -> dict[str, Any]:
             raise ValidationError(
                 message, errors=[{"field": k, "rule": "repeated", "message": message}]
             )
-        out[k] = _parse_field_value(v)
+        field_type = _field_type_for(kb_config, entry_type, k)
+        out[k] = _parse_field_value(v, field_type)
     return out
 
 
@@ -524,8 +596,11 @@ def register_entry_commands(app: typer.Typer) -> None:
             extra["tags"] = [t.strip() for t in tags.split(",")]
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
+            kb_config = config.require_kb(kb_name)
             # --field key=value pairs: syntax only; the service applies the schema.
-            extra.update(_parse_field_flags(field or []))
+            extra.update(
+                _parse_field_flags(field or [], kb_config=kb_config, entry_type=entry_type)
+            )
             # Every create decision -- the ADR-0034 truncated-body refusal (the
             # marker may arrive via --field or in the frontmatter of a
             # --body-file/--stdin read), the undeclared-type refusal (core types
@@ -740,12 +815,29 @@ def register_entry_commands(app: typer.Typer) -> None:
 
         with cli_context(kbs=(kb_name,)) as (config, db, svc):
             # The read is kept for its refusals (an ambiguous id, an unnamed
-            # KB), which answer before anything else; its value is no longer
-            # needed, since the CLI applies no schema to `-f` (#1502).
-            svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+            # KB), which answer before anything else; entry_type helps parse
+            # declared text/number fields correctly (#1672).
+            existing_entry = svc.get_entry(entry_id, kb_name=kb_name, readable_kbs=UNSCOPED)
+            entry_type = (
+                (existing_entry.get("entry_type") or existing_entry.get("type"))
+                if isinstance(existing_entry, dict)
+                else getattr(existing_entry, "entry_type", getattr(existing_entry, "type", None))
+            )
+            target_kb = (
+                kb_name
+                or (
+                    existing_entry.get("kb_name")
+                    if isinstance(existing_entry, dict)
+                    else getattr(existing_entry, "kb_name", None)
+                )
+                or ""
+            )
+            kb_config = config.require_kb(target_kb) if target_kb else None
 
             # --field key=value pairs: syntax only; the service applies the schema.
-            updates.update(_parse_field_flags(field or []))
+            updates.update(
+                _parse_field_flags(field or [], kb_config=kb_config, entry_type=entry_type)
+            )
 
             def items(pairs: list[str] | None) -> dict[str, Any]:
                 # Every pair is kept, in the order given: a field named twice
@@ -760,7 +852,8 @@ def register_entry_commands(app: typer.Typer) -> None:
                             errors=[{"field": "--field", "rule": "format", "message": message}],
                         )
                     k, v = fv.split("=", 1)
-                    value = _parse_field_value(v)
+                    field_type = _field_type_for(kb_config, entry_type, k)
+                    value = _parse_field_value(v, field_type)
                     out.setdefault(k, []).extend(value if isinstance(value, list) else [value])
                 return out
 
