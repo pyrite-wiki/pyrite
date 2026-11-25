@@ -14,6 +14,7 @@ project is worth their time.
 
 - Python 3.11+ (3.13 recommended)
 - Git
+- Node.js 22.17 or later, only to build or test the web UI in `web/` (SvelteKit 3; `web/package.json` `engines`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
 
 ### Initial Setup
@@ -48,7 +49,9 @@ pre-commit install
 scripts/setup-checkout.sh
 pyrite kb list   # the `pyrite` KB path must be this checkout's kb/
 
-# Verify imports resolve to this checkout, including every extension
+# Verify imports resolve to this checkout, including every extension. Pytest
+# repeats this check at startup, so a manually created or tool-created worktree
+# fails before tests run if its editable installs point at another checkout.
 .venv/bin/python scripts/check_checkout_imports.py
 
 # Verify installation
@@ -57,6 +60,12 @@ scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q
 
 Pytest prints the current collected and passed test counts in its summary;
 they change as the project and extensions grow.
+
+Each checkout must use its own environment. Run `scripts/setup-checkout.sh`
+for a manually created or tool-created worktree before testing. The pytest
+guard reports the package and both checkout paths when it refuses a run. An
+environment that intentionally uses non-editable installs may set
+`PYRITE_SKIP_CHECKOUT_IMPORTS=1` for that run.
 
 #### The dependency lock
 
@@ -391,6 +400,14 @@ experimental tests it left out. A new test of an experimental surface needs
 no marker if its path is mapped; a new file for one needs a line in
 `tests/experimental_surface.py`.
 
+**Ratchets.** To remove a row from a list that may only shrink, delete its line:
+there is no count to edit, so two pull requests that remove different rows
+merge. A row is added only by a commit whose final paragraph carries
+`Ratchet-raise: <list> <reason>`; the CI step `scripts/check_ratchets_only_shrink.py
+--range` refuses the pull request otherwise. This applies to `NOT_YET` in
+`tests/test_cli_numeric_options_declare_a_range.py` today; #1608 converts the
+other pinned lists.
+
 **Each tree is tested once.** A `--run` that passes on a clean tree (nothing
 uncommitted in tracked files, no untracked `.py` file, and no untracked or
 gitignored file under `pyrite/`, `tests/`, `extensions/`, `kb/` or `scripts/`
@@ -459,7 +476,7 @@ and stamps it.
 | Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* above) or the commit being pushed is already verified by CI (see *A verified commit is not tested again at the push*). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
 | On the pull request | nothing: CI runs the backend suite on one interpreter (a failure is the first thing in its log; the 25 slowest tests go to the step summary and a junit artifact is kept 30 days; mypy is its own advisory job: it fails only when a file has more type errors than the change's base commit (a PR's merge-ref parent, a push's previous tip; `.mypy-baseline.json` is the fallback when there is none), and after you fix errors you lower the baseline with `mypy pyrite/ --ignore-missing-imports > mypy.out; python scripts/mypy_ratchet.py mypy.out --update`); the backend suite runs as 3 parallel shards per interpreter balanced by `.test_durations.gz`, and `shard-report` proves they ran every test once) (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change, graded against the merge commit's first parent; it is not in `gate` and never blocks a merge, and CI does not pass it `--enforce-fix`; its claim rule handles module-level tables on the test function itself, grades the whole function for an inline `parametrize` list, and selects nothing for class-level, fixture-params, generate-hook and imported tables; a `control` counts only when written on the test or one of its parameters, and one added another way (class or module `pytestmark`, a hook, a fixture, the test body) turns the job red; it runs on pull requests, not in the merge queue, and CI's environment, which has no Postgres, is the one it reports in; gating waits for #1104's model; see `docs/testing.md`) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
 | A frontend change | `cd web && npm run check && npm run test:unit && npm run build` |
-| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, whether the private fixes repository (the `security` remote; `--private-remote`, or `--no-private-remote` for a project that keeps none) holds a change `dev` lacks, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
+| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- files that must move together with the version (`pyproject.toml`, the README install tag and `extensions/software-kb/README.md`'s, `pyrite-mcp/pyproject.toml`'s version and its `pyrite @ git+...@v<tag>` dependency, the tags in `pyrite-mcp/README.md`; bump all of them on `dev` before the dry run), untracked files, the changelog section's date, the branch, whether the commit is verified, whether the private fixes repository (the `security` remote; `--private-remote`, or `--no-private-remote` for a project that keeps none) holds a change `dev` lacks, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
 
 **What CI guarantees:** no pull request merges until the full backend suite
 has passed on top of current `dev`. Run the full suite locally to reproduce a
@@ -504,8 +521,10 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 
 - Tests live in `tests/`; extension tests in `extensions/<name>/tests/`
 - Name test files `test_*.py`
-- A `fix:` commit must include a test that fails without the fix (a hook checks
-  that it touches `tests/`)
+- A `fix:` commit must include a test that fails without the fix (the local
+  commit-msg hook checks that a `fix:` commit touches `tests/`). In CI, the pull
+  request as a whole is judged: a branch with a `test:` commit followed by a
+  `fix:` commit passes because pull requests are squashed when merged to `dev`.
 - Use pytest fixtures for common setup (`tmp_kb`, isolated plugin registry);
   close any `PyriteDB` you open
 - Use `in` not `len` for registry assertions (see [testing standards](kb/standards/testing-standards.md))
@@ -551,9 +570,8 @@ Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration un
   only and moves by fast-forward to a commit that already passed CI.
 - Branch from `dev`, open the PR against `dev`. Name the branch for what it
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
-  `process/*` (tooling and workflow). Never push to `dev`. Rebase is the default merge
-  method (it keeps your commits and their messages); squash is fine for a
-  branch whose history is noise.
+  `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
+  each pull request into a single commit on `dev` by default.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
@@ -607,6 +625,9 @@ before you write much, and the draft is visible to everyone else looking at
 the issue. The plan scales with the change: for a `good first issue` one
 sentence is enough ("I'll add `id`/`kb_name` to the three projections and a
 test per command").
+
+An issue assigned to a maintainer is not open for contributors; pick one
+labelled `help wanted` or `good first issue`.
 
 A claim with no PR after 5 days lapses. Two people on one issue is fine — the
 first PR that meets the acceptance criteria merges, and we credit the other
@@ -699,6 +720,8 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
   Anyone can file one; use the templates. Issues labelled
   [`good first issue`](https://github.com/pyrite-wiki/pyrite/labels/good%20first%20issue)
   are small, well-specified and a fine place to start.
+  An issue assigned to a maintainer is not open for contributors; pick one
+  labelled `help wanted` or `good first issue`.
 - **The roadmap → `kb/`** in this repo: epics, planned work and architecture
   decisions, browsable with the tool itself:
 

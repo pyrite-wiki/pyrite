@@ -1,1 +1,0 @@
-- `qa assess <kb> --entry <id>` on an id the KB does not hold now exits 1 with `ENTRY_NOT_FOUND` and writes no assessment file; MCP `kb_qa_assess` answers the same (#1499).

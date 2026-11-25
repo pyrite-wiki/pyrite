@@ -10,7 +10,7 @@ from pathlib import Path
 
 import typer
 
-from ..models.task import TASK_KB_PRESET
+from ..models.task import TASK_KB_PRESET, TASK_STATUSES
 from .output import cli_console, path_line, validate_output_format
 
 logger = logging.getLogger(__name__)
@@ -66,6 +66,46 @@ BUILTIN_TEMPLATES = {
                 "required": ["title"],
                 "optional": ["category", "enforced"],
                 "subdirectory": "standards/",
+                "fields": {
+                    "category": {
+                        "type": "select",
+                        "options": [
+                            "coding",
+                            "testing",
+                            "api",
+                            "git",
+                            "documentation",
+                            "security",
+                            "deployment",
+                        ],
+                    }
+                },
+            },
+            "programmatic_validation": {
+                "description": "Automated check with verifiable pass/fail criteria",
+                "required": ["title"],
+                "optional": ["category", "check_command", "pass_criteria"],
+                "subdirectory": "validations/",
+                "fields": {
+                    "category": {
+                        "type": "select",
+                        "options": [
+                            "coding",
+                            "testing",
+                            "api",
+                            "git",
+                            "documentation",
+                            "security",
+                            "deployment",
+                        ],
+                    }
+                },
+            },
+            "development_convention": {
+                "description": "Judgment-based guidance carried as context during work",
+                "required": ["title"],
+                "optional": ["category"],
+                "subdirectory": "conventions/",
                 "fields": {
                     "category": {
                         "type": "select",
@@ -169,6 +209,24 @@ BUILTIN_TEMPLATES = {
                     }
                 },
             },
+            "work_log": {
+                "description": "Work session linked to a backlog item",
+                "required": ["title"],
+                "optional": ["item_id", "date", "decisions", "rejected", "open_questions"],
+                "subdirectory": "work-logs/",
+            },
+            "milestone": {
+                "description": "Project milestone for grouping backlog items",
+                "required": ["title"],
+                "optional": ["status"],
+                "subdirectory": "milestones/",
+                "fields": {
+                    "status": {
+                        "type": "select",
+                        "options": ["open", "closed"],
+                    }
+                },
+            },
             # #860: every template that ships task tooling must declare the
             # `task` type so `pyrite task create` works out of the box.
             "task": copy.deepcopy(TASK_KB_PRESET["types"]["task"]),
@@ -177,8 +235,10 @@ BUILTIN_TEMPLATES = {
         # No rule enum on `status`: a rule applies to every type with the
         # field, and each type here has its own statuses. The software-kb
         # validator checks them per type only for a KB with
-        # `kb_type: software`; `pyrite init` registers this one as generic,
-        # so its per-type fields above enforce the vocabulary.
+        # `kb_type: software`; `pyrite init -t software` registers it as
+        # software when software-kb is installed (the plugin supplies this
+        # preset, #1405), and as generic when it is not, so the per-type
+        # fields above enforce the vocabulary either way.
         "validation": {
             "enforce": True,
             "rules": [],
@@ -187,9 +247,13 @@ BUILTIN_TEMPLATES = {
             "adrs",
             "designs",
             "standards",
+            "validations",
+            "conventions",
             "components",
             "backlog",
             "runbooks",
+            "work-logs",
+            "milestones",
             "tasks",
         ],
     },
@@ -433,12 +497,138 @@ BUILTIN_TEMPLATES = {
 }
 
 
+def _research_queue_template() -> dict:
+    task_type = copy.deepcopy(TASK_KB_PRESET["types"]["task"])
+    for opt in ("target_kb", "question", "sources_wanted"):
+        if opt not in task_type.setdefault("optional", []):
+            task_type["optional"].append(opt)
+    task_type["fields"] = {
+        "target_kb": {
+            "type": "text",
+            "description": "Knowledge base the research writes into",
+        },
+        "question": {
+            "type": "text",
+            "description": "Specific research question to answer",
+        },
+        "sources_wanted": {
+            "type": "list",
+            "description": "Types or locations of sources to consult",
+        },
+    }
+    task_type["field_descriptions"] = {
+        "target_kb": "Knowledge base the research writes into",
+        "question": "Specific research question to answer",
+        "sources_wanted": "Types or locations of sources to consult",
+    }
+    task_type["ai_instructions"] = (
+        "Write tickets that an agent can work autonomously: specify target_kb, "
+        "the concrete research question to answer, and what sources to consult."
+    )
+    task_type["guidelines"] = (
+        "When spawning follow-up research tasks, link them to the originating "
+        "ticket (e.g. via follows link or parent) so the research lineage is traceable."
+    )
+    return {
+        "name": "my-research-queue",
+        "description": "Research queue knowledge base for tracking research tasks and tickets",
+        "types": {
+            "task": task_type,
+        },
+        "policies": {
+            "enforce_workflow": True,
+        },
+        "validation": {
+            "enforce": True,
+            "rules": [
+                {
+                    "field": "status",
+                    "enum": list(TASK_STATUSES),
+                },
+                {"field": "priority", "range": [1, 10]},
+            ],
+        },
+        "directories": ["tasks"],
+    }
+
+
+BUILTIN_TEMPLATES["research-queue"] = _research_queue_template()
+
+
+def available_templates() -> list[str]:
+    """All template names accepted by init_kb: built-in templates plus registry presets."""
+    templates = set(BUILTIN_TEMPLATES.keys())
+    try:
+        from ..plugins import get_registry
+
+        templates.update(get_registry().get_all_kb_presets().keys())
+    except Exception:
+        pass
+    return sorted(templates)
+
+
+def resolve_template(template: str) -> dict | None:
+    """Resolve a template name against plugin presets first, then built-in templates."""
+    try:
+        from ..plugins import get_registry
+
+        plugin_presets = get_registry().get_all_kb_presets()
+        if template in plugin_presets:
+            return plugin_presets[template]
+    except Exception:
+        logger.warning("Failed to load plugin presets for template '%s'", template, exc_info=True)
+
+    if template in BUILTIN_TEMPLATES:
+        return BUILTIN_TEMPLATES[template]
+
+    return None
+
+
+def plugin_kb_type_for_template(template: str) -> str:
+    """KB type a template registers with: the plugin's, else ``generic``.
+
+    Mirrors ``resolve_template``: a plugin preset wins over a built-in of the
+    same name, and registers with the KB type the plugin declares under that
+    name (``get_kb_type_for_preset``). Built-in templates give ``generic``.
+    """
+    from ..plugins import get_registry
+
+    registry = get_registry()
+    if template not in registry.get_all_kb_presets():
+        return "generic"
+    return registry.get_kb_type_for_preset(template) or "generic"
+
+
+def _template_help() -> str:
+    return f"Template: {', '.join(available_templates())}"
+
+
+def _say_if_software_kb_is_missing(template: str) -> None:
+    """One line on stderr when the software template is made without the
+    extension whose ``pyrite sw`` commands it is meant for (#1457). stderr, so
+    the JSON or CSV document on stdout is unchanged; nothing when the
+    extension is importable."""
+    if template != "software":
+        return
+    import importlib.util
+
+    if importlib.util.find_spec("pyrite_software_kb") is not None:
+        return
+    from ..utils.errors import extension_install_line
+
+    typer.echo(
+        "Note: the `pyrite sw` commands come from the software-kb extension, which is "
+        f"not installed. {extension_install_line('software-kb')}",
+        err=True,
+    )
+
+
 def init_kb(
     template: str = typer.Option(
         ...,
         "--template",
         "-t",
-        help="Template: software, zettelkasten, research, intellectual-biography, movement, empty",
+        help=_template_help(),
     ),
     path: Path = typer.Option(..., "--path", "-p", help="Directory for the new KB"),
     name: str | None = typer.Option(
@@ -500,30 +690,23 @@ def init_kb(
             )
         return
 
-    # Resolve preset: try plugin presets first, fall back to built-in
+    # Resolve preset: try plugin presets first, fall back to built-in.
+    # A preset supplied by a plugin registers with that plugin's KB type
+    # (e.g. "software"), so the plugin's validators run on the new KB;
+    # a built-in template, or one given via --schema-file, stays generic.
     preset = None
+    kb_type = "generic"
     if schema_file is not None:
         preset = load_yaml_file(schema_file)
     else:
-        try:
-            from ..plugins import get_registry
-
-            plugin_presets = get_registry().get_all_kb_presets()
-            if template in plugin_presets:
-                preset = plugin_presets[template]
-        except Exception:
-            logger.warning(
-                "Failed to load plugin presets for template '%s'", template, exc_info=True
-            )
-
+        preset = resolve_template(template)
+        kb_type = plugin_kb_type_for_template(template)
         if preset is None:
-            if template not in BUILTIN_TEMPLATES:
-                available = ", ".join(sorted(BUILTIN_TEMPLATES.keys()))
-                console.print(
-                    f"[red]Error:[/red] Unknown template '{template}'. Available: {available}"
-                )
-                raise typer.Exit(1)
-            preset = BUILTIN_TEMPLATES[template]
+            available = ", ".join(available_templates())
+            console.print(
+                f"[red]Error:[/red] Unknown template '{template}'. Available: {available}"
+            )
+            raise typer.Exit(1)
 
     # Create directory structure
     path.mkdir(parents=True, exist_ok=True)
@@ -546,7 +729,7 @@ def init_kb(
         # Already registered, skip
         pass
     else:
-        kb_config = KBConfig(name=kb_name, path=path, kb_type="generic")
+        kb_config = KBConfig(name=kb_name, path=path, kb_type=kb_type)
         kb_config.load_kb_yaml()
         config.add_kb(kb_config)
         save_config(config)
@@ -589,6 +772,8 @@ def init_kb(
         if type_names:
             console.print(f"  Types: {', '.join(type_names)}")
         console.print(f"  Entries indexed: {entries_indexed}")
+
+    _say_if_software_kb_is_missing(template)
 
     if index_error:
         # The KB exists and is registered; the index is what is missing (#526).

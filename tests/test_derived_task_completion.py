@@ -183,9 +183,13 @@ def _list_service(config, status):
         db.close()
 
 
-def _cli_json(config, args):
+def _cli_result(config, args):
     with patch("pyrite.cli.context.load_config", return_value=config):
-        result = CliRunner().invoke(app, args)
+        return CliRunner().invoke(app, args)
+
+
+def _cli_json(config, args):
+    result = _cli_result(config, args)
     assert result.exit_code == 0, result.output
     return json.loads(result.stdout)
 
@@ -492,3 +496,214 @@ def test_mcp_task_status_reads_priority_as_list_tasks_does(tmp_path):
         db.close()
     out = _mcp(config, "task_status", {"task_id": "t", "kb_name": KB})
     assert out["priority"] == listed == 7
+
+
+# -- #1683: a cancelled child does not count toward completion --------------
+#
+# Maintainer decision on #1683 (2026-11-17, option A; ADR-0045 decision 7 as
+# refined then): a task with children and a non-terminal own status is
+# complete by its children only when at least one child is `done` and every
+# other child is `done` or `cancelled`. A parent whose remaining children are
+# all cancelled keeps its own status. A grandparent applies the same rule to
+# its children's derived completion. A parent with a terminal own status is
+# unaffected. Its own tree, so the rows above stay as they were.
+
+#: id -> (file status, parent).
+CANCELLED_TREE: dict[str, tuple[str, str]] = {
+    "root": ("open", ""),
+    # all_done
+    "ad": ("open", "root"),
+    "ad-a": ("done", "ad"),
+    "ad-b": ("done", "ad"),
+    # mixed: one done, one cancelled
+    "mx": ("open", "root"),
+    "mx-a": ("done", "mx"),
+    "mx-b": ("cancelled", "mx"),
+    # all_cancelled
+    "ac": ("open", "root"),
+    "ac-a": ("cancelled", "ac"),
+    "ac-b": ("cancelled", "ac"),
+    # one_cancelled: the issue's reproduction, one child and it is cancelled
+    "oc": ("open", "root"),
+    "oc-a": ("cancelled", "oc"),
+    # a grandparent over each parent shape
+    "gad": ("open", "root"),
+    "gad-m": ("open", "gad"),
+    "gad-m-a": ("done", "gad-m"),
+    "gad-m-b": ("done", "gad-m"),
+    "gmx": ("open", "root"),
+    "gmx-m": ("open", "gmx"),
+    "gmx-m-a": ("done", "gmx-m"),
+    "gmx-m-b": ("cancelled", "gmx-m"),
+    "gac": ("open", "root"),
+    "gac-m": ("open", "gac"),
+    "gac-m-a": ("cancelled", "gac-m"),
+    "gac-m-b": ("cancelled", "gac-m"),
+    "goc": ("open", "root"),
+    "goc-m": ("open", "goc"),
+    "goc-m-a": ("cancelled", "goc-m"),
+    # a grandparent with a cancelled child beside a parent whose own children
+    # are all cancelled: nothing below it is done.
+    "gcc": ("open", "root"),
+    "gcc-x": ("cancelled", "gcc"),
+    "gcc-m": ("open", "gcc"),
+    "gcc-m-a": ("cancelled", "gcc-m"),
+    # the same, beside a parent done by its children: complete.
+    "gcd": ("open", "root"),
+    "gcd-x": ("cancelled", "gcd"),
+    "gcd-m": ("open", "gcd"),
+    "gcd-m-a": ("done", "gcd-m"),
+    # terminal own status over cancelled children: the file decides.
+    "tc": ("done", "root"),
+    "tc-a": ("cancelled", "tc"),
+}
+
+#: shape -> literal expectations, written by hand from the property, with the
+#: columns of `_ROWS` above (`after_decompose` unused here). `children` counts
+#: every child and the resolved ones (`done` or `cancelled`, or complete by
+#: their own children): the count is unchanged; what changed is whether a
+#: parent whose resolved children are all cancelled is complete.
+# fmt: off
+_CANCELLED_ROWS = {
+    "all_done"                : ("ad", "open", "done", True, "children", (2, 2), False, False, None, "ad-a"),
+    "mixed"                   : ("mx", "open", "done", True, "children", (2, 2), False, False, None, "mx-a"),
+    "all_cancelled"           : ("ac", "open", "open", False, "children", (2, 2), False, True, None, "ac-a"),
+    "one_cancelled"           : ("oc", "open", "open", False, "children", (1, 1), False, True, None, "oc-a"),
+    "gp_all_done"             : ("gad", "open", "done", True, "children", (1, 1), False, False, None, "gad-m"),
+    "gp_mixed"                : ("gmx", "open", "done", True, "children", (1, 1), False, False, None, "gmx-m"),
+    "gp_all_cancelled"        : ("gac", "open", "open", False, "children", (1, 0), False, True, None, "gac-m"),
+    "gp_all_cancelled_middle" : ("gac-m", "open", "open", False, "children", (2, 2), False, True, None, "gac-m-a"),
+    "gp_one_cancelled"        : ("goc", "open", "open", False, "children", (1, 0), False, True, None, "goc-m"),
+    "gp_cancelled_beside_cancelled": ("gcc", "open", "open", False, "children", (2, 1), False, True, None, "gcc-m"),
+    "gp_cancelled_beside_done": ("gcd", "open", "done", True, "children", (2, 2), False, False, None, "gcd-m"),
+    "terminal_over_cancelled" : ("tc", "done", "done", True, "status", (1, 1), False, False, None, "tc-a"),
+}
+# fmt: on
+CANCELLED_SHAPES = {s: dict(zip(_COLS, row, strict=True)) for s, row in _CANCELLED_ROWS.items()}
+#: The shapes whose answer #1683 changed: on dev each counted as complete.
+CHANGED_BY_1683 = {
+    "all_cancelled",
+    "one_cancelled",
+    "gp_all_cancelled",
+    "gp_all_cancelled_middle",
+    "gp_one_cancelled",
+    "gp_cancelled_beside_cancelled",
+}
+
+
+def _cancelled_shape(shape: str):
+    if shape in CHANGED_BY_1683:
+        return shape
+    return pytest.param(
+        shape, marks=pytest.mark.control(reason="#1683 left this shape's answer as it was")
+    )
+
+
+CANCELLED_PARAMS = [_cancelled_shape(s) for s in CANCELLED_SHAPES]
+
+
+@pytest.fixture(scope="module")
+def cancelled_tree(tmp_path_factory):
+    config, kb_path = _build(tmp_path_factory.mktemp("cancelled"), CANCELLED_TREE)
+    before = _snapshot(kb_path)
+    yield config
+    assert _snapshot(kb_path) == before, "a read wrote a file"
+
+
+@pytest.fixture(scope="module")
+def cancelled_listings(cancelled_tree):
+    cache: dict[tuple[str, str], dict[str, dict]] = {}
+
+    def get(ep: str, status: str) -> dict[str, dict]:
+        if (ep, status) not in cache:
+            cache[(ep, status)] = {r["id"]: r for r in LISTS[ep](cancelled_tree, status)}
+        return cache[(ep, status)]
+
+    return get
+
+
+@pytest.mark.parametrize("shape", CANCELLED_PARAMS)
+@pytest.mark.parametrize("ep", list(LISTS))
+def test_a_cancelled_child_does_not_count_in_any_list(cancelled_listings, ep, shape):
+    """A parent whose remaining children are all cancelled stays listed under
+    its own status (`task list --status open`, the drain check, MCP, REST)."""
+    want = CANCELLED_SHAPES[shape]
+    listed_under = {s for s in STATUSES if want["target"] in cancelled_listings(ep, s)}
+    assert listed_under == {want["effective"]}
+    row = cancelled_listings(ep, want["effective"])[want["target"]]
+    assert row["status"] == want["file"]
+    _check_derived(row, want)
+
+
+@pytest.mark.parametrize("shape", CANCELLED_PARAMS)
+@pytest.mark.parametrize("ep", ["cli_get", "mcp_task_status", "mcp_task_ancestors"])
+def test_a_cancelled_child_does_not_count_on_a_read(cancelled_tree, ep, shape):
+    want = CANCELLED_SHAPES[shape]
+    if ep == "cli_get":
+        node = _get_cli(cancelled_tree, want["target"])
+    elif ep == "mcp_task_status":
+        node = _get_mcp(cancelled_tree, want["target"])
+    else:
+        node = _ancestors_mcp(cancelled_tree, want["target"], want["child"])
+    _check_derived(node, want)
+
+
+@pytest.mark.parametrize("shape", CANCELLED_PARAMS)
+@pytest.mark.parametrize("ep", list(CLAIMS))
+def test_a_parent_of_only_cancelled_children_can_be_claimed(tmp_path, ep, shape):
+    """`KBService.claim_entry` refuses a task complete by its children; a
+    parent whose children are all cancelled is not complete, so the claim
+    goes through. A refused claim writes nothing."""
+    config, kb_path = _build(tmp_path, CANCELLED_TREE)
+    want = CANCELLED_SHAPES[shape]
+    path = kb_path / "tasks" / f"{want['target']}.md"
+    before = path.read_bytes()
+
+    out = CLAIMS[ep](config, want["target"])
+
+    assert out["claimed"] is want["claim"], out
+    if not want["claim"]:
+        assert path.read_bytes() == before
+
+
+def test_derive_completion_does_not_count_a_cancelled_child():
+    rows = [{"id": tid, "status": s, "parent": p} for tid, (s, p) in CANCELLED_TREE.items()]
+    got = task_service.derive_completion(rows)
+    for want in CANCELLED_SHAPES.values():
+        _check_derived({"derived": got[want["target"]]}, want)
+
+
+@pytest.mark.parametrize(
+    ("shape", "allowed"),
+    [
+        ("all_cancelled", False),
+        ("one_cancelled", False),
+        pytest.param(
+            "mixed",
+            True,
+            marks=pytest.mark.control(reason="a parent done by its children still records it"),
+        ),
+    ],
+)
+def test_open_to_done_shortcut_follows_the_same_rule(tmp_path, shape, allowed):
+    """The transition guard lets `open -> done` through only for a parent
+    complete by its children (it asks `derive_completion`). A parent whose
+    children are all cancelled is not complete, so it walks the workflow or is
+    cancelled itself; the refusal writes nothing (#1683)."""
+    config, kb_path = _build(tmp_path, CANCELLED_TREE)
+    target = CANCELLED_SHAPES[shape]["target"]
+    path = kb_path / "tasks" / f"{target}.md"
+    before = path.read_bytes()
+
+    result = _cli_result(
+        config, ["task", "update", target, "-k", KB, "--status", "done", "--format", "json"]
+    )
+    out = json.loads(result.stdout)
+
+    assert (result.exit_code == 0) is allowed, result.output
+    if allowed:
+        assert out["status"] == "done", out
+    else:
+        assert out["error_code"] == "VALIDATION_FAILED", out
+        assert "Allowed next: claimed, cancelled" in out["error"]
+        assert path.read_bytes() == before

@@ -105,6 +105,7 @@ def list_entries(
         offset=offset,
         status=status,
         min_importance=min_importance,
+        include_warnings=True,
     )
     total = svc.count_entries(
         kb_name=kb,
@@ -424,7 +425,7 @@ def batch_read_entries(
     if not scope.unscoped:
         # Items in KBs the caller may not read are reported as not found.
         ids = [(eid, kb) for eid, kb in ids if scope.permits(kb)]
-    results = svc.get_entries(ids)
+    results = svc.get_entries(ids, include_warnings=True)
 
     # `[]` is no projection. A non-empty list that cleans to nothing (`[""]`,
     # `[" "]`) is still a projection, as it was before the list went through
@@ -606,7 +607,11 @@ async def import_entries(
         None, description="Format: json, markdown, csv (auto-detected from extension if omitted)"
     ),
     allow_undeclared: bool = Query(
-        False, description="Allow entry types the KB's kb.yaml does not declare"
+        False,
+        description="Allow an entry_type the KB does not declare. Only a KB whose "
+        "kb.yaml declares types refuses others (core types included); "
+        "`pyrite index health` then lists the entry. A KB that declares no "
+        "types accepts any type.",
     ),
     stream: bool = Query(
         False,

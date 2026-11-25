@@ -544,10 +544,16 @@ class SchemaViolationError(ValidationError):
 
     error_code = "SCHEMA_VIOLATION"
 
-    def __init__(self, message: str, errors: list[dict] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[dict] | None = None,
+        *,
+        suggestion: str | None = None,
+    ):
         # Positional, because `services/kb_service.py` raises it that way; the
         # base class keeps ``None`` for "not about a field".
-        super().__init__(message, errors=errors)
+        super().__init__(message, errors=errors, suggestion=suggestion)
 
 
 class TruncatedBodyError(ValidationError):
@@ -661,6 +667,37 @@ class EntryLoadError(FrontmatterError):
         self.rel_path = rel_path
         self.fields = dict(fields or {})
         self.loader_message = loader_message
+
+
+class UpdateWouldNotLoadError(ValidationError):
+    """The proposed update failed to load before it could be written.
+
+    The cause's loader message and field messages must already be text for
+    the caller; this constructor does not filter outside text.
+    """
+
+    def __init__(self, entry_id: str, cause: EntryLoadError):
+        # The repository already filters loader details for network callers.
+        errors = [
+            {
+                "field": field,
+                "rule": "entry_load",
+                "message": (
+                    "The entry type refused this field."
+                    if message == OUTSIDE_TEXT_WITHHELD
+                    else message
+                ),
+            }
+            for field, message in cause.fields.items()
+        ]
+        reason = cause.loader_message
+        if cause.fields:
+            reason = f"{', '.join(cause.fields)} ({reason})"
+        super().__init__(
+            f"Cannot update '{entry_id}': the result would not load ({reason}), "
+            "so nothing was written. The file is unchanged.",
+            errors=errors,
+        )
 
 
 class YamlLimitError(FrontmatterError):
@@ -785,6 +822,27 @@ class IndexSchemaRefusedError(StorageError):
     base class's fixed sentence would hide the one thing the user needs.
     """
 
+    public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
+
+
+class PostgresSchemaShadowedError(StorageError):
+    """A Postgres startup that would hide an existing instance is refused (#718).
+
+    The connection's own schema (``current_schema()``) holds no Pyrite tables,
+    but a schema later on its ``search_path`` does: the default ``"$user",
+    public`` with a newly created, empty ``"$user"`` schema in front of an
+    instance in ``public`` is the usual way to get here. Upgrading would build
+    a new, empty instance in the first schema, and every query would then read
+    it instead of the real one: nothing deleted, but the data no longer
+    visible. So `alembic_chain.upgrade_to_head` refuses before anything is
+    written, unless ``PYRITE_POSTGRES_ALLOW_NEW_INSTANCE`` asks for a new
+    instance there on purpose (maintainer decision on #1820, option b).
+
+    The message names only schema names (operator configuration, never a path
+    or the driver's text), so it is shown as is, like `IndexSchemaRefusedError`.
+    """
+
+    error_code = "POSTGRES_SCHEMA_SHADOWED"
     public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
 
 

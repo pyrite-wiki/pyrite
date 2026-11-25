@@ -139,6 +139,7 @@ Key rules:
 - `entry_type` must return the exact key you register in `get_entry_types()`.
 - `to_frontmatter()` should omit fields that hold their default value.
 - `from_frontmatter()` must call `generate_entry_id(title)` when the metadata has no `id`.
+- `from_frontmatter()` must accept a mapping with only `type`, `id` and `title`. A partial read probes a file with those base keys first; a loader that refuses them makes the read fail as `ENTRY_UNREADABLE` instead of listing the refused fields.
 
 ### 4. Add a validator
 
@@ -313,6 +314,8 @@ class ReadingListPlugin:
 
 The other keys a type's metadata may carry are `display`, `field_aliases`,
 `protocols`, `guidelines`, `goals`, `evaluation_rubric` and `settled_statuses`.
+
+If your type should be what a create of a core type stores, declare `get_type_mappings()`; subclassing maps nothing. See [Pyrite Plugin Protocol](../../kb/components/pyrite-plugin-protocol.md) for details.
 
 The registry only calls a method whose capability the plugin declares: an
 undeclared capability makes the registry ignore the method. Without the

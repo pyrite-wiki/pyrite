@@ -20,6 +20,7 @@ Send the key on every request, in a header (preferred) or a query parameter:
 
 ```bash
 curl -H "X-API-Key: my-key" "http://127.0.0.1:8088/api/kbs"
+curl -H "Authorization: Bearer my-key" "http://127.0.0.1:8088/api/kbs"
 curl "http://127.0.0.1:8088/api/kbs?api_key=my-key"
 ```
 
@@ -33,10 +34,40 @@ What a request needs depends on the server's mode:
 | API keys | `PYRITE_API_KEY` (one admin key) or `api_keys` in `config.yaml` (a role each: `read`, `write`, `admin`) | a valid key |
 | User accounts | `PYRITE_AUTH_ENABLED=true` | a key, or the `pyrite_session` cookie from `POST /auth/login`; with `anonymous_tier` set, no credential for what that tier allows |
 
+`Authorization: Bearer` also carries a session token, as on `/mcp`.
+
 A request without a valid credential gets `401` (`{"detail": "Invalid or
 missing API key"}`). A key whose role is too low gets `403`. Keys, roles,
 anonymous access and the first admin are in
 [Configuration](configuration.md).
+
+**A credential that does not verify gets `401`, never anonymous access.**
+Only a request that sends *no* credential is the anonymous visitor. A key
+(`X-API-Key`, `Authorization: Bearer`, or `?api_key` where it is read) or a
+`pyrite_session` cookie that is wrong, empty, expired or revoked gets `401`
+even when `anonymous_tier` allows reads, on REST, on `/mcp` and on the
+live-update socket. REST and the socket read `?api_key`; `/mcp` never does,
+so there a `?api_key` is ignored and the request's other credentials (or
+none) decide. When a request carries more than one credential, the first in
+the order `Authorization: Bearer`, `X-API-Key`, `?api_key`, cookie decides: a
+wrong key next to a valid cookie is `401`. A REST `401` caused by the session
+cookie also clears the cookie, so a browser's next request is anonymous;
+`/mcp` and the socket refuse it without clearing it. An `Authorization`
+header with another scheme (a proxy's `Basic`) is not read.
+
+Two consequences an operator should know (both accepted with #1754):
+
+- **A Bearer token next to `X-API-Key` decides alone.** On REST, `/mcp` and
+  the socket, a request that carries `Authorization: Bearer` is judged by that
+  token; its `X-API-Key` is not consulted. So a request whose Bearer token
+  Pyrite does not know -- for example one a reverse proxy adds for its own
+  use -- gets `401` even when the client's `X-API-Key` is valid. Have the
+  proxy strip its token, or send Pyrite's key as the Bearer token.
+- **Two instances on one host share the session cookie.** Browsers keep
+  cookies per host, not per port, and every Pyrite instance names its cookie
+  `pyrite_session`. Signing in to one instance replaces the other's cookie,
+  and the other instance then refuses it with `401` and (on REST) clears it,
+  so the user is signed out there. Give each instance its own host name.
 
 ## Read the API reference
 

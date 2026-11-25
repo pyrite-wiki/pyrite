@@ -32,8 +32,9 @@ The runner (`scripts/verify_red_ci.py`) never modifies your checkout:
 
 1. It checks out the merge base with the base branch into a throwaway
    `git worktree --detach` under `$TMPDIR`.
-2. It copies in your test-side files: everything under `tests/`,
-   `extensions/*/tests/`, and any `conftest.py`, committed or not.
+2. It copies in your test-side files: everything under `tests/` and
+   `extensions/*/tests/` (including their `conftest.py` files, but not the
+   repo-root `conftest.py`), committed or not.
 3. It runs only the tests you **added or edited**. That is the run *without
    the fix*. A test counts as edited when its AST changed, so reformatting a
    test does not count.

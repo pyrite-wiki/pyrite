@@ -262,7 +262,8 @@ class WikilinkService:
             SELECT l.target_id, l.target_kb, COUNT(*) as ref_count,
                    GROUP_CONCAT(DISTINCT l.source_id) as referenced_by
             FROM link l
-            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name{target_scope}
+            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1{target_scope}
             WHERE e.id IS NULL{source_scope}
         """
         params: dict[str, Any] = {**source_params, **target_params}
@@ -299,6 +300,7 @@ class WikilinkService:
             SELECT l.source_id, l.source_kb, l.target_id, l.target_kb, l.relation
             FROM link l
             LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
+                AND COALESCE(l.target_resolved, 1) = 1
             WHERE e.id IS NULL
         """
         params: dict[str, Any] = {}

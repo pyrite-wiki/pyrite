@@ -42,6 +42,24 @@ INPUT_FILE_PARAMS: dict[tuple[tuple[str, ...], str], object] = {
         p,
     ],  # fmt: skip
     (("update",), "body_file"): lambda p: ["update", "hello", "-k", "k", "--body-file", p],
+    (("task", "create"), "body_file"): lambda p: [
+        "task",
+        "create",
+        "T",
+        "-k",
+        "k",
+        "--body-file",
+        p,
+    ],
+    (("task", "update"), "body_file"): lambda p: [
+        "task",
+        "update",
+        "hello",
+        "-k",
+        "k",
+        "--body-file",
+        p,
+    ],
     (("add",), "file_path"): lambda p: ["add", p, "-k", "k"],
     (("links", "bulk-create"), "file_option"): lambda p: [
         "links",

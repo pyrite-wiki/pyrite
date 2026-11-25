@@ -505,6 +505,11 @@ class SoftwareKBPlugin:
                     "properties": {
                         "kb_name": {"type": "string", "description": "KB name"},
                         "title": {"type": "string", "description": "ADR title"},
+                        "tags": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Tags for the ADR",
+                        },
                         "context": {"type": "string", "description": "Context section"},
                         "decision": {"type": "string", "description": "Decision section"},
                         "consequences": {"type": "string", "description": "Consequences section"},
@@ -1843,6 +1848,7 @@ class SoftwareKBPlugin:
                 body,
                 owns=frozenset({"adr_number"}),
                 adr_number=next_num,
+                tags=args.get("tags", []),
                 status=status,
                 date=date.today().isoformat(),
                 deciders=args.get("deciders", []),
@@ -2174,6 +2180,7 @@ class SoftwareKBPlugin:
 
         criteria_results = []
         all_checkers_passed = True
+        entry_dict: dict[str, Any] | None = None
 
         for n, criterion in enumerate(gate_config.get("criteria", []), 1):
             where = f"criterion {n} of the gate for this status"
@@ -2196,10 +2203,13 @@ class SoftwareKBPlugin:
             if checker_name == "no_open_blockers":
                 item_id = row["id"] if isinstance(row, dict) else row["id"]
                 kb_name = row["kb_name"] if isinstance(row, dict) else row["kb_name"]
-                with evaluating(where):
-                    failure = self._check_no_open_blockers(
-                        db, item_id, kb_name, readable_kbs=readable_kbs
-                    )
+                # Not inside `evaluating`: the lookup reads the KB's index, not
+                # board.yaml, so a failure of it keeps its own error and
+                # `retryable` (as `sw_claim`'s earlier lookup does) and is never
+                # reported as a problem in the file (#1585).
+                failure = self._check_no_open_blockers(
+                    db, item_id, kb_name, readable_kbs=readable_kbs
+                )
                 passed = failure is None
                 result = {"text": text, "passed": passed, "type": "checker"}
                 if not passed:
@@ -2211,21 +2221,15 @@ class SoftwareKBPlugin:
             # Standard named checker (check_criterion refused an unknown one)
             checker_fn = gate_checker(checker_name)
 
-            # Build entry dict for the checker
-            entry_dict = dict(row) if not isinstance(row, dict) else row
-            entry_dict["metadata"] = meta
+            # The entry a checker sees, built as QA builds it (#1587): the
+            # item's fields wherever the index keeps them, from the row's own
+            # metadata (`meta` is the same bag, parsed by the caller). Not
+            # inside `evaluating`: the builder reads the KB's index, not
+            # board.yaml, so a failure keeps its own error (#1585).
+            if entry_dict is None:
+                from pyrite.services.checker_entry import checker_entry
 
-            # Enrich with link data for checkers that need it (e.g. not_oversized)
-            if "_links" not in entry_dict:
-                item_id = entry_dict.get("id", "")
-                kb_name = entry_dict.get("kb_name", "")
-                link_rows = db._raw_conn.execute(
-                    "SELECT target_id, relation FROM link WHERE source_id = ? AND source_kb = ?",
-                    (item_id, kb_name),
-                ).fetchall()
-                entry_dict["_links"] = [
-                    {"target": lr["target_id"], "relation": lr["relation"]} for lr in link_rows
-                ]
+                entry_dict = checker_entry(db, row)
 
             params = criterion.get("params")
             # Three outcomes: a failure row, None because it holds, or a
@@ -2456,7 +2460,10 @@ class SoftwareKBPlugin:
                 continue
             entry_type = link.get("entry_type", "")
             bucket = type_to_bucket.get(entry_type, "related")
-            body = link.get("body", "") or ""
+            entry = SoftwareKBPlugin._readable_entry(
+                db, link["id"], link["kb_name"], readable_kbs=readable_kbs
+            )
+            body = (entry.get("body", "") or "") if entry else ""
             buckets[bucket].append(
                 {
                     "id": link.get("id", ""),
@@ -2612,6 +2619,7 @@ class SoftwareKBPlugin:
                 candidates.append(
                     {
                         "id": row["id"],
+                        "kb_name": row["kb_name"],
                         "title": row["title"],
                         "kind": meta.get("kind", ""),
                         "priority": priority,
@@ -2644,7 +2652,7 @@ class SoftwareKBPlugin:
             top = None
             for candidate in candidates:
                 dep = self._get_dependency_status(
-                    db, candidate["id"], kb_name or "", readable_kbs=readable_kbs
+                    db, candidate["id"], candidate["kb_name"], readable_kbs=readable_kbs
                 )
                 if dep["is_blocked"]:
                     blocked_items.append(
@@ -2667,12 +2675,13 @@ class SoftwareKBPlugin:
                 }
 
             buckets = self._context_buckets(
-                db, top["id"], kb_name or "", top_dependencies, readable_kbs=readable_kbs
+                db, top["id"], top["kb_name"], top_dependencies, readable_kbs=readable_kbs
             )
 
             result = {
                 "recommendation": {
                     "id": top["id"],
+                    "kb_name": top["kb_name"],
                     "title": top["title"],
                     "kind": top["kind"],
                     "priority": top["priority"],

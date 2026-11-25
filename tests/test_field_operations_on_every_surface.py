@@ -451,26 +451,6 @@ def test_link_qa_assessment_appends_one_evidence_item(tmp_path: Path):
 @pytest.mark.control(
     reason="P3a's whole-list set already copied the unchanged items' bytes (apply's item-wise copy), so the bytes were right before; the control pins the property while the caller changes from sending the list to sending the one item"
 )
-def test_aggregate_evidence_appends_only_the_new_items(tmp_path: Path):
-    from pyrite.services.task_service import TaskService
-
-    child = TASK.replace("evidence: [e0]   # keep", "parent: t0\nevidence: [p0, c1]")
-    config, db, folder = _task_kb(tmp_path, {"t1.md": child, "t0.md": PARENT})
-    path = folder / "t0.md"
-    before = _text(path)
-    try:
-        result = TaskService(config, db).aggregate_evidence_to_parent("t1", "tasks")
-    finally:
-        db.close()
-    after = _text(path)
-    assert result and result["evidence_added"] == 1, result
-    assert "evidence: [p0, c1]" in after, after
-    assert_only_changed(before, after, [Append("evidence", "c1"), Set("updated_at", "x")])
-
-
-@pytest.mark.control(
-    reason="P3a's whole-list set already copied the unchanged items' bytes (apply's item-wise copy), so the bytes were right before; the control pins the property while the caller changes from sending the list to sending the one item"
-)
 def test_update_task_appends_the_audit_entry(tmp_path: Path):
     from pyrite.services.task_service import TaskService
 

@@ -1280,7 +1280,7 @@
         "shape": "{error, error_code, suggestion?, errors?, retryable}",
         "suggestion": "optional fix hint, omitted when not applicable"
       },
-      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
       "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
       "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
     },
@@ -1386,6 +1386,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -1653,7 +1655,7 @@
         "shape": "{error, error_code, suggestion?, errors?, retryable}",
         "suggestion": "optional fix hint, omitted when not applicable"
       },
-      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
       "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
       "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
     },
@@ -1759,6 +1761,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -2152,7 +2156,11 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_recent | anonymous | private-kb": {
     "did_you_mean": [],
@@ -2169,7 +2177,11 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_schema | anonymous | missing-kb": {
     "did_you_mean": [],
@@ -2254,6 +2266,8 @@
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
+      "markdown_link": "Markdown link to the entry's file",
+      "markdown_linked_by": "Linked to by a Markdown link",
       "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
@@ -2573,6 +2587,8 @@
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
+      "markdown_link": "Markdown link to the entry's file",
+      "markdown_linked_by": "Linked to by a Markdown link",
       "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
@@ -2832,6 +2848,15 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_search | anonymous | private-kb": {
@@ -2857,6 +2882,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_stats | anonymous | missing-kb": {
@@ -3939,6 +3973,32 @@
     "error_code": "FORBIDDEN",
     "retryable": false
   },
+  "task_finish | anonymous | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | anonymous | no-default-role-kb": {
+    "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_finish | anonymous | private-kb": {
+    "did_you_mean": [],
+    "error": "KB 'private-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | anonymous | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
   "task_list | anonymous | missing-kb": {
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
@@ -3962,6 +4022,58 @@
   "task_list | anonymous | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
+  },
+  "task_park | anonymous | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_park | anonymous | no-default-role-kb": {
+    "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_park | anonymous | private-kb": {
+    "did_you_mean": [],
+    "error": "KB 'private-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_park | anonymous | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_start | anonymous | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | anonymous | no-default-role-kb": {
+    "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_start | anonymous | private-kb": {
+    "did_you_mean": [],
+    "error": "KB 'private-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | anonymous | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
   },
   "task_status | anonymous | missing-kb": {
     "did_you_mean": [],
@@ -4013,6 +4125,32 @@
   "task_subtree | anonymous | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-anonymous-readable-kb' not found",
     "error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_unpark | anonymous | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_unpark | anonymous | no-default-role-kb": {
+    "error": "Insufficient permissions on KB 'no-default-role-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
+    "retryable": false
+  },
+  "task_unpark | anonymous | private-kb": {
+    "did_you_mean": [],
+    "error": "KB 'private-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_unpark | anonymous | readable-kb": {
+    "error": "Insufficient permissions on KB 'readable-kb': requires 'write' tier",
+    "error_code": "FORBIDDEN",
     "retryable": false
   },
   "task_update | anonymous | missing-kb": {

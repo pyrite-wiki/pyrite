@@ -275,3 +275,104 @@ class TestIndexManagerEdgeEndpointExtraction:
         assert by_role["target"]["endpoint_id"] == "company-1"  # brackets stripped
         assert by_role["target"]["field_name"] == "asset"
         assert by_role["source"]["edge_type"] == "ownership"
+
+
+EDGE_KB_YAML = """name: {name}
+types:
+  beat:
+    fields: {{}}
+  relation:
+    edge_type: true
+    endpoints:
+      source: {{field: from_ref, accepts: [beat]}}
+      target: {{field: to_ref, accepts: [beat]}}
+"""
+
+# (entry id, raw YAML value, expected (endpoint_id, endpoint_kb) for both
+# endpoint fields). The scalar spellings of tests/test_object_ref_index_values.py:
+# an endpoint value is one string, so the list spellings do not apply. A prefix
+# is a KB only when it names a registered KB; otherwise the colon is part of
+# the id, exactly as for object-refs (#1733, theme C).
+EDGE_MAIN, EDGE_OTHER = "main", "other-kb"
+EDGE_CASES = [
+    ("plain", "x", [("x", EDGE_MAIN)]),
+    ("wiki", "'[[x]]'", [("x", EDGE_MAIN)]),
+    ("prefixed", "other-kb:x", [("x", EDGE_OTHER)]),
+    ("wiki-prefixed", "'[[other-kb:x]]'", [("x", EDGE_OTHER)]),
+    ("shortname", "oth:x", [("x", EDGE_OTHER)]),
+    ("wiki-shortname", "'[[oth:x]]'", [("x", EDGE_OTHER)]),
+    ("spaces", "'[[ x ]]'", [("x", EDGE_MAIN)]),
+    ("spaces-prefixed", "'[[ other-kb:x ]]'", [("x", EDGE_OTHER)]),
+    ("unknown-prefix", "nope:x", [("nope:x", EDGE_MAIN)]),
+    ("doi", "doi:10.1000-x", [("doi:10.1000-x", EDGE_MAIN)]),
+    ("url", "'https://ex.org/x'", [("https://ex.org/x", EDGE_MAIN)]),
+    ("empty-brackets", "'[[]]'", []),
+]
+
+
+class TestEdgeEndpointPrefixRule:
+    """An edge endpoint value names its entry by the object-ref rule: the
+    bracket strip is shared, and a registered ``prefix:`` puts the endpoint
+    in that KB instead of the edge's own (#1733)."""
+
+    @pytest.fixture
+    def edge_world(self, tmp_path):
+        import sqlite3  # noqa: F401  (kept close to the query below)
+
+        from pyrite.config import KBConfig
+        from tests._world import build_world
+
+        main_dir, other_dir = tmp_path / "main", tmp_path / "other"
+        for name, path in ((EDGE_MAIN, main_dir), (EDGE_OTHER, other_dir)):
+            path.mkdir(parents=True)
+            (path / "kb.yaml").write_text(EDGE_KB_YAML.format(name=name), encoding="utf-8")
+            (path / "x.md").write_text(
+                f"---\nid: x\ntitle: Hub X\ntype: beat\n---\nHub in {name}.\n", encoding="utf-8"
+            )
+        for entry_id, value, _want in EDGE_CASES:
+            (main_dir / f"{entry_id}.md").write_text(
+                f"---\nid: {entry_id}\ntitle: {entry_id}\ntype: relation\n"
+                f"from_ref: {value}\nto_ref: {value}\n---\nBody.\n",
+                encoding="utf-8",
+            )
+        kbs = [
+            KBConfig(name=EDGE_MAIN, path=main_dir, kb_type="generic"),
+            KBConfig(name=EDGE_OTHER, path=other_dir, kb_type="generic", shortname="oth"),
+        ]
+        w = build_world(tmp_path / "w", kbs=kbs, rest=False, settings={"auto_embed": False})
+        yield w
+        w.close()
+
+    def _endpoint_rows(self, world):
+        import sqlite3
+
+        path = world.config.settings.index_path
+        with sqlite3.connect(path) as conn:
+            return sorted(
+                conn.execute(
+                    "SELECT edge_entry_id, role, endpoint_id, endpoint_kb FROM edge_endpoint "
+                    "WHERE edge_entry_kb = ?",
+                    (EDGE_MAIN,),
+                ).fetchall()
+            )
+
+    @pytest.mark.parametrize("entry_id", [c[0] for c in EDGE_CASES])
+    def test_each_spelling_stores_the_endpoint_it_names(self, edge_world, entry_id):
+        targets = next(t for i, _v, t in EDGE_CASES if i == entry_id)
+        want = sorted(
+            (entry_id, role, tid, tkb) for role in ("source", "target") for tid, tkb in targets
+        )
+        got = [r for r in self._endpoint_rows(edge_world) if r[0] == entry_id]
+        assert got == want
+
+    def test_edges_by_endpoint_reads_the_prefixed_kb(self, edge_world):
+        """The stored prefix is what the readers join on: the prefixed cases
+        are found under the other KB, the plain ones under this one."""
+        in_other = {r["id"] for r in edge_world.db.get_edges_by_endpoint("x", EDGE_OTHER)}
+        in_main = {
+            r["id"]
+            for r in edge_world.db.get_edges_by_endpoint("x", EDGE_MAIN)
+            if r["kb_name"] == EDGE_MAIN
+        }
+        assert in_other == {i for i, _v, t in EDGE_CASES if ("x", EDGE_OTHER) in t}
+        assert in_main == {i for i, _v, t in EDGE_CASES if ("x", EDGE_MAIN) in t}

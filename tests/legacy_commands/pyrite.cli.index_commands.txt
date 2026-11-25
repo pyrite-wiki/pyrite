@@ -4,4 +4,3 @@ pyrite index health
 pyrite index jobs
 pyrite index reconcile
 pyrite index stats
-pyrite index sync

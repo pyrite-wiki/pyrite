@@ -1206,6 +1206,8 @@
     "removed": "<ENUMERATION_CONTENT>",
     "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
+    "unreadable_files": 0,
+    "unreadable_folders": 0,
     "unreadable_kbs": [],
     "updated": "<ENUMERATION_CONTENT>"
   },
@@ -1214,6 +1216,8 @@
     "removed": "<ENUMERATION_CONTENT>",
     "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
+    "unreadable_files": 0,
+    "unreadable_folders": 0,
     "unreadable_kbs": [],
     "updated": "<ENUMERATION_CONTENT>"
   },
@@ -1222,6 +1226,8 @@
     "removed": "<ENUMERATION_CONTENT>",
     "skipped": [],
     "synced": "<ENUMERATION_CONTENT>",
+    "unreadable_files": 0,
+    "unreadable_folders": 0,
     "unreadable_kbs": [],
     "updated": "<ENUMERATION_CONTENT>"
   },
@@ -1403,7 +1409,7 @@
         "shape": "{error, error_code, suggestion?, errors?, retryable}",
         "suggestion": "optional fix hint, omitted when not applicable"
       },
-      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
       "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
       "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
     },
@@ -1509,6 +1515,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -1768,7 +1776,7 @@
         "shape": "{error, error_code, suggestion?, errors?, retryable}",
         "suggestion": "optional fix hint, omitted when not applicable"
       },
-      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
       "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
       "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
     },
@@ -1874,6 +1882,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -2133,7 +2143,7 @@
         "shape": "{error, error_code, suggestion?, errors?, retryable}",
         "suggestion": "optional fix hint, omitted when not applicable"
       },
-      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes.",
+      "indexing": "Entries are only searchable once indexed. Direct file writes under a KB's path (not via `pyrite create`/`update`) need `pyrite index sync` afterward -- it's incremental and cheap, safe to run after every batch of writes. `pyrite index sync -k <kb> --confirm <id-or-path> ...` also says whether each named entry is indexed and searchable, and exits 3 when one is not.",
       "search_quoting": "Special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. '\"family separation\" \"cross-link\"') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).",
       "task_claims": "Task claims are atomic; a lost race means the task is already claimed by someone else. On conflict, do NOT override the claim -- re-run the task list and pick a different item."
     },
@@ -2239,6 +2249,8 @@
         "is_part_of": "Part of a larger whole",
         "located_at": "Location relationship",
         "location_of": "Location of",
+        "markdown_link": "Markdown link to the entry's file",
+        "markdown_linked_by": "Linked to by a Markdown link",
         "member_of": "Person is a member of an organization",
         "mentioned_by": "Mentioned by",
         "mentions": "Mentions",
@@ -2630,7 +2642,11 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_recent | write_key | private-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2639,7 +2655,11 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_recent | write_key | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
@@ -2648,7 +2668,11 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
-    ]
+    ],
+    "has_more": "<ENUMERATION_CONTENT>",
+    "limit": "<ENUMERATION_CONTENT>",
+    "offset": "<ENUMERATION_CONTENT>",
+    "total": "<ENUMERATION_CONTENT>"
   },
   "kb_schema | write_key | missing-kb": {
     "did_you_mean": [],
@@ -2733,6 +2757,8 @@
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
+      "markdown_link": "Markdown link to the entry's file",
+      "markdown_linked_by": "Linked to by a Markdown link",
       "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
@@ -3044,6 +3070,8 @@
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
+      "markdown_link": "Markdown link to the entry's file",
+      "markdown_linked_by": "Linked to by a Markdown link",
       "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
@@ -3355,6 +3383,8 @@
       "is_part_of": "Part of a larger whole",
       "located_at": "Location relationship",
       "location_of": "Location of",
+      "markdown_link": "Markdown link to the entry's file",
+      "markdown_linked_by": "Linked to by a Markdown link",
       "member_of": "Person is a member of an organization",
       "mentioned_by": "Mentioned by",
       "mentions": "Mentions",
@@ -3614,6 +3644,15 @@
         "id": "no-default-role-note",
         "kb_name": "no-default-role-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_search | write_key | private-kb": {
@@ -3631,6 +3670,15 @@
         "id": "private-note",
         "kb_name": "private-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_search | write_key | readable-kb": {
@@ -3648,6 +3696,15 @@
         "id": "readable-note",
         "kb_name": "readable-kb"
       }
+    ],
+    "searched": [
+      "id",
+      "kb_name",
+      "entry_type",
+      "title",
+      "body",
+      "summary",
+      "location"
     ]
   },
   "kb_stats | write_key | missing-kb": {
@@ -4705,6 +4762,32 @@
     "error_code": "OPERATION_FAILED",
     "retryable": false
   },
+  "task_finish | write_key | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_finish | write_key | no-default-role-kb": {
+    "error": "Task 'characterization-placeholder-id-task_finish-write_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_finish | write_key | private-kb": {
+    "error": "Task 'characterization-placeholder-id-task_finish-write_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_finish | write_key | readable-kb": {
+    "error": "Task 'characterization-placeholder-id-task_finish-write_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
   "task_list | write_key | missing-kb": {
     "did_you_mean": [],
     "error": "KB 'missing-kb' not found",
@@ -4724,6 +4807,52 @@
   "task_list | write_key | readable-kb": {
     "count": "<ENUMERATION_CONTENT>",
     "tasks": []
+  },
+  "task_park | write_key | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_park | write_key | no-default-role-kb": {
+    "error": "Task 'characterization-placeholder-id-task_park-write_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_park | write_key | private-kb": {
+    "error": "Task 'characterization-placeholder-id-task_park-write_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_park | write_key | readable-kb": {
+    "error": "Task 'characterization-placeholder-id-task_park-write_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_start | write_key | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_start | write_key | no-default-role-kb": {
+    "claimed": false,
+    "error": "Entry 'characterization-placeholder-id-task_start-write_key-no-default-role-kb' not found in KB 'no-default-role-kb'"
+  },
+  "task_start | write_key | private-kb": {
+    "claimed": false,
+    "error": "Entry 'characterization-placeholder-id-task_start-write_key-private-kb' not found in KB 'private-kb'"
+  },
+  "task_start | write_key | readable-kb": {
+    "claimed": false,
+    "error": "Entry 'characterization-placeholder-id-task_start-write_key-readable-kb' not found in KB 'readable-kb'"
   },
   "task_status | write_key | missing-kb": {
     "did_you_mean": [],
@@ -4769,6 +4898,32 @@
   "task_subtree | write_key | readable-kb": {
     "error": "Task 'characterization-placeholder-id-task_subtree-write_key-readable-kb' not found",
     "error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_unpark | write_key | missing-kb": {
+    "did_you_mean": [],
+    "error": "KB 'missing-kb' not found",
+    "error_code": "KB_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false,
+    "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name."
+  },
+  "task_unpark | write_key | no-default-role-kb": {
+    "error": "Task 'characterization-placeholder-id-task_unpark-write_key-no-default-role-kb' not found in KB 'no-default-role-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_unpark | write_key | private-kb": {
+    "error": "Task 'characterization-placeholder-id-task_unpark-write_key-private-kb' not found in KB 'private-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
+    "retryable": false
+  },
+  "task_unpark | write_key | readable-kb": {
+    "error": "Task 'characterization-placeholder-id-task_unpark-write_key-readable-kb' not found in KB 'readable-kb'",
+    "error_code": "ENTRY_NOT_FOUND",
+    "legacy_error_code": "NOT_FOUND",
     "retryable": false
   },
   "task_update | write_key | missing-kb": {

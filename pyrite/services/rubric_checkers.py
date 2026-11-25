@@ -66,14 +66,9 @@ class CheckerConfigError(ValidationError, ValueError):
     about the kb.yaml item, so every surface shows it (``public_text``)."""
 
 
-# =========================================================================
-# Helper: parse metadata from entry
-# =========================================================================
-
-
-def _parse_metadata(entry: dict[str, Any]) -> dict[str, Any]:
-    """Extract metadata dict from entry, handling JSON string or dict."""
-    return parse_metadata(entry.get("metadata"))
+# A checker's entry is either an index row (its `metadata` already an object,
+# #1503) or a row of `qa_service`'s own SQL (the column's JSON text);
+# `parse_metadata`, the one decoder, reads both.
 
 
 # =========================================================================
@@ -174,7 +169,7 @@ def check_priority_present(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Check that entry has a priority value."""
-    meta_dict = _parse_metadata(entry)
+    meta_dict = parse_metadata(entry.get("metadata"))
     if meta_dict.get("priority") is not None:
         return None
     return {
@@ -202,7 +197,7 @@ def check_has_field(
     if not params or not params.get("field"):
         raise CheckerConfigError("has_field requires a non-empty 'field' parameter")
     field_name = params["field"]
-    meta_dict = _parse_metadata(entry)
+    meta_dict = parse_metadata(entry.get("metadata"))
     if meta_dict.get(field_name):
         return None
     return {
@@ -225,7 +220,7 @@ def check_has_any_field(
     if not params or not params.get("fields"):
         raise CheckerConfigError("has_any_field requires a non-empty 'fields' parameter")
     field_names = params["fields"]
-    meta_dict = _parse_metadata(entry)
+    meta_dict = parse_metadata(entry.get("metadata"))
     for fn in field_names:
         if meta_dict.get(fn):
             return None
@@ -335,7 +330,7 @@ def check_not_oversized(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Fail if effort is XL or larger and item has no subtask links."""
-    meta = _parse_metadata(entry)
+    meta = parse_metadata(entry.get("metadata"))
     effort = meta.get("effort", "")
     oversized = {"XL", "XXL", "xl", "xxl"}
     if effort in oversized:
@@ -364,7 +359,7 @@ def check_orphan_backlog_item(
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Warn if a non-epic open backlog item has no subtask_of link."""
-    meta = _parse_metadata(entry)
+    meta = parse_metadata(entry.get("metadata"))
     kind = meta.get("kind", "")
     if kind == "epic":
         return None  # epics don't need parents
