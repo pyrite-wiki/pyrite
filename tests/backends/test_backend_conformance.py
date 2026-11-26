@@ -1334,11 +1334,10 @@ class TestSimilarityConformance:
             ("far", 0.3),
         ]
 
-    @pytest.mark.control(reason="`distance` is kept as it was, for one release")
-    def test_rows_still_carry_the_backends_own_distance(self, known):
-        """``distance`` stays for one release; nothing asserts what it means."""
+    def test_rows_do_not_carry_legacy_distance(self, known):
+        """``distance`` left in 0.27 (#1901); rows carry ``similarity`` only."""
         rows = known.search_semantic(_QUERY, kb_name="test", limit=10)
-        assert all(isinstance(r["distance"], float) for r in rows)
+        assert all("distance" not in r and isinstance(r["similarity"], float) for r in rows)
 
     @pytest.mark.control(
         reason="SQLite already cut here (L2 1.3 is cos 0.155); it is Postgres that cut nothing"
