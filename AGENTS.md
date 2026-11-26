@@ -43,6 +43,30 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
   `scripts/heavy_lock.py -- .venv/bin/pytest tests/ extensions/*/tests/ -n 4 -q`,
   or just `scripts/test-affected --run`.
 
+## Before you change a public surface
+
+A public surface is a CLI command or flag, an MCP tool or argument, a REST
+field, an error code, or a file format. Agents new to this repo get these
+wrong most often:
+
+- **Run the full suite before you push**, not only the affected tests:
+  `PYRITE_PUSH_FULL=1 git push`, or the heavy-lock command above. Tests
+  across the repo pin flags, keys and messages by name, and the affected
+  selection does not find them all.
+- **Never remove or rename a public option in one step.** It needs a release
+  that warned first: a runtime warning naming the replacement and the
+  release that removes it. A help-text label is not a warning. See
+  CONTRIBUTING, "Removing or renaming a public option".
+- **Removals and design choices are the maintainer's call.** If an issue asks
+  you to remove a public option, or two designs both look right, write the
+  choice and your recommendation on the issue or PR and wait. Do not decide
+  it in the code.
+- **Stop at a test you are told not to edit.** Some guard tests are protected
+  because they catch exactly the change you are making. If one blocks you,
+  say so on the PR and ask; never weaken it to pass.
+- **Update every place an interface is described.** CONTRIBUTING,
+  "Regenerating goldens", lists them.
+
 ## Using the KB for project context
 
 This project has a knowledge base in `kb/`, indexed by Pyrite's own tools.
