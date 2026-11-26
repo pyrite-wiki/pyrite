@@ -6,6 +6,7 @@ status: active
 author: markr
 date: "2026-02-23"
 tags: [positioning, journalism, osint, investigation, research]
+lifecycle: archived
 ---
 
 # Market Positioning: OSINT & Investigative Journalism

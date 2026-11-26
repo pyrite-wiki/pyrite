@@ -11,6 +11,7 @@ importance: 5
 quality: stub
 review_status: draft
 protection_level: none
+lifecycle: archived
 ---
 
 ## TIER A AUDIT (post-cron-arc 2026-06-11 PM)
