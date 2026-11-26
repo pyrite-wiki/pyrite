@@ -560,6 +560,20 @@ A migration PR may not change a golden (ADR-0037). When an intentional behavior 
 PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest tests/characterization/
 ```
 
+The MCP input-schema snapshots (`tests/characterization/goldens/mcp-input-schemas.*.json`) are written by a test outside that directory, so the command above does not refresh them. After you add, remove or change an MCP tool argument, or a tool's description, also run:
+
+```bash
+PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest tests/test_mcp_schema_snapshots.py
+```
+
+A public-interface change touches more than the code. When you change an MCP argument, a REST field or a CLI flag, update in the same PR:
+
+- the tool's description and input schema in `pyrite/server/tool_schemas.py`, so an agent reading the tool list sees the new argument;
+- the same option on the other surfaces (CLI, REST, MCP), or say in the PR why one surface differs;
+- `docs/json-contracts.md`, when the change adds an error code or changes a response shape;
+- the goldens above, then read `git diff tests/characterization/goldens/`;
+- a `changelog.d/` fragment that names the new option.
+
 Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration under pytest-xdist because each worker records only the goldens its own tests observed (#712, fixed by #1225). The per-principal file lock does not make parallel regeneration supported. Review `git diff tests/characterization/goldens/` carefully before committing.
 
 ## Branches, hooks and pull requests
