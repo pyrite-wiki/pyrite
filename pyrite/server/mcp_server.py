@@ -549,10 +549,9 @@ def _kb_refusal(svc: KBService, kb_name: object, readable_kbs: set[str] | None) 
     `KBNotFoundError` -- deliberately not a "forbidden": a private KB's
     existence is itself private, so a caller cannot tell "you may not read
     this" from "there is no such KB". The envelope is `_refusal`'s: the class
-    code `KB_NOT_FOUND`, the resolver's suggestion, `did_you_mean` and the
-    old `NOT_FOUND` in `legacy_error_code` until 0.27 (#66, ADR-0037
-    theme 2). A handler's own not-found answer is only ever reached for a
-    name the caller may read.
+    code `KB_NOT_FOUND`, the resolver's suggestion, and `did_you_mean`. A
+    handler's own not-found answer is only ever reached for a name the caller
+    may read.
     """
     try:
         svc.resolve_kb(kb_name, readable_kbs=readable_kbs)

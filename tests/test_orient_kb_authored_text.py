@@ -75,7 +75,8 @@ def test_the_removed_mixed_keys_are_absent_from_orient(svc):
     schema = result["schema"]
     for key in ("guidelines", "goals", "evaluation_rubric"):
         assert key not in schema
-    for type_info in schema.get("types", {}).values():
+    assert schema["types"]
+    for type_info in schema["types"].values():
         for key in ("ai_instructions", "guidelines", "goals", "evaluation_rubric"):
             assert key not in type_info
 

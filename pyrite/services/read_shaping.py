@@ -96,8 +96,7 @@ SEARCH_ROW_FIELDS: tuple[str, ...] = (
 #: the score key the mode produced. `project_fields` skips a key a row lacks,
 #: so a keyword row carries `rank`, a semantic row `similarity`, a hybrid row
 #: `rrf_score` as well. `legs` (hybrid: which legs returned the row) is how an
-#: `rrf_score` is read and #668 made it part of the row's contract. `distance`
-#: (backend-specific, leaving the response) is not here.
+#: `rrf_score` is read and #668 made it part of the row's contract.
 SEARCH_DEFAULT_FIELDS: tuple[str, ...] = (
     "id", "kb_name", "entry_type", "title", "snippet", "rank", "rrf_score", "similarity",
     "legs",

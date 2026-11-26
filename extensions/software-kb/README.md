@@ -322,6 +322,7 @@ change the KB.
 | `epics` | List epics with subtask progress | `sw_epics` |
 | `epic <epic-id>` | Show an epic's subtasks by status | `sw_epic_detail` |
 | `prioritize <ids...>` | Set rank order, highest first (or `--after`/`--before` one id) | `sw_prioritize` |
+| `standards` | List all standard types *(deprecated, removed in 0.28.0: use `validations`/`conventions`)* | `sw_standards` |
 | `validations` | List programmatic validations | `sw_validations` |
 | `conventions` | List development conventions | `sw_conventions` |
 | `migrate-standards` | Move `standard` entries to validation or convention types (`--apply` to write; dry run by default) | none |

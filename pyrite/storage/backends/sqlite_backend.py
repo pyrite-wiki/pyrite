@@ -513,15 +513,16 @@ class SQLiteBackend(BaseBackend):
         nearest neighbours all survive ``min_similarity`` runs exactly one
         query, the same as before filters were threaded through.
 
-        **Two numbers per row** (#668). ``distance`` is the KNN's own L2
-        distance (``vec0``'s default metric) and is what picks the k
-        candidates. ``similarity`` is the cosine of the stored vector and the
-        query, computed from the vectors (``vec_distance_cosine``), not derived
-        from L2: ``1 - d**2 / 2`` is the cosine only between unit vectors, and
-        not every model normalises its output. Rows are returned in descending
-        ``similarity`` and cut at ``min_similarity``. For unit vectors the two
-        orders are the same; for others the k candidates are the L2-nearest,
-        so a long vector with a high cosine can be missed.
+        **Similarity on each row** (#668). ``vec0``'s KNN picks the k
+        candidates by L2 distance, and ``similarity`` is the cosine of the
+        stored vector and the query, computed from the vectors
+        (``vec_distance_cosine``), not derived from L2: ``1 - d**2 / 2`` is the
+        cosine only between unit vectors, and not every model normalises its
+        output (the backend-specific ``distance`` column is stripped before
+        rows leave). Rows are returned in descending ``similarity`` and cut at
+        ``min_similarity``. For unit vectors the two orders are the same; for
+        others the k candidates are the L2-nearest, so a long vector with a high
+        cosine can be missed.
 
         **The readable set is a filter like the others** (#668). ``kb_names``
         makes the search selective, so it rides inside the KNN with

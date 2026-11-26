@@ -4386,11 +4386,11 @@ class KBService:
             # response, not hidden.
             result["detail"] = "brief"
             result["detail_note"] = (
-                "brief omits kb_authored and pyrite_guidance (ai_instructions, "
-                "evaluation_rubric, guidelines and goals). Get them with "
-                "kb_schema (MCP), `pyrite orient -k <kb> --detail full` (CLI) or "
-                "detail='full'. Blocks added by a plugin are returned whole, so "
-                "brief does not bound their size."
+                "brief omits kb_authored (the KB's own text) and pyrite_guidance "
+                "(Pyrite's defaults); kb_schema returns the merged schema. Get "
+                "kb_authored and pyrite_guidance with `pyrite orient -k <kb> "
+                "--detail full` (CLI) or detail='full'. Blocks added by a plugin "
+                "are returned whole, so brief does not bound their size."
             )
 
         return result

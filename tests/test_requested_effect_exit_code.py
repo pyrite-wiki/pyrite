@@ -1145,6 +1145,7 @@ READ_ONLY = [
     "pyrite sw log",
     "pyrite sw milestones",
     "pyrite sw review-queue",
+    "pyrite sw standards",
     "pyrite sw validations",
     "pyrite tags",
     "pyrite task get",
@@ -1543,6 +1544,7 @@ def test_hint_a_module_on_the_contract_does_nothing_the_root_cannot_see():
     for name, cmd in _commands().items():
         if not _on_the_contract(cmd) or _location(cmd) is None:
             continue
+        # Only --format triggers the shared-option check (#1901); see tests/outcome_walk.py.
         fmt_params = {p.name for p in cmd.params if "--format" in p.opts}
         func = ast.parse(textwrap.dedent(inspect.getsource(inspect.unwrap(cmd.callback))))
         for node in ast.walk(func):

@@ -125,6 +125,7 @@ blank means no name. These details apply equally to CLI and REST resolution.
 
 ### Deprecated, still accepted
 
+- `pyrite sw standards`: emit a deprecation warning on stderr naming `0.28.0`. Use `pyrite sw validations` or `pyrite sw conventions` instead. Leaves in 0.28.0.
 - `db.conn`: use `db.session` for writes or `db.execute_sql()` for reads. Leaves in 0.28.
 - `FRONTMATTER_ALIASES`: declare `field_aliases` in the type's schema. Leaves in 0.28.
 - The global git identity fallback for network commits: set `git_identity` (`name`, `email`) in `config.yaml`. Leaves in 0.28.0.
@@ -831,7 +832,8 @@ free text an agent reads (`guidelines`, `goals`, `evaluation_rubric`, a type's
 `ai_instructions`), and whoever controls the KB wrote it. `pyrite orient -k
 <kb>` (MCP `kb_orient`, REST orient) keeps it apart from Pyrite's own
 guidance (#1369). Both keys are in `detail=full` only; `detail=brief` omits
-them with the other write-side blocks.
+`kb_authored` and `pyrite_guidance` (`kb_schema` still returns the merged schema
+when you need to write).
 
 - `kb_authored`: `{notice, source, read_only, guidelines?, goals?,
   evaluation_rubric?, types?, malformed?}`. `source` is `own`, `subscribed`
@@ -1436,7 +1438,7 @@ Choose a supported mode rather than retrying the same request.
 `entry_type`, `title`, `snippet` and the score key the mode produced: `rank`
 (keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
 (hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
-per-result `legs`. `distance` is not in the default. The page-level keys below
+per-result `legs`. The page-level keys below
 (`match`, `match_basis`, `legs_run`, `searched`, `keyword_match`, `warnings`) are in every
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.

@@ -294,8 +294,7 @@ def task_create(
 
     ``--field key=value`` (repeatable) sets any field a KB's schema requires
     or allows for ``task`` beyond the built-in options -- e.g. the desk
-    schema's ``project``/``kind``. It has no short flag: ``-f`` was
-    ``--format`` on this command and is deprecated (#303).
+    schema's ``project``/``kind`` (`-f` for `--format` left in 0.27; #1901).
     """
     if title_arg and title_opt:
         raise ValidationError("Provide the title either positionally or with --title, not both.")

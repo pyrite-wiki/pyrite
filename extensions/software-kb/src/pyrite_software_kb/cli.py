@@ -537,6 +537,88 @@ def sw_prioritize(
     exit_unless_whole(failed, len(result.get("updated", [])) - failed)
 
 
+@sw_app.command("standards")
+def sw_standards(
+    category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
+    limit: int | None = typer.Option(
+        None, "--limit", min=0, help="Max standards to return (default 50, 0 = all)"
+    ),
+    offset: int = typer.Option(
+        0, "--offset", min=0, help="Skip this many standards before returning"
+    ),
+    kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
+    fmt: str = typer.Option(
+        "json",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
+):
+    """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.28.0: use validations/conventions]"""
+    from pyrite.storage.database import PyriteDB
+
+    from .plugin import DEFAULT_LIST_LIMIT
+
+    typer.echo(
+        "Warning: 'pyrite sw standards' is deprecated and will be removed in 0.28.0; "
+        "use 'pyrite sw validations' or 'pyrite sw conventions'.",
+        err=True,
+    )
+
+    effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
+    config = load_config()
+    require_kb(config, kb_name, output_format=fmt)
+    db = PyriteDB(config.settings.index_path)
+
+    try:
+        rows = []
+        for et in ("standard", "programmatic_validation", "development_convention"):
+            rows.extend(_query_entries(db, et, kb_name))
+
+        if category:
+            rows = [r for r in rows if r["_meta"].get("category", "") == category]
+
+        # Bound AFTER filtering (#233), as on every sibling command.
+        rows = rows[offset : offset + effective_limit] if effective_limit else rows[offset:]
+
+        if not rows:
+            if fmt == "json":
+                _json_output([])
+            else:
+                console.print("[dim]No standards found.[/dim]")
+            return
+
+        if fmt == "json":
+            _json_output(
+                [
+                    {
+                        "title": r["title"],
+                        "type": r["entry_type"],
+                        "category": r["_meta"].get("category", ""),
+                        "enforced": bool(r["_meta"].get("enforced")),
+                    }
+                    for r in rows
+                ]
+            )
+            return
+
+        table = Table(title="Standards")
+        table.add_column("Title")
+        table.add_column("Type", style="magenta")
+        table.add_column("Category", style="blue")
+        table.add_column("Enforced", style="yellow")
+
+        for row in rows:
+            meta = row["_meta"]
+            enforced = "Yes" if meta.get("enforced") else "No"
+            table.add_row(row["title"], row["entry_type"], meta.get("category", ""), enforced)
+
+        console.print(table)
+    finally:
+        db.close()
+
+
 @sw_app.command("validations")
 def sw_validations(
     category: str | None = typer.Option(None, "--category", "-c", help="Filter by category"),
