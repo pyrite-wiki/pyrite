@@ -1811,7 +1811,22 @@ class TestPullNext:
                 plugin = _make_plugin_with_db(db)
                 result = plugin._mcp_pull_next({"kb_name": "test"})
                 assert result["recommendation"] is None
-                assert "No accepted" in result["reason"]
+                assert "1 proposed item(s) are waiting for acceptance." in result["reason"]
+                assert "`pyrite sw transition <id> accepted`" in result["reason"]
+            finally:
+                db.close()
+
+    def test_pull_next_no_backlog_items(self):
+        """Explains how to make items eligible when the backlog is empty."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = _make_test_db(tmpdir, entries=[])
+            try:
+                plugin = _make_plugin_with_db(db)
+                result = plugin._mcp_pull_next({"kb_name": "test"})
+                assert result["recommendation"] is None
+                assert "No accepted items available." in result["reason"]
+                assert "Backlog items start as 'proposed'." in result["reason"]
+                assert "`pyrite sw transition <id> accepted`" in result["reason"]
             finally:
                 db.close()
 
@@ -1852,6 +1867,34 @@ class TestPullNext:
                 result = plugin._mcp_pull_next({"kb_name": "test"})
                 assert result["recommendation"] is None
                 assert "WIP limit" in result["reason"]
+            finally:
+                db.close()
+
+    def test_board_returns_custom_lane_statuses(self):
+        """sw_board exposes statuses from a custom board configuration."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            board_file = Path(tmpdir) / "board.yaml"
+            board_file.write_text(
+                "lanes:\n"
+                "  - name: Todo\n"
+                "    statuses: [proposed, planned]\n"
+                "  - name: Ready for Work\n"
+                "    statuses: [accepted]\n"
+                "  - name: Finished\n"
+                "    statuses: [done]\n"
+            )
+            db = _make_test_db(tmpdir, entries=[])
+            try:
+                plugin = _make_plugin_with_db(db)
+                result = plugin._mcp_board({"kb_name": "test"})
+                assert [
+                    {"name": lane["name"], "statuses": lane["statuses"]}
+                    for lane in result["lanes"]
+                ] == [
+                    {"name": "Todo", "statuses": ["proposed", "planned"]},
+                    {"name": "Ready for Work", "statuses": ["accepted"]},
+                    {"name": "Finished", "statuses": ["done"]},
+                ]
             finally:
                 db.close()
 
@@ -2921,7 +2964,12 @@ class TestContextPreviewParity:
     @pytest.mark.parametrize(
         "status,reason",
         [
-            ("proposed", "No accepted items available"),
+            (
+                "proposed",
+                "No accepted items available. 2 proposed item(s) are waiting for acceptance. "
+                "Backlog items start as 'proposed'. Review an item and run "
+                "`pyrite sw transition <id> accepted` to make it eligible for pull-next.",
+            ),
             ("accepted", "All accepted items are blocked by dependencies"),
         ],
     )
@@ -3701,6 +3749,15 @@ class TestColumnFirstStatusFallback:
             try:
                 plugin = _make_plugin_with_db(db)
                 result = plugin._mcp_board({"kb_name": "test"})
+                assert {
+                    lane["name"]: lane["statuses"] for lane in result["lanes"]
+                } == {
+                    "Backlog": ["proposed", "planned"],
+                    "Ready": ["accepted"],
+                    "In Progress": ["in_progress"],
+                    "Review": ["review"],
+                    "Done": ["done"],
+                }
                 found = False
                 for lane in result["lanes"]:
                     for item in lane["items"]:
@@ -4033,6 +4090,24 @@ class TestWorkflowNormalization:
         from pyrite_software_kb.entry_types import BACKLOG_STATUSES
 
         assert "completed" not in BACKLOG_STATUSES
+
+
+# =========================================================================
+# CLI: check-ready
+# =========================================================================
+
+
+class TestCheckReadyCLI:
+    def test_help_explains_ready_vs_accepted(self):
+        """Help distinguishes readiness from acceptance for pull-next."""
+        from pyrite_software_kb.cli import sw_app
+        from typer.testing import CliRunner
+
+        runner = CliRunner()
+        result = runner.invoke(sw_app, ["check-ready", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "ready means fully specified" in result.output.lower()
+        assert "must also be accepted to be pulled" in result.output.lower()
 
 
 # =========================================================================
