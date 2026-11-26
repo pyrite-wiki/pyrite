@@ -4209,7 +4209,7 @@
   },
   "sw_create_adr | admin_key | no-default-role-kb": {
     "adr_number": 1,
-    "body": "## Context\n\nTODO\n\n## Decision\n\nTODO\n\n## Consequences\n\nTODO",
+    "body": "# ADR-0001: characterization-title-sw_create_adr-admin_key-no-default-role-kb\n\n## Context\n\nTODO: What is the issue that we're seeing that is motivating this decision or change?\n\n## Decision\n\nTODO: What is the change that we're proposing and/or doing?\n\n## Consequences\n\nTODO: What becomes easier or more difficult to do because of this change?\n",
     "created": true,
     "deciders": [],
     "filename": "adrs/adr-0001.md",
@@ -4219,7 +4219,7 @@
   },
   "sw_create_adr | admin_key | private-kb": {
     "adr_number": 1,
-    "body": "## Context\n\nTODO\n\n## Decision\n\nTODO\n\n## Consequences\n\nTODO",
+    "body": "# ADR-0001: characterization-title-sw_create_adr-admin_key-private-kb\n\n## Context\n\nTODO: What is the issue that we're seeing that is motivating this decision or change?\n\n## Decision\n\nTODO: What is the change that we're proposing and/or doing?\n\n## Consequences\n\nTODO: What becomes easier or more difficult to do because of this change?\n",
     "created": true,
     "deciders": [],
     "filename": "adrs/adr-0001.md",
@@ -4229,7 +4229,7 @@
   },
   "sw_create_adr | admin_key | readable-kb": {
     "adr_number": 1,
-    "body": "## Context\n\nTODO\n\n## Decision\n\nTODO\n\n## Consequences\n\nTODO",
+    "body": "# ADR-0001: characterization-title-sw_create_adr-admin_key-readable-kb\n\n## Context\n\nTODO: What is the issue that we're seeing that is motivating this decision or change?\n\n## Decision\n\nTODO: What is the change that we're proposing and/or doing?\n\n## Consequences\n\nTODO: What becomes easier or more difficult to do because of this change?\n",
     "created": true,
     "deciders": [],
     "filename": "adrs/adr-0001.md",

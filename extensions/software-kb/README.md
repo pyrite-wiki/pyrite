@@ -46,7 +46,7 @@ from inside the directory.
 An ADR (numbered for you, starts `proposed`):
 
 ```bash
-pyrite sw new-adr "Use PostgreSQL" -k my-project
+pyrite sw new-adr "Use PostgreSQL" -k my-project --context "Need ACID transactions" --decision "Use PG 16"
 ```
 
 ```text
@@ -317,7 +317,7 @@ change the KB.
 | Command | What it does | MCP tool |
 |---|---|---|
 | `adrs` | List ADRs | `sw_adrs` |
-| `new-adr <title>` | Create the next numbered ADR | `sw_create_adr` |
+| `new-adr <title>` | Create the next numbered ADR (`--body-file`, `--stdin`, `--context`, `--decision`, `--consequences`, `--deciders`) | `sw_create_adr` |
 | `backlog` | List backlog items (`--status`, `--priority`, `--kind`, `--epic`, `--sort` by `priority`, `rank` or `created`, `--group-by epic`, `--limit`, `--offset`); 50 by default, `--limit 0` for all | `sw_backlog` |
 | `epics` | List epics with subtask progress | `sw_epics` |
 | `epic <epic-id>` | Show an epic's subtasks by status | `sw_epic_detail` |

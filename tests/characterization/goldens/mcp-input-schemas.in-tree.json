@@ -2464,6 +2464,10 @@
       },
       "inputSchema": {
         "properties": {
+          "body": {
+            "description": "Full ADR body (under the generated heading)",
+            "type": "string"
+          },
           "consequences": {
             "description": "Consequences section",
             "type": "string"
@@ -7797,6 +7801,10 @@
       },
       "inputSchema": {
         "properties": {
+          "body": {
+            "description": "Full ADR body (under the generated heading)",
+            "type": "string"
+          },
           "consequences": {
             "description": "Consequences section",
             "type": "string"
