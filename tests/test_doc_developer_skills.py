@@ -2,6 +2,7 @@
 
 import re
 import shlex
+import subprocess
 from pathlib import Path
 
 from pyrite.config import KBConfig
@@ -163,3 +164,31 @@ def test_agents_md_block_has_no_chained_commands_and_runs_on_fresh_software_kb(
         assert res.exit_code == 0, f"{concrete} failed ({res.exit_code}): {res.output}"
         ran += 1
     assert ran >= 7, f"Expected at least 7 concrete commands in AGENTS.md block to run, ran {ran}"
+
+
+def test_raw_github_urls_in_howto_exist_in_repo():
+    """Every pinned raw.githubusercontent.com URL in the how-to points to a real file."""
+    howto_text = HOWTO.read_text(encoding="utf-8")
+    urls = re.findall(r"https://raw\.githubusercontent\.com/[^\s)`\"']+", howto_text)
+    for url in urls:
+        match = re.match(r"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/(.+)$", url)
+        assert match, f"Malformed raw.githubusercontent.com URL: {url}"
+        owner, repo, ref, rel_path = match.groups()
+        assert (owner, repo) == ("pyrite-wiki", "pyrite"), f"Unexpected repo in {url}"
+        assert (REPO / rel_path).exists(), f"{url} -> {rel_path} does not exist on disk"
+        ref_check = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", ref],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+        )
+        if ref_check.returncode == 0:
+            blob_check = subprocess.run(
+                ["git", "cat-file", "-e", f"{ref}:{rel_path}"],
+                cwd=REPO,
+                capture_output=True,
+                text=True,
+            )
+            assert blob_check.returncode == 0, (
+                f"{url} returned 404 at pinned ref {ref}: {rel_path} missing at {ref}"
+            )
