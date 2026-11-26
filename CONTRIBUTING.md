@@ -510,6 +510,8 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 
 ### Writing Tests
 
+Use [`build_world`](tests/_world.py) (or its fixture wrappers `make_client`, `rest_api_env`, `cli_world`, and `mcp_server`) for real-wiring tests: it writes `config.yaml` and reads it back through `load_config`, indexes KB files on disk, runs the FastAPI `TestClient` with `create_app`'s own `get_db` and lifespan (or `rest=False`), exposes `.cli(...)` and `.mcp(...)`, and closes every database and worker in `.close()`. New tests must use it rather than overriding `get_db` in `dependency_overrides` or patching `load_config`, which [`test_production_wiring_guard.py`](tests/test_production_wiring_guard.py) rejects on any new site. See [`test_malformed_files_are_findings.py`](tests/test_malformed_files_are_findings.py) for a short example.
+
 - Follow the [deadline rule](kb/standards/testing-standards.md#deadlines-and-waits);
   [test_test_rules.py](tests/test_test_rules.py) enforces it.
 - Drive real services behind entry points; the
