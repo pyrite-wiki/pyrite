@@ -155,8 +155,10 @@ DEFAULT_WAIT_CI_MINUTES = 15
 INSTALL_CHECK_EXTRAS = "all"
 
 # The second document step (c) runs against the install, after getting-started:
-# the tutorial a newcomer is sent to first (docs/tutorials/pyrite-in-20-minutes.md).
+# the tutorial a newcomer is sent to first (docs/tutorials/pyrite-in-20-minutes.md),
+# followed by the developer-track tutorial (docs/tutorials/agentic-development.md).
 TUTORIAL_20_MIN = "docs/tutorials/pyrite-in-20-minutes.md"
+TUTORIAL_AGENTIC_DEV = "docs/tutorials/agentic-development.md"
 
 CI_PASSED = verified_commit.PASSED
 CI_FAILED = verified_commit.FAILED
@@ -1498,12 +1500,20 @@ def step_release_layer(ctx: Context) -> None:
 
     if not (ctx.runner.execute or ctx.rehearse_install_check):
         spec = f"pyrite[{INSTALL_CHECK_EXTRAS}] @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+        sw_spec = (
+            f"pyrite-software-kb @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+            "#subdirectory=extensions/software-kb"
+        )
         print("    WOULD RUN: uv venv <tmp>")
         print(f'    WOULD RUN: uv pip install --python <tmp>/bin/python "{spec}"')
+        print(f'    WOULD RUN: uv pip install --python <tmp>/bin/python "{sw_spec}"')
         print(f"    WOULD RUN: <tmp>/bin/pyrite --version    (must contain {ctx.version})")
         print("    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh")
         print(
             f"    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh {TUTORIAL_20_MIN}"
+        )
+        print(
+            f"    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh {TUTORIAL_AGENTIC_DEV}"
         )
         if ctx.docker_check:
             print(f"    WOULD RUN: docker build -t pyrite:{ctx.version} .")
@@ -1524,12 +1534,18 @@ def step_release_layer(ctx: Context) -> None:
 
     venv = Path(tempfile.mkdtemp(prefix="pyrite-release-venv-"))
     spec = f"pyrite[{INSTALL_CHECK_EXTRAS}] @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+    sw_spec = (
+        f"pyrite-software-kb @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+        "#subdirectory=extensions/software-kb"
+    )
     try:
         ctx.runner.note(f"temp venv: {venv}")
         print(f"    RUN: uv venv {venv}")
         _check_output(["uv", "venv", str(venv)])
         print(f'    RUN: uv pip install --python {venv}/bin/python "{spec}"')
         _check_output(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), spec])
+        print(f'    RUN: uv pip install --python {venv}/bin/python "{sw_spec}"')
+        _check_output(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), sw_spec])
 
         reported = _check_output([str(venv / "bin" / "pyrite"), "--version"]).strip()
         if ctx.version not in reported:
@@ -1558,6 +1574,16 @@ def step_release_layer(ctx: Context) -> None:
             env=env,
         )
         ctx.runner.note("Pyrite-in-20-minutes tutorial ran clean against the install")
+        print(
+            f"    RUN: PYRITE_TUTORIAL_VENV={venv} scripts/run_tutorial.sh {TUTORIAL_AGENTIC_DEV}"
+            "   (the agentic-development tutorial against the install)"
+        )
+        _check_output(
+            [str(ctx.repo / "scripts" / "run_tutorial.sh"), TUTORIAL_AGENTIC_DEV],
+            cwd=ctx.repo,
+            env=env,
+        )
+        ctx.runner.note("Agentic-development tutorial ran clean against the install")
     finally:
         shutil.rmtree(venv, ignore_errors=True)
 

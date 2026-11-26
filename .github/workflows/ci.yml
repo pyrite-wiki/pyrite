@@ -960,6 +960,9 @@ jobs:
       - name: Pyrite in 20 minutes tutorial (docs-as-tests)
         run: bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md
 
+      - name: Agentic development tutorial (docs-as-tests)
+        run: bash scripts/run_tutorial.sh docs/tutorials/agentic-development.md
+
   # ===========================================================================
   # A live check of the recorded fixtures. The Hugo download stays outside gate.
   hugo-oracle:

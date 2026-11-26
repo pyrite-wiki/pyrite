@@ -1800,6 +1800,11 @@ class TestInstallCheckMatchesTheTutorial:
         installs = [c for c in calls if c[:2] == ["uv", "pip"]]
         assert installs, "no install was composed"
         assert any(f"pyrite[{release.INSTALL_CHECK_EXTRAS}]" in " ".join(c) for c in installs)
+        assert any(
+            "pyrite-software-kb @ git+https://github.com/" in " ".join(c)
+            and f"@{FAKE_SHA}#subdirectory=extensions/software-kb" in " ".join(c)
+            for c in installs
+        ), installs
 
 
 class TestDockerBuildIsOptIn:
