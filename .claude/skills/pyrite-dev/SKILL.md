@@ -156,7 +156,10 @@ tests](../../../CONTRIBUTING.md#running-the-tests)).
 
 **The exception: run the full suite before pushing** a change to a public
 surface, storage or migrations, or anything cross-cutting
-(`PYRITE_PUSH_FULL=1 git push`, or the heavy-lock command in the table).
+(`PYRITE_PUSH_FULL=1 git push`, which runs it in the pre-push hook, or
+`scripts/test-affected --run --full` on a committed tree, which stamps the
+tree so the push skips; a bare `pytest` run records nothing and the hook
+would test again).
 Tests across the repo pin flags, keys and messages by name, and the affected
 selection does not find them all: a removed flag once failed 25 to 37 tests
 per CI shard in files the change never touched.
