@@ -8,7 +8,7 @@ Pyrite is alpha. This tutorial uses only what the project lists as supported: fi
 
 **You need:**
 
-- macOS or Linux, `git`, and Python 3.11 or newer. `python3 --version` tells you; the Python that ships with macOS is older, so use Homebrew's (`brew install python`).
+- macOS or Linux, `git`, and Python 3.11.5 or newer. `python3 --version` tells you; the Python that ships with macOS is older, so use Homebrew's (`brew install python`).
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) for the steps marked **Ask Claude**. Any MCP client works the same way, but only Claude Code is covered here. Without an agent you can still run every command; the page says what the agent would have found.
 - About 2 GB of disk. Most of it is the local embedding model's libraries.
 
