@@ -24,6 +24,7 @@ guides solve a task; references describe contracts; explanations describe why.
 
 ## Agent and API integrators
 
+- [Agent instructions](agent-instructions.md) — how-to: what do I put in `AGENTS.md`, and how do I install the developer skills?
 - [JSON contracts](json-contracts.md) — reference: what result and error shapes do CLI, MCP, and REST return?
 - [REST API](rest-api.md) — how-to: how do I authenticate to the REST API and find its reference?
 - [Agent write path](agent-write-path.md) — how-to: how does an agent request a safe entry change?
