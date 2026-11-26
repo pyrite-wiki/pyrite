@@ -293,6 +293,22 @@ PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-i
 cd web && npx playwright install chromium && cd .. && scripts/e2e.sh      # large: browser; manual-only in CI while non-deterministic
 ```
 
+**Editing a page that runs as a test** (`docs/getting-started.md`, the 20-minute
+tutorial): the runner extracts the page's fenced bash blocks and runs them **in
+one shell session, top to bottom**, so a page's state carries forward: a `cd`
+in one block is still in effect in the next, a KB registered near the top is
+still registered at the bottom, a file created three sections up still exists.
+Write one command per line (no `a && b` lists). HTML comments a reader never
+sees tell the runner what to check, such as `<!-- runner: expect-text WORD -->`
+after a block or `<!-- runner: expect-exit N -->` before one; the header
+docstring of [`scripts/run_tutorial.py`](scripts/run_tutorial.py) lists every
+marker and what it checks. To run one page locally, pass its path:
+`PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md`.
+When you add a section in the middle of a page, account for the state the page
+has built up by that point (which directory the shell is in, which KBs and
+names already exist); otherwise say that the section starts fresh and have it
+do the `cd` or use a new name itself.
+
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
