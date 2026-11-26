@@ -576,6 +576,15 @@ A public-interface change touches more than the code. When you change an MCP arg
 
 Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration under pytest-xdist because each worker records only the goldens its own tests observed (#712, fixed by #1225). The per-principal file lock does not make parallel regeneration supported. Review `git diff tests/characterization/goldens/` carefully before committing.
 
+### Removing or renaming a public option
+
+A CLI flag, MCP argument, REST field, error code or command that users and agents may call leaves in two releases, never one:
+
+1. **The release that warns.** The option still works and prints a warning on every use (stderr for the CLI, a warning or deprecation field in the MCP or REST response), naming its replacement and the release that removes it. Add a row to `docs/json-contracts.md`, "Deprecated, still accepted", and a `changelog.d/` fragment. A note in `--help` alone does not count: nobody running a script sees it.
+2. **The release that removes.** Only a release after one that shipped the warning may remove the option. Remove it everywhere at once: the code, the docs row, every test that pins it, and any instruction that names it (`AGENTS.md`, the skills). Grep the whole repo for the old name, then run the full suite.
+
+Whether to remove a public option at all is the maintainer's decision. An issue that lists removals asks you to carry out decisions already made; if one has no recorded decision, ask on the issue first.
+
 ## Branches, hooks and pull requests
 
 **Branches** (ADR-0025 and ADR-0032):

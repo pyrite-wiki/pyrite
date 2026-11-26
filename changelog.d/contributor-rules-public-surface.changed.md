@@ -1,0 +1,1 @@
+AGENTS.md now has a short "Before you change a public surface" list (full suite before pushing, no one-step removals, removals and design choices are the maintainer's, stop at protected tests, update every place an interface is described), and CONTRIBUTING documents how a public option is removed: a release that warns, then a release that removes.
