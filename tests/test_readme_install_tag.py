@@ -61,5 +61,13 @@ def test_the_docs_give_the_no_clone_extension_lines_at_the_declared_version():
         assert _no_clone_line(directory, version) in readme, directory
     started = (REPO / "docs" / "getting-started.md").read_text()
     assert _no_clone_line("software-kb", version) in started
+    core_no_clone = (
+        f'pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v{version}"'
+    )
+    assert core_no_clone in readme and core_no_clone in started
+    first_bash = re.search(r"```bash\n(.*?)```", started, re.S)
+    assert first_bash and "git+https://github.com/pyrite-wiki/pyrite@v" in first_bash.group(1), (
+        "getting-started.md's first install block must lead with the pinned no-clone git+ line"
+    )
     tags = re.findall(r"pyrite@v([0-9][^\s\"'#]*)", started)
     assert tags and set(tags) == {version}, tags
