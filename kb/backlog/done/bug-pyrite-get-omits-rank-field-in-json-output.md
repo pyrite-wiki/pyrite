@@ -20,7 +20,7 @@ frontmatter and the index has correctly ingested it.
 Concrete repro from the 2026-06-05 backlog grooming pass:
 
 ```
-$ grep '^rank:' kb/notes/ji-absorb-cascade-mcp.md
+$ grep '^rank:' kb/backlog/done/ji-absorb-cascade-mcp.md
 rank: 300
 
 $ .venv/bin/pyrite get ji-absorb-cascade-mcp -k pyrite | python3 -c \
