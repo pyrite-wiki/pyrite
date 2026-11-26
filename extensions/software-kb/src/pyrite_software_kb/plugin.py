@@ -510,6 +510,10 @@ class SoftwareKBPlugin:
                             "items": {"type": "string"},
                             "description": "Tags for the ADR",
                         },
+                        "body": {
+                            "type": "string",
+                            "description": "Full ADR body (under the generated heading)",
+                        },
                         "context": {"type": "string", "description": "Context section"},
                         "decision": {"type": "string", "description": "Decision section"},
                         "consequences": {"type": "string", "description": "Consequences section"},
@@ -1824,15 +1828,17 @@ class SoftwareKBPlugin:
         title = args["title"]
         status = args.get("status", "proposed")
 
-        # Build structured body
-        context = args.get("context", "")
-        decision = args.get("decision", "")
-        consequences = args.get("consequences", "")
-        body_parts = []
-        body_parts.append(f"## Context\n\n{context or 'TODO'}")
-        body_parts.append(f"## Decision\n\n{decision or 'TODO'}")
-        body_parts.append(f"## Consequences\n\n{consequences or 'TODO'}")
-        body = "\n\n".join(body_parts)
+        # Build structured body (#1862)
+        from .adr_listing import build_adr_body
+
+        body = build_adr_body(
+            next_num,
+            title,
+            body_content=args.get("body"),
+            context=args.get("context"),
+            decision=args.get("decision"),
+            consequences=args.get("consequences"),
+        )
 
         from datetime import date
 

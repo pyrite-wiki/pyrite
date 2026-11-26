@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
@@ -188,6 +189,18 @@ def sw_new_adr(
     status: str = typer.Option("proposed", "--status", "-s", help="Initial status"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB name"),
     tags: str = typer.Option("", "--tags", help="Comma-separated tags"),
+    deciders: str = typer.Option(
+        "", "--deciders", help="Comma-separated deciders (e.g. alice,bob)"
+    ),
+    body_file: Path | None = typer.Option(
+        None, "--body-file", help="Read the decision text from a file (- for stdin)"
+    ),
+    stdin_flag: bool = typer.Option(False, "--stdin", help="Read the decision text from stdin"),
+    context: str | None = typer.Option(None, "--context", help="Context section text"),
+    decision: str | None = typer.Option(None, "--decision", help="Decision section text"),
+    consequences: str | None = typer.Option(
+        None, "--consequences", help="Consequences section text"
+    ),
 ):
     """Create a new ADR with the next sequential number, through the write
     pipeline."""
@@ -199,6 +212,18 @@ def sw_new_adr(
     # the software-kb `adr` type's `file_pattern`
     # (``{adr_number:04d}-{title}.md``) keeps the `NNNN-slug.md` filename and
     # `adr-NNNN` id this command has always produced.
+    dash = body_file is not None and str(body_file) == "-"
+    has_body_file = body_file is not None and not dash
+    has_stdin = stdin_flag or dash
+    has_sections = any(s is not None for s in (context, decision, consequences))
+
+    if has_body_file and has_stdin:
+        raise typer.BadParameter("Cannot combine --body-file and --stdin.")
+    if (has_body_file or has_stdin) and has_sections:
+        raise typer.BadParameter(
+            "Cannot combine --body-file or --stdin with section flags (--context, --decision, --consequences)."
+        )
+
     from datetime import date
 
     from pyrite.exceptions import PyriteError
@@ -206,6 +231,26 @@ def sw_new_adr(
     from pyrite.services.kb_service import KBService
     from pyrite.storage.database import PyriteDB
     from pyrite.utils.errors import cli_error
+
+    body_content: str | None = None
+    if has_stdin:
+        from pyrite.cli.entry_commands import _read_stdin
+
+        body_content = _read_stdin()
+    elif has_body_file:
+        from pyrite.cli.context import input_file_or_exit
+
+        resolved_file = input_file_or_exit(body_file, "Body file", output_format="rich")
+        body_content = resolved_file.read_text(encoding="utf-8")
+
+    if body_content is not None:
+        from pyrite.utils.frontmatter import Frontmatter, split_frontmatter
+
+        if isinstance(split_frontmatter(body_content), Frontmatter):
+            cli_error(
+                "--body-file/--stdin: the text opens with a frontmatter block, and ADR bodies do not read frontmatter.",
+                error_code="VALIDATION_FAILED",
+            )
 
     config = load_config()
 
@@ -225,21 +270,18 @@ def sw_new_adr(
         next_num = next_adr_number(kb_conf)
         today = date.today().isoformat()
 
-        body = (
-            f"# ADR-{next_num:04d}: {title}\n"
-            "\n"
-            "## Context\n"
-            "\n"
-            "TODO: What is the issue that we're seeing that is motivating this decision or change?\n"
-            "\n"
-            "## Decision\n"
-            "\n"
-            "TODO: What is the change that we're proposing and/or doing?\n"
-            "\n"
-            "## Consequences\n"
-            "\n"
-            "TODO: What becomes easier or more difficult to do because of this change?\n"
+        from .adr_listing import build_adr_body
+
+        body = build_adr_body(
+            next_num,
+            title,
+            body_content=body_content,
+            context=context,
+            decision=decision,
+            consequences=consequences,
         )
+
+        deciders_list = [d.strip() for d in deciders.split(",") if d.strip()] if deciders else []
 
         svc = KBService(config, db)
         try:
@@ -254,6 +296,7 @@ def sw_new_adr(
                 tags=[tag.strip() for tag in tags.split(",")] if tags else None,
                 status=status,
                 date=today,
+                deciders=deciders_list,
             )
         except PyriteError as e:
             code = getattr(e, "error_code", None) or "CREATE_FAILED"

@@ -1,0 +1,1 @@
+- `sw new-adr` accepts `--body-file` and `--stdin` for decision text, section flags (`--context`, `--decision`, `--consequences`), and comma-separated `--deciders`. MCP `sw_create_adr` now shares the unified ADR body builder and accepts optional `body` (#1862).
