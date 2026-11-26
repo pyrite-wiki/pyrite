@@ -26,6 +26,9 @@ from ..exceptions import FrontmatterError, TextOrigin, YamlLimitError, outside_t
 #: - ``MAX_YAML_EXPANDED_NODES``: scalars, sequences and mappings counted as if
 #:   every alias were copied out. A 10 MB file of plain data is about 1M nodes,
 #:   so a document past this is larger than any file Pyrite is meant to hold.
+#: - ``MAX_YAML_DEPTH``: maximum open YAML collection nesting depth. Checked
+#:   iteratively before ``load()`` recurses, raising a shallow ``RecursionError``
+#:   so callers keep their existing handling without deep tracebacks (#1899).
 MAX_YAML_ALIASES = 1000
 MAX_YAML_EXPANDED_NODES = 1_000_000
 MAX_YAML_DEPTH = 200
@@ -302,9 +305,7 @@ def _measure_events(events: Any, ev: Any) -> None:
         elif isinstance(event, ev.CollectionStartEvent):
             stack.append([event.anchor, 1])
             if len(stack) > MAX_YAML_DEPTH:
-                raise YamlLimitError(
-                    f"YAML document refused: nesting exceeds {MAX_YAML_DEPTH:,} levels"
-                )
+                raise RecursionError(f"YAML nesting exceeds {MAX_YAML_DEPTH:,} levels")
         elif isinstance(event, ev.CollectionEndEvent) and stack:
             anchor, size = stack.pop()
             if anchor:
@@ -337,7 +338,7 @@ def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> 
         return
     try:
         _measure_events(events_of(text), ev)
-    except YamlLimitError:
+    except (YamlLimitError, RecursionError):
         raise
     except parse_error:
         return  # the same parser's load stops at the same event and reports it
