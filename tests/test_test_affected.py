@@ -278,6 +278,30 @@ class TestAffectedByImports:
         sel = _select(repo, "pyrite/c.py")
         assert "tests/test_registry.py" not in sel.files
 
+    def test_an_extension_change_selects_tests_reaching_plugins_through_helper(self, repo):
+        # Core tests reach extensions through helpers or conftest fixtures (#1886)
+        _write(repo, "tests/helpers/world.py", "def make_world():\n    get_registry()\n")
+        _write(
+            repo,
+            "tests/test_via_helper.py",
+            "from tests.helpers.world import make_world\ndef test_w():\n    make_world()\n",
+        )
+        _write(
+            repo,
+            "tests/conftest.py",
+            "import pytest\n@pytest.fixture\ndef plug():\n    PluginRegistry.set_context()\n",
+        )
+        _write(
+            repo,
+            "tests/test_via_fixture.py",
+            "def test_f(plug):\n    pass\n",
+        )
+        sel = _select(repo, "extensions/foo/src/pyrite_foo/plugin.py")
+        assert {"tests/test_via_helper.py", "tests/test_via_fixture.py"} <= set(sel.files)
+        sel = _select(repo, "pyrite/c.py")
+        assert "tests/test_via_helper.py" not in sel.files
+        assert "tests/test_via_fixture.py" not in sel.files
+
     def test_a_name_matches_whole_words_only(self, repo):
         # "x.md" must not select a test that mentions "index.md"
         _write(repo, "tests/test_index.py", "NAME = 'index.md'\n")
