@@ -4,7 +4,21 @@ Pyrite is a Knowledge-as-Code platform. You keep structured knowledge in markdow
 
 ## Install Pyrite
 
-No PyPI wheel yet — install from source. Needs Python 3.11.5 or newer (the patched `soupsieve` needs it):
+No PyPI wheel yet — install straight from a release tag, with no clone needed (Python 3.11.5 or newer; the patched `soupsieve` needs it):
+
+```bash
+pip install "pyrite[server,cli] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4"
+```
+
+For a code repository (ADRs, components, and a software backlog with `pyrite sw`), install the software extension from the same tag:
+
+```bash
+pip install "pyrite-software-kb @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/software-kb"
+```
+
+(Add `semantic` to the extras — `"pyrite[server,cli,semantic] @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4"` — if you want local vector embeddings; see [README: Install](../README.md#install) for the full extension list.)
+
+To work on Pyrite itself (or build the bundled web UI from source), clone the repository and install in editable mode:
 
 ```bash
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
@@ -15,8 +29,8 @@ pip install -e ".[all]"   # Core + AI + semantic search + dev tools
 Or run the bundled Docker image instead (`docker compose up -d`, serves
 on `http://localhost:8088`, reachable only from your own machine: the compose
 file publishes the port on `127.0.0.1` and runs with no credential) — see the
-[README](../README.md#local-docker) for compose, or [pyrite.wiki](https://pyrite.wiki)
-for a public demo and the [one-click cloud options](../README.md#deploy).
+[README](../README.md#local-docker) for compose, [pyrite.wiki](https://pyrite.wiki)
+for the project landing page, [demo.pyrite.wiki](https://demo.pyrite.wiki) for a public demo, and the [one-click cloud options](../README.md#deploy).
 
 ## Create Your First Knowledge Base
 
@@ -42,7 +56,19 @@ git commit -m "Initial KB"
 
 Templates in core: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`, `task` and `research-queue`; installed plugins add theirs (`pyrite init --help` lists every one).
 
-Your knowledge base is just a directory of markdown files. You can open them in any editor.
+Your knowledge base is just a directory of markdown files. You can open them in any editor. After creating empty directories or adding clean entries, run `pyrite ci` to validate your files against the schema:
+
+```bash
+pyrite ci --kb my-kb
+```
+<!-- runner: expect-text Result: PASS -->
+
+```text
+pyrite ci — 1 KB, 0 entries validated
+  my-kb: 0 entries, 0 errors, 0 warnings
+
+Result: PASS
+```
 
 ## Create Some Entries
 
@@ -125,6 +151,48 @@ committed entries and their history. To try that locally:
 
 ```bash
 git clone ~/my-kb ~/my-kb-clone
+```
+
+### After cloning a repository that has a `kb/`
+
+The SQLite search index lives outside the repository (`~/.pyrite/index.db`), so a fresh clone has the Markdown files on disk but no local index rows yet. An empty answer (`[]`) from a search or list command before indexing means "not indexed yet", not "nothing there". Because `my-kb` is already registered in this walkthrough's single shell, give the local clone its own name before registering it (on another machine, skip renaming because `my-kb` is not registered there yet):
+
+```bash
+cd ~/my-kb-clone
+python3 -c 'from pathlib import Path; p = Path("kb.yaml"); p.write_text(p.read_text().replace("name: my-kb", "name: my-kb-clone", 1))'
+pyrite kb discover --add
+```
+<!-- runner: expect-text "name": "my-kb-clone" -->
+<!-- runner: expect-text "already_registered": false -->
+
+`pyrite kb discover --add` finds `kb.yaml` and registers the KB:
+
+```json
+{
+  "discovered": [
+    {
+      "name": "my-kb-clone",
+      "type": "generic",
+      "path": "/path/to/my-kb-clone",
+      "already_registered": false
+    }
+  ]
+}
+```
+
+`pyrite index sync` indexes the files on disk (in this walkthrough the clone holds the 4 entries created above; counts vary with the KB, and an `Embedded: N` line follows when `PYRITE_AUTO_EMBED` is enabled):
+
+```bash
+pyrite index sync
+cd ~/my-kb
+```
+<!-- runner: expect-text Sync complete -->
+
+```text
+Sync complete:
+  Added: 4
+  Updated: 0
+  Removed: 0
 ```
 
 For a KB outside Git, copy the whole folder to a new destination:
@@ -372,6 +440,8 @@ The **software** template adds ADRs, components, backlog items, standards, and r
 The `zettelkasten` template gives note-maturity types; the extension behind it is an example plugin, showing how a Pyrite plugin adds entry types, CLI commands, MCP tools and a preset, not a supported product.
 
 ## Launch the Web UI
+
+> **Experimental:** `pyrite serve` and the web UI are experimental and outside the supported 0.27 single-operator CLI and MCP surface.
 
 Pyrite ships an optional web interface for browsing, editing, and visualizing your knowledge base. It is built from the `web/` directory of your clone, so from the repository root, once:
 

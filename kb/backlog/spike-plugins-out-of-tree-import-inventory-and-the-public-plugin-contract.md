@@ -179,7 +179,7 @@ Each extension repeats themes 5 and 6 as its own pair. The site counts are
 cascade 17, social 31, encyclopedia 19 and zettelkasten 13.
 
 - **cascade** depends on ADR-0040 decision 2. If the answer is delete, the
-  work is `kb/notes/remove-cascade-plugin.md` and its three
+  work is `kb/backlog/done/remove-cascade-plugin.md` and its three
   `ji-absorb-cascade-*` subtasks, done before theme 6.
 - **social** needs `ctx.plugin_db` inside hook context, because its hooks
   write `social_*` tables.
