@@ -181,6 +181,7 @@ def test_raw_github_urls_in_howto_exist_in_repo():
             cwd=REPO,
             capture_output=True,
             text=True,
+            timeout=15,
         )
         if ref_check.returncode == 0:
             blob_check = subprocess.run(
@@ -188,6 +189,7 @@ def test_raw_github_urls_in_howto_exist_in_repo():
                 cwd=REPO,
                 capture_output=True,
                 text=True,
+                timeout=15,
             )
             assert blob_check.returncode == 0, (
                 f"{url} returned 404 at pinned ref {ref}: {rel_path} missing at {ref}"
