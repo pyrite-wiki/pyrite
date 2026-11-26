@@ -47,7 +47,7 @@ def test_transition_row_matches_real_mcp_not_found(tool, missing, cli_world):
     ("page", "heading"),
     [
         ("json-contracts.md", "### Deprecated, still accepted"),
-        ("upgrading.md", "### 8. Still deprecated"),
+        ("upgrading.md", "## Upgrading from 0.26.x to 0.27"),
     ],
 )
 def test_removal_versions_follow_the_maintainer_decision(page, heading):

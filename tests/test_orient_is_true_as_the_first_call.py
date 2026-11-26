@@ -867,7 +867,11 @@ class TestBriefAgreesWithItself:
         brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
         assert "guidelines" not in full
         assert "guidelines" not in brief
-        assert "guidelines" in brief["detail_note"]
+        assert (
+            "kb_authored" in brief["detail_note"]
+            and "pyrite_guidance" in brief["detail_note"]
+            and "kb_schema" in brief["detail_note"]
+        )
 
 
 class TestBriefKeepsTheRelationNames:
