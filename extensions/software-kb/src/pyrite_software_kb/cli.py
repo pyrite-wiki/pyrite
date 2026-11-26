@@ -201,6 +201,13 @@ def sw_new_adr(
     consequences: str | None = typer.Option(
         None, "--consequences", help="Consequences section text"
     ),
+    fmt: str = typer.Option(
+        "rich",
+        "--format",
+        "-f",
+        callback=output_format_choice("json", "rich"),
+        help="Output format: json, rich",
+    ),
 ):
     """Create a new ADR with the next sequential number, through the write
     pipeline."""
@@ -243,7 +250,7 @@ def sw_new_adr(
     elif has_body_file:
         from pyrite.cli.context import input_file_or_exit
 
-        resolved_file = input_file_or_exit(body_file, "Body file", output_format="rich")
+        resolved_file = input_file_or_exit(body_file, "Body file", output_format=fmt)
         body_content = resolved_file.read_text(encoding="utf-8")
 
     if body_content is not None:
@@ -253,11 +260,12 @@ def sw_new_adr(
             cli_error(
                 "--body-file/--stdin: the text opens with a frontmatter block, and ADR bodies do not read frontmatter.",
                 error_code="VALIDATION_FAILED",
+                output_format=fmt,
             )
 
     config = load_config()
 
-    require_kb(config, kb_name, output_format="rich")
+    require_kb(config, kb_name, output_format=fmt)
     # Resolve the KB up front: with none resolved, refuse -- do NOT fall back
     # to writing into the cwd, where the ADR is never indexed and the
     # numbering query (scoped to KBs) would never see it again.
@@ -308,16 +316,27 @@ def sw_new_adr(
             # path, a driver's own text) out of REST/MCP responses, but
             # masking it here hides that same detail from the person who
             # would read the server log anyway (#506 item 3). Always str(e).
-            cli_error(str(e), error_code=code)
+            cli_error(str(e), error_code=code, output_format=fmt)
 
         from pyrite.storage.repository import KBRepository
 
         repo = KBRepository(kb_conf)
         file_path = repo._resolve_file_path(entry, repo._infer_subdir(entry))
 
-        console.print(f"[green]Created {entry.id} (ADR-{next_num:04d}):[/green] {title}")
-        console.print(path_line("  File: ", file_path, path_style="cyan"))
-        console.print(f"  Status: [yellow]{status}[/yellow]")
+        if fmt == "json":
+            cli_console().print_json(
+                data={
+                    "id": entry.id,
+                    "adr_number": next_num,
+                    "title": title,
+                    "status": status,
+                    "file": str(file_path),
+                }
+            )
+        else:
+            console.print(f"[green]Created {entry.id} (ADR-{next_num:04d}):[/green] {title}")
+            console.print(path_line("  File: ", file_path, path_style="cyan"))
+            console.print(f"  Status: [yellow]{status}[/yellow]")
     finally:
         db.close()
 

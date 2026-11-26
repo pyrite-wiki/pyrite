@@ -287,6 +287,7 @@ def test_mcp_refuses_body_with_sections(make_world):
     assert result.get("created") is False
     assert result.get("error_code") == "VALIDATION_FAILED"
     assert "Cannot combine body with section fields" in result.get("error", "")
+    assert len(list(world.kb_path("mcp-conflict").rglob("*.md"))) == 0
 
 
 def test_mcp_refuses_frontmatter_in_body(make_world):
@@ -304,11 +305,19 @@ def test_mcp_refuses_frontmatter_in_body(make_world):
     assert result.get("created") is False
     assert result.get("error_code") == "VALIDATION_FAILED"
     assert "frontmatter block" in result.get("error", "")
+    assert len(list(world.kb_path("mcp-fm").rglob("*.md"))) == 0
 
 
 SHAPES = [
     ("skeleton", {}),
     ("body-file", {"body": "## Context\n\nFull custom body text from file."}),
+    (
+        "body-and-deciders",
+        {
+            "body": "## Context\n\nCustom body.\n\n## Decision\n\nCustom decision.",
+            "deciders": ["alice", "bob"],
+        },
+    ),
     ("stdin", {"stdin": "## Context\n\nFull custom body text from stdin."}),
     ("context-only", {"context": "Only the context section."}),
     ("decision-only", {"decision": "Only the decision section."}),
