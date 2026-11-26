@@ -261,10 +261,58 @@ def test_frontmatter_in_body_is_refused(make_world, tmp_path):
     assert "frontmatter block" in result.output
 
 
+def test_empty_string_section_flag_treated_as_unset(make_world):
+    from pyrite_software_kb.adr_listing import ADR_SECTION_PLACEHOLDERS
+
+    world = make_world("test-empty-str")
+    result = world.cli("sw", "new-adr", "Empty Sec", "-k", "test-empty-str", "--context", "")
+    assert result.exit_code == 0, result.output
+    _, body = _read_adr_file(world, "test-empty-str")
+    assert ADR_SECTION_PLACEHOLDERS["context"] in body
+
+
+def test_mcp_refuses_body_with_sections(make_world):
+    world = make_world("mcp-conflict")
+    server = world.mcp("write")
+    server._dispatch_tool("kb_orient", {"kb_name": "mcp-conflict"})
+    result = server._dispatch_tool(
+        "sw_create_adr",
+        {
+            "kb_name": "mcp-conflict",
+            "title": "Conflict",
+            "body": "Some body",
+            "context": "Some context",
+        },
+    )
+    assert result.get("created") is False
+    assert result.get("error_code") == "VALIDATION_FAILED"
+    assert "Cannot combine body with section fields" in result.get("error", "")
+
+
+def test_mcp_refuses_frontmatter_in_body(make_world):
+    world = make_world("mcp-fm")
+    server = world.mcp("write")
+    server._dispatch_tool("kb_orient", {"kb_name": "mcp-fm"})
+    result = server._dispatch_tool(
+        "sw_create_adr",
+        {
+            "kb_name": "mcp-fm",
+            "title": "FM ADR",
+            "body": "---\nstatus: accepted\n---\nBody here\n",
+        },
+    )
+    assert result.get("created") is False
+    assert result.get("error_code") == "VALIDATION_FAILED"
+    assert "frontmatter block" in result.get("error", "")
+
+
 SHAPES = [
     ("skeleton", {}),
-    ("body", {"body": "## Context\n\nFull custom body text."}),
+    ("body-file", {"body": "## Context\n\nFull custom body text from file."}),
+    ("stdin", {"stdin": "## Context\n\nFull custom body text from stdin."}),
     ("context-only", {"context": "Only the context section."}),
+    ("decision-only", {"decision": "Only the decision section."}),
+    ("consequences-only", {"consequences": "Only the consequences section."}),
     (
         "all-sections",
         {
@@ -292,10 +340,14 @@ def test_cli_and_mcp_equivalence(make_world, tmp_path, shape_name, shape_data):
     # 1. Run via CLI
     world_cli = make_world(f"cli-{shape_name}")
     cli_args = ["sw", "new-adr", "Compare ADR", "-k", f"cli-{shape_name}"]
+    cli_kwargs = {}
     if "body" in shape_data:
         p = tmp_path / f"body_{shape_name}.md"
         p.write_text(shape_data["body"], encoding="utf-8")
         cli_args.extend(["--body-file", str(p)])
+    if "stdin" in shape_data:
+        cli_args.append("--stdin")
+        cli_kwargs["input"] = shape_data["stdin"]
     if "context" in shape_data:
         cli_args.extend(["--context", shape_data["context"]])
     if "decision" in shape_data:
@@ -305,7 +357,7 @@ def test_cli_and_mcp_equivalence(make_world, tmp_path, shape_name, shape_data):
     if "deciders" in shape_data:
         cli_args.extend(["--deciders", ",".join(shape_data["deciders"])])
 
-    cli_result = world_cli.cli(*cli_args)
+    cli_result = world_cli.cli(*cli_args, **cli_kwargs)
     assert cli_result.exit_code == 0, cli_result.output
     cli_fm, cli_body = _read_adr_file(world_cli, f"cli-{shape_name}")
 
@@ -315,7 +367,10 @@ def test_cli_and_mcp_equivalence(make_world, tmp_path, shape_name, shape_data):
     server._dispatch_tool("kb_orient", {"kb_name": f"mcp-{shape_name}"})
 
     mcp_args = {"kb_name": f"mcp-{shape_name}", "title": "Compare ADR"}
-    mcp_args.update(shape_data)
+    mcp_data = dict(shape_data)
+    if "stdin" in mcp_data:
+        mcp_data["body"] = mcp_data.pop("stdin")
+    mcp_args.update(mcp_data)
     mcp_result = server._dispatch_tool("sw_create_adr", mcp_args)
     assert mcp_result.get("created") is True, mcp_result
     mcp_fm, mcp_body = _read_adr_file(world_mcp, f"mcp-{shape_name}")

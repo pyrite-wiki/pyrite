@@ -215,6 +215,9 @@ def sw_new_adr(
     dash = body_file is not None and str(body_file) == "-"
     has_body_file = body_file is not None and not dash
     has_stdin = stdin_flag or dash
+    context = context or None
+    decision = decision or None
+    consequences = consequences or None
     has_sections = any(s is not None for s in (context, decision, consequences))
 
     if has_body_file and has_stdin:

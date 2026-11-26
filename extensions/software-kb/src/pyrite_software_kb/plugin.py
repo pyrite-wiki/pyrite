@@ -1828,16 +1828,39 @@ class SoftwareKBPlugin:
         title = args["title"]
         status = args.get("status", "proposed")
 
+        body_content = args.get("body")
+        context = args.get("context") or None
+        decision = args.get("decision") or None
+        consequences = args.get("consequences") or None
+        has_sections = any(s is not None for s in (context, decision, consequences))
+
+        if body_content is not None and has_sections:
+            return {
+                "created": False,
+                "error": "Cannot combine body with section fields (context, decision, consequences).",
+                "error_code": "VALIDATION_FAILED",
+            }
+
+        if body_content is not None:
+            from pyrite.utils.frontmatter import Frontmatter, split_frontmatter
+
+            if isinstance(split_frontmatter(body_content), Frontmatter):
+                return {
+                    "created": False,
+                    "error": "body: the text opens with a frontmatter block, and ADR bodies do not read frontmatter.",
+                    "error_code": "VALIDATION_FAILED",
+                }
+
         # Build structured body (#1862)
         from .adr_listing import build_adr_body
 
         body = build_adr_body(
             next_num,
             title,
-            body_content=args.get("body"),
-            context=args.get("context"),
-            decision=args.get("decision"),
-            consequences=args.get("consequences"),
+            body_content=body_content,
+            context=context,
+            decision=decision,
+            consequences=consequences,
         )
 
         from datetime import date
