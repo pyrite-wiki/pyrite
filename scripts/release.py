@@ -372,16 +372,16 @@ def check_readme_install_tag(repo: Path, version: str) -> None:
     problem = _install_tag_problem("README.md", readme, version)
     if problem:
         raise ReleaseError(problem)
-    # The software-kb extension's README pins the same tag. A checkout without
-    # the extension has nothing to check (as with pyrite-mcp/).
-    name = "extensions/software-kb/README.md"
-    try:
-        extension = (repo / name).read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return
-    problem = _install_tag_problem(name, extension, version)
-    if problem:
-        raise ReleaseError(problem)
+    # The software-kb extension's README and agentic-development tutorial pin
+    # the same tag. A checkout without one of them has nothing to check.
+    for extra in ("extensions/software-kb/README.md", "docs/tutorials/agentic-development.md"):
+        try:
+            text = (repo / extra).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        problem = _install_tag_problem(extra, text, version)
+        if problem:
+            raise ReleaseError(problem)
 
 
 def check_pyrite_mcp_matches(repo: Path, version: str) -> None:

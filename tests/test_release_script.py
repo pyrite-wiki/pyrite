@@ -343,6 +343,18 @@ class TestReadmeInstallTag:
         assert not (repo / "extensions").exists()
         release.check_readme_install_tag(repo, "0.24.2")
 
+    def test_stale_tutorial_install_tag_raises(self, repo):
+        (repo / "docs" / "tutorials").mkdir(parents=True)
+        (repo / "docs" / "tutorials" / "agentic-development.md").write_text(
+            "git+https://github.com/pyrite-wiki/pyrite@v0.20.0\n"
+        )
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_readme_install_tag(repo, "0.24.2")
+        assert all(
+            part in str(excinfo.value)
+            for part in ("docs/tutorials/agentic-development.md", "0.20.0", "0.24.2")
+        )
+
 
 class TestPyriteMcpMatchesRelease:
     """`pyrite-mcp` carries Pyrite's version (#1582): its own version, the tag
@@ -1805,6 +1817,36 @@ class TestInstallCheckMatchesTheTutorial:
             and f"@{FAKE_SHA}#subdirectory=extensions/software-kb" in " ".join(c)
             for c in installs
         ), installs
+
+    def test_the_execute_path_runs_all_three_tutorials(self, monkeypatch):
+        cmds = []
+
+        def fake(cmd, cwd=None, env=None):
+            cmds.append(list(cmd))
+            if cmd and str(cmd[0]).endswith("pyrite"):
+                return "pyrite 0.24.2"
+            return ""
+
+        monkeypatch.setattr(release, "_check_output", fake)
+        monkeypatch.setattr(release.shutil, "which", lambda name: f"/usr/bin/{name}")
+        ctx = release.Context(
+            repo=REPO,
+            version="0.24.2",
+            runner=release.Runner(execute=False),
+            wait_ci_minutes=0,
+            rehearse_install_check=True,
+            sha=FAKE_SHA,
+        )
+        release.step_release_layer(ctx)
+        tutorial_runs = [c for c in cmds if c and str(c[0]).endswith("run_tutorial.sh")]
+        assert tutorial_runs == [
+            [str(REPO / "scripts" / "run_tutorial.sh")],
+            [str(REPO / "scripts" / "run_tutorial.sh"), "docs/tutorials/pyrite-in-20-minutes.md"],
+            [
+                str(REPO / "scripts" / "run_tutorial.sh"),
+                "docs/tutorials/agentic-development.md",
+            ],
+        ]
 
 
 class TestDockerBuildIsOptIn:

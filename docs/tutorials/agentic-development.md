@@ -106,13 +106,13 @@ pyrite orient -k itsdangerous --detail brief
 
 Copy the three single-file developer skills ([`extensions/software-kb/skills/`](../../extensions/software-kb/skills/)) into your repository (clone Pyrite and copy them until the first release tag carrying these skills is published) and add the project-memory block to `AGENTS.md` (see [Add Pyrite to your project's agent instructions](../agent-instructions.md)). The `.claude/skills/` path below is specific to Claude Code; any other coding agent reads the same three `SKILL.md` files from disk:
 
-```text
-$ git clone https://github.com/pyrite-wiki/pyrite.git /tmp/pyrite-src
-$ mkdir -p .claude/skills
-$ cp -r /tmp/pyrite-src/extensions/software-kb/skills/project-memory-bootstrap .claude/skills/
-$ cp -r /tmp/pyrite-src/extensions/software-kb/skills/session-start .claude/skills/
-$ cp -r /tmp/pyrite-src/extensions/software-kb/skills/session-wrap .claude/skills/
-$ ls .claude/skills
+```bash
+git clone https://github.com/pyrite-wiki/pyrite.git /tmp/pyrite-src
+mkdir -p .claude/skills
+cp -r /tmp/pyrite-src/extensions/software-kb/skills/project-memory-bootstrap .claude/skills/
+cp -r /tmp/pyrite-src/extensions/software-kb/skills/session-start .claude/skills/
+cp -r /tmp/pyrite-src/extensions/software-kb/skills/session-wrap .claude/skills/
+ls .claude/skills
 ```
 
 ---
@@ -129,7 +129,7 @@ Give your coding agent one prompt to read the repository's existing docs, change
 Use the project-memory-bootstrap skill to seed the `itsdangerous` software KB in `./kb` from this repository:
 1. Read `README.rst`, `CHANGES.rst`, `src/itsdangerous/`, and `git log --oneline -n 50`.
 2. Create component entries (`pyrite create -k itsdangerous -t component --title "<title>" -f kind=module -f path=<path> --body-file <file>`) for the core signing modules (`signer-core` for `src/itsdangerous/signer.py`, `timed-serialization` for `src/itsdangerous/timed.py`).
-3. Create accepted ADRs (`pyrite sw new-adr "<title>" -k itsdangerous --status accepted`, then `pyrite update <adr-id> -k itsdangerous --body-file <file>`) for 64-bit Unix timestamps in `TimestampSigner` (`adr-0001`) and secret key rotation via ordered `secret_keys` and `fallback_signers` (`adr-0002`). Cite the exact file or `CHANGES.rst` version for every claim, include `## Alternatives rejected`, and mark any unrecorded rationale as an open question.
+3. Create accepted ADRs (`pyrite sw new-adr "<title>" -k itsdangerous --status accepted`, then `pyrite update <adr-id> -k itsdangerous --body-file <file>`) for full Unix timestamps rather than the 2011 epoch offset in `TimestampSigner` (`adr-0001`) and secret key rotation via ordered `secret_keys` and `fallback_signers` (`adr-0002`). Cite the exact file or `CHANGES.rst` version for every claim, include `## Alternatives rejected`, and mark any unrecorded rationale as an open question.
 4. Link components to the ADRs they implement (`pyrite link <component> <adr-id> -r implements -k itsdangerous`).
 5. Create two `proposed` backlog items (`fallback-signer-verification` and `url-safe-compression-threshold`) linked to their ADRs with `-r tracks`, then run `pyrite qa validate itsdangerous`.
 ```
@@ -168,20 +168,32 @@ A new session with zero conversation history can now ask why `TimestampSigner` e
 pyrite search "TimestampSigner" -k itsdangerous --fields id,title,entry_type
 ```
 
-<!-- runner: expect-ids itsdangerous:adr-0001 -->
+<!-- runner: expect-ids itsdangerous:timed-serialization itsdangerous:adr-0001 -->
+<!-- runner: expect-text "count": 2 -->
 
 ```json
 {
+  "query": "TimestampSigner",
+  "count": 2,
   "results": [
+    {
+      "id": "timed-serialization",
+      "kb_name": "itsdangerous",
+      "title": "Timed signing and serialization",
+      "entry_type": "component"
+    },
     {
       "id": "adr-0001",
       "kb_name": "itsdangerous",
-      "title": "ADR-0001: 64-bit Unix timestamps in TimestampSigner",
+      "title": "ADR-0001: Full Unix timestamps in TimestampSigner",
       "entry_type": "adr"
     }
   ],
-  "count": 1,
-  "outcome": "done"
+  "match": "strong",
+  "match_basis": "keyword: every term matched",
+  "legs_run": ["keyword"],
+  "searched": ["id", "kb_name", "entry_type", "title", "body", "summary", "location"],
+  "keyword_match": "all_terms"
 }
 ```
 
@@ -197,19 +209,33 @@ pyrite backlinks adr-0001 -k itsdangerous
 ```json
 {
   "entry_id": "adr-0001",
-  "kb_name": "itsdangerous",
-  "backlinks": [
+  "entries": [
     {
-      "source": "timed-serialization",
-      "relation": "implements"
+      "id": "timed-serialization",
+      "kb_name": "itsdangerous",
+      "title": "Timed signing and serialization",
+      "entry_type": "component",
+      "relation": "implemented_by",
+      "forward_relation": "implements",
+      "prefix": null,
+      "note": "",
+      "inverse_relation": "implemented_by",
+      "resolved": true
     },
     {
-      "source": "url-safe-compression-threshold",
-      "relation": "tracks"
+      "id": "url-safe-compression-threshold",
+      "kb_name": "itsdangerous",
+      "title": "Benchmark URLSafeSerializer zlib compression overhead on small payloads",
+      "entry_type": "backlog_item",
+      "relation": "tracked_by",
+      "forward_relation": "tracks",
+      "prefix": null,
+      "note": "",
+      "inverse_relation": "tracked_by",
+      "resolved": true
     }
   ],
-  "count": 2,
-  "outcome": "done"
+  "total": 2
 }
 ```
 
@@ -275,9 +301,21 @@ pyrite sw pull-next -k itsdangerous
 {
   "recommendation": {
     "id": "fallback-signer-verification",
+    "kb_name": "itsdangerous",
     "title": "Document and test key-rotation order with fallback_signers",
+    "kind": "improvement",
     "priority": "high",
     "effort": "S"
+  },
+  "context_preview": {
+    "adr_count": 1,
+    "component_count": 1,
+    "validation_count": 0
+  },
+  "wip_status": {
+    "current": 0,
+    "limit": 5,
+    "policy": "warn"
   }
 }
 ```
@@ -295,7 +333,7 @@ pyrite sw context-for-item fallback-signer-verification -k itsdangerous
 <!-- runner: expect-text adr-0002 -->
 <!-- runner: expect-text signer-core -->
 
-Also inspect the affected component and its backlinks (until `#1863` adds two-hop component-to-ADR traversal directly to `context-for-item`):
+Also inspect the affected component and its backlinks to see every ADR linked directly to the component:
 
 ```bash
 pyrite get signer-core -k itsdangerous
@@ -314,11 +352,12 @@ Lock the item as `agent:dev-1`:
 pyrite sw claim fallback-signer-verification -k itsdangerous --assignee agent:dev-1
 ```
 
-<!-- runner: expect-text in_progress -->
+<!-- runner: expect-text Assignee: agent:dev-1 -->
+<!-- runner: expect-text Status: in_progress -->
 
 ```text
 Claimed: Document and test key-rotation order with fallback_signers
-  Assigned to: agent:dev-1
+  Assignee: agent:dev-1
   Status: in_progress
 ```
 
@@ -336,7 +375,7 @@ pyrite sw claim fallback-signer-verification -k itsdangerous --assignee agent:de
 Error: Cannot transition from 'in_progress' to 'in_progress'. Allowed: review, done, accepted
 ```
 
-**Why this works ([`kb/design.md`](../../kb/design.md), Principle 8 — *Each rule lives in one place*):** Claim transitions are checked atomically against the file's status and assignee so two agents never overwrite each other's claim.
+**Why this works ([`kb/design.md`](../../kb/design.md), Principle 8 — *Each rule lives in one place*):** `can_transition` rejects the invalid state transition before any write, and `claim_entry` performs the atomic file claim under lock so concurrent agents cannot overwrite each other's claim.
 
 ### 5. Log the session, validate, and submit for review
 
@@ -348,11 +387,11 @@ pyrite qa validate itsdangerous
 pyrite sw submit fallback-signer-verification -k itsdangerous
 ```
 
-<!-- runner: expect-text review -->
+<!-- runner: expect-text Status: review -->
 
 ```text
 Submitted for review: Document and test key-rotation order with fallback_signers
-  Status: in_progress -> review
+  Status: review
 ```
 
 **Why this works ([`kb/design.md`](../../kb/design.md), Principle 5 — *The file decides*):** `sw log` writes a `work_log` Markdown file under `kb/work-logs/` linked to the item via `session_for`, so the next session sees both what worked and what was ruled out.
@@ -389,12 +428,13 @@ Approve the item and move it to `done`:
 pyrite sw review fallback-signer-verification -k itsdangerous --outcome approved --reviewer agent:reviewer-1 --feedback "Matches ADR-0002 key rotation contract; work log is complete."
 ```
 
-<!-- runner: expect-text done -->
+<!-- runner: expect-text Outcome: approved -->
+<!-- runner: expect-text New status: done -->
 
 ```text
-Approved: Document and test key-rotation order with fallback_signers
-  Status: review -> done
-  Reviewed by: agent:reviewer-1
+Reviewed: fallback-signer-verification
+  Outcome: approved
+  New status: done
 ```
 
 Commit `kb/` to the repository so the project memory travels with the code:
@@ -412,40 +452,50 @@ git commit -m "kb: seed project memory and complete fallback-signer-verification
 
 ### 1. A teammate or cloud session clones the repository
 
-When a teammate or a cloud worker clones the repository, `kb/` is on disk, but `~/.pyrite/index.db` on that machine has not indexed the clone yet (if they run `pyrite sw backlog` before indexing, it returns `[]`). From the clone, run `pyrite kb discover --add` and `pyrite index sync`:
+When a teammate or a cloud worker clones the repository, `kb/` is on disk, but `~/.pyrite/index.db` on that machine has not indexed the clone yet (if they run `pyrite sw backlog` before indexing, it returns `[]`). Give the clone its own fresh `HOME` (simulating a teammate's machine), register the KB with `pyrite kb discover --add`, and build its local index with `pyrite index sync`:
 
 ```bash
 cd ..
 git clone itsdangerous itsdangerous-teammate
 cd itsdangerous-teammate
+OLD_HOME="$HOME"
+mkdir -p ../teammate-home
+export HOME="$PWD/../teammate-home"
+export PYRITE_CONFIG_DIR="$HOME/.pyrite"
 pyrite kb discover --add
 pyrite index sync
 ```
 
+<!-- runner: expect-text "already_registered": false -->
+<!-- runner: expect-text itsdangerous-teammate -->
 <!-- runner: expect-text Sync complete -->
 
-Now query the ADR from the clone:
+Now query the ADR from the clone's own index:
 
 ```bash
+export HOME="$PWD/../teammate-home"
+export PYRITE_CONFIG_DIR="$HOME/.pyrite"
 pyrite search "TimestampSigner" -k itsdangerous --fields id,title
 ```
 
 <!-- runner: expect-ids itsdangerous:adr-0001 -->
 
-**Why this works ([`kb/design.md`](../../kb/design.md), Principle 5 — *The index is a cache*):** The committed Markdown files carry the entire KB; any machine can rebuild the SQLite index from `kb/` in seconds. (Once `#1861` lands, `pyrite kb discover --add` will also read `kb_type: software` from `kb.yaml` and index the discovered KB in one step.)
+**Why this works ([`kb/design.md`](../../kb/design.md), Principle 5 — *The file decides*):** The committed Markdown files are authoritative and carry the entire KB; `~/.pyrite/index.db` is a local derived cache that any machine can rebuild from `kb/` in seconds.
 
 ### 2. Connect an MCP client
 
-If your coding agent uses MCP tools (`kb_orient`, `sw_pull_next`, `sw_context_for_item`, `sw_claim`, `sw_log`, `sw_submit`) in addition to shell commands, register the MCP server for your user configuration and write a project-scoped `.mcp.json` file:
+If your coding agent uses MCP tools (`kb_orient`, `sw_pull_next`, `sw_context_for_item`, `sw_claim`, `sw_log`, `sw_submit`) in addition to shell commands, return to your original `HOME`, register the MCP server for your user configuration, and write a project-scoped `.mcp.json` file:
 
 ```bash
+export HOME="${OLD_HOME:-$HOME}"
+export PYRITE_CONFIG_DIR="$HOME/.pyrite"
 pyrite mcp-setup
 pyrite mcp-setup --project
 ```
 
 <!-- runner: expect-text .mcp.json -->
 
-**Why this works ([`kb/design.md`](../../kb/design.md), Principle 10 — *One primary user per surface*):** The CLI and the MCP server call the same service methods and enforce the same schema and lifecycle rules.
+**Why this works ([`kb/design.md`](../../kb/design.md), Principle 8 — *Each rule lives in one place*, and Principle 10 — *One primary user per surface*):** Both surfaces call the same service methods so schema and lifecycle rules are enforced once, while the CLI serves shell pipelines and MCP serves agent tool calls.
 
 ### 3. Add a lightweight `task` tracker alongside the software KB
 

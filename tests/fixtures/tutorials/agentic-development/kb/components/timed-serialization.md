@@ -19,6 +19,6 @@ links:
 
 Time-bounded signing and serialization built on `Signer` and `Serializer`: `TimestampSigner` and `TimedSerializer`.
 
-- Appends a 64-bit Unix timestamp separated by `sep` before signing (`TimestampSigner.sign`).
+- Appends a full Unix timestamp (`int(time.time())`) separated by `sep` before signing (`TimestampSigner.sign`).
 - Validates signature first, then parses the timestamp and checks `max_age` (`TimestampSigner.unsign`), raising `SignatureExpired` when `age > max_age` or `age < 0`.
 - Inherits multi-key verification and `fallback_signers` traversal from `Signer` and `Serializer`.
