@@ -1,0 +1,1 @@
+- Partial entry reads preserve fields a plugin loader accepts when their companion fields are present (#1856).

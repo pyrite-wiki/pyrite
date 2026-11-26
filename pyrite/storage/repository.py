@@ -380,14 +380,13 @@ def _without(fm: dict, refused: Mapping[str, str]) -> dict:
 
 def _refused_fields(fm: dict, body: str) -> dict[str, str]:
     """``{file key: loader message}`` for each key the declared type's loader
-    refuses on its own, or ``{}`` when the refusal is not isolated to fields.
+    refuses with the other kept fields present, or ``{}`` for an unisolated error.
 
-    A key is refused when the loader raises on the base keys (``type``,
+    A key is a candidate when the loader raises on the base keys (``type``,
     ``id``, ``title``) plus that key alone; a ``metadata:`` mapping is probed
-    key by key, so ``metadata.rank`` is named as such. Isolated means the base
-    keys load alone and the file loads without the refused keys; otherwise
-    (a base field, a cross-field rule, a key the loader requires) it is
-    ``{}``. Runs only for a file that already failed to load.
+    key by key, so ``metadata.rank`` is named as such. If the base and the file
+    without the candidates both load, put back any candidate that loads in
+    context. Runs only for a file that already failed to load.
     """
     base = {k: fm[k] for k in ("type", "id", "title") if k in fm}
     if _loader_refuses(base) is not None:
@@ -415,6 +414,21 @@ def _refused_fields(fm: dict, body: str) -> dict[str, str]:
         entry_from_frontmatter(_without(fm, refused), body)
     except Exception:  # noqa: BLE001 - the rest still does not load: not isolated
         return {}
+
+    # Restoring a field can make an earlier candidate load on the next pass.
+    # Each successful pass shrinks the set, in deterministic file order.
+    while refused:
+        count = len(refused)
+        for key in tuple(refused):
+            remaining = refused.copy()
+            del remaining[key]
+            try:
+                entry_from_frontmatter(_without(fm, remaining), body)
+            except Exception:  # noqa: BLE001 - this field still makes the file unloadable
+                continue
+            refused = remaining
+        if len(refused) == count:
+            break
     return refused
 
 

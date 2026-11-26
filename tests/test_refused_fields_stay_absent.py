@@ -30,6 +30,7 @@ from pyrite.exceptions import OUTSIDE_TEXT_WITHHELD
 from tests.test_unloadable_file_is_never_written import (  # noqa: F401 - the autouse fixture
     REL,
     SHAPES,
+    Shape,
     _loaders_that_refuse,
     _text,
 )
@@ -140,6 +141,78 @@ def test_a_refused_field_is_absent_from_every_read_and_named(
         assert spec.loader in problem["message"] or OUTSIDE_TEXT_WITHHELD in problem["message"], (
             problem
         )
+
+
+@pytest.mark.parametrize(
+    ("shape", "nested", "kept", "refused"),
+    [
+        pytest.param(
+            "start: first\nend: last\nrank: .inf\n",
+            False,
+            {"start": "first", "end": "last"},
+            ["rank"],
+            id="top-level",
+        ),
+        pytest.param(
+            "metadata:\n  start: first\n  end: last\n  rank: .inf\n",
+            True,
+            {"start": "first", "end": "last"},
+            ["metadata.rank"],
+            id="metadata",
+        ),
+        pytest.param(
+            "complete: final\nend: last\nstart: first\nrank: .inf\n",
+            False,
+            {"start": "first", "end": "last", "complete": "final"},
+            ["rank"],
+            id="dependent-before-restored-partner",
+        ),
+        pytest.param(
+            "rank: .inf\nstatus: weird\n",
+            False,
+            {},
+            ["rank", "status"],
+            marks=pytest.mark.control(reason="both independent refusals remain named"),
+            id="independent-refusals",
+        ),
+    ],
+)
+def test_partial_reads_keep_fields_the_loader_accepts_in_context(
+    make_world, monkeypatch, shape, nested, kept, refused
+):
+    from pyrite_software_kb.entry_types import BacklogItemEntry
+
+    original = BacklogItemEntry.from_frontmatter
+
+    def from_frontmatter(cls, meta, body):
+        fields = meta.get("metadata", {}) if nested else meta
+        if "end" in fields and "start" not in fields:
+            raise ValueError("end requires start")
+        if "complete" in fields and "end" not in fields:
+            raise ValueError("complete requires end")
+        entry = original(meta, body)
+        # Expose the test plugin's custom fields as entry metadata on reads.
+        if not nested:
+            entry.metadata = {
+                **entry.metadata,
+                **{key: fields[key] for key in ("start", "end", "complete") if key in fields},
+            }
+        return entry
+
+    monkeypatch.setattr(BacklogItemEntry, "from_frontmatter", classmethod(from_frontmatter))
+    world = make_world(_text("backlog_item", Shape(shape)))
+
+    status, text = _cli_get(world)
+
+    assert status == OK["cli"], text
+    data = _entry("cli", text)
+    assert [problem["field"] for problem in data["load_problems"]] == refused
+    for key, value in kept.items():
+        assert data["metadata"][key] == value
+    for key in refused:
+        field = key.removeprefix("metadata.")
+        assert field not in data
+        assert field not in data["metadata"]
 
 
 @pytest.mark.parametrize("surface", SURFACES)
