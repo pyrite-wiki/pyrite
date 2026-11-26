@@ -153,9 +153,6 @@ release script's precondition asks the same of the requested version),
   script. The live repository settings were not verified ([[adr-audit-2026-10]]).
 - [[adr-0025]] still says "no PR reviews" and "all work happens on `dev`" in
   its body, with a banner pointing to [[adr-0032]].
-- The standard `git-workflow` still says "All work happens on `dev`" and lists
-  `feature/*` as for large multi-day changes: it contradicts [[adr-0032]] and
-  is not marked superseded (verified by reading it; not edited here).
 - Not decided: whether `main` moves untagged between releases, and who bumps
   the snapshot version ([[adr-0032]] open questions on 3b).
 - No ADR covers the worker and reviewer roles; the worker method is the
