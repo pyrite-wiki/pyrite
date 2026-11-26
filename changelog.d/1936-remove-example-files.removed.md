@@ -1,0 +1,1 @@
+The root `.env.example` and the example YAML config at the repository root are gone: no setting read them (they held upstream variable names and a stale model id). `docs/configuration.md` is the reference for `PYRITE_*` settings and the config file.
