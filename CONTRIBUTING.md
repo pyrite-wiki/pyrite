@@ -309,6 +309,22 @@ has built up by that point (which directory the shell is in, which KBs and
 names already exist); otherwise say that the section starts fresh and have it
 do the `cd` or use a new name itself.
 
+Keep these limits in mind when writing a page:
+
+1. The runner does not compare displayed output with a command's actual output:
+   it checks exit codes and only the words named by `expect-text`. Run each
+   command before showing its output, and add `expect-text` markers for the
+   values a reader relies on.
+2. CI runs both tutorial pages in the `smoke` job on a push to `dev` (after
+   merge) and on manual dispatch; it does not run them on pull requests.
+3. `run_tutorial.py` runs every block in one shell with one temporary HOME and
+   one Pyrite config. Since `kb discover --add` skips a KB already registered
+   under the same name, give each KB a distinct name or set a separate
+   `PYRITE_CONFIG_DIR`, then use `expect-text` to prove which KB answered.
+4. If a seeded fixture represents a real upstream project, state only facts
+   supported by that project's README, changelog, or code, and cite the source;
+   do not invent its history.
+
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
