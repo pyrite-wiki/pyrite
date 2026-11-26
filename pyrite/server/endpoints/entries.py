@@ -971,9 +971,14 @@ def update_entry(
     # detail of how this endpoint drives the echo comparison, not something
     # `ignored` should report back to a caller who never named it.
     ignored = [k for k in ignored if k != "id"]
+    sent_hash = (
+        ""
+        if ("content_hash" in req.model_fields_set and req.content_hash is None)
+        else req.content_hash
+    )
 
     try:
-        written = svc.update(entry_id, req.kb, updates)
+        written = svc.update(entry_id, req.kb, updates, content_hash=sent_hash)
     except EntryNotFoundError as e:
         # A KBNotFoundError is never caught here: the write tier resolves the
         # named KB before the handler runs (#952), and one that still arrives
@@ -1035,6 +1040,11 @@ def patch_entry_field(
 ):
     """Update a single field on an entry (used by kanban drag-drop)."""
     updates = {body.field: body.value} if body.op == "set" else {}
+    sent_hash = (
+        ""
+        if ("content_hash" in body.model_fields_set and body.content_hash is None)
+        else body.content_hash
+    )
     try:
         written = svc.update(
             entry_id,
@@ -1043,6 +1053,7 @@ def patch_entry_field(
             append={body.field: body.value} if body.op == "append" else None,
             remove={body.field: body.value} if body.op == "remove" else None,
             unset=[body.field] if body.op == "unset" else None,
+            content_hash=sent_hash,
         )
     except EntryNotFoundError as e:
         # A KBNotFoundError is never caught here: the write tier resolves the

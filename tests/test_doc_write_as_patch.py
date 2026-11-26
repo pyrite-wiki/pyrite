@@ -89,11 +89,6 @@ UPDATE_FLAGS = frozenset({"echo", "stale"})
 #: test fails outright, so a reason cannot quietly stop being true.
 #: Measured on dev at c097e7f6, 2026-10-03.
 KNOWN_DIVERGENCES: dict[str, tuple[str, str]] = {
-    "a-stale-whole-document-replace-is-refused": (
-        "decision 11: kb_get returns `content_hash` since #753 (decision 9), but "
-        "kb_update sets it aside as `ignored` and writes over the hand edit",
-        r"a stale replace was written, not refused",
-    ),
     "an-id-less-file-keeps-its-identity-when-its-title-changes": (
         "principle 5: no entry `posts/intro`; an id-less file is known by its title's "
         "slug (`intro`), and an update by that id adds `id: intro`",
@@ -1577,3 +1572,169 @@ def test_kb_update_descriptions_teach_item_operations_and_the_metadata_rule() ->
     assert "append" in props["tags"]["description"] and "remove" in props["tags"]["description"]
     assert "ADR-0051" in props["metadata"]["description"]
     assert "refused" in props["metadata"]["description"]
+
+
+# --------------------------------------------------------------------------
+# Cross-surface content_hash precondition checks (#1900)
+# --------------------------------------------------------------------------
+
+
+def test_stale_content_hash_is_refused_across_every_write_surface(tmp_path: Path) -> None:
+    """Every update surface (KBService.update, CLI, MCP, REST PUT and PATCH)
+    checks `content_hash` against the file's bytes on disk, refuses a stale
+    hash with CONFLICT leaving the file untouched, and writes when given the
+    re-read hash (#1900).
+    """
+    from pyrite.exceptions import ConflictError, ValidationError
+    from pyrite.services.kb_service import KBService
+    from pyrite.storage.index import content_hash
+    from tests._world import build_world
+
+    ex = _example("a-stale")
+    config, path, entry_id = _build_kb(tmp_path, ex)
+    initial_bytes = path.read_bytes()
+    initial_hash = content_hash(initial_bytes)
+
+    world = build_world(tmp_path / "world", config=config)
+    try:
+        read = _read(world.config, entry_id)
+        assert read["content_hash"] == initial_hash
+
+        # Hand-edit the file on disk after the read.
+        hand_edited_bytes = initial_bytes + b"\nHand edit on disk.\n"
+        path.write_bytes(hand_edited_bytes)
+        fresh_hash = content_hash(hand_edited_bytes)
+        assert fresh_hash != initial_hash
+
+        # 1. KBService.update refuses stale hash (both via content_hash kwarg and updates dict).
+        svc = KBService(world.config, world.db)
+        with pytest.raises(ConflictError, match="changed since it was read"):
+            svc.update(entry_id, KB, {"title": "Overwrite"}, content_hash=initial_hash)
+        assert path.read_bytes() == hand_edited_bytes
+
+        with pytest.raises(ConflictError, match="changed since it was read"):
+            svc.update(entry_id, KB, {"title": "Overwrite", "content_hash": initial_hash})
+        assert path.read_bytes() == hand_edited_bytes
+
+        # Conflicting spellings and malformed content_hash are refused with ValidationError.
+        with pytest.raises(ValidationError) as exc_info:
+            svc.update(
+                entry_id,
+                KB,
+                {"title": "Overwrite", "content_hash": fresh_hash},
+                content_hash=initial_hash,
+            )
+        assert exc_info.value.errors[0]["field"] == "content_hash"
+        assert exc_info.value.errors[0]["rule"] == "conflicting_spellings"
+
+        with pytest.raises(ValidationError) as exc_info:
+            svc.update(entry_id, KB, {"title": "Overwrite", "content_hash": "   "})
+        assert exc_info.value.errors[0]["field"] == "content_hash"
+        assert exc_info.value.errors[0]["rule"] == "format"
+
+        with pytest.raises(ValidationError) as exc_info:
+            svc.update(entry_id, KB, {}, unset=["content_hash"])
+        assert exc_info.value.errors[0]["field"] == "content_hash"
+        assert exc_info.value.errors[0]["rule"] == "managed"
+
+        # 2. MCP kb_update refuses stale hash with CONFLICT.
+        mcp_res = world.mcp("write")._dispatch_tool(
+            "kb_update",
+            {
+                "kb_name": KB,
+                "entry_id": entry_id,
+                "title": "MCP Overwrite",
+                "content_hash": initial_hash,
+            },
+        )
+        assert _is_error(mcp_res)
+        assert mcp_res["error_code"] == "CONFLICT"
+        assert mcp_res["retryable"] is True
+        assert path.read_bytes() == hand_edited_bytes
+
+        # 3. REST PUT and PATCH refuse stale hash with 409 CONFLICT.
+        put_res = world.client.put(
+            f"/api/entries/{entry_id}",
+            json={"kb": KB, "title": "REST PUT Overwrite", "content_hash": initial_hash},
+        )
+        assert put_res.status_code == 409, put_res.text
+        assert put_res.json()["detail"]["code"] == "CONFLICT"
+        assert path.read_bytes() == hand_edited_bytes
+
+        patch_res = world.client.patch(
+            f"/api/entries/{entry_id}",
+            json={
+                "kb": KB,
+                "field": "title",
+                "value": "REST PATCH Overwrite",
+                "content_hash": initial_hash,
+            },
+        )
+        assert patch_res.status_code == 409, patch_res.text
+        assert patch_res.json()["detail"]["code"] == "CONFLICT"
+        assert path.read_bytes() == hand_edited_bytes
+
+        # Explicit null content_hash on REST is refused with 400 VALIDATION_FAILED.
+        null_res = world.client.patch(
+            f"/api/entries/{entry_id}",
+            json={"kb": KB, "field": "title", "value": "Null hash", "content_hash": None},
+        )
+        assert null_res.status_code == 400, null_res.text
+        assert null_res.json()["detail"]["code"] == "VALIDATION_FAILED"
+        assert path.read_bytes() == hand_edited_bytes
+
+        # 4. CLI `pyrite update --content-hash` and `-f content_hash=...` refuse stale hash.
+        for flag_args in (
+            ["--content-hash", initial_hash],
+            ["-f", f"content_hash={initial_hash}"],
+        ):
+            cli_res = world.cli(
+                "update",
+                entry_id,
+                "-k",
+                KB,
+                "--title",
+                "CLI Overwrite",
+                *flag_args,
+                "--format",
+                "json",
+            )
+            assert cli_res.exit_code != 0, cli_res.output
+            payload = json.loads(cli_res.output)
+            assert payload["error_code"] == "CONFLICT"
+            assert payload["retryable"] is True
+            assert path.read_bytes() == hand_edited_bytes
+
+        # 5. Re-read and apply with the fresh hash across REST PATCH and CLI --content-hash.
+        patch_ok = world.client.patch(
+            f"/api/entries/{entry_id}",
+            json={
+                "kb": KB,
+                "field": "title",
+                "value": "Updated After Reread",
+                "content_hash": fresh_hash,
+            },
+        )
+        assert patch_ok.status_code == 200, patch_ok.text
+        assert "content_hash:" not in path.read_text(encoding="utf-8")
+        assert _front(path.read_text(encoding="utf-8"))["title"] == "Updated After Reread"
+        assert path.read_text(encoding="utf-8").endswith("Hand edit on disk.\n")
+
+        second_hash = content_hash(path.read_bytes())
+        cli_ok = world.cli(
+            "update",
+            entry_id,
+            "-k",
+            KB,
+            "--title",
+            "Updated By CLI With Fresh Hash",
+            "--content-hash",
+            second_hash,
+            "--format",
+            "json",
+        )
+        assert cli_ok.exit_code == 0, cli_ok.output
+        assert "content_hash:" not in path.read_text(encoding="utf-8")
+        assert _front(path.read_text(encoding="utf-8"))["title"] == "Updated By CLI With Fresh Hash"
+    finally:
+        world.close()
