@@ -4,7 +4,7 @@ Pyrite is a Knowledge-as-Code platform. You keep structured knowledge in markdow
 
 ## Install Pyrite
 
-No PyPI wheel yet — install from source. Needs Python 3.11+ (3.11.5 or newer for the patched `soupsieve`):
+No PyPI wheel yet — install from source. Needs Python 3.11.5 or newer (the patched `soupsieve` needs it):
 
 ```bash
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
