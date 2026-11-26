@@ -155,12 +155,15 @@ git clone ~/my-kb ~/my-kb-clone
 
 ### After cloning a repository that has a `kb/`
 
-The SQLite search index lives outside the repository (`~/.pyrite/index.db`), so a fresh clone has the Markdown files on disk but no local index rows yet. An empty answer (`[]`) from a search or list command before indexing means "not indexed yet", not "nothing there". From the cloned repository, register the KB and build its local index:
+The SQLite search index lives outside the repository (`~/.pyrite/index.db`), so a fresh clone has the Markdown files on disk but no local index rows yet. An empty answer (`[]`) from a search or list command before indexing means "not indexed yet", not "nothing there". Because `my-kb` is already registered in this walkthrough's single shell, give the local clone its own name before registering it (on another machine, skip renaming because `my-kb` is not registered there yet):
 
 ```bash
+cd ~/my-kb-clone
+python3 -c 'from pathlib import Path; p = Path("kb.yaml"); p.write_text(p.read_text().replace("name: my-kb", "name: my-kb-clone", 1))'
 pyrite kb discover --add
-pyrite index sync
 ```
+<!-- runner: expect-text my-kb-clone -->
+<!-- runner: expect-text "already_registered": false -->
 
 `pyrite kb discover --add` finds `kb.yaml` and registers the KB:
 
@@ -168,23 +171,29 @@ pyrite index sync
 {
   "discovered": [
     {
-      "name": "my-kb",
+      "name": "my-kb-clone",
       "type": "generic",
       "path": "/path/to/my-kb-clone",
       "already_registered": false
     }
   ],
   "added": [
-    "my-kb"
+    "my-kb-clone"
   ]
 }
 ```
 
 `pyrite index sync` indexes the files on disk:
 
+```bash
+pyrite index sync
+cd ~/my-kb
+```
+<!-- runner: expect-text Sync complete -->
+
 ```text
 Sync complete:
-  Added: 4
+  Added: <N>
   Updated: 0
   Removed: 0
 ```
