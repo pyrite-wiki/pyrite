@@ -309,6 +309,24 @@ has built up by that point (which directory the shell is in, which KBs and
 names already exist); otherwise say that the section starts fresh and have it
 do the `cd` or use a new name itself.
 
+The runner does not compare a page's shown output with what the command
+prints: it checks only what the markers name (the words in `expect-text`, the
+entries in `expect-ids`, the exit code), so a JSON key or a line the command
+never prints still passes. Run each command, paste its real output, and list in
+`expect-text` the words a reader relies on. CI runs both pages in the `smoke`
+job of `.github/workflows/ci.yml`, which runs on the push to `dev` after a
+merge (and on a manual run), not on the pull request: run the page locally
+before you push. The whole page shares one temp `HOME` and one Pyrite
+configuration, so a "second machine" or "teammate" step that clones a
+repository and registers a KB under a name already registered is skipped by
+`kb discover --add` without an error, and later searches answer from the first
+KB. Give such a step its own KB name, or its own `PYRITE_DATA_DIR` (the runner
+sets it, and it wins over `PYRITE_CONFIG_DIR`), and an `expect-text` that
+proves which KB answered. A `seed` fixture that stands for a real project (an
+ADR, component or backlog item for a pinned upstream repository) states only
+what that project's README, changelog or code state, and cites only history
+they contain.
+
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
