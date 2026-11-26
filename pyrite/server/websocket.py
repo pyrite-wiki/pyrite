@@ -44,7 +44,7 @@ GLOBAL_EVENTS = frozenset({"kb_synced"})
 
 # Events for operators only, whatever KB they name: delivered to unscoped
 # sockets and never to a scoped one. `index_progress` carries index job ids
-# and whole-index counts (the rule in kb/backlog/authenticate-and-scope-ws-218.md).
+# and whole-index counts (the rule in kb/backlog/done/authenticate-and-scope-ws-218.md).
 UNSCOPED_ONLY_EVENTS = frozenset({"index_progress"})
 
 
