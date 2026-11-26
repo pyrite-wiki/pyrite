@@ -7,7 +7,7 @@ tags:
 - public-repo
 importance: 5
 kind: improvement
-status: proposed
+status: done
 priority: medium
 effort: S
 rank: 0
@@ -66,3 +66,18 @@ Stale remote branches from March: `feature/structured-epics-prioritized-backlog`
 - [ ] Full suite green; README links resolve.
 
 Source: 2026-09-17 project review (three read-only audits: docs/contributor, public-repo, code-health). These are deletions of the owner's files — the owner decides each one.
+
+## Decisions per row (#1936)
+
+- `claude_desktop_config.json`, `ui_streamlit.py`, `.env.example:19`, `MCP_SUBMISSION.md`, `KnowledgeClaw-Spec.md`: already handled by #585 (PR #592).
+- `.env.example` (whole file): deleted; every variable was an upstream `ZK_*` name no code reads.
+- `config.example.yaml`: deleted; unreferenced and restated docs/configuration.md.
+- `deploy/start.sh`: deleted; referenced nowhere, the Dockerfile runs `pyrite-server`.
+- The four scripts under `scripts/`: deleted as unused upstream scripts; they were all 14 `ruff check .` errors on `dev`.
+- `adapter-node` (web): dependency removed, lockfile regenerated; `adapter-static` is the one in use.
+- `tests/usability/*.md`: deleted (internal run sheets, not tests).
+- `UPSTREAM_CHANGES.md`: updated in place (counts table dropped, attribution and history kept); path kept because README links it.
+- `KNOWN-ISSUES.md`: stays (#583).
+- `FEEDBACK.md`: stays where it is.
+- `pyrite/models/task_validators.py`: belongs to the code-audit item, not done here.
+- `pyrite/ui/`: not present; already gone.
