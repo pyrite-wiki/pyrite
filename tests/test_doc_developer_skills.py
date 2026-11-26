@@ -5,8 +5,11 @@ import shlex
 from pathlib import Path
 
 from pyrite.config import KBConfig
-from tests.outcome_walk import _typers_click_exception
-from tests.test_doc_kb_lifecycle_skill import commands, parse_command
+from tests.test_doc_kb_lifecycle_skill import (
+    _typers_click_exception,
+    commands,
+    parse_command,
+)
 
 REPO = Path(__file__).resolve().parents[1]
 SKILLS_DIR = REPO / "extensions" / "software-kb" / "skills"
