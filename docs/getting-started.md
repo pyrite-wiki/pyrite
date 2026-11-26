@@ -56,7 +56,7 @@ git commit -m "Initial KB"
 
 Templates in core: `research`, `software`, `zettelkasten`, `intellectual-biography`, `movement`, `empty`, `task` and `research-queue`; installed plugins add theirs (`pyrite init --help` lists every one).
 
-Your knowledge base is just a directory of markdown files. You can open them in any editor. After editing by hand, run `pyrite ci` to validate your files against the schema:
+Your knowledge base is just a directory of markdown files. You can open them in any editor. After creating empty directories or adding clean entries, run `pyrite ci` to validate your files against the schema:
 
 ```bash
 pyrite ci --kb my-kb
@@ -162,7 +162,7 @@ cd ~/my-kb-clone
 python3 -c 'from pathlib import Path; p = Path("kb.yaml"); p.write_text(p.read_text().replace("name: my-kb", "name: my-kb-clone", 1))'
 pyrite kb discover --add
 ```
-<!-- runner: expect-text my-kb-clone -->
+<!-- runner: expect-text "name": "my-kb-clone" -->
 <!-- runner: expect-text "already_registered": false -->
 
 `pyrite kb discover --add` finds `kb.yaml` and registers the KB:
@@ -176,14 +176,11 @@ pyrite kb discover --add
       "path": "/path/to/my-kb-clone",
       "already_registered": false
     }
-  ],
-  "added": [
-    "my-kb-clone"
   ]
 }
 ```
 
-`pyrite index sync` indexes the files on disk:
+`pyrite index sync` indexes the files on disk (in this walkthrough the clone holds the 4 entries created above; counts vary with the KB, and an `Embedded: N` line follows when `PYRITE_AUTO_EMBED` is enabled):
 
 ```bash
 pyrite index sync
@@ -193,7 +190,7 @@ cd ~/my-kb
 
 ```text
 Sync complete:
-  Added: <N>
+  Added: 4
   Updated: 0
   Removed: 0
 ```
@@ -443,6 +440,8 @@ The **software** template adds ADRs, components, backlog items, standards, and r
 The `zettelkasten` template gives note-maturity types; the extension behind it is an example plugin, showing how a Pyrite plugin adds entry types, CLI commands, MCP tools and a preset, not a supported product.
 
 ## Launch the Web UI
+
+> **Experimental:** `pyrite serve` and the web UI are experimental and outside the supported 0.27 single-operator CLI and MCP surface.
 
 Pyrite ships an optional web interface for browsing, editing, and visualizing your knowledge base. It is built from the `web/` directory of your clone, so from the repository root, once:
 
