@@ -22,7 +22,7 @@ if not hasattr(os, "getuid"):
 if not hasattr(os, "O_NONBLOCK"):
     os.O_NONBLOCK = 0
 
-COMMANDS = ["adrs", "backlog", "standards", "components"]
+COMMANDS = ["adrs", "backlog", "components"]
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def test_sw_backlog_help_text(runner: CliRunner) -> None:
     assert "negative number" not in result.output
 
 
-@pytest.mark.parametrize("cmd", ["adrs", "standards", "components"])
+@pytest.mark.parametrize("cmd", ["adrs", "components"])
 def test_sw_help_text_mentions_zero_all(runner: CliRunner, cmd: str) -> None:
     result = runner.invoke(cli.sw_app, [cmd, "--help"])
     assert result.exit_code == 0

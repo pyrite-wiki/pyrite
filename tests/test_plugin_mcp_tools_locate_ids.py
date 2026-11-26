@@ -295,10 +295,8 @@ def _files(ctx):
 
 
 def _missing(result: dict) -> bool:
-    return (
-        result.get("error_code") in ("ENTRY_NOT_FOUND", "KB_NOT_FOUND")
-        or result.get("legacy_error_code") == "NOT_FOUND"
-        or "not found" in str(result.get("error", ""))
+    return result.get("error_code") in ("ENTRY_NOT_FOUND", "KB_NOT_FOUND") or "not found" in str(
+        result.get("error", "")
     )
 
 
@@ -334,7 +332,7 @@ def test_an_id_in_no_kb_is_not_found_and_writes_nothing(server, tool, kb):
     files = _files(server)
     result = _call(server, tool, _with_kb(case.args(ids["none"]), kb))
     assert result.get("error_code") == "ENTRY_NOT_FOUND", result
-    assert result.get("legacy_error_code") == "NOT_FOUND", result
+    assert "legacy_error_code" not in result, result
     assert _files(server) == files
     if case.table:
         assert _rows(server, case.table) == []

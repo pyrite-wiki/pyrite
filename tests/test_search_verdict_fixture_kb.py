@@ -122,7 +122,4 @@ def test_similarity_is_a_cosine_of_unit_vectors(search):
     rows = search("Andon cord", "tps", "semantic")["results"]
     assert rows[0]["id"] == "andon"
     assert all(0.155 <= r["similarity"] <= 1.0 for r in rows)
-    # sqlite-vec's `distance` is L2; for unit vectors cos = 1 - d**2 / 2. The
-    # two are computed independently, so this also checks the model normalises.
-    for r in rows:
-        assert abs(r["similarity"] - (1 - r["distance"] ** 2 / 2)) < 0.002
+    assert all("distance" not in r for r in rows)

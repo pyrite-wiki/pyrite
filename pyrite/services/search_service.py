@@ -790,10 +790,9 @@ class SearchService:
            appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
            similarity, 3 places, the same number on every backend. A hybrid
-           row carries ``legs``, the legs that returned it. ``distance`` (the
-           backend's own measure), ``rank`` (raw BM25) and ``rrf_score`` (rank
-           arithmetic) order results and are not scores; ``distance`` leaves
-           the response in 0.27; use ``similarity`` instead.
+           row carries ``legs``, the legs that returned it. ``rank`` (raw BM25)
+           and ``rrf_score`` (rank arithmetic) order results and are not
+           scores; use ``similarity`` for vector similarity.
         8. The thresholds behind ``match`` belong to an embedding model. With a
            model that has no row in ``_MODEL_MATCH_THRESHOLDS`` the vector leg
            is not judged: ``match_basis`` says ``uncalibrated model <name>``,
@@ -1528,7 +1527,6 @@ class SearchService:
                 kept = entries[key]
                 kept["legs"] = ["keyword", "semantic"]
                 kept["similarity"] = result["similarity"]
-                kept["distance"] = result.get("distance")
 
         # Sort by RRF score descending
         sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)

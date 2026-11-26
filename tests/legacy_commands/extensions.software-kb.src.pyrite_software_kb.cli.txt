@@ -17,7 +17,6 @@ pyrite sw pull-next
 pyrite sw refine
 pyrite sw review
 pyrite sw review-queue
-pyrite sw standards
 pyrite sw submit
 pyrite sw transition
 pyrite sw validations

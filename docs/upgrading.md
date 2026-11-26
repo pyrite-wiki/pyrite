@@ -503,34 +503,27 @@ has it.
 
 ### 8. Still deprecated
 
-These interfaces remain supported in 0.26.0 and are scheduled for removal in
-0.27. CLI aliases warn on stderr; response fields remain in responses until
-removal. `db.conn` emits a `DeprecationWarning`, and `FRONTMATTER_ALIASES` logs
-a warning once per class.
+These interfaces remain supported in 0.27 and are scheduled for removal in
+0.28 (`db.conn` emits a `DeprecationWarning`, `FRONTMATTER_ALIASES` logs a
+warning once per class, and an unset `git_identity` logs a warning once per
+process when a network caller makes a commit):
 
-- **`-f` as `--format`** on the `task` commands leaves in 0.27. Use
-  `--format`, or set `PYRITE_FORMAT`.
-- **`pyrite export --format` (and `-f`)** leaves in 0.27. Use `--target`;
-  the only target today is `notebooklm`.
-- **MCP `legacy_error_code`** leaves in 0.27. Match `error_code` instead.
-- **Search `distance`** leaves in 0.27. Read `similarity` instead.
-- **`task status`** leaves in 0.27. Use `task get` instead.
-- **`db.conn`** leaves in 0.27. Use `db.session` for writes or
+- **`db.conn`** leaves in 0.28. Use `db.session` for writes or
   `db.execute_sql()` for read-only queries.
-- **`FRONTMATTER_ALIASES`** leaves in 0.27. Declare `field_aliases` in the
+- **`FRONTMATTER_ALIASES`** leaves in 0.28. Declare `field_aliases` in the
   type's schema instead.
-- **`pyrite sw standards`** leaves in 0.27.0. Use the validations and
-  conventions commands instead.
-- **The global git identity for network commits** leaves in 0.27.0. With
+- **The global git identity for network commits** leaves in 0.28.0. With
   `git_identity` unset, commits made for network callers use the server
   account's global `user.name` and `user.email`; set `git_identity`
   (`name`, `email`) in `config.yaml` (added in 0.26.3).
-- **orient's `schema.guidelines`**, `schema.goals`, `schema.evaluation_rubric`,
-  the per-type `ai_instructions`, `guidelines`, `goals` and
-  `evaluation_rubric` under `schema.types`, and the top-level `guidelines`
-  (always `{}`) leave orient in 0.27. Read `kb_authored` (the KB's own text,
-  as written) and `pyrite_guidance` (Pyrite's defaults) instead; added in
-  0.26.4 (#1369).
+
+Removed in 0.27 (#1901): `-f` as `--format` on the `task` commands,
+`pyrite export --format` (and `-f`), MCP `legacy_error_code` (see
+[json-contracts.md#mcp-code-transitions](json-contracts.md#mcp-code-transitions)),
+search `distance`, `pyrite task status`, `pyrite sw standards`, and orient's
+`schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, per-type
+`ai_instructions`/`guidelines`/`goals`/`evaluation_rubric` under
+`schema.types`, and top-level `guidelines`.
 
 The table in [JSON contracts](json-contracts.md#format-defaults) says which
 commands take `--format`.

@@ -1,0 +1,1 @@
+- **Re-dated `db.conn`, `FRONTMATTER_ALIASES`, and the global `git_identity` fallback for network commits to 0.28 (#1901).** Their deprecation warnings and documentation now name 0.28 (`0.28.0` for `git_identity`) as the removal release.

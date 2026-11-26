@@ -485,11 +485,11 @@ class TestSemanticRegimes:
         embed_crowd(db, 0.42, [0.38] * 11)
         assert response(svc, mode="semantic")["match"] == "none"
 
-    def test_every_row_carries_similarity_and_still_carries_distance(self, db, svc):
+    def test_every_row_carries_similarity_and_no_distance(self, db, svc):
         embed_crowd(db, 0.62, [0.4, 0.2])
         rows = response(svc, mode="semantic")["results"]
         assert [r["similarity"] for r in rows] == [0.62, 0.4, 0.2]
-        assert all("distance" in r for r in rows), "`distance` stays for one release"
+        assert all("distance" not in r for r in rows), "`distance` left in 0.27 (#1901)"
 
     def test_the_cutoff_is_a_similarity_floor(self, db, svc):
         embed_crowd(db, 0.62, [0.16, 0.1])

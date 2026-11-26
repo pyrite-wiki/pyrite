@@ -553,7 +553,6 @@ def test_rest_get_without_kb_refuses_an_ambiguous_id(world):
 CLI_CASES = {
     "pyrite get": ["get", DUPLICATE, "--format", "json"],
     "pyrite task get": ["task", "get", DUP_TASK, "--format", "json"],
-    "pyrite task status": ["task", "status", DUP_TASK, "--format", "json"],
     "pyrite-read get": ["get", DUPLICATE, "--format", "json"],
 }
 CLI_BLANK_KB_CASES = {

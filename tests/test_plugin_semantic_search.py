@@ -46,7 +46,7 @@ class TestTheVectorIndexIsUsed:
         rows = make_ctx(db).search_semantic("deep meaning")
 
         assert [(r["id"], r["similarity"]) for r in rows] == [("near", 0.62), ("far", 0.2)]
-        assert all("distance" in r and r["snippet"] for r in rows)
+        assert all("distance" not in r and r["snippet"] for r in rows)
 
     def test_the_query_is_embedded_by_the_configured_model(self, db, loaded_models):
         add_entry(db, "near", "kb", cosine=0.62, axis=1)

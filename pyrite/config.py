@@ -989,7 +989,7 @@ class Settings:
     # helpers, agent, netrc or global config (ADR-0052 N2). See GitCredential.
     git_credentials: list[GitCredential] = field(default_factory=list)
     # The identity commits made for a network caller carry. Unset: the
-    # account's global user.name/user.email, until 0.27.0 removes that
+    # account's global user.name/user.email, until 0.28.0 removes that
     # fallback.
     git_identity: GitIdentity | None = None
     # The proxy network git and the GitHub API calls made for a network caller

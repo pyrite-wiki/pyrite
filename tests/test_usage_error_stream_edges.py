@@ -130,8 +130,8 @@ app(['emit'])
 
 
 @pytest.mark.parametrize("fmt", ["yaml", "rich"])
-def test_legacy_format_beats_default_for_late_parse_error(fmt):
-    from pyrite.cli.output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT
+def test_explicit_format_beats_default_for_late_parse_error(fmt):
+    from pyrite.cli.output import OUTPUT_FORMAT
 
     app = _app()
 
@@ -141,12 +141,11 @@ def test_legacy_format_beats_default_for_late_parse_error(fmt):
     @app.command()
     def emit(
         output_format: str = OUTPUT_FORMAT,
-        legacy_format: str | None = LEGACY_FORMAT_SHORT,
         invalid: str = typer.Option("bad", callback=refuse),
     ):
         raise AssertionError("parse refusal must prevent the body")
 
-    result = CliRunner().invoke(app, ["emit", "-f", fmt])
+    result = CliRunner().invoke(app, ["emit", "--format", fmt])
     assert result.exit_code == 2
     if fmt == "yaml":
         import yaml

@@ -88,7 +88,7 @@ SEARCH_ROW_FIELDS: tuple[str, ...] = (
     "id", "kb_name", "entry_type", "title", "body", "summary", "file_path", "date",
     "importance", "status", "location", "lifecycle", "metadata", "created_at",
     "updated_at", "indexed_at", "created_by", "modified_by", "snippet",
-    "rank", "rrf_score", "similarity", "distance", "legs",
+    "rank", "rrf_score", "similarity", "legs",
 )  # fmt: skip
 
 #: What a caller needs to choose the next read: which entry (`id` + `kb_name`,

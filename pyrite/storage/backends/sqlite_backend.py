@@ -605,6 +605,7 @@ class SQLiteBackend(BaseBackend):
             for row in rows:
                 entry = dict(row)
                 entry.pop("_knn_size", None)
+                entry.pop("distance", None)
                 cosine_distance = entry.pop("_cosine_distance", None)
                 similarity = similarity_from(cosine_distance)
                 # Cut on the unrounded value, as Postgres does in its WHERE. A

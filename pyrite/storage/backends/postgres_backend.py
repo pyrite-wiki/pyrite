@@ -677,7 +677,7 @@ class PostgresBackend(BaseBackend):
         rows = shape_entry_rows(self._exec(sql, params), self._session)
         for row in rows:
             # ``distance`` here is already cosine distance (#668).
-            row["similarity"] = similarity_from(row.get("distance"))
+            row["similarity"] = similarity_from(row.pop("distance", None))
         return rows
 
     def has_embeddings(

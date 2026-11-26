@@ -1,0 +1,8 @@
+- **Removed deprecations scheduled for 0.27 (#1901):**
+  - `pyrite export --format` and `-f` alias for `--target` (use `--target`).
+  - `-f` as a short form of `--format` on `pyrite task` commands (use `--format` or `PYRITE_FORMAT`).
+  - `pyrite task status` (use `pyrite task get`).
+  - `pyrite sw standards` (use `pyrite sw validations` and `pyrite sw conventions`).
+  - Vector search `distance` key on semantic and hybrid result rows (read `similarity` instead).
+  - `orient`'s deprecated `schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, per-type `ai_instructions`, `guidelines`, `goals` and `evaluation_rubric` under `schema.types`, and top-level `guidelines` (read `kb_authored` and `pyrite_guidance` instead).
+  - MCP `legacy_error_code` on refusal responses (match `error_code` instead).
