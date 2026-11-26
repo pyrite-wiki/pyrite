@@ -36,18 +36,28 @@ Pyrite publishes three single-file skills alongside the software-kb extension in
 
 ### Claude Code
 
-Copy the three skills into `.claude/skills/` in your repository from a pinned release tag:
+Clone the repository and copy the three skills into `.claude/skills/` in your project:
 
 ```bash
-mkdir -p .claude/skills/project-memory-bootstrap .claude/skills/session-start .claude/skills/session-wrap
-curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/v0.26.4/extensions/software-kb/skills/project-memory-bootstrap/SKILL.md -o .claude/skills/project-memory-bootstrap/SKILL.md
-curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/v0.26.4/extensions/software-kb/skills/session-start/SKILL.md -o .claude/skills/session-start/SKILL.md
-curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/v0.26.4/extensions/software-kb/skills/session-wrap/SKILL.md -o .claude/skills/session-wrap/SKILL.md
+git clone https://github.com/pyrite-wiki/pyrite.git
+mkdir -p .claude/skills
+cp -r pyrite/extensions/software-kb/skills/project-memory-bootstrap .claude/skills/
+cp -r pyrite/extensions/software-kb/skills/session-start .claude/skills/
+cp -r pyrite/extensions/software-kb/skills/session-wrap .claude/skills/
+ls .claude/skills
 ```
+
+```text
+project-memory-bootstrap
+session-start
+session-wrap
+```
+
+Pinned `curl` download lines will be added here once the first release carrying these skills is tagged.
 
 ### Other coding agents
 
-Any agent that reads markdown instructions can use the same three `SKILL.md` files. Either keep them in `.claude/skills/<name>/SKILL.md` (or `docs/skills/<name>/SKILL.md`) in your repository and point to those paths from your `AGENTS.md` or `GEMINI.md` block, or ask the agent to read the skill file for the step you want (`project-memory-bootstrap`, `session-start`, or `session-wrap`).
+Any agent that reads markdown instructions can use the same three `SKILL.md` files. Keep them in `.claude/skills/<name>/SKILL.md` in your repository and point to those paths from your `AGENTS.md` or `GEMINI.md` block, or ask the agent to read the skill file for the step you want (`project-memory-bootstrap`, `session-start`, or `session-wrap`).
 
 ## CLI and MCP clients
 

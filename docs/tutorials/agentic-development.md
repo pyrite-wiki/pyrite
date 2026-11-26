@@ -104,13 +104,15 @@ pyrite orient -k itsdangerous --detail brief
 
 ### 5. Install the developer skills and `AGENTS.md` block
 
-Copy the three single-file developer skills ([`extensions/software-kb/skills/`](../../extensions/software-kb/skills/)) into your repository and add the project-memory block to `AGENTS.md` (see [Add Pyrite to your project's agent instructions](../agent-instructions.md)). The `.claude/skills/` path below is specific to Claude Code; any other coding agent reads the same three `SKILL.md` files from disk:
+Copy the three single-file developer skills ([`extensions/software-kb/skills/`](../../extensions/software-kb/skills/)) into your repository (clone Pyrite and copy them until the first release tag carrying these skills is published) and add the project-memory block to `AGENTS.md` (see [Add Pyrite to your project's agent instructions](../agent-instructions.md)). The `.claude/skills/` path below is specific to Claude Code; any other coding agent reads the same three `SKILL.md` files from disk:
 
 ```text
-$ mkdir -p .claude/skills/project-memory-bootstrap .claude/skills/session-start .claude/skills/session-wrap
-$ curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/v0.26.4/extensions/software-kb/skills/project-memory-bootstrap/SKILL.md -o .claude/skills/project-memory-bootstrap/SKILL.md
-$ curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/v0.26.4/extensions/software-kb/skills/session-start/SKILL.md -o .claude/skills/session-start/SKILL.md
-$ curl -fsSL https://raw.githubusercontent.com/pyrite-wiki/pyrite/v0.26.4/extensions/software-kb/skills/session-wrap/SKILL.md -o .claude/skills/session-wrap/SKILL.md
+$ git clone https://github.com/pyrite-wiki/pyrite.git /tmp/pyrite-src
+$ mkdir -p .claude/skills
+$ cp -r /tmp/pyrite-src/extensions/software-kb/skills/project-memory-bootstrap .claude/skills/
+$ cp -r /tmp/pyrite-src/extensions/software-kb/skills/session-start .claude/skills/
+$ cp -r /tmp/pyrite-src/extensions/software-kb/skills/session-wrap .claude/skills/
+$ ls .claude/skills
 ```
 
 ---
