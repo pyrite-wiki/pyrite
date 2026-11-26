@@ -1627,15 +1627,33 @@ def test_stale_content_hash_is_refused_across_every_write_surface(tmp_path: Path
         assert exc_info.value.errors[0]["field"] == "content_hash"
         assert exc_info.value.errors[0]["rule"] == "conflicting_spellings"
 
-        with pytest.raises(ValidationError) as exc_info:
-            svc.update(entry_id, KB, {"title": "Overwrite", "content_hash": "   "})
-        assert exc_info.value.errors[0]["field"] == "content_hash"
-        assert exc_info.value.errors[0]["rule"] == "format"
+        for bad_hash in ("   ", "zzz", initial_hash.upper(), f" {initial_hash}"):
+            with pytest.raises(ValidationError) as exc_info:
+                svc.update(entry_id, KB, {"title": "Overwrite", "content_hash": bad_hash})
+            assert exc_info.value.errors[0]["field"] == "content_hash"
+            assert exc_info.value.errors[0]["rule"] == "format"
 
-        with pytest.raises(ValidationError) as exc_info:
-            svc.update(entry_id, KB, {}, unset=["content_hash"])
-        assert exc_info.value.errors[0]["field"] == "content_hash"
-        assert exc_info.value.errors[0]["rule"] == "managed"
+        for managed_call in (
+            lambda: svc.update(entry_id, KB, {}, unset=["content_hash"]),
+            lambda: svc.update(entry_id, KB, {"metadata.content_hash": initial_hash}),
+            lambda: svc.update(entry_id, KB, {"metadata": {"content_hash": initial_hash}}),
+        ):
+            with pytest.raises(ValidationError) as exc_info:
+                managed_call()
+            assert exc_info.value.errors[0]["field"] == "content_hash"
+            assert exc_info.value.errors[0]["rule"] == "managed"
+
+        # REST PATCH with `field: "content_hash"` is refused as a managed field (400 VALIDATION_FAILED),
+        # not treated as a content_hash precondition.
+        patch_managed_res = world.client.patch(
+            f"/api/entries/{entry_id}",
+            json={"kb": KB, "field": "content_hash", "value": "abc"},
+        )
+        assert patch_managed_res.status_code == 400, patch_managed_res.text
+        assert patch_managed_res.json()["detail"]["code"] == "VALIDATION_FAILED"
+        assert patch_managed_res.json()["detail"]["errors"][0]["field"] == "content_hash"
+        assert patch_managed_res.json()["detail"]["errors"][0]["rule"] == "managed"
+        assert path.read_bytes() == hand_edited_bytes
 
         # 2. MCP kb_update refuses stale hash with CONFLICT.
         mcp_res = world.mcp("write")._dispatch_tool(
@@ -1705,7 +1723,8 @@ def test_stale_content_hash_is_refused_across_every_write_surface(tmp_path: Path
             assert payload["retryable"] is True
             assert path.read_bytes() == hand_edited_bytes
 
-        # 5. Re-read and apply with the fresh hash across REST PATCH and CLI --content-hash.
+        # 5. Re-read and apply with the fresh hash across REST PATCH, CLI --content-hash,
+        # MCP kb_update, and REST PUT.
         patch_ok = world.client.patch(
             f"/api/entries/{entry_id}",
             json={
@@ -1736,5 +1755,61 @@ def test_stale_content_hash_is_refused_across_every_write_surface(tmp_path: Path
         assert cli_ok.exit_code == 0, cli_ok.output
         assert "content_hash:" not in path.read_text(encoding="utf-8")
         assert _front(path.read_text(encoding="utf-8"))["title"] == "Updated By CLI With Fresh Hash"
+
+        third_hash = content_hash(path.read_bytes())
+        mcp_ok = world.mcp("write")._dispatch_tool(
+            "kb_update",
+            {
+                "kb_name": KB,
+                "entry_id": entry_id,
+                "title": "Updated By MCP With Fresh Hash",
+                "content_hash": third_hash,
+            },
+        )
+        assert not _is_error(mcp_ok), mcp_ok
+        assert mcp_ok["updated"] is True
+        assert "content_hash:" not in path.read_text(encoding="utf-8")
+        assert _front(path.read_text(encoding="utf-8"))["title"] == "Updated By MCP With Fresh Hash"
+
+        # Pin echo detection: a request with content_hash but no id/read-result marker
+        # is not treated as an echoed read (unchanged is empty), whereas an echoed read
+        # carrying id and content_hash places unchanged fields in `unchanged`.
+        fourth_hash = content_hash(path.read_bytes())
+        non_echo_updates, non_echo_ignored, non_echo_unchanged = svc.split_echoed_update(
+            entry_id,
+            KB,
+            {"title": "Updated By MCP With Fresh Hash", "content_hash": fourth_hash},
+        )
+        assert non_echo_updates == {
+            "title": "Updated By MCP With Fresh Hash",
+            "content_hash": fourth_hash,
+        }
+        assert non_echo_ignored == []
+        assert non_echo_unchanged == []
+
+        echo_updates, echo_ignored, echo_unchanged = svc.split_echoed_update(
+            entry_id,
+            KB,
+            {
+                "id": entry_id,
+                "title": "Updated By MCP With Fresh Hash",
+                "content_hash": fourth_hash,
+            },
+        )
+        assert echo_updates == {"content_hash": fourth_hash}
+        assert echo_ignored == ["id"]
+        assert echo_unchanged == ["title"]
+
+        put_ok = world.client.put(
+            f"/api/entries/{entry_id}",
+            json={
+                "kb": KB,
+                "title": "Updated By PUT With Fresh Hash",
+                "content_hash": fourth_hash,
+            },
+        )
+        assert put_ok.status_code == 200, put_ok.text
+        assert "content_hash:" not in path.read_text(encoding="utf-8")
+        assert _front(path.read_text(encoding="utf-8"))["title"] == "Updated By PUT With Fresh Hash"
     finally:
         world.close()

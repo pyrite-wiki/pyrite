@@ -910,10 +910,10 @@ plus a type's own `managed_fields` (a task's `status_change_log`,
 `evidence`, `agent_context`, `assigned_at`; an ADR's `adr_number`). REST
 `PUT`/`PATCH` and `pyrite update --field` refuse them with
 `VALIDATION_FAILED`; MCP `kb_update` sets them aside, along with
-`created_at`/`updated_at`, index columns and `null`s for undeclared keys,
+`created_at`/`updated_at`, index columns other than `content_hash`, and `null`s for undeclared keys,
 and lists them in the result's `ignored` field, so a read result echoed
-back cannot rewrite them. In a request that echoes a read result (it
-carries `id`, `file_path` or an index column), a field whose value is still
+back cannot rewrite them; a non-null `content_hash` (echoed from a read or sent explicitly) is checked against the file's bytes on disk as a precondition and never written to the file (#1900). In a request that echoes a read result (it
+carries `id`, `file_path` or an index column other than `content_hash`), a field whose value is still
 what the read returned is not a change: it is not written, and is listed
 in the result's `unchanged` field (apart from `ignored`, which names keys no
 update writes), so the file keeps `importance: high` rather than Pyrite's
@@ -1167,9 +1167,9 @@ they are **not run** (a server would be needed).
 
 | Surface | Call | Success shape |
 |---|---|---|
-| CLI | `pyrite update <id> -k <kb> --title <t>`; one item: `--append tags=gamma`, `--remove tags=alpha`, a key: `--unset extra` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>", "outcome": "done"}`. With `--format rich`: `Updated: <id>`. |
-| MCP | `kb_update`; one item: `"append": {"tags": "gamma"}` or `{"links": {"target": "b", "relation": "related_to"}}`, `"remove": {"tags": "alpha"}`; keys: `"unset": ["extra"]` (a list value under `append`/`remove` means each of its items) | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
-| REST (not run) | `PUT /api/entries/{id}` (body carries `kb`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`, and `op`: `set` (default), `append`, `remove` or `unset`; one field per call; `value` is the field's value, or the item for `append`/`remove`) | `PUT` returns `{"updated": true, "id": "<id>", "warnings": [], "ignored": [], "unchanged": [], "changed": true, "locked": true, "not_moved": null}`. `ignored` is always `[]`: unknown top-level keys are refused with HTTP 400 `VALIDATION_FAILED` before the echo comparison. ADR-0034 transport keys `body_truncated`, `body_length`, `body_offset` and `body_chunk_size` are accepted and never persisted; a truthy truncation marker on a body write is still refused. Accepted fields sent at their current read value can appear in `unchanged` (#561). `PATCH` returns the same shape with both lists always `[]`, and also refuses unknown body keys with HTTP 400 `VALIDATION_FAILED` (#1221). |
+| CLI | `pyrite update <id> -k <kb> --title <t> [--content-hash <sha256>]`; one item: `--append tags=gamma`, `--remove tags=alpha`, a key: `--unset extra` | **`--format` defaults to `json`:** `{"updated": true, "entry_id": "<id>", "outcome": "done"}`. With `--format rich`: `Updated: <id>`. |
+| MCP | `kb_update`; optional precondition: `"content_hash": "<sha256>"`; one item: `"append": {"tags": "gamma"}` or `{"links": {"target": "b", "relation": "related_to"}}`, `"remove": {"tags": "alpha"}`; keys: `"unset": ["extra"]` (a list value under `append`/`remove` means each of its items) | the block below, plus `"warnings"` when any, `"ignored"` listing keys no update writes, and `"unchanged"` listing fields an echoed read result carried at the value the read returned (not written). |
+| REST (not run) | `PUT /api/entries/{id}` (body carries `kb`, optional `content_hash`) or `PATCH /api/entries/{id}` (body: `kb`, `field`, `value`, optional `content_hash`, and `op`: `set` (default), `append`, `remove` or `unset`; one field per call; `value` is the field's value, or the item for `append`/`remove`) | `PUT` returns `{"updated": true, "id": "<id>", "warnings": [], "ignored": [], "unchanged": [], "changed": true, "locked": true, "not_moved": null}`. `ignored` is always `[]`: unknown top-level keys are refused with HTTP 400 `VALIDATION_FAILED` before the echo comparison. ADR-0034 transport keys `body_truncated`, `body_length`, `body_offset` and `body_chunk_size` are accepted and never persisted; a truthy truncation marker on a body write is still refused. Accepted fields sent at their current read value can appear in `unchanged` (#561). `PATCH` returns the same shape with both lists always `[]`, and also refuses unknown body keys with HTTP 400 `VALIDATION_FAILED` (#1221). |
 
 <!-- mcp-output: kb_update -->
 ```json

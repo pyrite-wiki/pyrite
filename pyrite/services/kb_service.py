@@ -257,12 +257,21 @@ _INDEX_ONLY_KEYS = frozenset(
 #: (#1900), so its presence alone does not mark a request as an echoed read.
 _READ_RESULT_MARKERS = (_INDEX_ONLY_KEYS - {"type", "content_hash"}) | {"id", "file_path"}
 
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
 
 def _pop_content_hash_candidates(
-    updates: dict[str, Any], expected_hash: Any
+    updates: dict[str, Any], expected_hash: Any, *, pop_from_updates: bool = True
 ) -> tuple[dict[str, Any], list[tuple[str, Any]]]:
-    """Strip ``content_hash`` (and ``MARKER_KEYS``) from ``updates`` and collect
-    every ``(spelling, value)`` pair the request gave for ``content_hash`` (#1900).
+    """Strip top-level ``content_hash`` (and ``MARKER_KEYS``) from ``updates`` and
+    collect every ``(spelling, value)`` precondition pair (#1900).
+
+    When ``pop_from_updates`` is False (REST ``PATCH``, where ``updates`` holds
+    only ``{body.field: body.value}`` and ``body.content_hash`` is passed via
+    ``expected_hash``), ``content_hash`` in ``updates`` is left for
+    ``_resolve_operation`` to refuse as a managed frontmatter field. Likewise,
+    ``metadata.content_hash`` and ``metadata["content_hash"]`` are always left
+    for ``_resolve_operation`` to refuse as managed fields.
     """
     cleaned: dict[str, Any] = {}
     candidates: list[tuple[str, Any]] = []
@@ -271,14 +280,8 @@ def _pop_content_hash_candidates(
     for k, v in updates.items():
         if k in MARKER_KEYS:
             continue
-        if k in ("content_hash", "metadata.content_hash"):
+        if pop_from_updates and k == "content_hash":
             candidates.append((k, v))
-            continue
-        if k == "metadata" and isinstance(v, dict) and "content_hash" in v:
-            candidates.append(("metadata.content_hash", v["content_hash"]))
-            rest = {mk: mv for mk, mv in v.items() if mk != "content_hash"}
-            if rest:
-                cleaned[k] = rest
             continue
         cleaned[k] = v
     return cleaned, candidates
@@ -299,10 +302,10 @@ def _validate_expected_hash(entry_id: str, candidates: Sequence[tuple[str, Any]]
             message,
             errors=[{"field": "content_hash", "rule": "conflicting_spellings", "message": message}],
         )
-    if not isinstance(first_val, str) or not first_val.strip():
+    if not isinstance(first_val, str) or not _SHA256_HEX.fullmatch(first_val):
         message = (
-            f"Cannot update {entry_id!r}: content_hash must be a non-empty SHA-256 hex string "
-            f"from a read of the entry, got {first_val!r}."
+            f"Cannot update {entry_id!r}: content_hash must be a 64-character lowercase "
+            f"SHA-256 hex string from a read of the entry, got {first_val!r}."
         )
         raise ValidationError(
             message,
@@ -2456,6 +2459,7 @@ class KBService:
         remove: dict[str, Any] | None = None,
         unset: list[str] | None = None,
         content_hash: str | None = None,
+        hash_in_updates: bool = True,
     ) -> WriteResult:
         """Update an existing entry for a caller, returning it and its warnings.
 
@@ -2491,6 +2495,7 @@ class KBService:
             ops=_item_operations(append, remove, unset),
             restrict=True,
             expected_hash=content_hash,
+            hash_in_updates=hash_in_updates,
         )
 
     def apply_operations(
@@ -2553,6 +2558,7 @@ class KBService:
         refuse_statuses: Sequence[str] | None = None,
         drop_emptied_metadata: bool = False,
         expected_hash: Any = None,
+        hash_in_updates: bool = True,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2578,7 +2584,9 @@ class KBService:
         # and otherwise never stored; `_prepare` does the same at the create
         # path.
         ensure_not_truncated(updates)
-        updates, hash_candidates = _pop_content_hash_candidates(updates, expected_hash)
+        updates, hash_candidates = _pop_content_hash_candidates(
+            updates, expected_hash, pop_from_updates=hash_in_updates
+        )
 
         kb_config = self._writable_kb(kb_name)
         repo = KBRepository(kb_config)

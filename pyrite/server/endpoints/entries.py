@@ -1054,6 +1054,7 @@ def patch_entry_field(
             remove={body.field: body.value} if body.op == "remove" else None,
             unset=[body.field] if body.op == "unset" else None,
             content_hash=sent_hash,
+            hash_in_updates=False,
         )
     except EntryNotFoundError as e:
         # A KBNotFoundError is never caught here: the write tier resolves the
