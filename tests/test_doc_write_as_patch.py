@@ -1692,13 +1692,23 @@ def test_stale_content_hash_is_refused_across_every_write_surface(tmp_path: Path
         assert patch_res.json()["detail"]["code"] == "CONFLICT"
         assert path.read_bytes() == hand_edited_bytes
 
-        # Explicit null content_hash on REST is refused with 400 VALIDATION_FAILED.
+        # Explicit null and malformed content_hash on REST are refused with 400 VALIDATION_FAILED.
         null_res = world.client.patch(
             f"/api/entries/{entry_id}",
             json={"kb": KB, "field": "title", "value": "Null hash", "content_hash": None},
         )
         assert null_res.status_code == 400, null_res.text
         assert null_res.json()["detail"]["code"] == "VALIDATION_FAILED"
+        assert path.read_bytes() == hand_edited_bytes
+
+        bad_patch_res = world.client.patch(
+            f"/api/entries/{entry_id}",
+            json={"kb": KB, "field": "title", "value": "Bad hash", "content_hash": "zzz"},
+        )
+        assert bad_patch_res.status_code == 400, bad_patch_res.text
+        assert bad_patch_res.json()["detail"]["code"] == "VALIDATION_FAILED"
+        assert bad_patch_res.json()["detail"]["errors"][0]["field"] == "content_hash"
+        assert bad_patch_res.json()["detail"]["errors"][0]["rule"] == "format"
         assert path.read_bytes() == hand_edited_bytes
 
         # 4. CLI `pyrite update --content-hash` and `-f content_hash=...` refuse stale hash.

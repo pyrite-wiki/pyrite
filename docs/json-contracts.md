@@ -912,7 +912,7 @@ plus a type's own `managed_fields` (a task's `status_change_log`,
 `VALIDATION_FAILED`; MCP `kb_update` sets them aside, along with
 `created_at`/`updated_at`, index columns other than `content_hash`, and `null`s for undeclared keys,
 and lists them in the result's `ignored` field, so a read result echoed
-back cannot rewrite them; a non-null `content_hash` (echoed from a read or sent explicitly) is checked against the file's bytes on disk as a precondition and never written to the file (#1900). In a request that echoes a read result (it
+back cannot rewrite them; a non-null `content_hash` (echoed from a read or sent explicitly) is checked against the file's bytes on disk as a precondition and never written to the file (#1900). Opt-in `content_hash` also guards field-level updates (`PATCH`, CLI `--content-hash`/`-f`, and MCP `kb_update`), and a non-echo `content_hash: null` or any value other than 64 lowercase hex characters is refused with `VALIDATION_FAILED`. In a request that echoes a read result (it
 carries `id`, `file_path` or an index column other than `content_hash`), a field whose value is still
 what the read returned is not a change: it is not written, and is listed
 in the result's `unchanged` field (apart from `ignored`, which names keys no
