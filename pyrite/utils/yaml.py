@@ -28,6 +28,7 @@ from ..exceptions import FrontmatterError, TextOrigin, YamlLimitError, outside_t
 #:   so a document past this is larger than any file Pyrite is meant to hold.
 MAX_YAML_ALIASES = 1000
 MAX_YAML_EXPANDED_NODES = 1_000_000
+MAX_YAML_DEPTH = 200
 
 
 def _pyyaml_regexes(tag: str) -> list[re.Pattern[str]]:
@@ -300,6 +301,10 @@ def _measure_events(events: Any, ev: Any) -> None:
             add(1)
         elif isinstance(event, ev.CollectionStartEvent):
             stack.append([event.anchor, 1])
+            if len(stack) > MAX_YAML_DEPTH:
+                raise YamlLimitError(
+                    f"YAML document refused: nesting exceeds {MAX_YAML_DEPTH:,} levels"
+                )
         elif isinstance(event, ev.CollectionEndEvent) and stack:
             anchor, size = stack.pop()
             if anchor:
@@ -317,10 +322,18 @@ def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> 
     directive) means the document cannot be measured: it is refused,
     ``YamlLimitError``, never passed on to a load.
 
-    Skipped for text that can hold no alias (no ``&`` or no ``*``) and no
-    directive (no ``%``).
+    Skipped for text that can hold no alias (no ``&`` or no ``*``), no
+    directive (no ``%``), and too few collection tokens to reach
+    ``MAX_YAML_DEPTH``.
     """
-    if ("*" not in text or "&" not in text) and "%" not in text:
+    if (
+        ("*" not in text or "&" not in text)
+        and "%" not in text
+        and (
+            text.count("[") + text.count("{") + text.count(":") + text.count("-") + text.count("?")
+        )
+        <= MAX_YAML_DEPTH
+    ):
         return
     try:
         _measure_events(events_of(text), ev)
@@ -510,10 +523,14 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
         if not inside.present(path):
             return {}
         raise KBConfigInvalidError() from e
+    except RecursionError as e:
+        # Never let a deep parser traceback chain outlive the read (#1899):
+        # formatting or finalizing a deep traceback near the limit can
+        # overflow again on Python 3.13. Keep the message without the frames.
+        raise KBConfigInvalidError() from RecursionError(str(e))
     except Exception as e:  # noqa: BLE001 - every other way the parse fails
         # Not UTF-8 (UnicodeDecodeError), a YAML error (syntax, a control
-        # character, a duplicate key, a tag), nesting past the interpreter's
-        # recursion limit (RecursionError), or anything else the parser
+        # character, a duplicate key, a tag), or anything else the parser
         # raises: the file's bytes are the cause, so it is the file's answer.
         # Nothing but a mapping or a typed Pyrite error leaves here.
         raise KBConfigInvalidError() from e
