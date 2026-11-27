@@ -657,6 +657,12 @@ class TestNewWorktreeRemoteCases:
         assert (checkout / "hooks-called").read_text().strip() == "install"
         assert str(worktree) in self._git(checkout, "worktree", "list", "--porcelain")
 
+    def test_printed_pr_command_targets_canonical_repo(self, checkout):
+        out = self._run(checkout, "dev")
+        assert out.returncode == 0, out.stdout + out.stderr
+        pr_lines = [line.strip() for line in out.stdout.splitlines() if "gh pr create" in line]
+        assert pr_lines == ["gh pr create --repo pyrite-wiki/pyrite --base dev --draft --fill"]
+
 
 class TestCloudSessionSetup:
     """Claude Code on the web: a cloud session sets itself up from the repo.
