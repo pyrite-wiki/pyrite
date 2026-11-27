@@ -11,7 +11,7 @@ repeat.
 ## Upgrading from 0.26.x to 0.27
 
 - **CLI flags and commands removed (#1901):**
-  - `pyrite export --format` and `-f`: calls now exit 2 with `USAGE_ERROR` (`pyrite export --format` and `-f` previously aliased `--target`). Pass `--target` (e.g. `notebooklm`) instead.
+  - `pyrite export --format` and `-f`: calls now exit 2 with `USAGE_ERROR` (`pyrite export --format` and `-f` previously aliased `--target`; passing `--format` / `-f` on `export` renders the usage error in JSON because `export` does not accept an output format flag). Pass `--target` (e.g. `notebooklm`) instead.
   - `-f` on `pyrite task` commands: calls passing `-f json|yaml|rich` now exit 2 with `USAGE_ERROR`. Pass `--format` or set `PYRITE_FORMAT` instead.
   - `pyrite task status`: calls now exit 2 with `USAGE_ERROR`. Use `pyrite task get` instead.
 - **Search `distance` key removed (#1901):** semantic and hybrid search rows no longer include `distance`; read `similarity` instead. Naming `distance` in `--fields` / `fields` now reports it as an unmatched field.
@@ -516,32 +516,32 @@ has it.
 
 ### 8. Still deprecated
 
-These interfaces remain supported in 0.26.0 and are scheduled for removal in
-0.27. CLI aliases warn on stderr; response fields remain in responses until
-removal. `db.conn` emits a `DeprecationWarning`, and `FRONTMATTER_ALIASES` logs
-a warning once per class.
+These interfaces remained supported in 0.26.0; the first group left in 0.27,
+and the four re-dated interfaces leave in 0.28 (CLI aliases warn on stderr;
+`db.conn` emits a `DeprecationWarning`, and `FRONTMATTER_ALIASES` logs a
+warning once per class).
 
-- **`-f` as `--format`** on the `task` commands leaves in 0.27. Use
+- **`-f` as `--format`** on the `task` commands left in 0.27. Use
   `--format`, or set `PYRITE_FORMAT`.
-- **`pyrite export --format` (and `-f`)** leaves in 0.27. Use `--target`;
+- **`pyrite export --format` (and `-f`)** left in 0.27. Use `--target`;
   the only target today is `notebooklm`.
-- **MCP `legacy_error_code`** leaves in 0.27. Match `error_code` instead.
-- **Search `distance`** leaves in 0.27. Read `similarity` instead.
-- **`task status`** leaves in 0.27. Use `task get` instead.
-- **`db.conn`** leaves in 0.27. Use `db.session` for writes or
-  `db.execute_sql()` for read-only queries.
-- **`FRONTMATTER_ALIASES`** leaves in 0.27. Declare `field_aliases` in the
-  type's schema instead.
-- **`pyrite sw standards`** leaves in 0.27.0. Use the validations and
-  conventions commands instead.
-- **The global git identity for network commits** leaves in 0.27.0. With
-  `git_identity` unset, commits made for network callers use the server
-  account's global `user.name` and `user.email`; set `git_identity`
-  (`name`, `email`) in `config.yaml` (added in 0.26.3).
+- **MCP `legacy_error_code`** left in 0.27. Match `error_code` instead.
+- **Search `distance`** left in 0.27. Read `similarity` instead.
+- **`task status`** left in 0.27. Use `task get` instead.
+- **`db.conn`** leaves in 0.28 (re-dated from 0.27). Use `db.session` for
+  writes or `db.execute_sql()` for read-only queries.
+- **`FRONTMATTER_ALIASES`** leaves in 0.28 (re-dated from 0.27). Declare
+  `field_aliases` in the type's schema instead.
+- **`pyrite sw standards`** leaves in 0.28.0 (re-dated from 0.27; now warns
+  on stderr). Use `pyrite sw validations` and `pyrite sw conventions` instead.
+- **The global git identity for network commits** leaves in 0.28.0 (re-dated
+  from 0.27). With `git_identity` unset, commits made for network callers
+  use the server account's global `user.name` and `user.email`; set
+  `git_identity` (`name`, `email`) in `config.yaml` (added in 0.26.3).
 - **orient's `schema.guidelines`**, `schema.goals`, `schema.evaluation_rubric`,
   the per-type `ai_instructions`, `guidelines`, `goals` and
   `evaluation_rubric` under `schema.types`, and the top-level `guidelines`
-  (always `{}`) leave orient in 0.27. Read `kb_authored` (the KB's own text,
+  (always `{}`) left orient in 0.27. Read `kb_authored` (the KB's own text,
   as written) and `pyrite_guidance` (Pyrite's defaults) instead; added in
   0.26.4 (#1369).
 

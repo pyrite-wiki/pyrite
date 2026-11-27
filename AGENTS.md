@@ -55,7 +55,8 @@ The CLI is faster and cheaper than reading files by hand.
 .venv/bin/pyrite sw components    # core modules and services
 .venv/bin/pyrite sw adrs          # architecture decision records
 .venv/bin/pyrite sw backlog       # top 50 backlog items (--limit/--offset, --limit 0 for all)
-.venv/bin/pyrite sw standards     # coding standards and conventions
+.venv/bin/pyrite sw validations   # coding validations
+.venv/bin/pyrite sw conventions   # coding conventions
 .venv/bin/pyrite backlinks <entry-id> -k pyrite              # what links here
 .venv/bin/pyrite tags -k pyrite
 ```
