@@ -11,7 +11,10 @@ links:
 - launch-messaging
 - launch-user-types
 - launch-staging
+lifecycle: archived
 ---
+
+> **Historical**: March 2026 launch plan.
 
 # Channels & Content Types
 

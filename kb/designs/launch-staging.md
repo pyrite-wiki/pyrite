@@ -15,7 +15,10 @@ links:
 - personal-kb-repo-backing
 - container-deployment
 - demo-site-deployment
+lifecycle: archived
 ---
+
+> **Historical**: March 2026 launch plan.
 
 # Staging & Sequencing (four waves, ~2 pieces/week within each)
 
