@@ -1621,8 +1621,8 @@ def sw_check_ready(
 ):
     """Check Definition of Ready for a backlog item without claiming it.
 
-Ready means fully specified; an item must also be accepted to be pulled.
-"""
+        Ready means fully specified; an item must also be accepted to be pulled.
+    """
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 
