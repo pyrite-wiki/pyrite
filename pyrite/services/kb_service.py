@@ -2430,12 +2430,12 @@ class KBService:
         unchanged: list[str] = []
         for key, value in fields.items():
             if key == "content_hash":
-                # #1900: `content_hash` is a read-only index digest that
-                # ADR-0042 decision 11 uses to guard whole-document replaces
-                # (leaving field-level operations as open question 2). Pyrite
-                # checks opt-in `content_hash` and refuses it as a writable/
-                # managed field across both whole-document and field-level
-                # updates, stripping it before writing frontmatter.
+                # #1900: `content_hash` is a read-only index digest. ADR-0042 decision 11
+                # uses it to guard a whole-document replace; field operations carry no
+                # token there (question 2, decided in decision 10). This opt-in check also
+                # guards field-level updates (accepted by the maintainer as an ADR-0042
+                # amendment on 2026-11-26). It is refused as a frontmatter key and
+                # stripped before frontmatter is written.
                 if value is None and not _READ_RESULT_MARKERS.isdisjoint(fields):
                     ignored.append(key)
                 else:
