@@ -8,10 +8,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import typer
+from rich.console import Console
 from rich.table import Table
 
 from pyrite.cli.context import require_entry_kb, require_kb
-from pyrite.cli.output import cli_console, output_format_choice, path_line
+from pyrite.cli.outcome import Outcome
+from pyrite.cli.output import OUTPUT_FORMAT, cli_console, output_format_choice, path_line
 from pyrite.config import load_config
 
 from .adr_listing import (
@@ -28,6 +30,38 @@ if TYPE_CHECKING:
 sw_app = typer.Typer(help="Software KB commands (ADRs, backlog, standards, components)")
 console = cli_console()
 logger = logging.getLogger(__name__)
+
+
+@sw_app.command("relations")
+def relations(output_format: str = OUTPUT_FORMAT) -> Outcome:
+    """List software relations, their inverses and intended entry types."""
+    from pyrite.exceptions import PluginError
+    from pyrite.plugins import get_registry
+    from pyrite.plugins.capabilities import Capability
+
+    from .plugin import SoftwareKBPlugin
+
+    plugin = get_registry().get_plugin(SoftwareKBPlugin.name)
+    if plugin is None:
+        raise PluginError(f"Plugin '{SoftwareKBPlugin.name}' is not registered")
+    capabilities = getattr(plugin, "capabilities", set()) or set()
+    if Capability.DOMAIN in capabilities and hasattr(plugin, "get_relationship_types"):
+        schema = dict(plugin.get_relationship_types() or {})
+    else:
+        schema = {}
+
+    def rich(console: Console, data: dict) -> None:
+        table = Table("Relation", "Inverse", "Source types", "Target types")
+        for name, relation in sorted(data["relations"].items()):
+            table.add_row(
+                name,
+                relation.get("inverse", ""),
+                ", ".join(relation.get("source_types", ())),
+                ", ".join(relation.get("target_types", ())),
+            )
+        console.print(table)
+
+    return Outcome.done({"relations": schema}, rich=rich)
 
 
 def _query_entries(db: PyriteDB, entry_type: str, kb_name: str | None = None) -> list[dict]:
