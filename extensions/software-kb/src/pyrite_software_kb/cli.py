@@ -1169,6 +1169,7 @@ def sw_board_cmd(
             wip_limit = lane_def.get("wip_limit")
             lane: dict = {
                 "name": lane_def["name"],
+                "statuses": lane_def["statuses"],
                 "count": len(items),
             }
             if wip_limit is not None:
@@ -1193,7 +1194,8 @@ def sw_board_cmd(
                 status_str = "[red]OVER LIMIT[/red]"
             elif "wip_limit" in lane:
                 status_str = "[green]OK[/green]"
-            table.add_row(lane["name"], str(lane["count"]), wip_str, status_str)
+            lane_label = f"{lane['name']} ({', '.join(lane['statuses'])})"
+            table.add_row(lane_label, str(lane["count"]), wip_str, status_str)
 
         console.print(table)
     finally:
@@ -1682,7 +1684,10 @@ def sw_check_ready(
         help="Output format: json, rich",
     ),
 ):
-    """Check Definition of Ready for a backlog item without claiming it."""
+    """Check Definition of Ready for a backlog item without claiming it.
+
+        Ready means fully specified; an item must also be accepted to be pulled.
+    """
     require_kb(load_config(), kb_name, output_format=fmt)
     from .plugin import SoftwareKBPlugin
 

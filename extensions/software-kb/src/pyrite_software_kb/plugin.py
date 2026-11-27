@@ -1780,6 +1780,7 @@ class SoftwareKBPlugin:
                 page = items if limit is None else items[:limit]
                 lane = {
                     "name": lane_def["name"],
+                    "statuses": lane_def["statuses"],
                     "count": len(items),
                     "items": page,
                     "has_more": len(page) < len(items),
@@ -2633,6 +2634,7 @@ class SoftwareKBPlugin:
 
             priority_rank = {"critical": 0, "high": 1, "medium": 2, "low": 3}
             candidates = []
+            proposed_count = 0
             for row in rows:
                 meta = {}
                 if row["metadata"]:
@@ -2641,6 +2643,8 @@ class SoftwareKBPlugin:
                     except (json.JSONDecodeError, TypeError):
                         pass
                 status = row["status"] or meta.get("status", "proposed")
+                if status == "proposed":
+                    proposed_count += 1
                 if status != "accepted":
                     continue
                 priority = row["priority"] or meta.get("priority", "medium")
@@ -2670,9 +2674,18 @@ class SoftwareKBPlugin:
             )
 
             if not candidates:
+                reason = "No accepted items available."
+                if proposed_count:
+                    reason += (
+                        f" {proposed_count} proposed item(s) are waiting for acceptance."
+                    )
+                reason += (
+                    " Backlog items start as 'proposed'. Review an item and run "
+                    "`pyrite sw transition <id> accepted` to make it eligible for pull-next."
+                )
                 return {
                     "recommendation": None,
-                    "reason": "No accepted items available",
+                    "reason": reason,
                     "wip_status": wip_status,
                 }
 

@@ -262,3 +262,33 @@ def test_sw_empty_listings(tmp_path: Path):
         assert json.loads(res_comp_json.output) == []
     finally:
         world.close()
+
+
+def test_sw_board_outputs_lane_statuses(tmp_path: Path):
+    world = _make_sw_world(tmp_path)
+    try:
+        (world.kb_path("sw-kb") / "board.yaml").write_text(
+            "lanes:\n"
+            "  - name: Review\n"
+            "    statuses: [accepted, review]\n"
+            "  - name: Complete\n"
+            "    statuses: [done]\n"
+            "wip_policy: warn\n",
+            encoding="utf-8",
+        )
+
+        json_result = _invoke_sw(world, ["board", "-k", "sw-kb", "--format", "json"])
+        assert json_result.exit_code == 0, json_result.output
+        assert json.loads(json_result.output)["lanes"] == [
+            {"name": "Review", "statuses": ["accepted", "review"], "count": 0},
+            {"name": "Complete", "statuses": ["done"], "count": 0},
+        ]
+
+        rich_result = _invoke_sw(
+            world, ["board", "-k", "sw-kb", "--format", "rich"], columns=120
+        )
+        assert rich_result.exit_code == 0, rich_result.output
+        assert "Review (accepted, review)" in rich_result.output
+        assert "Complete (done)" in rich_result.output
+    finally:
+        world.close()

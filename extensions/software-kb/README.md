@@ -95,7 +95,7 @@ pyrite sw pull-next -k my-project
 ```
 
 ```json
-{"recommendation":null,"reason":"No accepted items available","wip_status":{"current":0,"limit":5,"policy":"warn"}}
+{"recommendation":null,"wip_status":{"current":0,"limit":5,"policy":"warn"}}
 ```
 
 ```bash
