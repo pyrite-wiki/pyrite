@@ -1,0 +1,1 @@
+- **REST entry write routes now answer `403` `KB_READ_ONLY` (`retryable: false`) for a read-only KB (#1938).** `POST /api/entries`, `PUT /api/entries/{id}`, `PATCH /api/entries/{id}`, and `DELETE /api/entries/{id}` no longer emit the legacy `READ_ONLY` error code, matching the git-ops routes and `docs/json-contracts.md`.

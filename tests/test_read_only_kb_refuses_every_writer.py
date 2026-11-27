@@ -257,3 +257,79 @@ def test_a_kb_the_check_cannot_look_up_is_refused_not_let_through(server_with_an
         server.svc = real
     assert "error_code" in result, result
     assert reached == []
+
+
+# -- the REST entry-write and git-ops routes ---------------------------------
+
+
+def test_rest_writes_refuse_a_read_only_kb_with_kb_read_only(tmp_path, monkeypatch):
+    """All four REST entry-write routes (POST, PUT, PATCH, DELETE) and the
+    git-ops routes answer 403 ``KB_READ_ONLY`` with ``retryable: false``,
+    leaving every KB file byte-identical (#1938)."""
+    from tests.test_worktree_service import _init_git_repo
+
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global-config"))
+
+    repo = tmp_path / "repo"
+    root = repo / "kb"
+    root.mkdir(parents=True)
+    entry_path = root / "notes" / "existing.md"
+    entry_path.parent.mkdir(parents=True)
+    entry_path.write_text(
+        "---\nid: existing\ntitle: Existing\ntype: note\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    _init_git_repo(repo)
+
+    world = build_world(
+        tmp_path / "rest-world",
+        kbs=[KBConfig(name=RO, path=root, kb_type="generic", read_only=True)],
+        rest=True,
+    )
+    before = _tree(root)
+    try:
+        calls = [
+            (
+                "POST /api/entries",
+                world.client.post(
+                    "/api/entries",
+                    json={"kb": RO, "entry_type": "note", "title": "New", "body": "x"},
+                ),
+            ),
+            (
+                "PUT /api/entries/existing",
+                world.client.put(
+                    "/api/entries/existing",
+                    json={"kb": RO, "title": "Updated"},
+                ),
+            ),
+            (
+                "PATCH /api/entries/existing",
+                world.client.patch(
+                    "/api/entries/existing",
+                    json={"kb": RO, "op": "set", "field": "title", "value": "Patched"},
+                ),
+            ),
+            (
+                "DELETE /api/entries/existing",
+                world.client.delete("/api/entries/existing", params={"kb": RO}),
+            ),
+            (
+                f"POST /api/kbs/{RO}/commit",
+                world.client.post(f"/api/kbs/{RO}/commit", json={"message": "nope"}),
+            ),
+            (
+                f"POST /api/kbs/{RO}/push",
+                world.client.post(f"/api/kbs/{RO}/push", json={"remote": "origin"}),
+            ),
+        ]
+    finally:
+        world.close()
+
+    for label, resp in calls:
+        assert resp.status_code == 403, f"{label}: {resp.status_code} {resp.text}"
+        detail = resp.json()["detail"]
+        assert detail["code"] == "KB_READ_ONLY", f"{label}: {detail}"
+        assert detail["retryable"] is False, f"{label}: {detail}"
+    assert _tree(root) == before

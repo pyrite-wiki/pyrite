@@ -903,8 +903,9 @@ def create_entry(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        # Let the central handler answer 403 KB_READ_ONLY with retryable: false (#1938).
+        raise
     except ValidationError as e:
         raise refusal_http(e)
     except (AccessDenied, KBUnreadableError):
@@ -980,8 +981,9 @@ def update_entry(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        # Let the central handler answer 403 KB_READ_ONLY with retryable: false (#1938).
+        raise
     except ValidationError as e:
         raise refusal_http(e)
     except ConflictError as e:
@@ -1050,8 +1052,9 @@ def patch_entry_field(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        # Let the central handler answer 403 KB_READ_ONLY with retryable: false (#1938).
+        raise
     except ValidationError as e:
         raise refusal_http(e)
     except ConflictError as e:
@@ -1098,8 +1101,9 @@ def delete_entry(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        # Let the central handler answer 403 KB_READ_ONLY with retryable: false (#1938).
+        raise
     except EntryLoadError as e:
         raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
     except KBUnreadableError:

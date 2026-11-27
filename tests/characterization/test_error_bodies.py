@@ -122,12 +122,8 @@ def test_query_too_long_live_over_rest(world):
 def test_kb_read_only_live_over_rest(world):
     from tests.characterization.world import READ_ONLY
 
-    # Oddity (reported): this route's own `except KBReadOnlyError` answers
-    # {"code": "READ_ONLY", ...} -- not the central handler's KB_READ_ONLY
-    # (pyrite/server/endpoints/entries.py:776 and 3 siblings), a THIRD
-    # spelling alongside MCP/CLI's own "READ_ONLY" (which happens to
-    # coincide here) and the central table's "KB_READ_ONLY". The golden
-    # below pins today's real code, not the central table's.
+    # REST entry writes delegate KBReadOnlyError to the central handler (#1938),
+    # answering 403 KB_READ_ONLY with retryable: false, matching the golden below.
     p = world.principals["admin_key"]
     resp = world.client.post(
         "/api/entries",
@@ -135,7 +131,9 @@ def test_kb_read_only_live_over_rest(world):
         headers=p.rest_headers,
     )
     assert resp.status_code == 403
-    assert resp.json()["detail"]["code"] == "READ_ONLY"
+    detail = resp.json()["detail"]
+    assert detail["code"] == "KB_READ_ONLY"
+    assert detail["retryable"] is False
 
 
 def test_kb_protected_live_over_rest(world):

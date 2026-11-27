@@ -85,8 +85,9 @@ def commit_kb(
     try:
         result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
         return result
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        # Let the central handler answer 403 KB_READ_ONLY with retryable: false (#1938).
+        raise
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
@@ -112,8 +113,9 @@ def push_kb(
     try:
         result = export_svc.push_kb(kb_name, remote=remote, branch=branch)
         return result
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        # Let the central handler answer 403 KB_READ_ONLY with retryable: false (#1938).
+        raise
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
