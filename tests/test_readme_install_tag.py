@@ -71,3 +71,11 @@ def test_the_docs_give_the_no_clone_extension_lines_at_the_declared_version():
     )
     tags = re.findall(r"pyrite@v([0-9][^\s\"'#]*)", started)
     assert tags and set(tags) == {version}, tags
+
+
+def test_agentic_development_tutorial_install_tag_is_the_declared_version():
+    version = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]["version"]
+    tutorial = (REPO / "docs" / "tutorials" / "agentic-development.md").read_text()
+    assert _no_clone_line("software-kb", version) in tutorial
+    tags = re.findall(r"pyrite@v([0-9][^\s\"'#]*)", tutorial)
+    assert tags and set(tags) == {version}, tags

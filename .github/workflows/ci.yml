@@ -891,7 +891,7 @@ jobs:
     needs: changes
     if: github.ref == 'refs/heads/dev' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -959,6 +959,9 @@ jobs:
       # after the cheaper getting-started one.
       - name: Pyrite in 20 minutes tutorial (docs-as-tests)
         run: bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md
+
+      - name: Agentic development tutorial (docs-as-tests)
+        run: bash scripts/run_tutorial.sh docs/tutorials/agentic-development.md
 
   # ===========================================================================
   # A live check of the recorded fixtures. The Hugo download stays outside gate.
