@@ -313,6 +313,11 @@ def _measure_events(events: Any, ev: Any) -> None:
             add(size)
 
 
+def _max_block_nesting_prefix(text: str) -> int:
+    """Maximum leading block-nesting prefix length across lines of ``text``."""
+    return max((len(line) - len(line.lstrip(" \t-?")) for line in text.splitlines()), default=0)
+
+
 def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> None:
     """The bound on ``text``, measured by one parser (``events_of``, its
     event stream; ``parse_error``, its own error for malformed YAML).
@@ -324,16 +329,13 @@ def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> 
     ``YamlLimitError``, never passed on to a load.
 
     Skipped for text that can hold no alias (no ``&`` or no ``*``), no
-    directive (no ``%``), and too few collection tokens to reach
+    directive (no ``%``), and too little nesting structure to reach
     ``MAX_YAML_DEPTH``.
     """
     if (
         ("*" not in text or "&" not in text)
         and "%" not in text
-        and (
-            text.count("[") + text.count("{") + text.count(":") + text.count("-") + text.count("?")
-        )
-        <= MAX_YAML_DEPTH
+        and (text.count("[") + text.count("{") + _max_block_nesting_prefix(text)) <= MAX_YAML_DEPTH
     ):
         return
     try:
@@ -509,6 +511,7 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
     inside = KBFiles(root)
     if not inside.present(path):  # nothing there, a dangling link, a link loop
         return {}
+    recursion_msg: str | None = None
     try:
         data = load_yaml_file(path, kb_root=root)
     except YamlLimitError as e:  # Pyrite's own refusal: over the YAML limits
@@ -525,16 +528,20 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
             return {}
         raise KBConfigInvalidError() from e
     except RecursionError as e:
-        # Never let a deep parser traceback chain outlive the read (#1899):
-        # formatting or finalizing a deep traceback near the limit can
-        # overflow again on Python 3.13. Keep the message without the frames.
-        raise KBConfigInvalidError() from RecursionError(str(e))
+        # Never let a deep parser traceback chain or __context__ outlive the
+        # read (#1899): clear the caught traceback and re-raise outside the
+        # except block so no deep frame chain survives in __cause__ or
+        # __context__ for later formatting/finalization.
+        recursion_msg = str(e)
+        e.__traceback__ = None
     except Exception as e:  # noqa: BLE001 - every other way the parse fails
         # Not UTF-8 (UnicodeDecodeError), a YAML error (syntax, a control
         # character, a duplicate key, a tag), or anything else the parser
         # raises: the file's bytes are the cause, so it is the file's answer.
         # Nothing but a mapping or a typed Pyrite error leaves here.
         raise KBConfigInvalidError() from e
+    if recursion_msg is not None:
+        raise KBConfigInvalidError() from RecursionError(recursion_msg)
     if not isinstance(data, Mapping):
         raise KBConfigInvalidError() from TypeError(
             f"the top level of kb.yaml is a {type(data).__name__}, not a mapping"
