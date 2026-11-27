@@ -120,22 +120,51 @@ def test_query_too_long_live_over_rest(world):
 
 
 def test_kb_read_only_live_over_rest(world):
-    from tests.characterization.world import READ_ONLY
+    from tests.characterization.world import READ_ONLY, READ_ONLY_ENTRY
 
-    # Oddity (reported): this route's own `except KBReadOnlyError` answers
-    # {"code": "READ_ONLY", ...} -- not the central handler's KB_READ_ONLY
-    # (pyrite/server/endpoints/entries.py:776 and 3 siblings), a THIRD
-    # spelling alongside MCP/CLI's own "READ_ONLY" (which happens to
-    # coincide here) and the central table's "KB_READ_ONLY". The golden
-    # below pins today's real code, not the central table's.
+    # REST entry write handlers answer the central handler's KB_READ_ONLY
+    # with retryable: false (#1938).
     p = world.principals["admin_key"]
+
+    # 1. POST /api/entries (create)
     resp = world.client.post(
         "/api/entries",
         json={"kb": READ_ONLY, "entry_type": "note", "title": "nope", "body": "x"},
         headers=p.rest_headers,
     )
     assert resp.status_code == 403
-    assert resp.json()["detail"]["code"] == "READ_ONLY"
+    assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+    assert resp.json()["detail"]["retryable"] is False
+
+    # 2. PUT /api/entries/{id} (update)
+    resp = world.client.put(
+        f"/api/entries/{READ_ONLY_ENTRY}",
+        json={"kb": READ_ONLY, "title": "updated"},
+        headers=p.rest_headers,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+    assert resp.json()["detail"]["retryable"] is False
+
+    # 3. PATCH /api/entries/{id} (update_fields)
+    resp = world.client.patch(
+        f"/api/entries/{READ_ONLY_ENTRY}",
+        json={"kb": READ_ONLY, "field": "title", "value": "patched", "op": "set"},
+        headers=p.rest_headers,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+    assert resp.json()["detail"]["retryable"] is False
+
+    # 4. DELETE /api/entries/{id} (delete)
+    resp = world.client.delete(
+        f"/api/entries/{READ_ONLY_ENTRY}",
+        params={"kb": READ_ONLY},
+        headers=p.rest_headers,
+    )
+    assert resp.status_code == 403
+    assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+    assert resp.json()["detail"]["retryable"] is False
 
 
 def test_kb_protected_live_over_rest(world):

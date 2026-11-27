@@ -904,7 +904,10 @@ def create_entry(
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
+        )
     except ValidationError as e:
         raise refusal_http(e)
     except (AccessDenied, KBUnreadableError):
@@ -981,7 +984,10 @@ def update_entry(
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
+        )
     except ValidationError as e:
         raise refusal_http(e)
     except ConflictError as e:
@@ -1051,7 +1057,10 @@ def patch_entry_field(
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
+        )
     except ValidationError as e:
         raise refusal_http(e)
     except ConflictError as e:
@@ -1099,7 +1108,10 @@ def delete_entry(
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
     except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "READ_ONLY", "message": str(e)})
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
+        )
     except EntryLoadError as e:
         raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
     except KBUnreadableError:

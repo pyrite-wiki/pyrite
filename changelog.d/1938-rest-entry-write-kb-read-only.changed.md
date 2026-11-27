@@ -1,0 +1,1 @@
+- Every REST write refused because the KB is read-only now answers `403` with `code: KB_READ_ONLY` and `retryable: false` across all entry-write routes (create, update, update-fields, delete), retiring the legacy `READ_ONLY` code scheduled for removal in 0.27 (#1938).

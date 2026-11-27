@@ -257,3 +257,43 @@ def test_a_kb_the_check_cannot_look_up_is_refused_not_let_through(server_with_an
         server.svc = real
     assert "error_code" in result, result
     assert reached == []
+
+
+def test_rest_entry_write_routes_refuse_read_only_kb(tmp_path):
+    """Every REST entry write refused because the KB is read-only answers 403
+    with code KB_READ_ONLY and retryable false (#1938)."""
+    root = tmp_path / RO
+    root.mkdir()
+    world = build_world(
+        tmp_path / "world",
+        kbs=[KBConfig(name=RO, path=root, read_only=True)],
+        rest=True,
+    )
+    world.add_entry(RO, "---\nid: a\ntitle: A\ntype: note\n---\nbody\n", filename="notes/a.md")
+    try:
+        # 1. POST /api/entries (create)
+        resp = world.client.post("/api/entries", json={"kb": RO, "entry_type": "note", "title": "t", "body": "b"})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+        assert resp.json()["detail"]["retryable"] is False
+
+        # 2. PUT /api/entries/{id} (update)
+        resp = world.client.put("/api/entries/a", json={"kb": RO, "title": "updated"})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+        assert resp.json()["detail"]["retryable"] is False
+
+        # 3. PATCH /api/entries/{id} (update_fields)
+        resp = world.client.patch("/api/entries/a", json={"kb": RO, "field": "title", "value": "v", "op": "set"})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+        assert resp.json()["detail"]["retryable"] is False
+
+        # 4. DELETE /api/entries/{id} (delete)
+        resp = world.client.delete("/api/entries/a", params={"kb": RO})
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+        assert resp.json()["detail"]["retryable"] is False
+    finally:
+        world.close()
+
