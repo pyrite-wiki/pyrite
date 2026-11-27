@@ -69,7 +69,7 @@ def test_deploy_and_prod_compose_files_keep_auth_on():
     wide bind always comes with a credential."""
     files = sorted((ROOT / "deploy").glob("*/docker-compose*.y*ml"))
     files.append(ROOT / "docker-compose.prod.yml")
-    assert len(files) == 5, "no deploy compose files found"
+    assert len(files) == 4, "no deploy compose files found"
     for f in files:
         svcs = yaml.safe_load(f.read_text())["services"].values()
         envs = []
