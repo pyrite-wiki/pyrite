@@ -41,6 +41,18 @@ console = cli_console()
 err_console = cli_console(stderr=True)
 
 
+@app.callback()
+def _root(ctx: typer.Context) -> None:
+    """Every pyrite-read command is the operator's own process
+    (``services.acting``): bound here for the command, as ``pyrite``'s root
+    binds it, so an in-process invocation is the operator too, not only one
+    that went through ``main``."""
+    from .services.acting import OPERATOR, acting_as, local_process
+
+    ctx.with_resource(acting_as(OPERATOR))
+    ctx.with_resource(local_process(True))
+
+
 def _emit_error(
     message: str,
     output_format: str,

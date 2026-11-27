@@ -117,6 +117,37 @@ pyrite kb commit -k my-kb -m "Add first entries"
 
 (`git add` and `git commit` in the KB directory do the same.)
 
+## Share or publish a KB
+
+To hand someone the complete KB, share the directory with its `kb.yaml` and
+entry files. If it is in Git, they can clone the repository to get the
+committed entries and their history. To try that locally:
+
+```bash
+git clone ~/my-kb ~/my-kb-clone
+```
+
+For a KB outside Git, copy the whole folder to a new destination:
+
+```bash
+cp -R ~/my-kb ~/my-kb-copy
+```
+
+To prepare a Quartz site, use `--init` once to scaffold the project and export
+its entries as Markdown. Run the second command to update current entries. If
+you delete an entry from the KB, its exported page stays in the site directory.
+
+```bash
+pyrite export site -k my-kb -o ~/my-site --init
+pyrite export site -k my-kb -o ~/my-site
+```
+
+To prepare the events from this tutorial as a NotebookLM bundle:
+
+```bash
+pyrite export collection "q:type:event" -k my-kb -o ~/my-events
+```
+
 ## Search Your Knowledge Base
 
 **Keyword search** works out of the box:

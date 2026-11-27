@@ -222,3 +222,26 @@ class TestReadCLIExcludesWrites:
         assert (
             result.exit_code == 2 or "No such command" in result.output or "Error" in result.output
         )
+
+
+def test_read_cli_binds_operator_and_local_process():
+    """pyrite-read binds acting_as(OPERATOR) and local_process(True) for every command (#1460)."""
+    from pyrite.read_cli import app as read_app
+    from pyrite.services.acting import OPERATOR, acting, is_local_process
+
+    observed = {}
+
+    @read_app.command("_probe_acting_1460")
+    def probe():
+        observed["local_process"] = is_local_process()
+        observed["acting"] = acting()
+
+    try:
+        res = runner.invoke(read_app, ["_probe_acting_1460"])
+        assert res.exit_code == 0, res.output
+        assert observed["local_process"] is True
+        assert observed["acting"] is OPERATOR
+    finally:
+        read_app.registered_commands[:] = [
+            c for c in read_app.registered_commands if c.name != "_probe_acting_1460"
+        ]
