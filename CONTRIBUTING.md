@@ -642,6 +642,9 @@ Whether to remove a public option at all is the maintainer's decision. An issue 
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
   `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
   each pull request into a single commit on `dev` by default.
+- A `[[link]]` in a `kb/` entry takes the entry's id, which can differ from its
+  file name; check the id with `pyrite get <id> -k pyrite` before you write the
+  link.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
@@ -702,6 +705,10 @@ labelled `help wanted` or `good first issue`.
 A claim with no PR after 5 days lapses. Two people on one issue is fine — the
 first PR that meets the acceptance criteria merges, and we credit the other
 in the changelog entry for the change.
+
+Before you start on an issue, search its open pull requests
+(`gh pr list --state open --search "<issue number>"`); if one exists, review
+it, extend it or comment there instead of opening another.
 
 A placeholder commit or file is not a claim, and we don't merge placeholders.
 
@@ -851,6 +858,8 @@ the ones that arrived on 2026-09-18 from four first-time contributors all did:
   ```
   Changelog: none
   ```
+  A change that alters public output beyond what its issue asked for says so
+  in the pull-request description and in its changelog fragment.
 - AI-assisted contributions are welcome here. If an AI coding agent wrote or
   co-wrote your change, declare it with a `Co-authored-by:` trailer on the
   commit (most agent tools add this automatically) — it is machine-readable,

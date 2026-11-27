@@ -1,6 +1,8 @@
 # tests/test_a_failure_is_never_a_success.py: four shrink-only baselines (T4-1, #1531).
 # Never add or raise a line: lower or delete it when a site is removed. One line per file (or
 # per handler group), so two honest pull requests never touch the same line (#1608).
+# Neighbouring lines can still conflict in git; the pull request that lands second
+# resolves by keeping dev's line and its own line.
 #
 # http_exception | <count> | <path>   HTTPException( calls outside server/errors.py and
 #                                     server/endpoints/write_refusal.py (target 0)
