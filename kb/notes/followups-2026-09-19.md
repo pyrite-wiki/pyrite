@@ -7,6 +7,7 @@ tags:
 - review
 - filed
 importance: 5
+lifecycle: archived
 ---
 
 Five follow-ups found during the 2026-09-19 reviews. **Filed 2026-09-20 with the maintainer's agreement:** #192, #193, #194, #195, #196; the `pyrite create -t note` → ADR bug hit while writing this note is #197. Each section below

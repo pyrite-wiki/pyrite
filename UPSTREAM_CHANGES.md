@@ -17,24 +17,7 @@ These concepts are preserved in the zettelkasten extension (`extensions/zettelka
 
 ## What Pyrite Replaced or Rebuilt
 
-Essentially everything else. The scope of changes makes this closer to a rewrite than a fork:
-
-| Area | Upstream | Pyrite |
-|------|----------|--------|
-| Package name | `zettelkasten` | `pyrite` |
-| Knowledge bases | Single KB | Multi-KB with cross-references |
-| Entry types | Single `Note` model | 8 core types + plugin-defined types + YAML-defined custom types |
-| Storage | In-memory search | SQLAlchemy ORM + SQLite FTS5 + Alembic migrations |
-| Search | Basic text matching | FTS5 with BM25, semantic (embeddings), hybrid mode |
-| Interfaces | Single CLI | CLI (read/write/admin), REST API, MCP server, SvelteKit frontend |
-| MCP | 7 tools, single tier | 15+ tools across 3 permission tiers + prompts + resources |
-| AI providers | OpenAI only | OpenAI, Anthropic, stub (abstraction layer) |
-| Extensibility | None | Plugin protocol with 12 extension points |
-| Schema system | Hardcoded | 4-layer resolution (config YAML → plugin → core defaults → empty) |
-| Collaboration | None | GitHub OAuth, multi-user, workspace repos, git version tracking |
-| Validation | None | Pydantic models + YAML field schemas with 10 field types |
-| Content formats | Markdown only | JSON, Markdown, CSV, YAML via content negotiation |
-| Tests | Minimal | 583 tests covering CRUD, FTS5, REST, MCP, plugins, migrations, security |
+Essentially everything else. The scope of changes makes this closer to a rewrite than a fork: the package and module tree were renamed to `pyrite`, and the architecture was rebuilt around multiple knowledge bases, plugins, several interfaces (CLI, REST API, MCP server, web frontend) and agent integration. For what Pyrite is today, see [README.md](README.md) and `docs/`; this file keeps only the history.
 
 ## Syncing with Upstream
 
