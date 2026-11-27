@@ -21,8 +21,8 @@ Accept an iterable of keys on `Signer(secret_key)` (normalized to `Signer.secret
 ## Consequences
 
 - Operators can append a new key to `secret_keys` to sign all new payloads while still accepting unexpired signatures produced with older keys.
-- Removing an old key from the front of `secret_keys` revokes tokens signed with that key immediately.
+- Because `Signer.verify_signature` checks only keys present in `self.secret_keys`, removing an old key stops accepting signatures made with that key (inferred from `src/itsdangerous/signer.py`).
 
-## Alternatives rejected
+## Open questions
 
-- **Single key with external dual-serializer wrapper:** Forces every caller to catch `BadSignature` and retry a second `Serializer` instance by hand instead of keeping rotation policy in configuration (`src/itsdangerous/serializer.py`).
+- Were callers previously maintaining external dual-serializer wrappers before `secret_keys` / `fallback_signers` were introduced? (`CHANGES.rst` records the feature addition, not rejected alternatives.)

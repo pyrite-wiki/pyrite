@@ -10,7 +10,7 @@ By the end, a fresh agent session with no chat history answers **"why is this mo
 
 - macOS or Linux, `git`, and Python 3.11 or newer.
 - Any terminal coding agent (Claude Code is the tested example; the prompts and CLI commands work with any agent that can run shell commands).
-- Your own code repository, or the small BSD-3 Python library [`pallets/itsdangerous`](https://github.com/pallets/itsdangerous) pinned at tag `2.2.0` to follow along verbatim (and which CI runs).
+- Your own code repository, or the small BSD-3 Python library [`pallets/itsdangerous`](https://github.com/pallets/itsdangerous) pinned at tag `2.2.0` to follow along verbatim (and which CI runs on `dev`).
 
 See the [software-kb extension guide](../../extensions/software-kb/README.md) for the complete entry-type reference, link vocabulary, and backlog state machine.
 
@@ -452,7 +452,7 @@ git commit -m "kb: seed project memory and complete fallback-signer-verification
 
 ### 1. A teammate or cloud session clones the repository
 
-When a teammate or a cloud worker clones the repository, `kb/` is on disk, but `~/.pyrite/index.db` on that machine has not indexed the clone yet (if they run `pyrite sw backlog` before indexing, it returns `[]`). Give the clone its own fresh `HOME` (simulating a teammate's machine), register the KB with `pyrite kb discover --add`, and build its local index with `pyrite index sync`:
+When a teammate or a cloud worker clones the repository, `kb/` is on disk, but `~/.pyrite/index.db` on that machine has not indexed the clone yet (until they register and index the clone, Pyrite does not know about its `kb/` yet). Give the clone its own fresh `HOME` (simulating a teammate's machine), register the KB with `pyrite kb discover --add`, and build its local index with `pyrite index sync`:
 
 ```bash
 cd ..
@@ -495,7 +495,7 @@ pyrite mcp-setup --project
 
 <!-- runner: expect-text .mcp.json -->
 
-**Why this works ([`kb/design.md`](../../kb/design.md), Principle 8 — *Each rule lives in one place*, and Principle 10 — *One primary user per surface*):** Both surfaces call the same service methods so schema and lifecycle rules are enforced once, while the CLI serves shell pipelines and MCP serves agent tool calls.
+**Why this works ([`kb/design.md`](../../kb/design.md), Principle 8 — *Each rule lives in one place*):** Both CLI and MCP call the same service methods so schema and lifecycle rules are enforced once.
 
 ### 3. Add a lightweight `task` tracker alongside the software KB
 

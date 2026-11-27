@@ -76,9 +76,16 @@ def _sw_session_verbs(markdown_text: str) -> list[str]:
     return verbs
 
 
-def test_hand_cycle_and_session_skills_name_the_same_sw_verbs_in_order():
+def _is_subsequence(needle: list[str], haystack: list[str]) -> bool:
+    it = iter(haystack)
+    return all(item in it for item in needle)
+
+
+def test_hand_cycle_and_session_skills_follow_documented_sw_verb_sequences():
     """#1895 acceptance 4: the page's Act 3 hand cycle and the session-start +
-    session-wrap skills name the same `pyrite sw` verbs in the same order."""
+    session-wrap skills share the documented `pyrite sw` workflow backbone in
+    order (`board`, `backlog`, `pull-next`, `transition`, `context-for-item`,
+    `claim`, `log`, `submit`) while preserving each sequence's step order."""
     tutorial_text = TUTORIAL.read_text(encoding="utf-8")
     act3_text = tutorial_text.split("## Act 3:")[1].split("## Act 4:")[0]
     # Strip the introductory prompt block so we measure the deterministic hand cycle blocks.
@@ -89,7 +96,22 @@ def test_hand_cycle_and_session_skills_name_the_same_sw_verbs_in_order():
     # In session-wrap, Step 0 only notes pull-next/claim as a recovery fallback; Steps 1–5 are the wrap sequence.
     wrap_main = wrap_text.split("### 1. Log the work session", 1)[1]
 
-    expected = [
+    backbone = [
+        "board",
+        "backlog",
+        "pull-next",
+        "transition",
+        "context-for-item",
+        "claim",
+        "log",
+        "submit",
+    ]
+    hand_cycle = _sw_session_verbs(hand_cycle_text)
+    skill_flow = _sw_session_verbs(start_steps) + _sw_session_verbs(wrap_main)
+
+    assert _is_subsequence(backbone, hand_cycle)
+    assert _is_subsequence(backbone, skill_flow)
+    assert hand_cycle == [
         "board",
         "backlog",
         "pull-next",
@@ -100,8 +122,7 @@ def test_hand_cycle_and_session_skills_name_the_same_sw_verbs_in_order():
         "log",
         "submit",
     ]
-    assert _sw_session_verbs(hand_cycle_text) == expected
-    assert _sw_session_verbs(start_steps) + _sw_session_verbs(wrap_main) == [
+    assert skill_flow == [
         "board",
         "backlog",
         "pull-next",
