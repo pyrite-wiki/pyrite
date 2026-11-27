@@ -2433,9 +2433,9 @@ class KBService:
                 # #1900: `content_hash` is a read-only index digest. ADR-0042 decision 11
                 # uses it to guard a whole-document replace; field operations carry no
                 # token there (question 2, decided in decision 10). This opt-in check also
-                # guards field-level updates (accepted by the maintainer as an ADR-0042
-                # amendment on 2026-11-26). It is refused as a frontmatter key and
-                # stripped before frontmatter is written.
+                # guards field-level updates (a proposed ADR-0042 amendment, 2026-11-26).
+                # It is refused as a frontmatter key and stripped before frontmatter is
+                # written.
                 if value is None and not _READ_RESULT_MARKERS.isdisjoint(fields):
                     ignored.append(key)
                 else:

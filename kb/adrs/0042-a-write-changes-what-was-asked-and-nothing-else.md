@@ -1344,7 +1344,10 @@ public surface; `unset` is added to the CLI, MCP and REST as one named
 operation; the `body:` cleanup, alias renames and `_schema_version` stamping
 are explicit commands.
 
-## Amendment, proposed 2026-11-26 (accepted by the maintainer on PR #1913)
+## Amendment (proposed 2026-11-26, #1900)
+
+The maintainer accepted the opt-in field-level `content_hash` guard on PR `#1913`
+(2026-11-26); this amendment text awaits his acceptance.
 
 Extending decisions 10 and 11 for `#1900`: any update (whole-document replace
 or field-level update via `PUT`/`PATCH`, `kb_update`, or `pyrite update`) that
