@@ -1,0 +1,1 @@
+- REST entry writes to a read-only KB now return `KB_READ_ONLY` with `retryable: false`; the legacy `READ_ONLY` response is removed from these routes.

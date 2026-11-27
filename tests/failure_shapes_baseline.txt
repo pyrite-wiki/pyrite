@@ -24,7 +24,7 @@ http_exception | 1 | pyrite/server/endpoints/blocks.py
 http_exception | 6 | pyrite/server/endpoints/clipper.py
 http_exception | 3 | pyrite/server/endpoints/collections.py
 http_exception | 2 | pyrite/server/endpoints/daily.py
-http_exception | 27 | pyrite/server/endpoints/entries.py
+http_exception | 23 | pyrite/server/endpoints/entries.py
 http_exception | 10 | pyrite/server/endpoints/git_ops.py
 http_exception | 6 | pyrite/server/endpoints/kbs.py
 http_exception | 14 | pyrite/server/endpoints/repos.py
