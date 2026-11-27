@@ -298,7 +298,12 @@ def test_rest_git_ops_refuse_a_read_only_kb_with_kb_read_only(tmp_path, monkeypa
     )
     before = _tree(root)
     head_before = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
     ).stdout
     try:
         calls = [
@@ -325,10 +330,20 @@ def test_rest_git_ops_refuse_a_read_only_kb_with_kb_read_only(tmp_path, monkeypa
         assert detail["retryable"] is False, f"{label}: {detail}"
     assert _tree(root) == before
     head_after = subprocess.run(
-        ["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
     ).stdout
     git_status = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=repo, capture_output=True, text=True, check=True
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
     ).stdout
     assert head_before == head_after
     assert "kb/notes/uncommitted.md" in git_status
