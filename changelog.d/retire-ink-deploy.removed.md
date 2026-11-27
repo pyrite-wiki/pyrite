@@ -1,0 +1,1 @@
+- **The retired `pyrite.ink` deploy template (`deploy/ink/`) is removed**, and `deploy/journalists/update.sh` now pulls and redeploys the journalists compose stack (`deploy/journalists/docker-compose.yml`) instead of `deploy/selfhost`'s. The release script's post-tag checklist no longer prints deploy commands for the retired `ink` and `cascade` deployments.

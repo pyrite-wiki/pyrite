@@ -1,3 +1,0 @@
-pyrite.ink {
-	reverse_proxy pyrite:8088
-}

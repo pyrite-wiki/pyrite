@@ -1,7 +1,7 @@
 # White-labeling a Pyrite deployment
 
 Pyrite ships as "Pyrite" out of the box, but an operator running a
-branded instance (e.g. `investigate.transparencycascade.org`) can
+branded instance (for example, a hostname like `investigate.transparencycascade.org`) can
 re-skin the UI and rendered output under a custom identity. This is
 **cosmetic re-skinning, not attribution removal** — Pyrite is open
 source and the "Powered by Pyrite" credit always remains visible in
@@ -120,7 +120,7 @@ The frontend picks the variant matching the active theme.
 | Path | Description |
 |------|-------------|
 | `deploy/branding-examples/default/` | Documents the config format with inline comments. Pyrite's defaults are compiled in — this folder isn't loaded automatically. |
-| `deploy/branding-examples/transparency-cascade/` | Complete working example for `investigate.transparencycascade.org`: real logo + wordmark, tuned color, full metadata. |
+| `deploy/branding-examples/transparency-cascade/` | Complete working example for an example hostname (`investigate.transparencycascade.org`): real logo + wordmark, tuned color, full metadata. |
 
 ## Out of scope (V1)
 

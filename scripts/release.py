@@ -1934,8 +1934,6 @@ def step_handoff(ctx: Context) -> None:
     print(f"         - whatever {tag} added that the site's feature list should say")
     print()
     print("    2. Deploys -- the tag does not deploy itself (site mapping, runbook):")
-    print(f"         ./pyrite_deployments/deploy.sh ink {tag}")
-    print("         ./pyrite_deployments/deploy.sh cascade        # --reseed if KB data changed")
     print("       (demo.pyrite.wiki follows dev HEAD automatically; nothing to do)")
     print()
     print(
