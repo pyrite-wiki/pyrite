@@ -77,7 +77,7 @@ def test_service_priority_filter_respects_kb_scope(task_list_env, tmp_path, kb_n
     ],
 )
 def test_cli_priority_filter(task_list_env, fmt, filters, expected):
-    result = runner.invoke(app, ["task", "list", "-k", "test-tasks", "-f", fmt, *filters])
+    result = runner.invoke(app, ["task", "list", "-k", "test-tasks", "--format", fmt, *filters])
     assert result.exit_code == 0, result.output
     if fmt == "json":
         data = json.loads(result.stdout)
@@ -91,7 +91,9 @@ def test_cli_priority_filter(task_list_env, fmt, filters, expected):
 @pytest.mark.cli
 @pytest.mark.parametrize("fmt", ["json", "rich"])
 def test_cli_priority_filter_refuses_zero(task_list_env, fmt):
-    result = runner.invoke(app, ["task", "list", "-k", "test-tasks", "-f", fmt, "--priority", "0"])
+    result = runner.invoke(
+        app, ["task", "list", "-k", "test-tasks", "--format", fmt, "--priority", "0"]
+    )
     assert result.exit_code == 2, result.output
     if fmt == "json":
         error = json.loads(result.stdout)

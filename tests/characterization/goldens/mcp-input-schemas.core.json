@@ -714,7 +714,7 @@
       "inputSchema": {
         "properties": {
           "detail": {
-            "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+            "description": "full (default; null is the same): everything. brief: omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults).",
             "enum": [
               "brief",
               "full",
@@ -2256,7 +2256,7 @@
       "inputSchema": {
         "properties": {
           "detail": {
-            "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+            "description": "full (default; null is the same): everything. brief: omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults).",
             "enum": [
               "brief",
               "full",
@@ -3376,7 +3376,7 @@
       "inputSchema": {
         "properties": {
           "detail": {
-            "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+            "description": "full (default; null is the same): everything. brief: omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults).",
             "enum": [
               "brief",
               "full",

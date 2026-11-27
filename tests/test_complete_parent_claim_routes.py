@@ -32,9 +32,9 @@ ROUTES = [
 def request_claim(config, route):
     if route.startswith("cli_"):
         command = (
-            ["task", "claim", "parent", "-k", "work", "-a", "worker", "-f", "json"]
+            ["task", "claim", "parent", "-k", "work", "-a", "worker", "--format", "json"]
             if route == "cli_claim"
-            else ["task", "update", "parent", "-k", "work", "-s", "claimed", "-f", "json"]
+            else ["task", "update", "parent", "-k", "work", "-s", "claimed", "--format", "json"]
         )
         save_config(config)
         result = CliRunner().invoke(app, command)

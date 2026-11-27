@@ -247,7 +247,7 @@ def register_browse_commands(app: typer.Typer) -> None:
         detail: str | None = typer.Option(
             None,
             "--detail",
-            help="full (default) or brief. brief omits the write-side schema blocks.",
+            help="full (default) or brief. brief omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults).",
         ),
         overview_limit: int = typer.Option(
             50,

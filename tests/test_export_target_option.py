@@ -95,48 +95,28 @@ class TestSiteTarget:
         assert _files(out)
         assert "deprecated" not in result.stderr.lower()
 
-    @pytest.mark.parametrize("flag", ["--format", "-f"])
-    def test_old_spelling_writes_the_same_files_and_warns_once(self, config, tmp_path, flag):
-        new, old = tmp_path / "new", tmp_path / "old"
-        assert _export(config, *SITE, "-o", str(new), "--target", "quartz").exit_code == 0
-        result = _export(config, *SITE, "-o", str(old), flag, "quartz")
-        assert result.exit_code == 0, result.output
-        assert _files(old) == _files(new)
-        warnings = [ln for ln in result.stderr.splitlines() if "deprecated" in ln.lower()]
-        assert len(warnings) == 1, result.stderr
-        assert "--target" in warnings[0]
-
     def test_default_is_unchanged(self, config, tmp_path):
         out = tmp_path / "d"
         result = _export(config, *SITE, "-o", str(out))
         assert result.exit_code == 0, result.output
         assert _files(out)
 
-    @pytest.mark.parametrize("flag", ["--target", "--format", "-f"])
-    def test_unknown_target_is_refused_before_anything_is_written(self, config, tmp_path, flag):
+    def test_unknown_target_is_refused_before_anything_is_written(self, config, tmp_path):
         out = tmp_path / "x"
-        result = _export(config, *SITE, "-o", str(out), flag, "hugo")
+        result = _export(config, *SITE, "-o", str(out), "--target", "hugo")
         assert result.exit_code == 2
         text = _say(result)
         assert "hugo" in text and "quartz" in text
         assert not out.exists()
 
-    def test_same_value_on_both_spellings_is_accepted_and_warns_once(self, config, tmp_path):
+    @pytest.mark.parametrize("flag", ["--format", "-f"])
+    def test_removed_format_alias_is_refused_as_unknown_option(self, config, tmp_path, flag):
         out = tmp_path / "x"
-        result = _export(config, *SITE, "-o", str(out), "--target", "quartz", "-f", "quartz")
-        assert result.exit_code == 0, result.output
-        assert len([ln for ln in result.stderr.splitlines() if "deprecated" in ln.lower()]) == 1
-
-    def test_conflicting_target_and_format_is_a_usage_error(self, config, tmp_path):
-        result = _export(
-            config, *SITE, "-o", str(tmp_path / "x"), "--target", "quartz", "--format", "hugo"
-        )
+        result = _export(config, *SITE, "-o", str(out), flag, "quartz")
         assert result.exit_code == 2
-        text = _say(result)
-        assert "--target" in text and "--format" in text
-        assert not (tmp_path / "x").exists()
+        assert not out.exists()
 
-    def test_help_shows_target_and_hides_the_old_spelling(self, config):
+    def test_help_shows_target_and_no_format_option(self, config):
         result = _export(config, "site", "--help")
         text = _say(result)
         assert "--target" in text
@@ -150,60 +130,26 @@ class TestCollectionTarget:
         assert result.exit_code == 0, result.output
         assert (out / "_manifest.md").exists()
 
-    @pytest.mark.parametrize("flag", ["--format", "-f"])
-    def test_old_spelling_writes_the_same_files_and_warns_once(self, config, tmp_path, flag):
-        new, old = tmp_path / "new", tmp_path / "old"
-        assert _export(config, *COLLECTION, "-o", str(new), "--target", "notebooklm").exit_code == 0
-        result = _export(config, *COLLECTION, "-o", str(old), flag, "notebooklm")
-        assert result.exit_code == 0, result.output
-        assert _files(old) == _files(new)
-        warnings = [ln for ln in result.stderr.splitlines() if "deprecated" in ln.lower()]
-        assert len(warnings) == 1, result.stderr
-        assert "--target" in warnings[0]
-
     def test_default_is_unchanged(self, config, tmp_path):
         result = _export(config, *COLLECTION, "-o", str(tmp_path / "d"))
         assert result.exit_code == 0, result.output
 
-    @pytest.mark.parametrize("flag", ["--target", "--format", "-f"])
-    def test_unknown_target_is_refused_before_anything_is_written(self, config, tmp_path, flag):
+    def test_unknown_target_is_refused_before_anything_is_written(self, config, tmp_path):
         out = tmp_path / "x"
-        result = _export(config, *COLLECTION, "-o", str(out), flag, "hugo")
+        result = _export(config, *COLLECTION, "-o", str(out), "--target", "hugo")
         assert result.exit_code == 2
         text = _say(result)
         assert "hugo" in text and "notebooklm" in text
         assert not out.exists()
 
-    def test_same_value_on_both_spellings_is_accepted_and_warns_once(self, config, tmp_path):
-        result = _export(
-            config,
-            *COLLECTION,
-            "-o",
-            str(tmp_path / "x"),
-            "--target",
-            "notebooklm",
-            "-f",
-            "notebooklm",
-        )
-        assert result.exit_code == 0, result.output
-        assert len([ln for ln in result.stderr.splitlines() if "deprecated" in ln.lower()]) == 1
-
-    def test_conflicting_target_and_format_is_a_usage_error(self, config, tmp_path):
-        result = _export(
-            config,
-            *COLLECTION,
-            "-o",
-            str(tmp_path / "x"),
-            "--target",
-            "notebooklm",
-            "-f",
-            "other",
-        )
+    @pytest.mark.parametrize("flag", ["--format", "-f"])
+    def test_removed_format_alias_is_refused_as_unknown_option(self, config, tmp_path, flag):
+        out = tmp_path / "x"
+        result = _export(config, *COLLECTION, "-o", str(out), flag, "notebooklm")
         assert result.exit_code == 2
-        text = _say(result)
-        assert "--target" in text and "--format" in text
+        assert not out.exists()
 
-    def test_help_shows_target_and_hides_the_old_spelling(self, config):
+    def test_help_shows_target_and_no_format_option(self, config):
         result = _export(config, "collection", "--help")
         text = _say(result)
         assert "--target" in text

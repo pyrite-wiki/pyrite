@@ -426,7 +426,8 @@ Pyrite's own backlog and architecture docs live in `kb/`:
 pyrite sw backlog        # Prioritized backlog
 pyrite sw adrs           # Architecture Decision Records
 pyrite sw components     # Module documentation
-pyrite sw standards      # Coding conventions
+pyrite sw validations    # Coding validations
+pyrite sw conventions    # Coding conventions
 ```
 
 ## Documentation

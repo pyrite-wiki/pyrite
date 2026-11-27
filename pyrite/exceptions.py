@@ -10,10 +10,9 @@ code from the class alone, with no external table keyed by type to keep in
 sync. Where REST and MCP used to disagree (``NOT_FOUND`` vs
 ``ENTRY_NOT_FOUND``/``KB_NOT_FOUND``, ``READ_ONLY`` vs ``KB_READ_ONLY``,
 ``CONFIG_ERROR`` vs ``CONFIG_CONFLICT``), the maintainer's decision
-(2026-09-25) is that REST's more specific code is the one on the class; MCP
-keeps emitting its old code until 0.27 in a transitional
-``legacy_error_code`` field it builds itself (see
-``server/mcp_server._refusal``), never on the class.
+(2026-09-25) is that REST's more specific code is the one on the class; all
+transports now emit that code directly (the transitional ``legacy_error_code``
+field was removed in 0.27; #1901).
 
 **The base ``ValidationError`` is the one exception, by conductor decision
 (fix round 1, cold read of #501):** REST itself used two different spellings
@@ -29,8 +28,7 @@ central handler's less-visited one, not the reverse -- so the base code is
 ``ValidationError`` that changes (previously ``VALIDATION_ERROR``, an
 under-used path few things exercise directly). MCP already said
 ``VALIDATION_FAILED`` too, so this is the one base class where REST, MCP and
-the CLI all already agreed, and continue to agree -- no ``legacy_error_code``
-for it.
+the CLI all already agreed, and continue to agree.
 
 **Messages are public or private by construction.** ``public_message`` is
 ``None`` by default -- every transport's ``public_text(exc)`` (which returns

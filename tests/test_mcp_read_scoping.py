@@ -60,7 +60,6 @@ def _absent_kb_payload(kb_name):
         "retryable": False,
         "suggestion": "To list the KBs you can read, call kb_orient (MCP) or `pyrite orient` (CLI) with no KB name.",
         "did_you_mean": [],
-        "legacy_error_code": "NOT_FOUND",
     }
 
 
@@ -216,7 +215,7 @@ class TestPeerCannotReachPrivateKBOverMCP:
         out = _call(env, "peer", "kb_get", {"entry_id": "secret-note"})
         assert "zebra behind the wall" not in json.dumps(out)
         assert out.get("error_code") == "ENTRY_NOT_FOUND"
-        assert out.get("legacy_error_code") == "NOT_FOUND"
+        assert "legacy_error_code" not in out
 
     def test_kb_list_entries_on_a_private_kb(self, env):
         out = _call(env, "peer", "kb_list_entries", {"kb_name": PRIVATE})
@@ -557,7 +556,7 @@ class TestOmittingTheKBNameIsNotAWayIn:
         # code names what was missing, the old NOT_FOUND stays for a release
         # (#981, #984), and the two are still indistinguishable to the caller.
         assert out["error_code"] == "ENTRY_NOT_FOUND"
-        assert out["legacy_error_code"] == "NOT_FOUND"
+        assert "legacy_error_code" not in out
 
     def test_kb_read_body_still_works_on_a_readable_entry(self, env):
         out = _call(env, "peer", "kb_read_body", {"entry_id": "public-note"})

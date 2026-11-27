@@ -17,7 +17,7 @@ Properties, each through the surface a caller uses:
 4. An ssh remote is used only with an operator ssh key, through an ssh command
    that reads no other identity, agent, ssh config or known_hosts.
 5. Commits made for a network caller carry ``git_identity``; unset, the
-   account's global identity, until 0.27.0 (D1).
+   account's global identity, until 0.28.0 (D1).
 
 The https cases run real git against a local smart-HTTP server (``git
 http-backend`` behind Basic auth) whose certificate is trusted through
@@ -680,7 +680,7 @@ def test_a_network_commit_carries_git_identity(account, repo_to_commit):
 
 
 def test_unset_a_network_commit_falls_back_to_the_global_identity(account, repo_to_commit):
-    """Until 0.27.0: the account's global user.name/email, carried alone into
+    """Until 0.28.0: the account's global user.name/email, carried alone into
     Pyrite's own global config (no helper, askpass or header with it)."""
     with local_process(False):
         ok, result = GitService.commit(repo_to_commit, "m")

@@ -39,7 +39,7 @@ import typer
 from typer.testing import CliRunner
 
 from pyrite.cli.outcome import EXIT_CODES, Outcome, OutcomeKind
-from pyrite.cli.output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT, declares_shared_format
+from pyrite.cli.output import OUTPUT_FORMAT, declares_shared_format
 from pyrite.exceptions import EntryNotFoundError, KBNotFoundError, PyriteError
 from pyrite.utils.errors import PARTIAL_EXIT, PyriteCLIGroup, exit_unless_whole
 from tests.outcome_walk import (
@@ -52,7 +52,6 @@ from tests.outcome_walk import (
     contract_commands,
     planted,
     root_app,
-    takes_short_format,
 )
 
 REPO = Path(__file__).resolve().parent.parent
@@ -171,9 +170,7 @@ def _app(result=None, raises: BaseException | None = None, body=None, sub_kwargs
     inner = typer.Typer()
 
     @sub.command("leaf")
-    def leaf(
-        output_format: str = OUTPUT_FORMAT, legacy_format: str | None = LEGACY_FORMAT_SHORT
-    ) -> Outcome:
+    def leaf(output_format: str = OUTPUT_FORMAT) -> Outcome:
         if body is not None:
             return body()
         if raises is not None:
@@ -268,12 +265,10 @@ def test_an_unknown_format_is_a_usage_error(fmt):
     assert out.exit_code == 2, out.output
 
 
-def test_short_f_still_works_for_one_release_and_says_so_on_stderr():
-    """#303: `-f` stops meaning `--format`, deprecated with a warning for one release."""
+def test_short_f_is_refused_as_unknown_option_on_shared_format():
+    """#303 / #1901: `-f` no longer means `--format` on the shared option."""
     out = runner.invoke(_app(Outcome.done({"n": 5}, rich=_rich)), ["sub", "leaf", "-f", "rich"])
-    assert out.exit_code == 0, out.output
-    assert out.stdout.strip() == "rich says 5"
-    assert "deprecated" in out.stderr and "--format" in out.stderr
+    assert out.exit_code == 2, out.output
 
 
 def test_a_raised_refusal_is_rendered_in_the_requested_format():
@@ -328,28 +323,6 @@ def test_a_migrated_command_that_returns_nothing_is_an_internal_error():
     assert (body["error_code"], body["outcome"]) == ("NO_OUTCOME", "error")
     rich = runner.invoke(_app(None), ["sub", "leaf", "--format", "rich"])
     assert rich.exit_code == 1 and "NO_OUTCOME" in rich.stdout
-
-
-@pytest.mark.parametrize(
-    "args",
-    [
-        ["sub", "leaf", "-f", "rich", "--format", "json"],
-        ["sub", "leaf", "--format", "json", "-f", "rich"],
-    ],
-)
-def test_short_f_together_with_format_is_a_usage_error(args):
-    """Two answers to one question: refuse rather than let one silently win."""
-    out = runner.invoke(_app(Outcome.done({"n": 1})), args)
-    assert out.exit_code == 2, out.output
-
-
-@pytest.mark.control(reason="PYRITE_FORMAT is a default, not a second answer")
-def test_short_f_with_pyrite_format_set_is_not_a_conflict():
-    out = runner.invoke(
-        _app(Outcome.done({"n": 1})), ["sub", "leaf", "-f", "json"], env={"PYRITE_FORMAT": "rich"}
-    )
-    assert out.exit_code == 0, out.output
-    assert json.loads(out.stdout)["n"] == 1
 
 
 def test_a_value_error_leaves_its_traceback_in_the_debug_log(caplog):
@@ -730,48 +703,9 @@ def test_before_the_body_is_entered_nothing_changes(root, path):
         assert late.exit_code == 2, late.output
         for unknown in ("xml", "csv"):
             assert runner.invoke(app, [*path, *args, "--format", unknown]).exit_code == 2
-        if takes_short_format(click_command(app, path)):
-            # -f and --format together are two answers. A command whose -f
-            # means something else (--field, --file, --force) has no such rule.
-            both = runner.invoke(app, [*path, *args, "-f", "rich", "--format", "json"])
-            assert both.exit_code == 2
         if args:
             missing = runner.invoke(app, [*path, "--format", "json"])
             assert missing.exit_code == 2, missing.output
-
-
-@pytest.mark.control(
-    reason="tests the walk's helper in tests/outcome_walk.py, not pyrite code; it failed against the hidden-proxy version"
-)
-def test_a_visible_short_f_that_means_format_is_found_by_its_callback():
-    """`-f` as the deprecated format spelling is recognised by what the option
-    is, not by being hidden: a command whose own visible `-f` is the format
-    alias must still get the `-f`/`--format` conflict checked by the walk, and a
-    hidden `-f` that is something else must not."""
-    visible_alias = typer.Option(None, "-f", callback=LEGACY_FORMAT_SHORT.callback)
-    app = typer.Typer(cls=PyriteCLIGroup)
-
-    @app.command()
-    def leaf(output_format: str = OUTPUT_FORMAT, legacy: str | None = visible_alias) -> Outcome:
-        return Outcome.done({})
-
-    @app.command()
-    def other(
-        output_format: str = OUTPUT_FORMAT,
-        hidden_field: str | None = typer.Option(None, "-f", hidden=True),
-    ) -> Outcome:
-        return Outcome.done({})
-
-    @app.command()
-    def real(
-        output_format: str = OUTPUT_FORMAT, legacy: str | None = LEGACY_FORMAT_SHORT
-    ) -> Outcome:
-        return Outcome.done({})
-
-    click_app = typer.main.get_command(app)
-    assert takes_short_format(click_app.commands["leaf"])
-    assert not takes_short_format(click_app.commands["other"])
-    assert takes_short_format(click_app.commands["real"])
 
 
 @pytest.mark.control(reason="before any command: the root's own options are click's")

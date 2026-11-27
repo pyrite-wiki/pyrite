@@ -218,8 +218,7 @@ class SearchBackend(Protocol):
         and ``embedding``, rounded to 3 places (`similarity_from`), the same
         number on every backend for the same vectors. Rows come back in
         descending ``similarity``, and a row below ``min_similarity`` is not
-        returned. ``distance`` is also on each row and is backend-specific
-        (sqlite-vec: L2; pgvector: cosine distance); nothing should read it.
+        returned.
 
         A backend that cannot consider every candidate the filters admit says
         so by returning a :class:`SemanticRows` with ``capped=True``.

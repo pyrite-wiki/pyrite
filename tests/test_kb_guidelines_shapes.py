@@ -50,14 +50,16 @@ def kb_with(tmp_path):
 def _exports(svc, server):
     """The schema `orient` and MCP `kb_schema` export for KB `k`."""
     oriented = svc.orient("k")["schema"]
+    assert "guidelines" not in oriented
     result = server._dispatch_tool("kb_schema", {"kb_name": "k"})
     assert "error" not in result, result
     return oriented, result
 
 
 def test_a_string_is_one_guideline(kb_with):
-    for schema in _exports(*kb_with('"Keep records canonical."')):
-        assert schema["guidelines"] == {**DEFAULTS, "general": "Keep records canonical."}
+    oriented, kb_schema_res = _exports(*kb_with('"Keep records canonical."'))
+    assert kb_schema_res["guidelines"] == {**DEFAULTS, "general": "Keep records canonical."}
+    for schema in (oriented, kb_schema_res):
         assert "note" in schema["types"]
 
 
@@ -69,16 +71,19 @@ def test_the_string_is_still_returned_as_written(kb_with):
 @pytest.mark.parametrize("value", ["[a, b]", "3"])
 def test_another_shape_is_left_out_and_named(kb_with, caplog, value):
     with caplog.at_level(logging.WARNING, logger="pyrite.schema.kb_schema"):
-        for schema in _exports(*kb_with(value)):
-            assert schema["guidelines"] == DEFAULTS
+        oriented, kb_schema_res = _exports(*kb_with(value))
+        assert kb_schema_res["guidelines"] == DEFAULTS
+        for schema in (oriented, kb_schema_res):
             assert "note" in schema["types"]
     assert any("`guidelines`" in r.getMessage() for r in caplog.records)
 
 
 @pytest.mark.control(reason="a mapping merges exactly as before")
 def test_a_mapping_merges_as_before(kb_with):
-    for schema in _exports(*kb_with("{tone: Be careful}")):
-        assert schema["guidelines"] == {**DEFAULTS, "tone": "Be careful"}
+    oriented, kb_schema_res = _exports(*kb_with("{tone: Be careful}"))
+    assert kb_schema_res["guidelines"] == {**DEFAULTS, "tone": "Be careful"}
+    for schema in (oriented, kb_schema_res):
+        assert "note" in schema["types"]
 
 
 def test_extract_tags_from_string_guidelines_and_goals():
