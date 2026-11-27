@@ -293,6 +293,22 @@ PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-i
 cd web && npx playwright install chromium && cd .. && scripts/e2e.sh      # large: browser; manual-only in CI while non-deterministic
 ```
 
+**Editing a page that runs as a test** (`docs/getting-started.md`, the 20-minute
+tutorial): the runner extracts the page's fenced bash blocks and runs them **in
+one shell session, top to bottom**, so a page's state carries forward: a `cd`
+in one block is still in effect in the next, a KB registered near the top is
+still registered at the bottom, a file created three sections up still exists.
+Write one command per line (no `a && b` lists). HTML comments a reader never
+sees tell the runner what to check, such as `<!-- runner: expect-text WORD -->`
+after a block or `<!-- runner: expect-exit N -->` before one; the header
+docstring of [`scripts/run_tutorial.py`](scripts/run_tutorial.py) lists every
+marker and what it checks. To run one page locally, pass its path:
+`PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md`.
+When you add a section in the middle of a page, account for the state the page
+has built up by that point (which directory the shell is in, which KBs and
+names already exist); otherwise say that the section starts fresh and have it
+do the `cd` or use a new name itself.
+
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
@@ -575,6 +591,15 @@ A public-interface change touches more than the code. When you change an MCP arg
 - a `changelog.d/` fragment that names the new option.
 
 Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration under pytest-xdist because each worker records only the goldens its own tests observed (#712, fixed by #1225). The per-principal file lock does not make parallel regeneration supported. Review `git diff tests/characterization/goldens/` carefully before committing.
+
+### Removing or renaming a public option
+
+A CLI flag, MCP argument, REST field, error code or command that users and agents may call leaves in two releases, never one:
+
+1. **The release that warns.** The option still works and prints a warning on every use (stderr for the CLI, a warning or deprecation field in the MCP or REST response), naming its replacement and the release that removes it. Add a row to `docs/json-contracts.md`, "Deprecated, still accepted", and a `changelog.d/` fragment. A note in `--help` alone does not count: nobody running a script sees it.
+2. **The release that removes.** Only a release after one that shipped the warning may remove the option. Remove it everywhere at once: the code, the docs row, every test that pins it, and any instruction that names it (`AGENTS.md`, the skills). Grep the whole repo for the old name, then run the full suite.
+
+Whether to remove a public option at all is the maintainer's decision. An issue that lists removals asks you to carry out decisions already made; if one has no recorded decision, ask on the issue first.
 
 ## Branches, hooks and pull requests
 

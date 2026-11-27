@@ -130,6 +130,6 @@ pyrite qa validate <kb>
 ```
 
 - **If `qa validate` or an earlier `pyrite sw` listing returned `[]` unexpectedly:** run `pyrite index sync` and `pyrite index health -k <kb>`, then re-run the check.
-- **If an entry you wrote has a validation error:** fix it with `pyrite update <id> -k <kb> -f <field>=<value>` or `pyrite delete <id> -k <kb>` (only for a duplicate or mistaken entry created in this session).
+- **If an entry you wrote has a validation error:** fix it with `pyrite update <id> -k <kb> -f <field>=<value>`. Only delete an entry with `pyrite delete <id> -k <kb>` if you created that entry in this session — never delete pre-existing entries.
 
 Report the created component, ADR, and backlog item IDs along with `git status kb/`.
