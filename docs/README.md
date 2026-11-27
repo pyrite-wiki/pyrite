@@ -7,6 +7,7 @@ guides solve a task; references describe contracts; explanations describe why.
 
 - [Getting started](getting-started.md) — how-to: how do I install Pyrite, create a KB, and connect an AI?
 - [Pyrite in 20 minutes](tutorials/pyrite-in-20-minutes.md) — tutorial: how do I use a KB from creation through querying and updates?
+- [Agentic development: give your coding agent a project memory](tutorials/agentic-development.md) — tutorial: how do I seed a software KB in a code repository and run the backlog cycle with an agent?
 - [Troubleshooting](troubleshooting.md) — diagnose read/write and upgrade symptoms.
 
 ## Organize work

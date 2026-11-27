@@ -1150,7 +1150,6 @@ READ_ONLY = [
     "pyrite tags",
     "pyrite task get",
     "pyrite task list",
-    "pyrite task status",
     "pyrite timeline",
     "pyrite wiki quality",
     "pyrite wiki stats",
@@ -1492,7 +1491,7 @@ def test_a_command_on_the_contract_is_declared_the_way_the_root_expects():
     """
     from pyrite.cli import output
 
-    shared = {output._record_format, output._record_short_format}
+    shared = {output._record_format}
     offences = []
     for name, cmd in sorted(_commands().items()):
         if not _on_the_contract(cmd):
@@ -1545,13 +1544,8 @@ def test_hint_a_module_on_the_contract_does_nothing_the_root_cannot_see():
     for name, cmd in _commands().items():
         if not _on_the_contract(cmd) or _location(cmd) is None:
             continue
-        # `-f` is the deprecated format spelling only where it is the legacy option
-        # (found by its callback); on create/update it is --field.
-        from tests.outcome_walk import takes_short_format
-
+        # Only --format triggers the shared-option check (#1901); see tests/outcome_walk.py.
         fmt_params = {p.name for p in cmd.params if "--format" in p.opts}
-        if takes_short_format(cmd):
-            fmt_params |= {p.name for p in cmd.params if "-f" in getattr(p, "opts", ())}
         func = ast.parse(textwrap.dedent(inspect.getsource(inspect.unwrap(cmd.callback))))
         for node in ast.walk(func):
             if isinstance(node, ast.Name) and node.id in fmt_params:

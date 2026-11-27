@@ -23,7 +23,6 @@ from pydantic import AnyUrl
 from ..config import PyriteConfig, load_config
 from ..exceptions import (
     AccessDenied,
-    BrandingInvalidError,
     ConfigError,
     ConflictError,
     EntryLoadError,
@@ -36,7 +35,6 @@ from ..exceptions import (
     KBUnreadableError,
     PyriteError,
     QuerySyntaxError,
-    QueryTooLongError,
     StorageError,
     ValidationError,
     public_attribute,
@@ -125,95 +123,6 @@ def _project_fields(entry: dict, fields: list[str] | None) -> dict:
     return out
 
 
-# ADR-0037 theme 2 (maintainer decision, 2026-09-25): "one code per
-# exception, and REST's code wins. For one release, MCP keeps emitting its
-# current code in a legacy_error_code field, then switches." (Removal: 0.27.)
-# Codes now live on the exception classes (``pyrite.exceptions``) -- REST's spelling, since
-# REST's is the more specific one where the two transports used to disagree.
-#
-# This table and _legacy_mcp_code() below reproduce *exactly* what this
-# module computed before this theme (the old _DOMAIN_ERROR_CODES lookup,
-# most-specific-first via isinstance, falling back to the class's own old
-# error_code attribute, and finally to "REQUEST_REFUSED") -- kept only to
-# detect where that disagrees with the class's new code and populate
-# ``legacy_error_code`` until 0.27. It is not consulted for the code
-# MCP reports going forward (``exc.error_code`` is). A hand-picked list of
-# "the codes that changed" was tried first and missed cases (FrontmatterError,
-# TruncatedBodyError, PluginError, StorageError -- anything that used to fall
-# through to the REQUEST_REFUSED fallback or inherit a base class's old
-# literal); replaying the actual old algorithm cannot miss one.
-_LEGACY_DOMAIN_ERROR_CODES: tuple[tuple[type[PyriteError], str], ...] = (
-    (EntryNotFoundError, "NOT_FOUND"),
-    (KBNotFoundError, "NOT_FOUND"),
-    (KBReadOnlyError, "READ_ONLY"),
-    (KBProtectedError, "KB_PROTECTED"),
-    (QuerySyntaxError, "QUERY_SYNTAX"),
-    (QueryTooLongError, "QUERY_TOO_LONG"),
-    (ValidationError, "VALIDATION_FAILED"),
-    (ConfigError, "CONFIG_ERROR"),
-    (BrandingInvalidError, "BRANDING_INVALID"),
-)
-#: The literal ``error_code`` every ``PyriteError`` subclass carried before
-#: this theme gave classes without their own a code at all (ADR-0037 theme
-#: 2). Anything not listed here had no class-level code pre-theme.
-_LEGACY_OWN_ERROR_CODE: dict[str, str] = {
-    "ValidationError": "VALIDATION_FAILED",
-    "UndeclaredTypeError": "UNDECLARED_TYPE",
-    "EntryExistsError": "ENTRY_EXISTS",
-    "SchemaViolationError": "SCHEMA_VIOLATION",
-    "InvalidGitRefError": "INVALID_REF",
-    "QuerySyntaxError": "QUERY_SYNTAX",
-    "QueryTooLongError": "QUERY_TOO_LONG",
-    "ClipperBlockedHostError": "CLIPPER_BLOCKED_HOST",
-    "LastAdminError": "LAST_ADMIN",
-}
-
-
-#: Classes ADR-0037 theme 2 introduces (``exceptions.AccessDenied`` and its
-#: subclasses). Never raised by any surface before this theme -- theme 1/3b's
-#: job -- so there is no old MCP behaviour to disagree with, and no
-#: ``legacy_error_code`` should be reported for them even though they are
-#: not explicitly in the tables above either.
-_NEW_IN_THIS_THEME = frozenset(
-    {
-        "AccessDenied",
-        "NotAuthenticated",
-        "Forbidden",
-        "AmbiguousEntryError",
-        # #795: QA refusals no MCP surface raised before, so there is no old
-        # code to carry either.
-        "InvalidQATierError",
-        "AINotConfiguredError",
-        "EvaluationFailedError",
-        "KBUnreadableError",
-        # ADR-0044 §1 (2026-10-20): a refusal no surface raised before.
-        "LandingRefusedError",
-    }
-)
-
-
-def _legacy_mcp_code(exc: PyriteError) -> str | None:
-    """What this module would have reported for ``exc`` before this theme,
-    or ``None`` for a class this theme introduces (see ``_NEW_IN_THIS_THEME``).
-
-    Walks the exception's own MRO up to (and including) ``PyriteError`` so a
-    subclass with no code of its own inherits its nearest ancestor's old
-    literal, exactly as plain attribute lookup did before this theme.
-    """
-    for klass in type(exc).__mro__:
-        name = klass.__name__
-        if name in _NEW_IN_THIS_THEME:
-            return None
-        if name in _LEGACY_OWN_ERROR_CODE:
-            return _LEGACY_OWN_ERROR_CODE[name]
-        if klass is PyriteError:
-            break
-    for t, c in _LEGACY_DOMAIN_ERROR_CODES:
-        if isinstance(exc, t):
-            return c
-    return "REQUEST_REFUSED"
-
-
 def _safe_message(exc: Exception) -> str:
     """The message an MCP tool handler may show for ``exc``.
 
@@ -272,45 +181,19 @@ def _error(
     *,
     suggestion: str | None = None,
     retryable: bool = False,
-    legacy_error_code: str | None = None,
 ) -> dict:
     """Build a structured error response for MCP tools."""
     r: dict = {"error": message, "error_code": code, "retryable": retryable}
     if suggestion:
         r["suggestion"] = suggestion
-    if legacy_error_code is not None:
-        r["legacy_error_code"] = legacy_error_code
     return r
-
-
-def _with_old_kb_update_code(refusal: dict) -> dict:
-    """``kb_update``'s ``legacy_error_code`` for a class its old handler never
-    named: ``UPDATE_FAILED``, the one code it answered every such failure
-    with (its ``except PyriteError`` catch-all), kept until 0.27 (ADR-0037
-    theme 2). ``_refusal`` alone would carry the module-wide fallback
-    ``REQUEST_REFUSED``, a code ``kb_update`` never gave (#990)."""
-    refusal["legacy_error_code"] = "UPDATE_FAILED"
-    return refusal
 
 
 def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
     """Map a service refusal to the MCP envelope.
 
     The code is the exception class's own (``exc.error_code`` -- every
-    ``PyriteError`` carries one; see ``pyrite.exceptions``) -- REST's more
-    specific spelling where REST and MCP used to disagree (``ENTRY_NOT_FOUND``
-    replacing ``NOT_FOUND``, etc.), or the one spelling REST, MCP and the CLI
-    already agreed on where they did not (the base ``ValidationError``:
-    conductor decision, fix round 1 -- the write pipeline's documented
-    ``VALIDATION_FAILED`` wins over the central handler's less-visited
-    ``VALIDATION_ERROR``). Where the class's code differs from what MCP used
-    to report for this class (``_legacy_mcp_code``, replaying the old
-    ``_LEGACY_DOMAIN_ERROR_CODES``/``_LEGACY_OWN_ERROR_CODE`` lookup), the old
-    code is carried until 0.27 in ``legacy_error_code`` so an existing
-    MCP caller matching on the old string is not broken outright (ADR-0037
-    theme 2, maintainer decision 2026-09-25). A class MCP and REST already
-    agreed on gets no ``legacy_error_code`` key at all -- there is nothing
-    legacy to report.
+    ``PyriteError`` carries one; see ``pyrite.exceptions``).
 
     Not retryable -- the same call fails the same way -- except a class
     that says otherwise: a locked or busy database (``StorageBusyError``)
@@ -319,9 +202,6 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
     cannot (#431).
     """
     code = exc.error_code
-    legacy_code = _legacy_mcp_code(exc)
-    if legacy_code == code:
-        legacy_code = None
     # A class that says it is retryable (a busy database, a write that lost
     # the race for its file and asks for a re-read) is reported so.
     retryable = bool(getattr(exc, "retryable", False))
@@ -338,7 +218,6 @@ def _refusal(exc: PyriteError, *, already_logged: bool = False) -> dict:
         message,
         suggestion=public_attribute(exc, "suggestion"),
         retryable=retryable,
-        legacy_error_code=legacy_code,
     )
     # A refusal's public extras (AMBIGUOUS's candidate_kbs, #528), mapped
     # once for every class from REFUSAL_FIELDS in pyrite.exceptions.
@@ -670,10 +549,9 @@ def _kb_refusal(svc: KBService, kb_name: object, readable_kbs: set[str] | None) 
     `KBNotFoundError` -- deliberately not a "forbidden": a private KB's
     existence is itself private, so a caller cannot tell "you may not read
     this" from "there is no such KB". The envelope is `_refusal`'s: the class
-    code `KB_NOT_FOUND`, the resolver's suggestion, `did_you_mean` and the
-    old `NOT_FOUND` in `legacy_error_code` until 0.27 (#66, ADR-0037
-    theme 2). A handler's own not-found answer is only ever reached for a
-    name the caller may read.
+    code `KB_NOT_FOUND`, the resolver's suggestion, and `did_you_mean`. A
+    handler's own not-found answer is only ever reached for a name the caller
+    may read.
     """
     try:
         svc.resolve_kb(kb_name, readable_kbs=readable_kbs)
@@ -1889,22 +1767,15 @@ class PyriteMCPServer:
         except ValidationError as e:
             return _refusal(e)
         except ConflictError as e:
-            # A write that lost the race for its file (#955): the class's
-            # own code, with the old code this handler gave everything it
-            # did not name (ADR-0037, removal in 0.27).
-            return _with_old_kb_update_code(_refusal(e))
+            return _refusal(e)
         except StorageError as e:
             # A storage fault on the write (a hard-linked file, the lock
             # directory, a lock held too long): the class's own code and
             # `retryable`, its public text, the detail logged once (#431).
             logger.error("Tool kb_update failed: %s", e, exc_info=e)
-            return _with_old_kb_update_code(_refusal(e, already_logged=True))
+            return _refusal(e, already_logged=True)
         except (EntryNotFoundError, KBNotFoundError) as e:
-            # Keep the old handler-level spelling until 0.27 while the
-            # class code becomes the primary contract (ADR-0037).
-            refusal = _refusal(e)
-            refusal["legacy_error_code"] = "UPDATE_FAILED"
-            return refusal
+            return _refusal(e)
         except AccessDenied as e:
             return _refusal(e)
         except PyriteError as e:
@@ -3533,15 +3404,6 @@ class PyriteMCPServer:
         for kb_name in named_kbs:
             refusal = _kb_refusal(self.svc, kb_name, readable_kbs)
             if refusal is not None:
-                # The one refusal, with the code the old algorithm gave this
-                # caller: an unscoped kb_update reached its handler, which
-                # answered a missing KB with UPDATE_FAILED (retryable: true)
-                # before #761 typed it; a scoped caller was refused here, with
-                # NOT_FOUND, as every other tool still is. kb_delete answered
-                # NOT_FOUND here for every caller (#984), so its legacy code is
-                # the resolver's, not the handler's DELETE_FAILED.
-                if name == "kb_update" and readable_kbs is None:
-                    refusal["legacy_error_code"] = "UPDATE_FAILED"
                 return refusal
 
         takes_readable = readable_kbs is not None and self._handler_takes_readable_kbs(name)

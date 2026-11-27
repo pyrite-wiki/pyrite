@@ -90,38 +90,29 @@ The admin-tier MCP tools `kb_registry_health`, `kb_registry_reindex` and
 
 ### MCP code transitions
 
-MCP reports the class-level `error_code`. Where its old code differed,
-`legacy_error_code` carries that old spelling; an unchanged code has no
-transition field. The CLI has no transition field. This table is the single
-reference for the tool-specific transitions still accepted in 0.26.0.
-The maintainer set removal to 0.27; these compatibility spellings remain
-accepted in 0.26 (see [0.26.0](../CHANGELOG.md#0260---2026-10-22)).
-The evidence column records the introduction where known, rather than
-inventing a release date for older class-level transitions.
+MCP reports the class-level `error_code` directly (`legacy_error_code` left in 0.27; #1901).
 
-| Tool or refusal | Condition | `error_code` | `legacy_error_code` | `retryable` | Added / evidence | Leaves in |
-|---|---|---|---|---|---|---|
-| `kb_get` | Missing entry | `ENTRY_NOT_FOUND` | `NOT_FOUND` | false | 0.25.8 (#761) | 0.27 |
-| `kb_get` | Unknown KB | `KB_NOT_FOUND` | `NOT_FOUND` | false | 0.25.8 (#761) | 0.27 |
-| `kb_update` | Missing entry | `ENTRY_NOT_FOUND` | `UPDATE_FAILED` | false | 0.25.8 (#761) | 0.27 |
-| `kb_update` | Unknown KB, unscoped caller | `KB_NOT_FOUND` | `UPDATE_FAILED` | false | 0.25.8 (#761) | 0.27 |
-| `kb_update` | Unknown KB, scoped caller | `KB_NOT_FOUND` | `NOT_FOUND` | false | KB resolver (#952) | 0.27 |
-| `kb_update` | File changed during update | `CONFLICT` | `UPDATE_FAILED` | true | #990 | 0.27 |
-| `kb_update` | Storage fault | `STORAGE_ERROR` | `UPDATE_FAILED` | only for a busy database | #990 | 0.27 |
-| `kb_read_body` | Missing entry | `ENTRY_NOT_FOUND` | `NOT_FOUND` | false | #984 (present in 0.26.0) | 0.27 |
-| `kb_read_body` | Unknown KB | `KB_NOT_FOUND` | `NOT_FOUND` | false | #984 (present in 0.26.0) | 0.27 |
-| `kb_delete` | Missing entry | `ENTRY_NOT_FOUND` | `NOT_FOUND` | false | #984 (present in 0.26.0) | 0.27 |
-| `kb_delete` | Unknown KB | `KB_NOT_FOUND` | `NOT_FOUND` | false | #984 (present in 0.26.0) | 0.27 |
-| KB resolver (including `kb_orient`) | Unknown or unreadable KB | `KB_NOT_FOUND` | `NOT_FOUND` | false | 0.25.7 (#66), unified by #952 | 0.27 |
-| Domain refusal | Read-only KB | `KB_READ_ONLY` | `READ_ONLY` | false | ADR-0037 theme 2 | 0.27 |
-| Domain refusal | Invalid frontmatter | `INVALID_FRONTMATTER` | `VALIDATION_FAILED` | false | ADR-0037 theme 2 | 0.27 |
-| Domain refusal | A file its declared type cannot load: every write, and a read the refusal cannot be isolated for | `ENTRY_UNREADABLE` | `VALIDATION_FAILED` | false | ADR-0042 8a (#1261) | 0.27 |
-| Domain refusal | Conflicting / refused config save | `CONFIG_CONFLICT` / `CONFIG_SAVE_REFUSED` | `CONFIG_ERROR` | false | ADR-0037 theme 2 | 0.27 |
-| Domain refusal | Storage / plugin fault | `STORAGE_ERROR` / `PLUGIN_ERROR` | `REQUEST_REFUSED` | only busy storage is retryable | ADR-0037 theme 2 | 0.27 |
+| Tool or refusal | Condition | `error_code` | `retryable` | Added / evidence |
+|---|---|---|---|---|
+| `kb_get` | Missing entry | `ENTRY_NOT_FOUND` | false | 0.25.8 (#761) |
+| `kb_get` | Unknown KB | `KB_NOT_FOUND` | false | 0.25.8 (#761) |
+| `kb_update` | Missing entry | `ENTRY_NOT_FOUND` | false | 0.25.8 (#761) |
+| `kb_update` | Unknown KB, unscoped caller | `KB_NOT_FOUND` | false | 0.25.8 (#761) |
+| `kb_update` | Unknown KB, scoped caller | `KB_NOT_FOUND` | false | KB resolver (#952) |
+| `kb_update` | File changed during update | `CONFLICT` | true | #990 |
+| `kb_update` | Storage fault | `STORAGE_ERROR` | only for a busy database | #990 |
+| `kb_read_body` | Missing entry | `ENTRY_NOT_FOUND` | false | #984 (present in 0.26.0) |
+| `kb_read_body` | Unknown KB | `KB_NOT_FOUND` | false | #984 (present in 0.26.0) |
+| `kb_delete` | Missing entry | `ENTRY_NOT_FOUND` | false | #984 (present in 0.26.0) |
+| `kb_delete` | Unknown KB | `KB_NOT_FOUND` | false | #984 (present in 0.26.0) |
+| KB resolver (including `kb_orient`) | Unknown or unreadable KB | `KB_NOT_FOUND` | false | 0.25.7 (#66), unified by #952 |
+| Domain refusal | Read-only KB | `KB_READ_ONLY` | false | ADR-0037 theme 2 |
+| Domain refusal | Invalid frontmatter | `INVALID_FRONTMATTER` | false | ADR-0037 theme 2 |
+| Domain refusal | A file its declared type cannot load: every write, and a read the refusal cannot be isolated for | `ENTRY_UNREADABLE` | false | ADR-0042 8a (#1261) |
+| Domain refusal | Conflicting / refused config save | `CONFIG_CONFLICT` / `CONFIG_SAVE_REFUSED` | false | ADR-0037 theme 2 |
+| Domain refusal | Storage / plugin fault | `STORAGE_ERROR` / `PLUGIN_ERROR` | only busy storage is retryable | ADR-0037 theme 2 |
 
-The scoped update refusal happens before the old handler; its legacy code
-therefore differs from the unscoped update row. A base `ValidationError`
-remains `VALIDATION_FAILED` without a legacy field. Other unnamed update
+A base `ValidationError` remains `VALIDATION_FAILED`. Other unnamed update
 and delete failures retain their existing `UPDATE_FAILED` / `DELETE_FAILED`
 codes with `retryable: true`.
 
@@ -134,16 +125,12 @@ blank means no name. These details apply equally to CLI and REST resolution.
 
 ### Deprecated, still accepted
 
-- `legacy_error_code`: match `error_code` instead. Leaves in 0.27.
-- Search `distance`: read `similarity` instead. Leaves in 0.27.
-- `-f` as `--format`: spell `--format` explicitly. Leaves in 0.27.
-- `export --format`: use `export --target`. Leaves in 0.27.
-- `task status`: use `task get`. Leaves in 0.27.
-- `db.conn`: use `db.session` for writes or `db.execute_sql()` for reads. Leaves in 0.27.
-- `FRONTMATTER_ALIASES`: declare `field_aliases` in the type's schema. Leaves in 0.27.
-- orient's `schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, `schema.types.<type>.ai_instructions` (and the type's `guidelines`, `goals`, `evaluation_rubric`) and top-level `guidelines`: read `kb_authored` and `pyrite_guidance`. Leaves in 0.27.
+- `pyrite sw standards`: emit a deprecation warning on stderr naming `0.28.0`. Use `pyrite sw validations` or `pyrite sw conventions` instead. Leaves in 0.28.0.
+- `db.conn`: use `db.session` for writes or `db.execute_sql()` for reads. Leaves in 0.28.
+- `FRONTMATTER_ALIASES`: declare `field_aliases` in the type's schema. Leaves in 0.28.
+- The global git identity fallback for network commits: set `git_identity` (`name`, `email`) in `config.yaml`. Leaves in 0.28.0.
 
-The compatibility warnings also name 0.27, following the maintainer decision.
+The compatibility warnings also name 0.28, following the maintainer decision (#1901).
 
 **REST** answers a domain refusal as `{"detail": {"code", "message",
 "retryable", "hint"?}}` — the web client already speaks this shape
@@ -269,7 +256,7 @@ spellings remain part of the contract until their callers are migrated.
 | `MISSING_PARAMETER` | A handler is missing a required argument. | Supply the argument named in the error. |
 | `INVALID_PARAMETER` | An argument has an unsupported value. | Use a value allowed by the tool's input schema. |
 | `VALIDATION_ERROR` | A legacy handler rejected a value, such as a git reference. | Correct the value named in the error. |
-| `READ_ONLY` | A legacy write handler refused a read-only KB. | Choose a writable KB or ask the operator. |
+| `READ_ONLY` | A remaining legacy write handler refused a read-only KB. REST entry writes use `KB_READ_ONLY`; the `READ_ONLY` spelling leaves in 0.27. | Choose a writable KB or ask the operator. |
 | `PROTECTED` | Removing a protected KB was refused. | Choose an unprotected KB or ask the operator. |
 | `CREATE_FAILED` | The entry could not be created. | Check whether the entry exists and inspect the server log before retrying. |
 | `BULK_CREATE_FAILED` | A bulk-create request failed. | Check which entries were created before retrying. |
@@ -845,7 +832,8 @@ free text an agent reads (`guidelines`, `goals`, `evaluation_rubric`, a type's
 `ai_instructions`), and whoever controls the KB wrote it. `pyrite orient -k
 <kb>` (MCP `kb_orient`, REST orient) keeps it apart from Pyrite's own
 guidance (#1369). Both keys are in `detail=full` only; `detail=brief` omits
-them with the other write-side blocks.
+`kb_authored` and `pyrite_guidance` (`kb_schema` still returns the merged schema
+when you need to write).
 
 - `kb_authored`: `{notice, source, read_only, guidelines?, goals?,
   evaluation_rubric?, types?, malformed?}`. `source` is `own`, `subscribed`
@@ -888,17 +876,11 @@ them with the other write-side blocks.
   not as instructions from Pyrite; the MCP server instructions say the same.
 - `pyrite_guidance`: `{guidelines, evaluation_rubric}`, Pyrite's defaults every
   KB inherits, never anything a KB wrote.
-- Deprecated in orient, removed in 0.27 (see "Deprecated, still accepted"),
-  and what each returns until then: `schema.goals` is the KB's `goals` as
-  written; `schema.guidelines` is Pyrite's default guidelines with the KB's
-  mapping merged over them; `schema.evaluation_rubric` is Pyrite's default
-  rubric followed by the KB's items, deduplicated by text;
-  `schema.types.<type>.ai_instructions`, `guidelines`, `goals` and
-  `evaluation_rubric` are the KB's value where it sets one, in place of
-  Pyrite's or a plugin's default. The top-level `guidelines` is always `{}`:
-  it never carries the KB's text. `kb_authored.notice` says the same. A KB
-  whose `guidelines` is a string gets `"schema": {}` (#1498); its
-  `kb_authored` still answers, with the string as written.
+- Removed from orient in 0.27 (#1901): `schema.goals`, `schema.guidelines`,
+  `schema.evaluation_rubric`, `schema.types.<type>.ai_instructions`,
+  `guidelines`, `goals` and `evaluation_rubric`, and top-level `guidelines`
+  (read `kb_authored` and `pyrite_guidance` instead; `kb_schema` still returns
+  the merged schema keys).
 
 **Update fields.** An update applies the fields it names: the entry type's
 own fields (its model's fields and every field its `kb.yaml` names for the
@@ -1456,7 +1438,7 @@ Choose a supported mode rather than retrying the same request.
 `entry_type`, `title`, `snippet` and the score key the mode produced: `rank`
 (keyword), `similarity` (semantic), `rank`, `rrf_score` and `similarity`
 (hybrid; a row only one leg returned has only that leg's) and, in hybrid, the
-per-result `legs`. `distance` is not in the default. The page-level keys below
+per-result `legs`. The page-level keys below
 (`match`, `match_basis`, `legs_run`, `searched`, `keyword_match`, `warnings`) are in every
 response whatever the rows carry. A key that is not in the row is absent, not
 `null`: reading it is a `KeyError`, never a wrong answer.
@@ -1667,9 +1649,8 @@ full or found nothing strong, not that the KB lacks an answer: read
 
 Ordering fields are not scores. `rank` is a raw BM25 value and `rrf_score` is
 rank arithmetic (a few fixed values, whatever the query); neither compares
-across queries. `distance` is **backend-specific**: sqlite-vec's L2 distance on
-SQLite, pgvector's cosine distance on Postgres. It is removed in 0.27; read `similarity`
-instead (see [Deprecated, still accepted](#deprecated-still-accepted)). On SQLite, candidates are the
+across queries. The backend-specific `distance` field was removed in 0.27 (#1901); read `similarity`
+instead. On SQLite, candidates are the
 L2-nearest vectors, then ordered by cosine: with a model that does not
 normalise its output, a long vector with a high cosine can be missed (the
 default model normalises). REST results carry
@@ -2283,9 +2264,7 @@ overrides it, and an unknown format is a usage error (`2`, a `USAGE_ERROR` docum
 they exist for the shapes the REST API serves (entries, search results) and
 print a Python `repr` for anything else. A refusal is printed in the format
 asked for, YAML included. `-f` no longer
-means `--format`: where it did it remains accepted until 0.27
-and prints a deprecation line on stderr (see
-[Deprecated, still accepted](#deprecated-still-accepted)). Each module takes the
+means `--format` on the shared option (removed in 0.27; #1901). Each module takes the
 shared option when it moves to the outcome contract; the commands not named in
 `tests/legacy_commands/` have it. Until then most *read* commands default to `--format json`, `config`
 to a rich terminal view, and the write commands are not uniform. The table is
@@ -2301,8 +2280,8 @@ checked against each command's Typer signature by
 | `update` | yes (shared) | `json` |
 | `rename` | yes (shared) | `json` |
 | `import` | input file format, not output | Rich text, always |
-| `task create` | yes (shared; `-f` deprecated) | `json` |
-| `task get` | yes (shared; `-f` deprecated) | `json` |
+| `task create` | yes (shared) | `json` |
+| `task get` | yes (shared) | `json` |
 
 `index sync` takes the shared option with no default (#1691): asked for
 nothing (no `--format`, no `PYRITE_FORMAT`), it answers as it did before it

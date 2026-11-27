@@ -88,8 +88,7 @@ def test_the_decoy_entry_has_no_backlink_and_the_real_one_does(world):
         (b["id"], b["forward_relation"])
         for b in db.get_backlinks("real", KB, readable_kbs=UNSCOPED)
     ] == [("src", "markdown_link")]
-    assert "missing.md" not in db.get_all_backlinks_for_kb(KB)
-    assert [b["id"] for b in db.get_all_backlinks_for_kb(KB)["real"]] == ["src"]
+    assert all(b["resolved"] for b in db.get_backlinks("real", KB, readable_kbs=UNSCOPED))
 
 
 def test_an_outlink_to_the_broken_path_is_listed_as_broken(world):
@@ -97,8 +96,8 @@ def test_an_outlink_to_the_broken_path_is_listed_as_broken(world):
     out = {o["id"]: o for o in db.get_outlinks("src", KB, readable_kbs=UNSCOPED)}
     assert out["missing.md"]["title"] is None  # not the decoy's title
     assert out["real"]["title"] == "real"
-    all_out = {o["id"]: o for o in db.get_all_outlinks_for_kb(KB)["src"]}
-    assert all_out["missing.md"]["title"] is None and all_out["real"]["title"] == "real"
+    assert out["missing.md"]["resolved"] is False
+    assert out["real"]["resolved"] is True
 
 
 def test_the_graph_counts_and_orphans_do_not_count_the_broken_link(world):

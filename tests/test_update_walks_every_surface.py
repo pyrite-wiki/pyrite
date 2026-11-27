@@ -1243,7 +1243,7 @@ def test_mcp_kb_update_carries_its_own_old_code_for_a_storage_fault(tmp_path: Pa
     finally:
         server.close()
     assert result["error_code"] == "STORAGE_ERROR", result
-    assert result["legacy_error_code"] == "UPDATE_FAILED", result
+    assert "legacy_error_code" not in result, result
     assert result["retryable"] is False
 
 

@@ -222,14 +222,14 @@ def _network_git_env(plan: _NetworkPlan) -> dict[str, str]:
 
 def _warn_identity_fallback() -> None:
     """Once per process: a network caller's commit with no `git_identity`
-    falls back to the account's global identity, until 0.27.0."""
+    falls back to the account's global identity, until 0.28.0."""
     global _IDENTITY_FALLBACK_WARNED
     if not _IDENTITY_FALLBACK_WARNED:
         _IDENTITY_FALLBACK_WARNED = True
         logger.warning(
             "settings.git_identity is unset: commits made for network callers use "
             "the server account's global git user.name/user.email. That fallback "
-            "is removed in 0.27.0; set git_identity in config.yaml."
+            "is removed in 0.28.0; set git_identity in config.yaml."
         )
 
 

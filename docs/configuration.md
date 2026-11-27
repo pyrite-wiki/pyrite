@@ -148,6 +148,7 @@ the bound.
 | Input | Bound | Where |
 |---|---|---|
 | YAML aliases in one document | 1,000 aliases, or an expanded size of 1,000,000 nodes (measured from parse events, without building the expansion) | `pyrite/utils/yaml.py` (`MAX_YAML_ALIASES`, `MAX_YAML_EXPANDED_NODES`); refused as `INVALID_FRONTMATTER` (import: `400 PARSE_ERROR`; index sync: the file is listed as malformed) |
+| YAML nesting depth in one document | 200 nested mappings/sequences (checked iteratively from parse events before `load()` recurses) | `pyrite/utils/yaml.py` (`MAX_YAML_DEPTH`); raises `RecursionError` (`kb.yaml`: `KB_CONFIG_INVALID`; `board.yaml`: `VALIDATION_FAILED`) |
 | A page fetched by the web clipper | 5 MiB counted after decoding, memory bounded at every decoding step (one gzip or deflate coding is decoded in 64 KiB steps; a stack of codings, br and zstd are refused), and twice the request timeout in all | `pyrite/services/clipper.py` (`MAX_CLIP_BYTES`); `413 CLIP_TOO_LARGE` |
 | Anonymous WebSocket sockets | 100 in all, 5 per client; a client is its IPv4 address or its IPv6 /64 (below) | `pyrite/server/websocket.py`, `pyrite/server/client_key.py` |
 | A lookup of an id the index lacks | reads at most 200 files, only those the index is behind on | `pyrite/services/kb_service.py` (`MISS_SCAN_MAX_FILES`) |
@@ -490,7 +491,7 @@ email, unless the KB's repository sets its own `user.name`/`user.email` in
 operator's own git (Pyrite writes `git_identity` into its own global git
 config, which repository config ranks above). Unset, they carry the
 `user.name` and `user.email` of the account's global git config, as before;
-**that fallback is removed in 0.27.0**, and Pyrite logs a warning once per
+**that fallback is removed in 0.28.0**, and Pyrite logs a warning once per
 process while it is in use. The operator's own commits at the CLI keep their
 own git setup.
 
@@ -532,7 +533,7 @@ the account's environment: the operator chose that destination.
   `ssh_key` entry with `known_hosts`; for https, a token entry.
 - **Set `git_identity`** if worktree submits, merges or exports over the
   network should not rely on the account's global identity (required from
-  0.27.0).
+  0.28.0).
 - **Signed commits:** commits made for network callers are no longer signed
   through a global `commit.gpgsign`; the global config is not read.
 - **Behind a proxy:** network git, the GitHub API calls made for network

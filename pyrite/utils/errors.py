@@ -143,9 +143,8 @@ def cli_error_from(
 
     The message shown is ``exc.public_message`` when the class sets one
     (safe by construction; see ``pyrite.exceptions``), else ``str(exc)``.
-    The CLI has no ``legacy_error_code`` concept -- that is MCP-only, for one
-    release, per the maintainer's decision (2026-09-25); a CLI caller was
-    never promised the old MCP spelling.
+    The CLI emits ``exc.error_code`` directly without any transitional code
+    field.
 
     ``error_code`` replaces the class's code for one documented CLI spelling
     (``NOT_FOUND``; see ``_CLI_CODE_OVERRIDES``), and ``extra`` adds keys as
@@ -222,30 +221,29 @@ def _default_format() -> str:
 
 
 def _format_in(argv: Sequence[str], ctx: Any = None) -> str:
-    """The format a usage error is printed in: the ``--format`` (or the
-    deprecated ``-f``) the caller typed, if it is a format the root prints (the
+    """The format a usage error is printed in: the ``--format`` (or a legacy
+    command's ``-f``) the caller typed, if it is a format the root prints (the
     parse that failed may be what never got to read it), else the default.
-    ``pyrite export`` is skipped: there ``--format`` and ``-f`` mean
-    ``--target``. Where the format cannot be read from the arguments, the
-    document is in ``PYRITE_FORMAT``, else JSON."""
+    ``pyrite export`` is skipped: there ``--format``/``-f`` (removed in 0.27)
+    meant ``--target``, so an old script still gets a JSON usage error. Where
+    the format cannot be read from the arguments, the document is in
+    ``PYRITE_FORMAT``, else JSON."""
     from ..cli.output import SHARED_FORMATS
 
     short_is_format = ctx is None
     if ctx is not None:
-        from ..cli.output import _record_short_format, requested_format
+        from ..cli.output import requested_format
 
         if value := requested_format(ctx):
             if isinstance(value, str) and value in SHARED_FORMATS:
                 return value
         for parameter in ctx.command.params:
             options = (*getattr(parameter, "opts", ()), *getattr(parameter, "secondary_opts", ()))
-            callback = getattr(parameter, "callback", None)
-            original = getattr(callback, "__wrapped__", callback)
             if "--format" in options:
                 value = ctx.params.get(parameter.name)
                 if isinstance(value, str) and value in SHARED_FORMATS:
                     return value
-            if "-f" in options and ("--format" in options or original is _record_short_format):
+            if "-f" in options and "--format" in options:
                 short_is_format = True
     if next((w for w in argv if not w.startswith("-")), None) == "export":
         return _default_format()

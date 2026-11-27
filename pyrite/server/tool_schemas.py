@@ -282,7 +282,7 @@ READ_TOOLS = {
         },
     },
     "kb_orient": {
-        "description": "Use this first. With no kb_name it lists up to 50 KBs you can read (maximum 100 per page); pass offset to continue when has_more is true. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
+        "description": "Use this first. With no kb_name it lists up to 50 KBs you can read (maximum 100 per page); pass offset to continue when has_more is true. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults), which kb_schema returns alongside the merged schema when you need to write. brief keeps relationship_types, for following links.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -300,7 +300,7 @@ READ_TOOLS = {
                 "detail": {
                     "type": ["string", "null"],
                     "enum": ["brief", "full", None],
-                    "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+                    "description": "full (default; null is the same): everything. brief: omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults).",
                 },
                 "limit": {
                     "type": "integer",

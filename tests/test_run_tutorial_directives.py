@@ -162,6 +162,8 @@ class TestTheTwentyMinuteTutorial:
         release = (REPO / "scripts" / "release.py").read_text()
         assert "run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md" in ci
         assert "docs/tutorials/pyrite-in-20-minutes.md" in release
+        assert "run_tutorial.sh docs/tutorials/agentic-development.md" in ci
+        assert "docs/tutorials/agentic-development.md" in release
 
 
 class TestSearchesAreAssertedOneByOne:
@@ -232,6 +234,7 @@ class TestAndListsAreRefused:
         for doc in (
             REPO / "docs" / "getting-started.md",
             REPO / "docs" / "tutorials" / "pyrite-in-20-minutes.md",
+            REPO / "docs" / "tutorials" / "agentic-development.md",
         ):
             for block in runner.extract_blocks(doc):
                 if not runner.should_skip(block):

@@ -55,7 +55,7 @@ def regenerating() -> bool:
     return os.environ.get(REGENERATE_ENV) == "1"
 
 
-def refuse_ambiguous_regenerate() -> None:
+def refuse_ambiguous_regenerate(*, serial_command: str | None = None) -> None:
     """A regenerate run that cannot rewrite every golden it owns raises here (#712).
 
     Each xdist worker records only the routes/tools its own tests observed, so
@@ -65,11 +65,15 @@ def refuse_ambiguous_regenerate() -> None:
     real.
     """
     if os.environ.get("PYTEST_XDIST_WORKER") or os.environ.get("PYTEST_XDIST_WORKER_COUNT"):
+        rerun = (
+            f"Run serially (without `-n`): `{serial_command}`"
+            if serial_command
+            else "Run the characterization suite serially (without `-n`)"
+        )
         raise RuntimeError(
             "PYRITE_CHARACTERIZATION_REGENERATE=1 with pytest-xdist active writes only "
             "the goldens this worker's tests own, leaving the others stale (#712). "
-            "Run the characterization suite serially (without `-n`), review the diff, "
-            "and commit it as a separate change."
+            f"{rerun}, review the diff, and commit it as a separate change."
         )
 
 

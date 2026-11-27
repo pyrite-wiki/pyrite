@@ -111,11 +111,10 @@ def test_pyrite_format_sets_the_default(task_cli_env):  # noqa: F811
 
 
 @pytest.mark.cli
-def test_short_f_still_means_format_and_warns_on_stderr(task_cli_env):  # noqa: F811
+def test_short_f_is_refused_as_a_usage_error(task_cli_env):  # noqa: F811
     out = runner.invoke(app, ["task", "list", "-k", "test-tasks", "-f", "json"])
-    assert out.exit_code == 0, out.output
-    assert json.loads(out.stdout)["count"] == 1
-    assert "-f is deprecated" in out.stderr
+    assert out.exit_code == 2, out.output
+    assert "No such option: -f" in out.output
 
 
 @pytest.mark.cli

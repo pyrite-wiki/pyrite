@@ -306,16 +306,12 @@ class TestABadNameIsKBNotFound:
         out = one_kb.mcp("kb_orient", {"kb_name": "nope"})
         assert out["error_code"] == "KB_NOT_FOUND", out
         assert out["retryable"] is False
-        assert out["legacy_error_code"] == "NOT_FOUND", (
-            "one refusal for every caller: the dispatcher's, not orient's own (#952)"
-        )
+        assert "legacy_error_code" not in out
 
     def test_mcp_scoped_caller_over_the_http_wiring(self, scoped):
         out = scoped.mcp("kb_orient", {"kb_name": ABSENT}, readable=scoped.peer)
         assert out["error_code"] == "KB_NOT_FOUND", out
-        assert out["legacy_error_code"] == "NOT_FOUND", (
-            "the code the scoping refusal reported before this release"
-        )
+        assert "legacy_error_code" not in out
 
     @pytest.mark.control(reason="the CLI already answered KB_NOT_FOUND, exit 1; pinned beside MCP")
     def test_cli(self, one_kb, monkeypatch):
@@ -383,7 +379,6 @@ class TestUnreadableAndAbsentAreOneAnswer:
             "retryable": False,
             "suggestion": SCOPED_REFUSAL_HINT,
             "did_you_mean": [],
-            "legacy_error_code": "NOT_FOUND",
         }
 
 
@@ -554,7 +549,8 @@ class TestDetail:
         )
         full = sw.svc.orient("sw")
         assert "detail" not in full and "detail_note" not in full
-        assert _write_side_keys_in(full["schema"]), "fixture: full must carry what brief drops"
+        assert "kb_authored" in full and "pyrite_guidance" in full
+        assert _write_side_keys_in(full["schema"]) == []
 
     def test_brief_omits_the_write_side_blocks_and_says_how_to_get_them(self, sw):
         full = sw.mcp("kb_orient", {"kb_name": "sw"})
@@ -860,19 +856,22 @@ class TestTheScopedRefusalSaysWhatToDoNext:
 
 
 class TestBriefAgreesWithItself:
-    """Item 5: no top-level `guidelines` that contradicts the dropped block."""
+    """Item 5: no top-level `guidelines` in orient (#1369, #1901)."""
 
     def test_no_top_level_guidelines_under_brief(self, sw):
         brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
         assert "guidelines" not in brief and "guidelines" not in brief["schema"]
 
-    def test_a_configured_guideline_is_not_hidden_behind_an_empty_one(self, sw):
-        sw.config.get_kb("sw").guidelines = {"tone": "plain"}
+    def test_top_level_guidelines_is_removed_from_orient(self, sw):
         full = sw.mcp("kb_orient", {"kb_name": "sw"})
         brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
-        assert full["guidelines"] == {"tone": "plain"}
+        assert "guidelines" not in full
         assert "guidelines" not in brief
-        assert "guidelines" in brief["detail_note"]
+        assert (
+            "kb_authored" in brief["detail_note"]
+            and "pyrite_guidance" in brief["detail_note"]
+            and "kb_schema" in brief["detail_note"]
+        )
 
 
 class TestBriefKeepsTheRelationNames:

@@ -51,7 +51,8 @@ pyrite backlinks <entry-id> --kb=pyrite         # Entries linking to this one
 ```bash
 pyrite sw adrs                                  # List ADRs
 pyrite sw backlog                               # List backlog items
-pyrite sw standards                             # List standards
+pyrite sw validations                           # List validations
+pyrite sw conventions                           # List conventions
 pyrite sw components                            # List components
 ```
 

@@ -620,10 +620,16 @@ def sw_standards(
         help="Output format: json, rich",
     ),
 ):
-    """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.27.0: use validations/conventions]"""
+    """List all standards (standard + programmatic_validation + development_convention). [deprecated, removed in 0.28.0: use validations/conventions]"""
     from pyrite.storage.database import PyriteDB
 
     from .plugin import DEFAULT_LIST_LIMIT
+
+    typer.echo(
+        "Warning: 'pyrite sw standards' is deprecated and will be removed in 0.28.0; "
+        "use 'pyrite sw validations' or 'pyrite sw conventions'.",
+        err=True,
+    )
 
     effective_limit = DEFAULT_LIST_LIMIT if limit is None else (None if limit <= 0 else limit)
     config = load_config()

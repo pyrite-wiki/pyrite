@@ -197,8 +197,7 @@ record each one.
 A parent's completion is derived from its children. Completing the children
 makes the derived result complete without rewriting the parent's stored
 status. Read both the stored status and `derived`; do not infer parent
-completion from a stored status alone. `task status` is a deprecated alias;
-new workflows use `task get`.
+completion from a stored status alone. Use `task get` to inspect a single task.
 
 A cancelled child does not count toward its parent's completion. A parent is
 complete by its children only when at least one child is `done` and every

@@ -114,18 +114,6 @@ class QueryMixin:
             entry_id=entry_id, kb_name=kb_name, readable_kbs=readable_kbs
         )
 
-    def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL backlinks targeting entries in a KB (1 query, not N)."""
-        return self._backend.get_all_backlinks_for_kb(kb_name)
-
-    def get_all_outlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL outlinks from entries in a KB (1 query, not N)."""
-        return self._backend.get_all_outlinks_for_kb(kb_name)
-
-    def get_all_sources_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL sources for entries in a KB (1 query, not N)."""
-        return self._backend.get_all_sources_for_kb(kb_name)
-
     def get_related(
         self, entry_id: str, kb_name: str, depth: int = 1, *, readable_kbs: set[str] | None
     ) -> list[dict[str, Any]]:
