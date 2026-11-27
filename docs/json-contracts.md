@@ -269,7 +269,7 @@ spellings remain part of the contract until their callers are migrated.
 | `MISSING_PARAMETER` | A handler is missing a required argument. | Supply the argument named in the error. |
 | `INVALID_PARAMETER` | An argument has an unsupported value. | Use a value allowed by the tool's input schema. |
 | `VALIDATION_ERROR` | A legacy handler rejected a value, such as a git reference. | Correct the value named in the error. |
-| `READ_ONLY` | A legacy write handler refused a read-only KB. | Choose a writable KB or ask the operator. |
+| `READ_ONLY` | A remaining legacy write handler refused a read-only KB. REST entry writes use `KB_READ_ONLY`; the `READ_ONLY` spelling leaves in 0.27. | Choose a writable KB or ask the operator. |
 | `PROTECTED` | Removing a protected KB was refused. | Choose an unprotected KB or ask the operator. |
 | `CREATE_FAILED` | The entry could not be created. | Check whether the entry exists and inspect the server log before retrying. |
 | `BULK_CREATE_FAILED` | A bulk-create request failed. | Check which entries were created before retrying. |
