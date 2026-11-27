@@ -903,16 +903,13 @@ def create_entry(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
-        )
     except ValidationError as e:
         raise refusal_http(e)
     except (AccessDenied, KBUnreadableError):
         # FORBIDDEN 403, and KB_UNREADABLE (#1542): the central handler's
         # answer, the same on every verb, not this handler's catch-all.
+        raise
+    except KBReadOnlyError:
         raise
     except (PyriteError, ValueError) as e:
         raise HTTPException(
@@ -983,11 +980,6 @@ def update_entry(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
-        )
     except ValidationError as e:
         raise refusal_http(e)
     except ConflictError as e:
@@ -1000,6 +992,8 @@ def update_entry(
         raise
     except AccessDenied:
         raise  # the central handler's 403 FORBIDDEN
+    except KBReadOnlyError:
+        raise
     except (PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "UPDATE_FAILED", "message": public_text(e, log=logger)}
@@ -1056,11 +1050,6 @@ def patch_entry_field(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
-        )
     except ValidationError as e:
         raise refusal_http(e)
     except ConflictError as e:
@@ -1069,6 +1058,8 @@ def patch_entry_field(
         raise  # the central handler's STORAGE_ERROR 500, as on PUT
     except AccessDenied:
         raise  # the central handler's 403 FORBIDDEN
+    except KBReadOnlyError:
+        raise
     except (PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "UPDATE_FAILED", "message": public_text(e, log=logger)}
@@ -1107,15 +1098,12 @@ def delete_entry(
         # (a blank name is a ValidationError, below) carries the class code
         # through the central handler (#610).
         raise HTTPException(status_code=404, detail={"code": "NOT_FOUND", "message": str(e)})
-    except KBReadOnlyError as e:
-        raise HTTPException(
-            status_code=403,
-            detail={"code": "KB_READ_ONLY", "message": str(e), "retryable": False},
-        )
     except EntryLoadError as e:
         raise refusal_http(e)  # ENTRY_UNREADABLE 422: nothing deleted (ADR-0042 8a)
     except KBUnreadableError:
         raise  # KB_UNREADABLE from the central handler, as on every verb (#1542)
+    except KBReadOnlyError:
+        raise
     except (ValidationError, PyriteError, ValueError) as e:
         raise HTTPException(
             status_code=400, detail={"code": "DELETE_FAILED", "message": public_text(e)}
