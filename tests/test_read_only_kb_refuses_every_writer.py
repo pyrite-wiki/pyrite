@@ -272,7 +272,9 @@ def test_rest_entry_write_routes_refuse_read_only_kb(tmp_path):
     world.add_entry(RO, "---\nid: a\ntitle: A\ntype: note\n---\nbody\n", filename="notes/a.md")
     try:
         # 1. POST /api/entries (create)
-        resp = world.client.post("/api/entries", json={"kb": RO, "entry_type": "note", "title": "t", "body": "b"})
+        resp = world.client.post(
+            "/api/entries", json={"kb": RO, "entry_type": "note", "title": "t", "body": "b"}
+        )
         assert resp.status_code == 403
         assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
         assert resp.json()["detail"]["retryable"] is False
@@ -284,7 +286,9 @@ def test_rest_entry_write_routes_refuse_read_only_kb(tmp_path):
         assert resp.json()["detail"]["retryable"] is False
 
         # 3. PATCH /api/entries/{id} (update_fields)
-        resp = world.client.patch("/api/entries/a", json={"kb": RO, "field": "title", "value": "v", "op": "set"})
+        resp = world.client.patch(
+            "/api/entries/a", json={"kb": RO, "field": "title", "value": "v", "op": "set"}
+        )
         assert resp.status_code == 403
         assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
         assert resp.json()["detail"]["retryable"] is False
@@ -296,4 +300,3 @@ def test_rest_entry_write_routes_refuse_read_only_kb(tmp_path):
         assert resp.json()["detail"]["retryable"] is False
     finally:
         world.close()
-
