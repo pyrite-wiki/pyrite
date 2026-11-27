@@ -1,8 +1,8 @@
 # Transparency Cascade — example branding folder
 
 Example branding configuration for deploying a Pyrite instance under
-the Transparency Cascade Press identity (e.g.,
-`investigate.transparencycascade.org`).
+the Transparency Cascade Press identity. The hostname
+`investigate.transparencycascade.org` is an example, not a live deployment.
 
 ## Usage
 
@@ -12,9 +12,8 @@ Point a Pyrite deployment at this folder:
 export PYRITE_BRANDING_DIR=/path/to/deploy/branding-examples/transparency-cascade
 ```
 
-See the top-level `pyrite-white-labeling` backlog item and
-`docs/deployment/white-labeling.md` (once the feature ships) for the
-full branding-folder contract.
+See `docs/deployment/white-labeling.md` for the full branding-folder
+contract.
 
 ## Contents
 
@@ -28,26 +27,6 @@ Assets are black-on-transparent. `branding.yaml` sets
 `invert_on_dark: true`, so the frontend applies CSS `filter: invert(1)`
 for dark-theme rendering. One asset per surface, no light/dark
 duplication.
-
-## TODOs (derive once, then commit)
-
-The source site does not publish a favicon or apple-touch-icon. Derive
-both from `logo.png`:
-
-```bash
-# Requires imagemagick or sips. Example with sips (macOS):
-sips -s format png -z 180 180 logo.png --out apple-touch-icon.png
-sips -s format png -z 32  32  logo.png --out favicon-32.png
-# And a multi-resolution .ico via imagemagick:
-magick convert logo.png -define icon:auto-resize=16,32,48 favicon.ico
-```
-
-After deriving, add `favicon`, `apple_touch_icon`, and `favicon_32`
-keys to `branding.yaml` pointing at the new files.
-
-An Open Graph social-share card (1200×630) is also not yet present. A
-simple version can be generated from `wordmark.png` over the accent
-color `#c93b3b`.
 
 ## Provenance
 
