@@ -99,7 +99,7 @@ def _text(entry_type: str, shape: Shape, entry_id: str = "x", body: str = "Body\
     )
 
 
-def _refusing(original, *, str_metadata: bool):
+def _refusing(original):
     """A ``from_frontmatter`` that raises on the injected shapes, the way a
     loader raises, and otherwise is ``original``."""
 
@@ -109,7 +109,7 @@ def _refusing(original, *, str_metadata: bool):
         nested = meta.get("metadata")
         if isinstance(nested, dict) and nested.get("probe") == "bad":
             raise ValueError("probe: refused by the loader")
-        if str_metadata and isinstance(nested, str):
+        if isinstance(nested, str):
             raise TypeError("'str' object is not a mapping")
         return original(klass, meta, body)
 
@@ -118,13 +118,12 @@ def _refusing(original, *, str_metadata: bool):
 
 @pytest.fixture(autouse=True)
 def _loaders_that_refuse(monkeypatch):
-    """The injected shapes, inside each type's own loader; a file without them
-    loads as before. (`task` refuses a string `metadata:` on its own.)"""
+    """Inject refusals in each loader; a file without those shapes loads normally."""
     from pyrite.models.task import TaskEntry
     from pyrite_software_kb.entry_types import BacklogItemEntry
 
-    task_loader = _refusing(TaskEntry.from_frontmatter.__func__, str_metadata=False)
-    backlog_loader = _refusing(BacklogItemEntry.from_frontmatter.__func__, str_metadata=True)
+    task_loader = _refusing(TaskEntry.from_frontmatter.__func__)
+    backlog_loader = _refusing(BacklogItemEntry.from_frontmatter.__func__)
     monkeypatch.setattr(TaskEntry, "from_frontmatter", task_loader)
     monkeypatch.setattr(BacklogItemEntry, "from_frontmatter", backlog_loader)
 

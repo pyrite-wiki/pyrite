@@ -1,0 +1,1 @@
+- Tasks with non-mapping frontmatter metadata now load and stay editable without changing the authored value. QA and unrelated writes warn for every entry type, and the index still reads non-task entries and their top-level references when metadata is not a mapping ([#1332](https://github.com/pyrite-wiki/pyrite/issues/1332)).

@@ -13,7 +13,7 @@ import os
 import re
 import sqlite3
 import stat as stat_module
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -768,7 +768,7 @@ class IndexManager:
 
         # For GenericEntry types: promote protocol fields from metadata to DB columns
         # This handles kb.yaml types that declare protocols: [temporal, assignable, ...]
-        if hasattr(entry, "metadata") and entry.metadata:
+        if isinstance(entry.metadata, Mapping):
             for key in PROTOCOL_COLUMN_KEYS:
                 if key not in data and key in entry.metadata:
                     value = entry.metadata[key]
@@ -778,7 +778,7 @@ class IndexManager:
 
         # Promote fips/state from metadata or entry attributes to DB columns
         # for geographic filtering (cross-KB FIPS queries)
-        if hasattr(entry, "metadata") and entry.metadata:
+        if isinstance(entry.metadata, Mapping):
             if "fips" not in data and "fips" in entry.metadata:
                 data["fips"] = entry.metadata["fips"]
             if "state" not in data and "state" in entry.metadata:

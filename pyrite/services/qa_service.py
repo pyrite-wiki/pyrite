@@ -38,6 +38,7 @@ from ..models.base import lifecycle_validation_error
 from ..plugins.registry import get_registry
 from ..schema import validate_date, validate_importance
 from ..schema.core_types import SYSTEM_INTENT, resolve_type_metadata, settled_statuses
+from ..schema.validators import metadata_shape_warning
 from ..storage import effective_status
 from ..storage.backends.base_backend import kb_names_clause
 from ..storage.database import PyriteDB
@@ -1722,6 +1723,15 @@ class QAService:
                     }
                 )
             if entry._source_frontmatter is not None:
+                if warning := metadata_shape_warning(entry._source_frontmatter.get("metadata")):
+                    issues.append(
+                        {
+                            **warning,
+                            "entry_id": entry.id,
+                            "kb_name": kb_name,
+                            "message": f"{shown}: {warning['message']}",
+                        }
+                    )
                 leaked = leaked_frontmatter_line(entry._source_frontmatter, entry.body or "")
                 if leaked is not None:
                     key, line = leaked
