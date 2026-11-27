@@ -14,7 +14,13 @@ from typer.core import TyperCommand
 from ..utils.errors import PARTIAL_EXIT, cli_error, exit_unless_whole
 from .context import cli_db_context, get_config_and_db, require_kb
 from .outcome import Outcome, OutcomeKind
-from .output import OUTPUT_FORMAT_UNASKED, cli_console, path_line, validate_output_format
+from .output import (
+    OUTPUT_FORMAT_UNASKED,
+    cli_console,
+    output_format_choice,
+    path_line,
+    validate_output_format,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -559,10 +565,30 @@ def index_stats(
         console.print(table)
 
 
+def _refuse_dependency_missing(
+    message: str,
+    output_format: str = "rich",
+    *,
+    suggestion: str | None = None,
+) -> None:
+    cli_error(
+        message,
+        output_format=output_format,
+        error_code="DEPENDENCY_MISSING",
+        suggestion=suggestion,
+    )
+
+
 @index_app.command("embed")
 def index_embed(
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="KB to embed (all if omitted)"),
     force: bool = typer.Option(False, "--force", "-f", help="Re-embed all entries"),
+    output_format: str = typer.Option(
+        "rich",
+        "--format",
+        callback=output_format_choice("rich", "json", "yaml"),
+        help="Output format: rich (default), json, yaml",
+    ),
 ):
     """Generate vector embeddings for semantic search."""
     from ..services.embedding_service import (
@@ -575,11 +601,12 @@ def index_embed(
     # The KB first (#952): a name that is not a KB is refused before the
     # dependency check, so the answer names the thing that is wrong.
     config, db = get_config_and_db()
-    require_kb(config, kb_name, db=db, output_format="rich")
+    require_kb(config, kb_name, db=db, output_format=output_format)
     if not is_available():
         missing = semantic_unavailable(False)  # never None while the package is absent
         cli_error(
             "sentence-transformers is not installed.",
+            output_format=output_format,
             error_code="DEPENDENCY_MISSING",
             suggestion=missing[2] if missing else None,
         )
@@ -590,6 +617,7 @@ def index_embed(
         _, cause, remedy = unavailable
         cli_error(
             cause[0].upper() + cause[1:] + ".",
+            output_format=output_format,
             error_code="DEPENDENCY_MISSING",
             suggestion=remedy,
         )
@@ -600,11 +628,10 @@ def index_embed(
     if IndexManager(db, config).is_empty():
         cli_error(
             "Index is empty.",
+            output_format=output_format,
             error_code="INDEX_EMPTY",
             suggestion="run `pyrite index build` first",
         )
-
-    from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
     # Before embed_all, not after: a queued row marks an entry whose body
     # changed, and only the drain re-embeds it. embed_all(force=False) skips
@@ -613,6 +640,8 @@ def index_embed(
 
     queue_worker = EmbeddingWorker(db, model_name=config.settings.embedding_model)
     if queue_worker.has_pending() and (model_problem := queue_worker.model_unavailable()):
+        if output_format != "rich":
+            _refuse_dependency_missing(model_problem, output_format=output_format)
         typer.echo(model_problem)
         # Nothing was embedded and the queued entries stay owed: the batch rule
         # (docs/json-contracts.md, "Exit codes (CLI)": offline with nothing
@@ -628,35 +657,60 @@ def index_embed(
     svc = EmbeddingService(db, model_name=config.settings.embedding_model)
 
     try:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("{task.completed}/{task.total}"),
-            console=console,
-        ) as progress:
-            task = progress.add_task("Embedding entries...", total=None)
+        if output_format == "rich":
+            from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
-            def update_progress(current: int, total: int):
-                progress.update(task, completed=current, total=total)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task("Embedding entries...", total=None)
 
+                def update_progress(current: int, total: int):
+                    progress.update(task, completed=current, total=total)
+
+                stats = svc.embed_all(
+                    kb_name=kb_name,
+                    force=force,
+                    progress_callback=update_progress,
+                )
+        else:
             stats = svc.embed_all(
                 kb_name=kb_name,
                 force=force,
-                progress_callback=update_progress,
             )
     except EmbeddingModelUnavailableError as e:
         # The finder in `is_available()` saw the package; its first real import
         # failed. That is a missing dependency, not an entry error (#1101).
         from ..utils.install_hints import extra_install_command
 
-        cli_error(
+        _refuse_dependency_missing(
             str(e),
-            error_code="DEPENDENCY_MISSING",
+            output_format=output_format,
             suggestion=extra_install_command("semantic"),
         )
 
     embedded, skipped, overshoot = _embed_counts(stats, from_queue, force)
+
+    result_data = {
+        "embedded": embedded,
+        "skipped": skipped,
+        "from_queue": from_queue,
+        "overshoot": overshoot,
+        "other_kbs": other_kbs,
+        "truncated": stats.get("truncated", 0),
+        "errors": stats["errors"],
+    }
+    formatted = _format_output(result_data, output_format)
+    if formatted is not None:
+        typer.echo(formatted)
+        if stats["errors"]:
+            exit_unless_whole(stats["errors"], embedded + skipped)
+        return
+
     console.print("\n[green]Embedding complete.[/green]")
     console.print(f"  Embedded: {embedded}")
     console.print(f"  Skipped: {skipped}")
