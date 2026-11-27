@@ -163,6 +163,8 @@ def _read_stdin() -> str:
 
 def _field_type_for(kb_config: Any, entry_type: str | None, field_name: str) -> str | None:
     """Return the declared type for a field, including core-type metadata."""
+    if field_name in ("content_hash", "metadata.content_hash"):
+        return "text"
     if not entry_type or kb_config is None:
         return None
 
@@ -772,6 +774,11 @@ def register_entry_commands(app: typer.Typer) -> None:
         unset: list[str] | None = typer.Option(
             None, "--unset", help="Remove a key with its own lines (null is a value, not a removal)"
         ),
+        content_hash: str | None = typer.Option(
+            None,
+            "--content-hash",
+            help="Expected SHA-256 content_hash from `pyrite get`; refuses with CONFLICT if the file changed",
+        ),
         output_format: str = OUTPUT_FORMAT,
     ) -> Outcome:
         """Update an existing entry."""
@@ -867,6 +874,7 @@ def register_entry_commands(app: typer.Typer) -> None:
                     append=items(append) or None,
                     remove=items(remove) or None,
                     unset=list(unset) if unset else None,
+                    content_hash=content_hash,
                 )
             except ValidationError as e:
                 raise _with_cli_hint(e) from None

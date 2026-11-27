@@ -22,9 +22,10 @@ Each example below is three blocks:
 - `file`: a file as it sits in your KB before the edit;
 - `update`: the edit sent to Pyrite, written as operations (`set`, `append`,
   `replace`). Each surface spells them its own way; the table below gives the
-  spelling for `set`, `append`, `remove` and `unset`. `replace` is not an
-  operation Pyrite has: it stands for sending back a whole document, which the
-  stale example below shows Pyrite does not yet refuse;
+  spelling for `set`, `append`, `remove` and `unset`. `replace` stands for
+  sending back a whole document with the `content_hash` of the read it came
+  from, which the stale example below shows Pyrite refuses when the file changed
+  in between;
 - `diff`: every line the edit changes in the file, `-` for a line removed and
   `+` for a line added. An empty `diff` means the file is byte for byte as it
   was.
@@ -96,20 +97,18 @@ First note.
 
 ## Where Pyrite does not keep this promise yet
 
-An update changes only the fields it names, and two writers on different keys
-both land. Two examples below still fail, and the test module lists them in
-`KNOWN_DIVERGENCES`, marked as expected failures:
+An update changes only the fields it names, two writers on different keys both
+land, and an update or whole-document replace carrying a stale `content_hash`
+is refused rather than written over a hand edit. One example below still fails,
+and the test module lists it in `KNOWN_DIVERGENCES`, marked as an expected
+failure:
 
-- [A stale whole-document replace is refused](#a-stale-whole-document-replace-is-refused):
-  a whole document sent back with the hash of an older read is written over a
-  hand edit, not refused. Send the fields you mean to change, not the whole
-  document.
 - [An id-less file keeps its identity when its title changes](#an-id-less-file-keeps-its-identity-when-its-title-changes):
   a file with no `id:` line is known by the slug of its title, not by its
   path, and an update by that id adds an `id:` line. Pin the ids first:
   [Pin your entry ids before upgrading](pinning-entry-ids.md).
 
-Until both are fixed, keep your KB in git and read `git diff` after Pyrite
+Until it is fixed, keep your KB in git and read `git diff` after Pyrite
 writes. When the write path is fixed and an example starts to pass, the test
 suite fails until its mark is removed, so the list only shrinks; another test
 fails if this section stops naming exactly that list.

@@ -576,6 +576,7 @@ class UpdateEntryRequest(BaseModel):
     importance: Any = Field(None, json_schema_extra=_IMPORTANCE_SCHEMA)
     tags: list[str] | None = None
     metadata: dict[str, Any] | None = None
+    content_hash: Any = Field(None, json_schema_extra={"type": "string"})
 
 
 class PatchEntryRequest(BaseModel):
@@ -593,6 +594,7 @@ class PatchEntryRequest(BaseModel):
     field: str
     value: Any = None
     op: Literal["set", "append", "remove", "unset"] = "set"
+    content_hash: Any = Field(None, json_schema_extra={"type": "string"})
 
 
 class EntryListResponse(BaseModel):

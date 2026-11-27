@@ -10,6 +10,11 @@ repeat.
 
 ## Upgrading from 0.26.4 to 0.26.5
 
+- **`content_hash` in frontmatter is now refused as a managed field (#1900):**
+  if an older bug wrote a `content_hash:` key into an entry's frontmatter,
+  no update (`unset`, `metadata`, `pyrite update`, `kb_update`, or `PATCH`) can
+  remove or change that key because it is refused as managed—delete the line
+  from the file by hand.
 - **Markdown links to entry files are links now**: an ordinary Markdown link
   to another entry's `.md` file (see
   [links](links.md#markdown-links-to-entry-files)). Run `pyrite index sync`

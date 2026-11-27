@@ -252,8 +252,67 @@ _INDEX_ONLY_KEYS = frozenset(
 
 #: Keys only a read result carries -- the index's own and the entry's
 #: identity. A request holding one is an echoed read result, whose other keys
-#: are Pyrite's reading unless the caller changed them (#561).
-_READ_RESULT_MARKERS = (_INDEX_ONLY_KEYS - {"type"}) | {"id", "file_path"}
+#: are Pyrite's reading unless the caller changed them (#561). `content_hash`
+#: is also sent as an explicit concurrency precondition on non-echo updates
+#: (#1900), so its presence alone does not mark a request as an echoed read.
+_READ_RESULT_MARKERS = (_INDEX_ONLY_KEYS - {"type", "content_hash"}) | {"id", "file_path"}
+
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _pop_content_hash_candidates(
+    updates: dict[str, Any], expected_hash: Any, *, pop_from_updates: bool = True
+) -> tuple[dict[str, Any], list[tuple[str, Any]]]:
+    """Strip top-level ``content_hash`` (and ``MARKER_KEYS``) from ``updates`` and
+    collect every ``(spelling, value)`` precondition pair (#1900).
+
+    When ``pop_from_updates`` is False (REST ``PATCH``, where ``updates`` holds
+    only ``{body.field: body.value}`` and ``body.content_hash`` is passed via
+    ``expected_hash``), ``content_hash`` in ``updates`` is left for
+    ``_resolve_operation`` to refuse as a managed frontmatter field. Likewise,
+    ``metadata.content_hash`` and ``metadata["content_hash"]`` are always left
+    for ``_resolve_operation`` to refuse as managed fields.
+    """
+    cleaned: dict[str, Any] = {}
+    candidates: list[tuple[str, Any]] = []
+    if expected_hash is not None:
+        candidates.append(("content_hash", expected_hash))
+    for k, v in updates.items():
+        if k in MARKER_KEYS:
+            continue
+        if pop_from_updates and k == "content_hash":
+            candidates.append((k, v))
+            continue
+        cleaned[k] = v
+    return cleaned, candidates
+
+
+def _validate_expected_hash(entry_id: str, candidates: Sequence[tuple[str, Any]]) -> str | None:
+    """Validate and resolve the ``content_hash`` precondition for ``entry_id`` (#1900)."""
+    if not candidates:
+        return None
+    first_val = candidates[0][1]
+    if any(not isinstance(v, type(first_val)) or v != first_val for _, v in candidates[1:]):
+        shown = ", ".join(f"{name}={val!r}" for name, val in candidates)
+        message = (
+            f"Cannot update {entry_id!r}: content_hash is given more than once with "
+            f"different values ({shown}). Send one value."
+        )
+        raise ValidationError(
+            message,
+            errors=[{"field": "content_hash", "rule": "conflicting_spellings", "message": message}],
+        )
+    if not isinstance(first_val, str) or not _SHA256_HEX.fullmatch(first_val):
+        message = (
+            f"Cannot update {entry_id!r}: content_hash must be a 64-character lowercase "
+            f"SHA-256 hex string from a read of the entry, got {first_val!r}."
+        )
+        raise ValidationError(
+            message,
+            errors=[{"field": "content_hash", "rule": "format", "message": message}],
+        )
+    return first_val
+
 
 #: Two different spellings of "no relation was ever named" that must compare
 #: equal in a link's duplicate key. Every write surface (CLI `link`, MCP
@@ -2370,7 +2429,18 @@ class KBService:
         ignored: list[str] = []
         unchanged: list[str] = []
         for key, value in fields.items():
-            if key in not_written or (value is None and key not in updatable):
+            if key == "content_hash":
+                # #1900: `content_hash` is a read-only index digest. ADR-0042 decision 11
+                # uses it to guard a whole-document replace; field operations carry no
+                # token there (question 2, decided in decision 10). This opt-in check also
+                # guards field-level updates (a proposed ADR-0042 amendment, 2026-11-26).
+                # It is refused as a frontmatter key and stripped before frontmatter is
+                # written.
+                if value is None and not _READ_RESULT_MARKERS.isdisjoint(fields):
+                    ignored.append(key)
+                else:
+                    updates[key] = "" if value is None else value
+            elif key in not_written or (value is None and key not in updatable):
                 ignored.append(key)
             elif key in reading and _same_yaml_value(reading[key], value):
                 # The same YAML value, type included (#1588 fix round 1):
@@ -2389,6 +2459,8 @@ class KBService:
         append: dict[str, Any] | None = None,
         remove: dict[str, Any] | None = None,
         unset: list[str] | None = None,
+        content_hash: str | None = None,
+        hash_in_updates: bool = True,
     ) -> WriteResult:
         """Update an existing entry for a caller, returning it and its warnings.
 
@@ -2423,6 +2495,8 @@ class KBService:
             updates,
             ops=_item_operations(append, remove, unset),
             restrict=True,
+            expected_hash=content_hash,
+            hash_in_updates=hash_in_updates,
         )
 
     def apply_operations(
@@ -2484,6 +2558,8 @@ class KBService:
         expect_holder: str | None = None,
         refuse_statuses: Sequence[str] | None = None,
         drop_emptied_metadata: bool = False,
+        expected_hash: Any = None,
+        hash_in_updates: bool = True,
     ) -> WriteResult:
         """The one update: the request as operations applied to the file's own
         bytes (ADR-0042; #955, B6 P3a).
@@ -2509,7 +2585,9 @@ class KBService:
         # and otherwise never stored; `_prepare` does the same at the create
         # path.
         ensure_not_truncated(updates)
-        updates = {k: v for k, v in updates.items() if k not in MARKER_KEYS}
+        updates, hash_candidates = _pop_content_hash_candidates(
+            updates, expected_hash, pop_from_updates=hash_in_updates
+        )
 
         kb_config = self._writable_kb(kb_name)
         repo = KBRepository(kb_config)
@@ -2541,6 +2619,15 @@ class KBService:
                 raise EntryNotFoundError(
                     f"Entry not found: {entry_id}{repo.not_found_hint(entry_id)}"
                 ) from None
+            checked_hash = _validate_expected_hash(entry_id, hash_candidates)
+            if checked_hash is not None:
+                current_hash = content_hash(raw)
+                if current_hash != checked_hash:
+                    raise ConflictError(
+                        f"'{entry_id}' in KB '{kb_name}' changed since it was read "
+                        f"(expected content_hash {checked_hash}, file is now {current_hash}); "
+                        "nothing was written. Read the entry again and re-apply your changes."
+                    )
             if expect_holder is not None:
                 # `task start`'s retry from `claimed` (#1685): only the holder
                 # it read moves the claim on. Read from these bytes, on every
@@ -3056,6 +3143,15 @@ class KBService:
             )
             raise ValidationError(
                 message, errors=[{"field": "body", "rule": "managed", "message": message}]
+            )
+        if field == "content_hash":
+            message = (
+                f"Cannot modify content_hash on {entry_id!r} as a frontmatter key: "
+                "content_hash is the SHA-256 digest of the file's bytes; send it as a "
+                "top-level precondition to guard an update against concurrent edits."
+            )
+            raise ValidationError(
+                message, errors=[{"field": "content_hash", "rule": "managed", "message": message}]
             )
         whole_item = isinstance(op, Append | Remove) and not rest
         if restrict:

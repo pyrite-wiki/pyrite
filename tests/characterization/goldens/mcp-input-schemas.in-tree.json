@@ -1967,6 +1967,10 @@
             "description": "New body content (markdown)",
             "type": "string"
           },
+          "content_hash": {
+            "description": "Refuse if the file changed since this hash was read",
+            "type": "string"
+          },
           "date": {
             "description": "Date (YYYY-MM-DD)",
             "type": "string"
@@ -7302,6 +7306,10 @@
           },
           "body": {
             "description": "New body content (markdown)",
+            "type": "string"
+          },
+          "content_hash": {
+            "description": "Refuse if the file changed since this hash was read",
             "type": "string"
           },
           "date": {
