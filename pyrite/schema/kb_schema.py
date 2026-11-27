@@ -55,6 +55,7 @@ class KBSchema:
     goals: dict[str, Any] | str = field(default_factory=dict)
     evaluation_rubric: list[str | dict[str, Any]] = field(default_factory=list)
     rubric_action: str = "fail"
+    ignored_declarations: list[dict[str, str]] = field(default_factory=list)
 
     @classmethod
     def from_yaml(cls, path: Path) -> "KBSchema":
@@ -74,6 +75,7 @@ class KBSchema:
     def from_dict(cls, data: dict[str, Any]) -> "KBSchema":
         """Create from dictionary."""
         types = {}
+        ignored_declarations = []
         for type_name, type_data in (data.get("types") or {}).items():
             if isinstance(type_data, dict):
                 # Parse rich field definitions if present
@@ -90,7 +92,20 @@ class KBSchema:
                         type_name,
                         collisions,
                     )
-                    for col_name in collisions:
+                    for col_name in sorted(collisions):
+                        ignored_declarations.append(
+                            {
+                                "type": type_name,
+                                "field": col_name,
+                                "reason": "reserved_field",
+                                "message": (
+                                    f"kb.yaml: types.{type_name}.fields.{col_name} is ignored "
+                                    "because the field name is reserved. Remove this typed "
+                                    "declaration or rename the custom field. Reserved field "
+                                    f"names: {', '.join(sorted(RESERVED_FIELD_NAMES))}."
+                                ),
+                            }
+                        )
                         del fields[col_name]
 
                 endpoints = {}
@@ -142,6 +157,7 @@ class KBSchema:
             goals=data.get("goals", {}),
             evaluation_rubric=data.get("evaluation_rubric", []),
             rubric_action=rubric_action,
+            ignored_declarations=ignored_declarations,
         )
 
     def get_type_schema(self, entry_type: str) -> TypeSchema | None:

@@ -85,6 +85,15 @@ class SchemaService:
             "validation": data.get("validation", {}),
         }
 
+    @staticmethod
+    def _refuse_ignored_declarations(schema: dict[str, Any]) -> None:
+        """Judge typed fields through the same parser that records ignored declarations."""
+        from pyrite.schema.kb_schema import KBSchema
+
+        ignored = KBSchema.from_dict(schema).ignored_declarations
+        if ignored:
+            raise ValidationError("\n".join(item["message"] for item in ignored), errors=ignored)
+
     def add_type(self, kb_name: str, type_name: str, type_def: dict[str, Any]) -> dict[str, Any]:
         """Add a type definition to kb.yaml.
 
@@ -104,6 +113,7 @@ class SchemaService:
         if type_name in types:
             return {"error": f"Type '{type_name}' already exists in KB '{kb_name}'"}
 
+        self._refuse_ignored_declarations({"types": {type_name: type_def}})
         types[type_name] = type_def
         data["types"] = types
         self._save_kb_yaml(kb, data)
@@ -151,6 +161,7 @@ class SchemaService:
         data = self._load_kb_yaml(kb)
 
         if "types" in schema:
+            self._refuse_ignored_declarations(schema)
             data["types"] = schema["types"]
         if "policies" in schema:
             data["policies"] = schema["policies"]

@@ -20,7 +20,7 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any
 
-from ..config import PyriteConfig
+from ..config import KBConfig, PyriteConfig
 from ..exceptions import (
     AINotConfiguredError,
     EntryNotFoundError,
@@ -322,6 +322,8 @@ class QAService:
             self._check_rubric_action_config(issues, kb_name)
             self._check_settled_statuses_config(issues, kb_name)
             self._check_schema_retypes_core_fields(issues, kb_name)
+            if kb is not None:
+                self._check_ignored_schema_declarations(issues, kb)
             self._check_schema_all(issues, kb_name, sources)
 
             # The bulk SQL checks above do not know a KB's named rubric (#956).
@@ -1746,6 +1748,22 @@ class QAService:
             # pass reads every file and can see it.
             self._check_non_string_titles(issues, kb_name, repo, kb_config)
         return sources
+
+    @staticmethod
+    def _check_ignored_schema_declarations(
+        issues: list[dict[str, Any]], kb_config: KBConfig
+    ) -> None:
+        """Report declarations the parser discarded once per KB, even when it is empty."""
+        for item in kb_config.kb_schema.ignored_declarations:
+            issues.append(
+                {
+                    **item,
+                    "entry_id": "",
+                    "kb_name": kb_config.name,
+                    "rule": "ignored_schema_declaration",
+                    "severity": "error",
+                }
+            )
 
     def _check_schema_retypes_core_fields(self, issues: list[dict[str, Any]], kb_name: str) -> None:
         """Report, once, a kb.yaml that retypes a core type's typed field.
