@@ -467,9 +467,6 @@ class TestGraph:
         backlinks = backend.get_backlinks("target", "test", readable_kbs=UNSCOPED)
         assert relation_fields(backlinks) == expected
 
-        all_backlinks = backend.get_all_backlinks_for_kb("test")["target"]
-        assert relation_fields(all_backlinks) == expected
-
     def test_get_backlinks_empty(self, backend):
         self._setup_linked_entries(backend)
         backlinks = backend.get_backlinks("a", "test", readable_kbs=UNSCOPED)

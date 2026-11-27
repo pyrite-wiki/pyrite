@@ -293,27 +293,6 @@ class SearchBackend(Protocol):
         """In which readable KBs does each id exist? ``{id: [kb, ...]}``, one query."""
         ...
 
-    def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL backlinks targeting entries in a KB, keyed by target entry_id.
-
-        Returns the same per-entry data as get_backlinks() but in a single query.
-        """
-        ...
-
-    def get_all_outlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL outlinks from entries in a KB, keyed by source entry_id.
-
-        Returns the same per-entry data as get_outlinks() but in a single query.
-        """
-        ...
-
-    def get_all_sources_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL sources for entries in a KB, keyed by entry_id.
-
-        Returns the same per-entry data as _get_entry_sources() but in a single query.
-        """
-        ...
-
     def get_graph_data(
         self,
         center: str | None = None,
