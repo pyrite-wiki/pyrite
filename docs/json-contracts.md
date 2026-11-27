@@ -1702,6 +1702,10 @@ The result array's key also differs by transport for the same logical
 call: CLI `backlinks` → `entries`, MCP `kb_backlinks` → `backlinks`; CLI
 `tags` → `count` + `tags`, MCP `kb_tags` → `tag_count` + `tags`.
 
+Both `pyrite tags` and `pyrite-read tags` apply `--prefix` before `--limit`.
+If there are no matching tags, JSON and YAML return an empty `tags` list
+and a `count` of 0. CSV returns an empty stream.
+
 Source of truth: `pyrite/server/mcp_server.py` (`_kb_search`,
 `_kb_list_entries`, `_kb_recent`, `_kb_backlinks`, `_kb_tags`);
 `pyrite/services/search_service.py` (`search_response`, `match_verdict`, and

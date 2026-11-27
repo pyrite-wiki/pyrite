@@ -585,19 +585,15 @@ def register_browse_commands(app: typer.Typer) -> None:
     ):
         """List tags with counts."""
         with cli_context(kbs=(kb_name,), output_format=output_format) as (config, db, svc):
-            tag_list = svc.get_tags(kb_name=kb_name, limit=limit)
-
-            # Apply prefix filter
-            if prefix:
-                tag_list = [t for t in tag_list if t.get("name", "").startswith(prefix)]
-
-            if not tag_list:
-                console.print("[yellow]No tags found.[/yellow]")
-                return
+            tag_list = svc.get_tags(kb_name=kb_name, limit=limit, prefix=prefix)
 
             formatted = _format_output({"tags": tag_list, "count": len(tag_list)}, output_format)
             if formatted is not None:
-                typer.echo(formatted)
+                typer.echo(formatted, nl=bool(formatted))
+                return
+
+            if not tag_list:
+                console.print("[yellow]No tags found.[/yellow]")
                 return
 
             title = f"Tags (prefix: {prefix})" if prefix else "Tags"

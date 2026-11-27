@@ -1,0 +1,1 @@
+- `pyrite tags` and `pyrite-read tags` apply `--prefix` before `--limit` and return empty machine-readable results when no tags match (#1417).
