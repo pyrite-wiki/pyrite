@@ -38,6 +38,45 @@ def _core_field_type(spelled: str) -> str:
     return "text"
 
 
+def _agent_fields(
+    schema: "KBSchema",
+    entry_type: str,
+    core_fields: dict[str, Any] | None = None,
+    *,
+    plugin_fields: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The fields ``to_agent_schema`` publishes for ``entry_type`` (#232).
+
+    Reads the canonical ``KBSchema.type_fields`` merge (core < plugin
+    ``get_field_schemas()`` < kb.yaml). Explicitly declared core types publish
+    every merged field as ``FieldSchema.to_dict()``; undeclared (fallback) core
+    types keep their ``CORE_TYPES`` spellings for compatibility, applying
+    ``FieldSchema.to_dict()`` only to fields added or redeclared by a plugin.
+    ``core_fields`` is retained for call-site compatibility.
+    """
+    if plugin_fields is None:
+        from ..plugins import get_registry
+
+        plugin_fields = get_registry().get_all_field_schemas()
+    merged = schema.type_fields(entry_type, _plugin_fields=plugin_fields)
+    # Fallback (undeclared) core types keep their CORE_TYPES spellings for
+    # compatibility (#232 acceptance table); explicitly declared types publish
+    # the canonical type_fields (FieldSchema.to_dict()) for every field.
+    if core_fields is not None and entry_type not in getattr(schema, "types", {}):
+        published: dict[str, Any] = dict(core_fields)
+        type_plugin_fields = plugin_fields.get(entry_type, {})
+        plugin_declared = (
+            {name for name, spec in type_plugin_fields.items() if isinstance(spec, dict)}
+            if isinstance(type_plugin_fields, dict)
+            else set()
+        )
+        for name, field_schema in merged.items():
+            if name not in core_fields or name in plugin_declared:
+                published[name] = field_schema.to_dict()
+        return published
+    return {name: fs.to_dict() for name, fs in merged.items()}
+
+
 @dataclass
 class KBSchema:
     """Schema for a knowledge base, loaded from kb.yaml."""
@@ -157,7 +196,12 @@ class KBSchema:
             )
         return None
 
-    def type_fields(self, entry_type: str) -> dict[str, FieldSchema]:
+    def type_fields(
+        self,
+        entry_type: str,
+        *,
+        _plugin_fields: dict[str, dict[str, Any]] | None = None,
+    ) -> dict[str, FieldSchema]:
         """The fields a type's schema declares, ``{name: FieldSchema}``, merged
         core < plugin < kb.yaml (#86, #232).
 
@@ -186,13 +230,19 @@ class KBSchema:
             name: FieldSchema(name=name, field_type=_core_field_type(spelled))
             for name, spelled in core.items()
         }
-        try:
-            from ..plugins import get_registry
+        if _plugin_fields is None:
+            try:
+                from ..plugins import get_registry
 
-            plugin_fields = get_registry().get_all_field_schemas().get(entry_type, {})
-        except Exception:
-            logger.warning("Failed to load plugin field schemas for %s", entry_type, exc_info=True)
-            plugin_fields = {}
+                plugin_fields = get_registry().get_all_field_schemas().get(entry_type, {})
+            except Exception:
+                logger.warning(
+                    "Failed to load plugin field schemas for %s", entry_type, exc_info=True
+                )
+                plugin_fields = {}
+        else:
+            raw_fields = _plugin_fields.get(entry_type, {})
+            plugin_fields = raw_fields if isinstance(raw_fields, dict) else {}
         for name, data in plugin_fields.items():
             if isinstance(data, dict):
                 fields[name] = FieldSchema.from_dict(name, data)
@@ -338,8 +388,11 @@ class KBSchema:
         and is the KB's registered type (``KBConfig.kb_type``), the one the
         write path reads -- never this file's ``kb_type``, which can differ.
         """
+        from ..plugins import get_registry
+
         types_dict = {}
         declared = self.declared_types()
+        all_plugin_fields = get_registry().get_all_field_schemas() or {}
 
         # Include core types -- all of them when the KB declares no
         # vocabulary, otherwise only the ones it names.
@@ -348,7 +401,9 @@ class KBSchema:
                 continue
             type_info: dict[str, Any] = {
                 "description": core_def["description"],
-                "fields": core_def["fields"],
+                "fields": _agent_fields(
+                    self, type_name, core_def["fields"], plugin_fields=all_plugin_fields
+                ),
             }
             # Apply KB customizations
             if type_name in self.types:
@@ -393,6 +448,13 @@ class KBSchema:
                     type_dict["goals"] = metadata["goals"]
                 if metadata.get("evaluation_rubric"):
                     type_dict["evaluation_rubric"] = metadata["evaluation_rubric"]
+                # The #86 merge, not kb.yaml's `fields` alone (#232). An empty
+                # merge omits `fields` (prose with no declared field).
+                merged_fields = _agent_fields(self, type_name, plugin_fields=all_plugin_fields)
+                if merged_fields:
+                    type_dict["fields"] = merged_fields
+                else:
+                    type_dict.pop("fields", None)
                 types_dict[type_name] = type_dict
 
         from .type_mapping import resolve_type_mappings

@@ -20,13 +20,13 @@ The [documentation index](docs/README.md) groups guides and contracts by reader 
    base — it returns entry types, tags, recent changes, schema, and
    the operational contracts (indexing, error shape, search quoting,
    task-claim semantics) in one call. Don't relearn these from trial
-   and error. Caveat: for a plugin-declared type (e.g. this repo's own
-   `backlog_item`, `adr`, `component`, `standard`), the schema block is
-   rubric prose with no field list — `pyrite kb schema show <kb>` and
-   `pyrite schema diff` don't fill the gap either (both verified to
-   return the same prose, no fields); today the required fields exist
-   only in that type's MCP create-tool schema (e.g. `sw_create_backlog_item`
-   requires `title`, `kind`, `kb_name`) — see #232.
+   and error. For every type the KB declares, that schema names the fields
+   from the same merge create writes: core, then a plugin's
+   `get_field_schemas()`, then `kb.yaml` (#232). A `kb.yaml` field
+   replaces the plugin's declaration of that field. A plugin's fields
+   apply by type name, and do not appear on any other type. This repo's
+   `backlog_item` lists `kind`, `status`, `priority` and `effort` with
+   their options.
 4. If integrating over MCP: connect with `pyrite mcp --tier <tier>`
    and call the `kb_orient` tool first for the same reason.
 

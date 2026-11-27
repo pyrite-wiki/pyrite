@@ -102,7 +102,7 @@ Returns: `ai_instructions`, `field_descriptions`, `display` dict.
 
 ## Agent Schema Export
 
-`to_agent_schema()` serializes the full schema for MCP's `kb_schema` tool: all core + custom types with fields, AI instructions, field descriptions, display hints, and relationship types. Used by AI agents to discover what they can create.
+`to_agent_schema()` serializes the full schema for MCP's `kb_schema` tool and for `orient`: the types the KB declares, with AI instructions, field descriptions, display hints, and relationship types. Each type's `fields` are `KBSchema.type_fields` (#86, #232): core, then plugin `get_field_schemas()` for that type name, then `kb.yaml`. A `kb.yaml` field replaces the plugin's declaration of that field whole; fields the KB does not mention stay. A plugin's fields do not appear on any other type. Used by AI agents to discover what they can create.
 
 ## Related
 
