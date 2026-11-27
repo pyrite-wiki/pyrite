@@ -7,48 +7,9 @@ audience: "developers"
 tags: [setup, development]
 ---
 
-## Prerequisites
-- Python 3.11+ (3.13 recommended)
-- git
+## Setup
 
-## Steps
-
-### 1. Clone and create venv
-```bash
-git clone <repo-url>
-cd pyrite
-python3 -m venv .venv
-source .venv/bin/activate
-```
-
-### 2. Install pyrite with all optional dependencies plus dev tooling
-```bash
-pip install -e ".[all]"
-```
-`dev` alone (pytest, ruff, mypy, build, pre-commit) is tooling only — it has
-no `fastapi` and no CLI deps, so it cannot even collect the suite. `all` is
-the meta-extra `pyrite[server,cli,ai,semantic,dev]` and is what CONTRIBUTING
-uses.
-
-### 3. Install all extensions
-```bash
-for ext in extensions/*/; do pip install -e "$ext"; done
-```
-This installs every directory under `extensions/` as it exists today, so the
-list here cannot drift out of sync the way an enumerated one has before.
-
-### 4. Install pre-commit hooks
-```bash
-pre-commit install
-```
-
-### 5. Verify
-```bash
-python -m pytest tests/ extensions/ --collect-only -q
-```
-The suite is in the thousands and grows with every PR — run the command
-above rather than trusting a number written here. If it errors instead of
-reporting a collected count, step 2 or 3 above did not take.
+For setup steps, prerequisites, and dependency lock management, see [CONTRIBUTING.md](../../CONTRIBUTING.md), "Development Setup" (using `scripts/setup-checkout.sh`).
 
 ## Troubleshooting
 - If the pre-push pytest run fails: ensure extensions are installed in `.venv/` not just system Python

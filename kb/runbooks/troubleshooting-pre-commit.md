@@ -12,11 +12,11 @@ tags: [git, pre-commit, troubleshooting]
 ### ruff-format reformats files, commit fails
 **Symptom**: Commit fails, but running it again also fails.
 **Cause**: ruff-format modifies files, but they need to be re-staged.
-**Fix**: `git add -u && git commit` (the hooks run twice — first pass reformats, second pass should pass)
+**Fix**: `git add <file> && git commit` (the hooks run twice — first pass reformats, second pass should pass)
 
-### pytest hook fails with import error
+### pre-push pytest hook fails with import error
 **Symptom**: `ModuleNotFoundError: No module named 'pyrite_zettelkasten'`
-**Cause**: Extensions not installed in `.venv/` (pre-commit uses `.venv/bin/activate`)
+**Cause**: Extensions not installed in `.venv/` (the pre-push `pytest-full` hook uses `.venv/bin/activate`)
 **Fix**: `.venv/bin/pip install -e extensions/<name>` for each extension
 
 ### Python version mismatch
@@ -27,4 +27,4 @@ tags: [git, pre-commit, troubleshooting]
 ### ruff lint errors after hook
 **Symptom**: `Found N errors (N fixed, 0 remaining)` but commit still fails
 **Cause**: ruff auto-fixed the issues but the files need re-staging
-**Fix**: `git add -u && git commit` again
+**Fix**: `git add <file> && git commit` again

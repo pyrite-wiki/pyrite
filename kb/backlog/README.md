@@ -45,15 +45,15 @@ kb/backlog/
 
 | Location | Purpose |
 |----------|---------|
-| `kb/backlog/*.md` | Active priority items (target: ~30) |
-| `kb/backlog/done/` | Completed — moved here when `status: completed` is set |
+| `kb/backlog/*.md` | Active priority items |
+| `kb/backlog/done/` | Completed — moved here when `status: done` is set |
 | `kb/backlog/future-ideas/` | Valid ideas not in the current focus; promote when priorities shift |
 
 ## Workflow: completing an item
 
 1. Set status via CLI (validates + reindexes):
    ```bash
-   pyrite update <item-id> -k pyrite -f status=completed
+   pyrite update <item-id> -k pyrite -f status=done
    ```
    Do **not** hand-edit frontmatter for status changes — the CLI keeps the index
    in sync and rejects invalid transitions.

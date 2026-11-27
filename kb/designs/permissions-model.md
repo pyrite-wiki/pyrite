@@ -12,7 +12,10 @@ links:
 - launch-plan
 - roadmap
 - bhag-self-configuring-knowledge-infrastructure
+lifecycle: archived
 ---
+
+> Superseded by [[adr-0043]] and [[who-can-do-what]].
 
 # Design Sketch: Three-Layer Permissions Model
 
