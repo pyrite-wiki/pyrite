@@ -15,7 +15,7 @@ links:
 lifecycle: archived
 ---
 
-> Superseded by [[adr-0043]] and [[who-can-do-what]].
+> Superseded by [[adr-0043]] and [[map-who-can-do-what]].
 
 # Design Sketch: Three-Layer Permissions Model
 

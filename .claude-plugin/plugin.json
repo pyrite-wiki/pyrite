@@ -1,7 +1,7 @@
 {
   "name": "pyrite",
-  "version": "0.26.4",
-  "description": "Pyrite is a knowledge infrastructure platform: Knowledge-as-Code for humans and AI agents. Provides skills for KB operations, research workflows, and development.",
+  "version": "0.1.0",
+  "description": "Knowledge-as-Code for you and your agents",
   "author": "markr",
   "autoDiscover": {
     "skills": true,

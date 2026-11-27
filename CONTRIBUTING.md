@@ -309,7 +309,7 @@ has built up by that point (which directory the shell is in, which KBs and
 names already exist); otherwise say that the section starts fresh and have it
 do the `cd` or use a new name itself.
 
-Four things to know about an executable page:
+Six things to know about an executable page:
 
 1. The runner does not compare a page's shown output with what the command
    prints. It checks only what the markers name (the words in `expect-text`,
@@ -331,6 +331,10 @@ Four things to know about an executable page:
    backlog item for a pinned upstream repository) states only what that
    project's README, changelog or code state, and cites only history they
    contain.
+5. Sample output on a page is copied from a real run, and any directive that
+   checks output asserts text only the real output carries.
+6. Example or fixture records (ADRs, decisions) cite only rationale that is
+   actually recorded; anything else goes under "Open questions".
 
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
@@ -611,7 +615,8 @@ A public-interface change touches more than the code. When you change an MCP arg
 - the same option on the other surfaces (CLI, REST, MCP), or say in the PR why one surface differs;
 - `docs/json-contracts.md`, when the change adds an error code or changes a response shape;
 - the goldens above, then read `git diff tests/characterization/goldens/`;
-- a `changelog.d/` fragment that names the new option.
+- a `changelog.d/` fragment that names the new option;
+- `docs/configuration.md`, "Fixed bounds on untrusted input", when the change adds a parser or a size bound on untrusted input: add a row there, and say so in the changelog fragment.
 
 Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration under pytest-xdist because each worker records only the goldens its own tests observed (#712, fixed by #1225). The per-principal file lock does not make parallel regeneration supported. Review `git diff tests/characterization/goldens/` carefully before committing.
 
@@ -621,6 +626,7 @@ A CLI flag, MCP argument, REST field, error code or command that users and agent
 
 1. **The release that warns.** The option still works and prints a warning on every use (stderr for the CLI, a warning or deprecation field in the MCP or REST response), naming its replacement and the release that removes it. Add a row to `docs/json-contracts.md`, "Deprecated, still accepted", and a `changelog.d/` fragment. A note in `--help` alone does not count: nobody running a script sees it.
 2. **The release that removes.** Only a release after one that shipped the warning may remove the option. Remove it everywhere at once: the code, the docs row, every test that pins it, and any instruction that names it (`AGENTS.md`, the skills). Grep the whole repo for the old name, then run the full suite.
+3. **Before you push either release's change,** grep the whole repo (`docs/`, `kb/`, `README*`, `AGENTS.md`, `extensions/*/README*`, and the skills under `.claude/`) for the old command or option name and for the release number the deprecation named, and update or date every mention.
 
 Whether to remove a public option at all is the maintainer's decision. An issue that lists removals asks you to carry out decisions already made; if one has no recorded decision, ask on the issue first.
 
@@ -795,6 +801,11 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
 
   `kb/roadmap.md` is the plan for the next releases. A request we accept gets a
   roadmap item that links back to the issue.
+
+  An ADR amendment is headed and worded as proposed until the maintainer
+  accepts its text. A maintainer decision about behaviour is not acceptance of
+  the amendment's text, so never write "accepted" in its heading, its status or
+  a code comment before then.
 
 **Contributing a fix.** The PRs that merge fastest here look like this — and
 the ones that arrived on 2026-09-18 from four first-time contributors all did:

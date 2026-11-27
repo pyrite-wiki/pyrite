@@ -12,7 +12,6 @@ Written from the outside: notes from an agent that spent a session using `pyrite
 open-ended exploration of a 3,576-entry corpus, plus a traced research task (the Powell Memorandum
 lineage). Empirical claims are from that session and are dated; design proposals are opinion.
 
-Companion usability tests: `tests/usability/powell-lineage-search-usability.md`.
 Related issues: #53 (type filter ignored in semantic/hybrid), #54 (search UX).
 
 ## 1. Failure modes

@@ -1,6 +1,6 @@
 # Pyrite
 
-Knowledge infrastructure platform for humans and AI agents. Git-native markdown storage with SQLite full-text search indexing.
+Knowledge-as-Code for you and your agents. Git-native markdown storage with SQLite full-text search indexing.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ Knowledge infrastructure platform for humans and AI agents. Git-native markdown 
 ## Skills Available
 
 - **kb** (`.claude/skills/kb/`) -- Search, read, create, and update KB entries via CLI
-- **kb-lifecycle** (`.claude/skills/kb-lifecycle/`) -- Manage entry lifecycle transitions, archiving, and deprecations
+- **kb-lifecycle** (`.claude/skills/kb-lifecycle/`) -- Create, validate, and maintain a knowledge base
 - **software-kb** (`.claude/skills/software-kb/`) -- Kanban development workflow: pull, claim, submit, review via sw_* tools
 - **pyrite-dev** (`.claude/skills/pyrite-dev/`) -- Development workflow for Pyrite core, extensions, web frontend, and API
 - **extension-builder** (`.claude/skills/extension-builder/`) -- Scaffold new Pyrite extensions from a description
@@ -36,7 +36,7 @@ See `kb/` for architectural decisions (ADRs), design docs, standards, and the pr
 
 | Layer | Technology |
 |-------|-----------|
-| Backend | Python 3.11+ (>=3.11.5), FastAPI, SQLite + FTS5, Typer CLI |
+| Backend | Python 3.11+, FastAPI, SQLite + FTS5, Typer CLI |
 | Frontend | SvelteKit, Svelte 5, CodeMirror 6, Tailwind CSS 4 |
 | MCP | MCP 2024-11-05 protocol, 3-tier tools (read/write/admin) |
 | Plugins | Entry-point based plugin system with protocol class |
