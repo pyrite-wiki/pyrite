@@ -227,3 +227,26 @@ def test_an_alias_inside_its_own_anchor_stays_fast():
         except FrontmatterError:
             pass
     assert time.monotonic() - started < 2
+
+
+def test_nesting_past_max_yaml_depth_is_refused_iteratively():
+    """Deep block and flow nesting past ``MAX_YAML_DEPTH`` is refused iteratively
+    with a shallow ``RecursionError`` before ``y.load()`` recurses (#1899)."""
+    from pyrite.utils.yaml import MAX_YAML_DEPTH, safe_load_bounded
+
+    def _tb_depth(tb) -> int:
+        depth = 0
+        while tb is not None:
+            depth += 1
+            tb = tb.tb_next
+        return depth
+
+    depth = MAX_YAML_DEPTH + 20
+    deep_block = "".join(" " * i + f"k{i}:\n" for i in range(depth)) + " " * depth + "v: 1\n"
+    deep_flow = "a: " + "[" * depth + "]" * depth + "\n"
+
+    for text in (deep_block, deep_flow):
+        for load in (load_yaml, safe_load_bounded):
+            with pytest.raises(RecursionError, match="nesting exceeds") as exc_info:
+                load(text)
+            assert _tb_depth(exc_info.value.__traceback__) <= 10

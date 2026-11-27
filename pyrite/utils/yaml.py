@@ -26,8 +26,12 @@ from ..exceptions import FrontmatterError, TextOrigin, YamlLimitError, outside_t
 #: - ``MAX_YAML_EXPANDED_NODES``: scalars, sequences and mappings counted as if
 #:   every alias were copied out. A 10 MB file of plain data is about 1M nodes,
 #:   so a document past this is larger than any file Pyrite is meant to hold.
+#: - ``MAX_YAML_DEPTH``: maximum open YAML collection nesting depth. Checked
+#:   iteratively before ``load()`` recurses, raising a shallow ``RecursionError``
+#:   so callers keep their existing handling without deep tracebacks (#1899).
 MAX_YAML_ALIASES = 1000
 MAX_YAML_EXPANDED_NODES = 1_000_000
+MAX_YAML_DEPTH = 200
 
 
 def _pyyaml_regexes(tag: str) -> list[re.Pattern[str]]:
@@ -300,11 +304,18 @@ def _measure_events(events: Any, ev: Any) -> None:
             add(1)
         elif isinstance(event, ev.CollectionStartEvent):
             stack.append([event.anchor, 1])
+            if len(stack) > MAX_YAML_DEPTH:
+                raise RecursionError(f"YAML nesting exceeds {MAX_YAML_DEPTH:,} levels")
         elif isinstance(event, ev.CollectionEndEvent) and stack:
             anchor, size = stack.pop()
             if anchor:
                 sizes[anchor] = size
             add(size)
+
+
+def _max_block_nesting_prefix(text: str) -> int:
+    """Maximum leading block-nesting prefix length across lines of ``text``."""
+    return max((len(line) - len(line.lstrip(" \t-?")) for line in text.splitlines()), default=0)
 
 
 def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> None:
@@ -317,14 +328,19 @@ def _check(text: str, events_of: Any, ev: Any, parse_error: type[Exception]) -> 
     directive) means the document cannot be measured: it is refused,
     ``YamlLimitError``, never passed on to a load.
 
-    Skipped for text that can hold no alias (no ``&`` or no ``*``) and no
-    directive (no ``%``).
+    Skipped for text that can hold no alias (no ``&`` or no ``*``), no
+    directive (no ``%``), and too little nesting structure to reach
+    ``MAX_YAML_DEPTH``.
     """
-    if ("*" not in text or "&" not in text) and "%" not in text:
+    if (
+        ("*" not in text or "&" not in text)
+        and "%" not in text
+        and (text.count("[") + text.count("{") + _max_block_nesting_prefix(text)) <= MAX_YAML_DEPTH
+    ):
         return
     try:
         _measure_events(events_of(text), ev)
-    except YamlLimitError:
+    except (YamlLimitError, RecursionError):
         raise
     except parse_error:
         return  # the same parser's load stops at the same event and reports it
@@ -495,6 +511,7 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
     inside = KBFiles(root)
     if not inside.present(path):  # nothing there, a dangling link, a link loop
         return {}
+    recursion_msg: str | None = None
     try:
         data = load_yaml_file(path, kb_root=root)
     except YamlLimitError as e:  # Pyrite's own refusal: over the YAML limits
@@ -510,13 +527,21 @@ def read_kb_yaml(kb_root: str | Path) -> dict[str, Any]:
         if not inside.present(path):
             return {}
         raise KBConfigInvalidError() from e
+    except RecursionError as e:
+        # Never let a deep parser traceback chain or __context__ outlive the
+        # read (#1899): clear the caught traceback and re-raise outside the
+        # except block so no deep frame chain survives in __cause__ or
+        # __context__ for later formatting/finalization.
+        recursion_msg = str(e)
+        e.__traceback__ = None
     except Exception as e:  # noqa: BLE001 - every other way the parse fails
         # Not UTF-8 (UnicodeDecodeError), a YAML error (syntax, a control
-        # character, a duplicate key, a tag), nesting past the interpreter's
-        # recursion limit (RecursionError), or anything else the parser
+        # character, a duplicate key, a tag), or anything else the parser
         # raises: the file's bytes are the cause, so it is the file's answer.
         # Nothing but a mapping or a typed Pyrite error leaves here.
         raise KBConfigInvalidError() from e
+    if recursion_msg is not None:
+        raise KBConfigInvalidError() from RecursionError(recursion_msg)
     if not isinstance(data, Mapping):
         raise KBConfigInvalidError() from TypeError(
             f"the top level of kb.yaml is a {type(data).__name__}, not a mapping"
