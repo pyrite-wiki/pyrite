@@ -101,6 +101,13 @@ def sync_index(
     ``pyrite index sync --confirm`` prints (``services.index_confirm``,
     #1691). It needs ``wait=true`` and ``kb``.
     """
+    if confirm is not None:
+        # A blank kb names no KB: refused before anything syncs, with the
+        # one code every surface gives (#1747). (An absent kb is refused
+        # below, as before.)
+        from ...services.index_confirm import refuse_blank_confirm_kb
+
+        refuse_blank_confirm_kb(kb)
     resolved = None
     if kb is not None:
         # Through the one resolver, for the caller: an unknown name is 404

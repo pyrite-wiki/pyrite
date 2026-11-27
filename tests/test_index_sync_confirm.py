@@ -918,22 +918,118 @@ def test_a_refusal_under_pyrite_format_json_is_json(corrupt_index):
 
 
 # --------------------------------------------------------------------------
-# A blank KB name: refused KB_NOT_FOUND on the CLI and MCP, as in round 1
-# (#1747's gap 2 is a stated limit: unchanged until that ticket)
+# The outcome is the rows AND what the sync could not reach (#1747, gap 1):
+# one value, computed in the service, that the CLI exit code and the
+# network outcome both come from
 # --------------------------------------------------------------------------
 
 
-def test_a_blank_kb_name_with_confirm_is_kb_not_found_on_the_cli(world):
+def test_the_service_outcome_counts_what_the_sync_could_not_reach(world):
+    """All rows confirmed, but the sync could not reach a folder of this
+    KB that no name pointed at: the outcome is not `done`. Unreadable
+    rows of another KB do not count."""
+    from pyrite.services.index_confirm import confirm_entries
+    from pyrite.storage.index import IndexManager
+
+    index_mgr = IndexManager(world.db, world.config)
+    resolved = world.config.knowledge_bases[0]
+    sync_result = index_mgr.sync_incremental(KB)
+    sync_result["unreadable_folders"] = [{"kb": KB, "path": "blocked", "error": "denied"}]
+    sync_result["unreadable_files"] = [{"kb": KB, "path": "stuck.md", "error": "denied"}]
+
+    block = confirm_entries(index_mgr, resolved, ["unchanged"], sync_result)
+
+    assert [(r["name"], r["confirmed"]) for r in block["entries"]] == [("unchanged", True)]
+    assert block["not_confirmed"] == 0
+    assert block["outcome"] == "partial"
+
+    sync_result["unreadable_folders"] = [{"kb": "elsewhere", "path": "blocked", "error": "x"}]
+    sync_result["unreadable_files"] = [{"kb": "elsewhere", "path": "stuck.md", "error": "x"}]
+
+    block = confirm_entries(index_mgr, resolved, ["unchanged"], sync_result)
+
+    assert block["outcome"] == "done"
+
+
+def _unreadable_folder(world) -> Path:
+    """A folder the walk cannot list, holding one note no name points at
+    (chmod, restored by the caller; skipped for a user mode 000 does not
+    stop, as the unreadable-KB test above)."""
+    folder = world.kb_path(KB) / "blocked"
+    folder.mkdir()
+    (folder / "trapped.md").write_text(note("trapped", "Trapped Theta"), encoding="utf-8")
+    folder.chmod(0o000)
+    if os.access(folder, os.R_OK):
+        folder.chmod(0o755)
+        pytest.skip(f"running as a user (uid {os.getuid()}) whom mode 000 does not stop")
+    return folder
+
+
+@pytest.mark.parametrize("surface", ["cli", "mcp", "rest"])
+def test_an_unreadable_unnamed_folder_makes_the_outcome_partial_on_every_surface(world, surface):
+    """All named rows confirmed + one unreadable folder no name points
+    at: the same not-done outcome on CLI, MCP and REST."""
+    folder = _unreadable_folder(world)
+    try:
+        if surface == "cli":
+            result = _sync(world, "--confirm", "unchanged")
+            assert result.exit_code == 3, result.output
+            block = _json(result)["confirm"]
+        elif surface == "mcp":
+            block = _mcp_answer(world, {"confirm": ["unchanged"]})["confirm"]
+        else:
+            resp = _rest_answer(world, {"confirm": ["unchanged"]})
+            assert resp.status_code == 200, resp.text
+            block = resp.json()["confirm"]
+    finally:
+        folder.chmod(0o755)
+
+    assert [(r["name"], r["confirmed"]) for r in block["entries"]] == [("unchanged", True)]
+    assert block["not_confirmed"] == 0
+    assert block["outcome"] == "partial"
+
+
+# --------------------------------------------------------------------------
+# A blank KB name: refused before any sync, with one code on every surface
+# (#1747, gap 2: VALIDATION_FAILED, the code REST already gave; round 1
+# answered KB_NOT_FOUND on the CLI and MCP, after the sync ran)
+# --------------------------------------------------------------------------
+
+
+def test_a_blank_kb_name_with_confirm_is_validation_failed_on_the_cli(world):
+    _write(world, "fresh.md", note("fresh", "Fresh Gamma"))
+
     result = world.cli(
         "index", "sync", "-k", "  ", "--no-embed", "--format", "json", "--confirm", "x"
     )
 
     assert result.exit_code == 1, result.output
-    assert _json(result)["error_code"] == "KB_NOT_FOUND", result.output
+    payload = _json(result)
+    assert payload["error_code"] == "VALIDATION_FAILED", result.output
+    assert "confirm" not in payload
+    # Refused before any sync: the fresh file is still unindexed, so a
+    # plain sync afterwards is the one that adds it.
+    assert _json(_sync(world))["added"] == 1
 
 
-def test_a_blank_kb_name_with_confirm_is_kb_not_found_over_mcp(world):
+def test_a_blank_kb_name_with_confirm_is_validation_failed_over_mcp(world):
+    _write(world, "fresh.md", note("fresh", "Fresh Gamma"))
+
     res = world.mcp("admin")._dispatch_tool("kb_index_sync", {"kb_name": "  ", "confirm": ["x"]})
 
-    assert res.get("error_code") == "KB_NOT_FOUND", res
-    assert res.get("retryable") is False, res
+    assert res.get("error_code") == "VALIDATION_FAILED", res
+    assert "confirm" not in res
+    follow = world.mcp("admin")._dispatch_tool("kb_index_sync", {"kb_name": KB})
+    assert follow["added"] == 1, follow
+
+
+def test_a_blank_kb_name_with_confirm_is_validation_failed_over_rest(world):
+    _write(world, "fresh.md", note("fresh", "Fresh Gamma"))
+
+    resp = _rest_answer(world, {"kb": "  ", "confirm": ["x"]})
+
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["detail"]["code"] == "VALIDATION_FAILED"
+    follow = _rest_answer(world, {})
+    assert follow.status_code == 200, follow.text
+    assert follow.json()["added"] == 1

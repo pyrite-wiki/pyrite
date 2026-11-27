@@ -373,6 +373,13 @@ def index_sync(
     # The KB is resolved once, here (T3-1, #1530); the confirm takes the handle.
     resolved = require_kb(config, kb_name, db=db)
 
+    if confirm:
+        # A blank `-k " "` names no KB: refused before anything syncs,
+        # with the one code every surface gives (#1747).
+        from ..services.index_confirm import refuse_blank_confirm_kb
+
+        refuse_blank_confirm_kb(kb_name)
+
     if background:
         from ..services.index_worker import IndexWorker
 
@@ -419,7 +426,7 @@ def index_sync(
         # After the embed, so each row's embedding state is what it now is.
         from ..services.index_confirm import confirm_entries
 
-        # None for a blank `-k " "`: the confirm refuses it (KB_NOT_FOUND).
+        # A blank `-k " "` was refused above, before the sync (#1747).
         results["confirm"] = confirm_entries(index_mgr, resolved, names, results)
 
     # A KB whose files could not be read was not synced and kept its rows
@@ -429,9 +436,13 @@ def index_sync(
     synced = sum(1 for kb in config.all_kbs() if kb.path.exists()) - len(unreadable_kbs)
     failed = len(unreadable_kbs) + _could_not_reach(results)
     outcome = Outcome.from_counts(synced, failed, results, rich=_sync_renderer(config))
-    if outcome.kind is OutcomeKind.DONE and results.get("confirm", {}).get("not_confirmed"):
-        # A named entry that is not confirmed: the sync ran, the ask did not
-        # all happen (docs/json-contracts.md, "Exit codes (CLI)").
+    if outcome.kind is OutcomeKind.DONE and results.get("confirm", {}).get("outcome") not in (
+        None,
+        "done",
+    ):
+        # The confirm's one outcome (the rows, and what the sync could not
+        # reach, #1747): the sync ran, the ask did not all happen
+        # (docs/json-contracts.md, "Exit codes (CLI)").
         return Outcome.partial(results, rich=outcome.rich)
     return outcome
 
