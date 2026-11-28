@@ -143,6 +143,7 @@ def test_a_refused_field_is_absent_from_every_read_and_named(
         )
 
 
+@pytest.mark.parametrize("surface", SURFACES)
 @pytest.mark.parametrize(
     ("shape", "nested", "kept", "refused"),
     [
@@ -178,7 +179,7 @@ def test_a_refused_field_is_absent_from_every_read_and_named(
     ],
 )
 def test_partial_reads_keep_fields_the_loader_accepts_in_context(
-    make_world, monkeypatch, shape, nested, kept, refused
+    make_world, monkeypatch, shape, nested, kept, refused, surface
 ):
     from pyrite_software_kb.entry_types import BacklogItemEntry
 
@@ -202,16 +203,19 @@ def test_partial_reads_keep_fields_the_loader_accepts_in_context(
     monkeypatch.setattr(BacklogItemEntry, "from_frontmatter", classmethod(from_frontmatter))
     world = make_world(_text("backlog_item", Shape(shape)))
 
-    status, text = _cli_get(world)
+    status, text = SURFACES[surface](world)
 
-    assert status == OK["cli"], text
-    data = _entry("cli", text)
+    assert status == OK[surface], text
+    data = _entry(surface, text)
     assert [problem["field"] for problem in data["load_problems"]] == refused
     for key, value in kept.items():
         assert data["metadata"][key] == value
     for key in refused:
         field = key.removeprefix("metadata.")
-        assert field not in data
+        if surface == "rest":
+            assert data.get(field) is None
+        else:
+            assert field not in data
         assert field not in data["metadata"]
 
 

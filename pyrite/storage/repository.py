@@ -350,10 +350,10 @@ def load_problem(field_path: str, error: str) -> dict[str, str]:
     }
 
 
-def _loader_refuses(fm: dict) -> str | None:
+def _loader_refuses(fm: dict, body: str = "") -> str | None:
     """The loader's message when the type ``fm`` declares refuses it, else None."""
     try:
-        entry_from_frontmatter(fm, "")
+        entry_from_frontmatter(fm, body)
     except Exception as e:  # noqa: BLE001 - a probe of the type's own loader
         # A loader's text (a plugin's, a library's) reaches the refusal's
         # message and its fields: a network caller gets Pyrite's own text
@@ -386,7 +386,8 @@ def _refused_fields(fm: dict, body: str) -> dict[str, str]:
     ``id``, ``title``) plus that key alone; a ``metadata:`` mapping is probed
     key by key, so ``metadata.rank`` is named as such. If the base and the file
     without the candidates both load, put back any candidate that loads in
-    context. Runs only for a file that already failed to load.
+    context, one at a time and in file order. Runs only for a file that
+    already failed to load.
     """
     base = {k: fm[k] for k in ("type", "id", "title") if k in fm}
     if _loader_refuses(base) is not None:
@@ -410,9 +411,7 @@ def _refused_fields(fm: dict, body: str) -> dict[str, str]:
         refused[str(key)] = whole
     if not refused:
         return {}
-    try:
-        entry_from_frontmatter(_without(fm, refused), body)
-    except Exception:  # noqa: BLE001 - the rest still does not load: not isolated
+    if _loader_refuses(_without(fm, refused), body) is not None:
         return {}
 
     # Restoring a field can make an earlier candidate load on the next pass.
@@ -422,9 +421,7 @@ def _refused_fields(fm: dict, body: str) -> dict[str, str]:
         for key in tuple(refused):
             remaining = refused.copy()
             del remaining[key]
-            try:
-                entry_from_frontmatter(_without(fm, remaining), body)
-            except Exception:  # noqa: BLE001 - this field still makes the file unloadable
+            if _loader_refuses(_without(fm, remaining), body) is not None:
                 continue
             refused = remaining
         if len(refused) == count:
