@@ -11,6 +11,8 @@ import json
 
 import yaml
 
+from pyrite.read_cli import app as read_app
+
 KB = "test-kb"
 
 
@@ -21,7 +23,7 @@ def _run_pyrite(world, *args: str):
 
 
 def _run_read(world, *args: str):
-    result = world.read_cli("timeline", *args)
+    result = world.cli("timeline", *args, app=read_app)
     assert result.exit_code == 0, result.output
     return result.stdout
 
