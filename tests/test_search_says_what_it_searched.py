@@ -278,14 +278,24 @@ class _WordTokenizer:
         return {"input_ids": text.split()}
 
 
+class _SpecialTokenizer:
+    """A tokenizer that adds two special tokens, as a real
+    sentence-transformers tokenizer does: `input_ids` is the words plus a
+    leading and a trailing special token, and the model's window counts
+    them too."""
+
+    def __call__(self, text):
+        return {"input_ids": ["<cls>", *text.split(), "<sep>"]}
+
+
 class _WindowedModel(FakeModel):
     """A recording model with a token window, as the bundled local model
     has: a `max_seq_length` the service can read through its tokenizer.
     `seen` keeps every text it was handed."""
 
-    def __init__(self, window):
+    def __init__(self, window, tokenizer=None):
         self.max_seq_length = window
-        self.tokenizer = _WordTokenizer()
+        self.tokenizer = tokenizer or _WordTokenizer()
         self.seen = []
 
     def encode(self, text, **kwargs):
@@ -295,47 +305,97 @@ class _WindowedModel(FakeModel):
 
 class TestSemanticSaysWhenTheModelWindowCutTheBody:
     """#1785: `body_prefix_chars` is only an upper bound when the model's
-    token window cuts a body before the character cut; the response says so
-    when embedding in this process measured the window doing it."""
+    token window cuts a body before the character cut; the response says
+    so, derived at response time from the entries it returns, as they
+    read now. Nothing is recorded at embed time, so a cut in another KB,
+    or in an entry that was edited or not returned, never marks a
+    response."""
 
-    @pytest.fixture(autouse=True)
-    def _no_measured_truncation(self, monkeypatch):
-        monkeypatch.setattr(es, "_BODY_TRUNCATED_BY_MODEL", set())
-
-    def _embed_long_entry(self, db, monkeypatch, window):
-        install_fake_model(monkeypatch, _WindowedModel(window))
-        body = " ".join(f"word{i}" for i in range(120))
-        add_entry(db, "long", title="the title", summary="the summary", body=body)
-        assert es.EmbeddingService(db).embed_entry("long", "t")
+    def _search(self, db, monkeypatch, model, query="x"):
+        install_fake_model(monkeypatch, model)
+        return SearchService(db).search_response(query, mode="semantic")
 
     def test_a_small_window_marks_the_number_as_an_upper_bound(self, db, monkeypatch):
-        self._embed_long_entry(db, monkeypatch, window=8)
-        add_entry(db, "b", body="x", cosine=0.9, axis=2)
-        resp = SearchService(db).search_response("x", mode="semantic")
+        body = " ".join(f"word{i}" for i in range(120))
+        add_entry(
+            db, "long", title="the title", summary="the summary", body=body, cosine=0.95, axis=1
+        )
+        resp = self._search(db, monkeypatch, _WindowedModel(8))
         assert resp["legs_run"] == ["semantic"]
         assert resp["body_prefix_chars"] == 500
         assert resp["body_truncated_by_model"] is True
 
     def test_a_window_that_fits_the_text_marks_nothing(self, db, monkeypatch):
-        self._embed_long_entry(db, monkeypatch, window=1000)
-        add_entry(db, "b", body="x", cosine=0.9, axis=2)
-        resp = SearchService(db).search_response("x", mode="semantic")
+        body = " ".join(f"word{i}" for i in range(120))
+        add_entry(
+            db, "long", title="the title", summary="the summary", body=body, cosine=0.95, axis=1
+        )
+        resp = self._search(db, monkeypatch, _WindowedModel(1000))
         assert resp["body_prefix_chars"] == 500
         assert "body_truncated_by_model" not in resp
 
     def test_a_model_that_cannot_say_marks_nothing(self, db, svc):
-        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        body = " ".join(f"word{i}" for i in range(120))
+        add_entry(db, "long", title="the title", body=body, cosine=0.95, axis=1)
         resp = svc.search_response("x", mode="semantic")
         assert resp["body_prefix_chars"] == 500
         assert "body_truncated_by_model" not in resp
 
     def test_keyword_and_hybrid_are_unchanged(self, db, monkeypatch):
-        self._embed_long_entry(db, monkeypatch, window=8)
-        add_entry(db, "b", body="x", cosine=0.9, axis=2)
+        body = " ".join(f"word{i}" for i in range(120))
+        add_entry(db, "long", title="the title", body=body, cosine=0.95, axis=1)
+        install_fake_model(monkeypatch, _WindowedModel(8))
         for mode in ("keyword", "hybrid"):
             resp = SearchService(db).search_response("x", mode=mode)
             assert "body_prefix_chars" not in resp
             assert "body_truncated_by_model" not in resp
+
+    def test_a_cut_in_another_kb_does_not_mark_a_scoped_search(self, db, monkeypatch):
+        db.register_kb("a", KBType.GENERIC, "a")
+        db.register_kb("b", KBType.GENERIC, "b")
+        body = " ".join(f"word{i}" for i in range(120))
+        add_entry(db, "long", kb="a", title="the title", body=body, cosine=0.95, axis=1)
+        add_entry(db, "short", kb="b", title="the title", body="x", cosine=0.9, axis=2)
+        install_fake_model(monkeypatch, _WindowedModel(8))
+        scoped_b = SearchService(db).search_response("x", mode="semantic", kb_name="b")
+        assert [r["id"] for r in scoped_b["results"]] == ["short"]
+        assert "body_truncated_by_model" not in scoped_b
+        scoped_a = SearchService(db).search_response("x", mode="semantic", kb_name="a")
+        assert [r["id"] for r in scoped_a["results"]] == ["long"]
+        assert scoped_a["body_truncated_by_model"] is True
+
+    def test_a_body_cut_by_tokens_before_the_character_cut(self, db, monkeypatch):
+        # 400 characters, 200 tokens: the character cut never bites, the
+        # window still cuts the body well before its end.
+        add_entry(db, "dense", title="t", body="a " * 200, cosine=0.95, axis=1)
+        resp = self._search(db, monkeypatch, _WindowedModel(50))
+        assert resp["body_truncated_by_model"] is True
+
+    def test_a_long_title_and_summary_leave_the_body_no_tokens(self, db, monkeypatch):
+        title = " ".join(f"t{i}" for i in range(60))
+        summary = " ".join(f"s{i}" for i in range(60))
+        add_entry(
+            db, "crowded", title=title, summary=summary, body="short body", cosine=0.95, axis=1
+        )
+        resp = self._search(db, monkeypatch, _WindowedModel(50))
+        assert resp["body_truncated_by_model"] is True
+
+    def test_an_empty_body_is_never_cut(self, db, monkeypatch):
+        title = " ".join(f"t{i}" for i in range(60))
+        add_entry(db, "hollow", title=title, body="", cosine=0.95, axis=1)
+        resp = self._search(db, monkeypatch, _WindowedModel(8))
+        assert resp["body_prefix_chars"] == 500
+        assert "body_truncated_by_model" not in resp
+
+    def test_special_tokens_count_toward_the_window(self, db, monkeypatch):
+        # Title "t1" + a six-word body + two special tokens = 9 tokens.
+        # A window of 9 reads the whole body; a window of 8 cuts it. The
+        # overhead is the model's own, so an exact fit is not a cut.
+        add_entry(db, "exact", title="t1", body="one two three four five six", cosine=0.95, axis=1)
+        fits = self._search(db, monkeypatch, _WindowedModel(9, _SpecialTokenizer()))
+        assert "body_truncated_by_model" not in fits
+        cut = self._search(db, monkeypatch, _WindowedModel(8, _SpecialTokenizer()))
+        assert cut["body_truncated_by_model"] is True
 
 
 class TestPostgresReportsItsOwnColumns:
