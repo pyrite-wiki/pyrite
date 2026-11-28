@@ -4,6 +4,7 @@ title: "Serial queue — the not-started 0.24.2 work re-split for one task at a 
 type: note
 tags: [process, conductor, groom, architect, 0.24.2]
 created: "2026-09-18"
+lifecycle: archived
 ---
 
 The `pyrite-architect`'s re-split after #168 (the conductor loop ran the 16 GB machine out of memory, 2026-09-18 ~11:10Z). The maintainer's direction: **one Pyrite task at a time** — one worker *or* one review on the machine, never both — and "split the remaining pyrite work up again". Every theme below is sized for one worker pass, one suite run to verify, one review: ≤ ~300 changed lines, ≤ ~6 files, one reason to change. Baseline `origin/dev` 28fc380. Supersedes the dispatch order (not the analysis) in [[groom-2026-09-18-tick6]].

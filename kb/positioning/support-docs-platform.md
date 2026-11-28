@@ -6,6 +6,7 @@ status: active
 author: markr
 date: "2026-07-03"
 tags: [positioning, support, documentation, publishing, vertical, agents]
+lifecycle: archived
 ---
 
 # Market Positioning: Support-to-Docs Publishing Platform

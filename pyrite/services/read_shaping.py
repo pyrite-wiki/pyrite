@@ -51,6 +51,14 @@ def parse_cli_fields(fields: str | None) -> list[str] | None:
     return None if parsed and "*" in parsed else parsed
 
 
+#: The entry-level warnings an entry read or a search row carries when the file
+#: holds a value its reading does not show faithfully (a refused ``importance``,
+#: #1761). Not search's page-level ``warnings`` ("a leg was skipped"). A
+#: projection keeps it: it is the one key a projection adds, because dropping it
+#: would show the legacy reading silently.
+ENTRY_WARNINGS_KEY = "entry_warnings"
+
+
 def project_fields(
     record: dict[str, Any],
     fields: list[str] | None,
@@ -65,7 +73,7 @@ def project_fields(
     """
     if not fields:
         return record
-    keys = dict.fromkeys((*required, *fields))
+    keys = dict.fromkeys((*required, *fields, ENTRY_WARNINGS_KEY))
     return {key: record[key] for key in keys if key in record}
 
 
@@ -80,7 +88,7 @@ SEARCH_ROW_FIELDS: tuple[str, ...] = (
     "id", "kb_name", "entry_type", "title", "body", "summary", "file_path", "date",
     "importance", "status", "location", "lifecycle", "metadata", "created_at",
     "updated_at", "indexed_at", "created_by", "modified_by", "snippet",
-    "rank", "rrf_score", "similarity", "distance", "legs",
+    "rank", "rrf_score", "similarity", "legs",
 )  # fmt: skip
 
 #: What a caller needs to choose the next read: which entry (`id` + `kb_name`,
@@ -88,8 +96,7 @@ SEARCH_ROW_FIELDS: tuple[str, ...] = (
 #: the score key the mode produced. `project_fields` skips a key a row lacks,
 #: so a keyword row carries `rank`, a semantic row `similarity`, a hybrid row
 #: `rrf_score` as well. `legs` (hybrid: which legs returned the row) is how an
-#: `rrf_score` is read and #668 made it part of the row's contract. `distance`
-#: (backend-specific, leaving the response) is not here.
+#: `rrf_score` is read and #668 made it part of the row's contract.
 SEARCH_DEFAULT_FIELDS: tuple[str, ...] = (
     "id", "kb_name", "entry_type", "title", "snippet", "rank", "rrf_score", "similarity",
     "legs",

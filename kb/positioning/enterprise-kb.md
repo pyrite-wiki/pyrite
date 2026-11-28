@@ -6,6 +6,7 @@ status: active
 author: markr
 date: "2026-02-23"
 tags: [positioning, enterprise, knowledge-management, collaboration]
+lifecycle: archived
 ---
 
 # Market Positioning: Enterprise Knowledge Management

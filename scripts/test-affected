@@ -37,8 +37,9 @@ Selection
              ``--helper-threshold`` test files.
 
 A change under extensions/*/src/ also selects every test that mentions
-``get_registry``, ``entry_points`` or ``PluginRegistry``: core tests reach
-plugins through entry points, which no import names.
+``get_registry``, ``entry_points`` or ``PluginRegistry``, directly or through
+a helper it imports: core tests reach plugins through entry points, which no
+import names.
 
 Experimental tests (#657) are deselected: ``--run`` passes ``-m "not slow and
 not e2e and not experimental"``, the gating CI job's expression, so a push is
@@ -256,6 +257,7 @@ class _File:
     text: str = ""
     # imported dotted name -> how ("" for a plain import, "fixture x (conftest)")
     deps: dict[str, str] = field(default_factory=dict)
+    loads_plugins: bool = False
 
 
 def _walk_py(directory: Path):
@@ -348,6 +350,7 @@ class _Fixture:
     autouse: bool
     imports: set[str]
     params: list[str]
+    loads_plugins: bool = False
 
 
 def _conftest_fixtures(tree: ast.Module, package: str, rel: str, resolve) -> dict[str, _Fixture]:
@@ -381,13 +384,35 @@ def _conftest_fixtures(tree: ast.Module, package: str, rel: str, resolve) -> dic
                     found |= deps_of(functions[node.id], seen)
         return found
 
+    def loads_plugins(fn: ast.AST, seen: set[str]) -> bool:
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and node.id in {
+                "get_registry",
+                "entry_points",
+                "PluginRegistry",
+            }:
+                return True
+            if isinstance(node, ast.Attribute) and node.attr in {
+                "get_registry",
+                "entry_points",
+                "PluginRegistry",
+            }:
+                return True
+            if isinstance(node, ast.Name) and node.id in functions and node.id not in seen:
+                seen.add(node.id)
+                if loads_plugins(functions[node.id], seen):
+                    return True
+        return False
+
     fixtures = {}
     for name, fn in functions.items():
         for decorator in fn.decorator_list:
             is_fixture, autouse = _is_fixture(decorator)
             if is_fixture:
                 params = [a.arg for a in fn.args.args + fn.args.kwonlyargs]
-                fixtures[name] = _Fixture(name, rel, autouse, deps_of(fn, {name}), params)
+                fixtures[name] = _Fixture(
+                    name, rel, autouse, deps_of(fn, {name}), params, loads_plugins(fn, {name})
+                )
                 break
     return fixtures
 
@@ -606,6 +631,8 @@ class Graph:
                 # it; it is never "used" by the tests it silently wraps.
                 if fixture is None:
                     continue
+                if fixture.loads_plugins:
+                    f.loads_plugins = True
                 for dep in fixture.imports:
                     f.deps.setdefault(dep, f"fixture {fixture.name} ({fixture.conftest})")
                 stack.extend(fixture.params)
@@ -734,8 +761,11 @@ def select(
     if plugin_change:
         # Core tests reach extensions through entry points, not imports.
         for f in graph.files.values():
-            if f.is_test and _LOADS_PLUGINS.search(f.text):
+            if f.is_test and (_LOADS_PLUGINS.search(f.text) or f.loads_plugins):
                 selection.files.setdefault(f.path, f"loads plugins ({plugin_change})")
+            elif graph.in_test_root(f.path) and not f.is_test and _LOADS_PLUGINS.search(f.text):
+                for test_path in _tests_reaching(graph, f.names):
+                    selection.files.setdefault(test_path, f"loads plugins ({plugin_change})")
     for rel in changed:
         f = graph.files.get(rel)
         if f is not None and f.is_test:

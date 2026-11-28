@@ -6,7 +6,7 @@ Extracted from api.py to reduce file size and improve organization.
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 # =============================================================================
 # Knowledge Bases
@@ -102,16 +102,18 @@ class KBReindexResponse(BaseModel):
     #: never a path, over the network. The local CLI names them.
     unreadable_folders: int = 0
 
-    @field_validator("unreadable_folders", mode="before")
+    unreadable_files: int = 0
+
+    @field_validator("unreadable_folders", "unreadable_files", mode="before")
     @classmethod
-    def _folders_as_counted(cls, value: Any) -> Any:
-        """The route builds this from the registry's dict (``**result``):
-        the folder rows are shaped by ``network_shape``, the one place that
-        decides what a network caller gets, whichever way the dict arrives."""
+    def _unreadable_as_counted(cls, value: Any, info: ValidationInfo) -> Any:
+        """Accept raw registry rows as well as the route's shaped counts."""
         if isinstance(value, list):
             from ..services.index_health import network_shape
 
-            return network_shape({"unreadable_folders": value})["unreadable_folders"]
+            field = info.field_name
+            assert field is not None
+            return network_shape({field: value})[field]
         return value
 
 
@@ -145,6 +147,10 @@ class SearchResult(BaseModel):
     #: Hybrid mode: the legs that returned this row, ``keyword`` and/or
     #: ``semantic``.
     legs: list[str] | None = None
+    #: What the entry's file holds that this row's reading does not show
+    #: faithfully (a refused ``importance``, #1761). Not the response-level
+    #: ``warnings`` (a leg was skipped). Absent on a row with nothing to say.
+    entry_warnings: list[str] | None = None
 
 
 class SearchResponse(BaseModel):
@@ -195,6 +201,24 @@ class SearchResponse(BaseModel):
 # =============================================================================
 
 
+def _document_partial_entry_read(schema: dict[str, Any]) -> None:
+    # The endpoint supplies these details as extra keys on partial reads.
+    # Document them without adding a field to the response model.
+    properties = schema["properties"]
+    fields = ("field", "rule", "severity", "message")
+    properties["load_problems"] = {
+        "type": "array",
+        "description": "Present only when the file's type could not load every field.",
+        "items": {
+            "type": "object",
+            "properties": {field: {"type": "string"} for field in fields},
+            "required": list(fields),
+        },
+    }
+    for column in ("tags", "participants", "sources", "metadata"):
+        properties[column]["description"] = "Absent when load_problems names this column."
+
+
 class EntryResponse(BaseModel):
     """Full entry response.
 
@@ -233,6 +257,12 @@ class EntryResponse(BaseModel):
     # SHA-256 of the file bytes the read parsed (ADR-0042 decision 9); None
     # for an entry with no file.
     content_hash: str | None = None
+
+
+class SingleEntryResponse(EntryResponse):
+    """OpenAPI response for a single-entry read, which can return a partial entry."""
+
+    model_config = ConfigDict(json_schema_extra=_document_partial_entry_read)
 
 
 # =============================================================================
@@ -481,6 +511,7 @@ class SyncResponse(BaseModel):
     #: How many folders it could not list in the KBs it synced: their rows
     #: kept (#1546). A count, never a path; the local CLI names them.
     unreadable_folders: int = 0
+    unreadable_files: int = 0
 
 
 class ErrorResponse(BaseModel):

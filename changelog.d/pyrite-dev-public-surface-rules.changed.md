@@ -1,0 +1,1 @@
+The pyrite-dev skill now carries the public-surface rules (no one-step removals, removals are the maintainer's call, update every place an interface is described, stop at a protected test), lists instances before coding an "every/all" property, stops on a red baseline, requires checked references in proposals, and says when to run the full suite before pushing.

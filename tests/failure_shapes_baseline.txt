@@ -1,6 +1,8 @@
 # tests/test_a_failure_is_never_a_success.py: four shrink-only baselines (T4-1, #1531).
 # Never add or raise a line: lower or delete it when a site is removed. One line per file (or
 # per handler group), so two honest pull requests never touch the same line (#1608).
+# Neighbouring lines can still conflict in git; the pull request that lands second
+# resolves by keeping dev's line and its own line.
 #
 # http_exception | <count> | <path>   HTTPException( calls outside server/errors.py and
 #                                     server/endpoints/write_refusal.py (target 0)
@@ -24,8 +26,8 @@ http_exception | 1 | pyrite/server/endpoints/blocks.py
 http_exception | 6 | pyrite/server/endpoints/clipper.py
 http_exception | 3 | pyrite/server/endpoints/collections.py
 http_exception | 2 | pyrite/server/endpoints/daily.py
-http_exception | 27 | pyrite/server/endpoints/entries.py
-http_exception | 10 | pyrite/server/endpoints/git_ops.py
+http_exception | 23 | pyrite/server/endpoints/entries.py
+http_exception | 8 | pyrite/server/endpoints/git_ops.py
 http_exception | 6 | pyrite/server/endpoints/kbs.py
 http_exception | 14 | pyrite/server/endpoints/repos.py
 http_exception | 5 | pyrite/server/endpoints/reviews.py
@@ -239,7 +241,6 @@ broad_except | pyrite/services/task_service.py | TaskService.list_tasks | swallo
 broad_except | pyrite/services/url_checker.py | URLChecker.check_url | boundary-backstop | 1 | returns a failure value the caller reports
 broad_except | pyrite/services/user_service.py | UserService.get_current_user | swallow-to-default | 1 |
 broad_except | pyrite/services/version_service.py | VersionService.get_entry_at_version | swallow-to-default | 1 |
-broad_except | pyrite/storage/alembic/versions/002_collaboration_tables.py | upgrade | swallow-to-default | 4 |
 broad_except | pyrite/storage/backends/base_backend.py | DeclaredFieldTypes._kb_path | swallow-to-default | 1 |
 broad_except | pyrite/storage/backends/base_backend.py | DeclaredFieldTypes._schema | swallow-to-default | 2 |
 broad_except | pyrite/storage/backends/postgres_backend.py | _announce_experimental | swallow-to-default | 4 |

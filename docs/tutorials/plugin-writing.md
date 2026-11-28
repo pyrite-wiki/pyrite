@@ -139,6 +139,7 @@ Key rules:
 - `entry_type` must return the exact key you register in `get_entry_types()`.
 - `to_frontmatter()` should omit fields that hold their default value.
 - `from_frontmatter()` must call `generate_entry_id(title)` when the metadata has no `id`.
+- `from_frontmatter()` must accept a mapping with only `type`, `id` and `title`. A partial read probes a file with those base keys first; a loader that refuses them makes the read fail as `ENTRY_UNREADABLE` instead of listing the refused fields.
 
 ### 4. Add a validator
 

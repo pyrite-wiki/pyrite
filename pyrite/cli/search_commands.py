@@ -29,8 +29,8 @@ from ..services.read_shaping import (
     unmatched_search_fields,
 )
 from ..utils.errors import exit_unless_whole
-from .context import get_config_with_registered_kbs, require_kb
-from .output import cli_console, validate_output_format
+from .context import ROW_COUNT_MAX, get_config_with_registered_kbs, require_kb
+from .output import cli_console, print_rich_entry_warnings, validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,9 @@ def register_search_command(app: typer.Typer):
                 "'readiness') are NOT reachable via this flag."
             ),
         ),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+        limit: int = typer.Option(
+            20, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Max results"
+        ),
         mode: str = typer.Option(
             None, "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
         ),
@@ -378,6 +380,10 @@ def register_search_command(app: typer.Typer):
                         if f not in IDENTITY_FIELDS and any(f in r for r in results)
                     ]
                 content, _ = format_response(resp_data, output_format, fields=table_fields)
+                if output_format == "csv":
+                    from .output import note_entry_warnings
+
+                    note_entry_warnings(resp_data)
                 typer.echo(content)
                 return
 
@@ -385,6 +391,7 @@ def register_search_command(app: typer.Typer):
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(results, fields_list, "Search Results"))
+                print_rich_entry_warnings(console, {"results": results})
                 return
 
             table = Table(title=f"Search Results ({len(results)})")
@@ -418,6 +425,7 @@ def register_search_command(app: typer.Typer):
                 table.add_row(*cells, *([date] if show_date else []), snippet)
 
             console.print(table)
+            print_rich_entry_warnings(console, {"results": results})
 
         except QuerySyntaxError as e:
             # Deterministic, not retryable — falling back to file search
@@ -808,6 +816,7 @@ def _print_batch(data: dict, output_format: str) -> None:
             rid = _safe_rich(r.get("id", ""))
             title = _safe_rich(r.get("title", ""))
             console.print(f"  [cyan]{escape(kb)}[/cyan] [dim]{escape(rid)}[/dim] {escape(title)}")
+        print_rich_entry_warnings(console, slot)
 
 
 def _warn_fields_not_applied(fields):

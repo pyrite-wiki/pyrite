@@ -13,6 +13,7 @@ import stat
 from collections.abc import Callable, Iterator, Mapping, Set
 from dataclasses import dataclass
 from pathlib import Path
+from typing import overload
 
 from ..config import KBConfig
 from ..exceptions import (
@@ -433,6 +434,7 @@ class KBRepository:
         self.path = kb_config.path
         self.kb_type = kb_config.kb_type
         self.name = kb_config.name
+        self._folder_casing_cache: dict[str, str] = {}
 
     def _get_entry_class(self) -> type:
         """Get the default entry class for loading files."""
@@ -657,10 +659,34 @@ class KBRepository:
         KBFiles(self.path).require(file_path)
         return file_path
 
+    @overload
+    def _resolve_existing_folder_casing(self, subdir: str) -> str: ...
+
+    @overload
+    def _resolve_existing_folder_casing(self, subdir: None) -> None: ...
+
+    @overload
+    def _resolve_existing_folder_casing(self, subdir: str | None) -> str | None: ...
+
+    def _resolve_existing_folder_casing(self, subdir: str | None) -> str | None:
+        """Resolve ``subdir`` against existing on-disk folders using entry_paths (#1624)."""
+        if subdir is None:
+            return None
+        cached = self._folder_casing_cache.get(subdir)
+        if cached is not None:
+            return cached
+        resolved = entry_paths.resolve_existing_folder_casing(self.path, subdir)
+        # Only cache spellings that already exist, so a later create or
+        # rename is not hidden by a miss cached from an earlier write.
+        if resolved and (self.path / resolved).is_dir():
+            self._folder_casing_cache[subdir] = resolved
+        return resolved
+
     def _get_file_path(self, entry_id: str, subdir: str | None = None) -> Path:
         """Get file path for an entry."""
         self._validate_entry_id(entry_id)
         if subdir:
+            subdir = self._resolve_existing_folder_casing(subdir)
             return self._contained(self.path / subdir / f"{entry_id}.md")
         return self._contained(self.path / f"{entry_id}.md")
 
@@ -684,6 +710,8 @@ class KBRepository:
         two items whose names differ only in case step the second to ``-2``
         (or refuse a ``file_pattern`` name), and dry-run and real writes agree.
         """
+        if subdir:
+            subdir = self._resolve_existing_folder_casing(subdir)
         schema = self.config.kb_schema
         type_schema = schema.get_type_schema(entry.entry_type)
         if type_schema:
@@ -1411,6 +1439,8 @@ class KBRepository:
         from the type's ``file_pattern`` or its id."""
         if subdir is None:
             subdir = self._infer_subdir(entry)
+        if subdir:
+            subdir = self._resolve_existing_folder_casing(subdir)
         if keep_filename and entry.file_path is not None:
             filename = entry.file_path.name
             if subdir:
@@ -1486,13 +1516,14 @@ class KBRepository:
                 touching the filesystem.
 
         Returns:
-            Plan/result dict with keys ``renamed`` (bool), ``old_id``,
-            ``new_id``, ``files_rewritten`` (linking files written),
+            Plan/result dict with keys ``renamed`` (true only after a write),
+            ``old_id``, ``new_id``, ``files_rewritten`` (linking files written),
             ``links_rewritten``, ``files_skipped`` (linking files the rename
             could not patch, each ``{"path", "reason"}``), ``files_partial``
             (linking files whose body was rewritten while a wikilink in a
             frontmatter that could not be patched as values still names the
-            old id, each ``{"path", "reason"}``), ``dry_run``.
+            old id, each ``{"path", "reason"}``), ``dry_run``. A dry run also
+            includes ``file_path``, the retained path relative to the KB.
 
         A rename either completes, with every linker it could not patch
         listed, or changes nothing (#978 delta review, round 1): the entry
@@ -1582,7 +1613,7 @@ class KBRepository:
                     rewrites.append((md_file, linker, rewrite))
 
         if dry_run:
-            return self._rename_result(
+            plan = self._rename_result(
                 old_id,
                 new_id,
                 files_rewritten=len(rewrites),
@@ -1591,6 +1622,8 @@ class KBRepository:
                 partial=partial,
                 dry_run=True,
             )
+            plan["file_path"] = self._rel(src)
+            return plan
 
         # Execute: the entry first, so a rename that cannot write it changes
         # nothing (the delta review's "half-applied rename": the linkers used
@@ -1661,7 +1694,7 @@ class KBRepository:
         dry_run: bool,
     ) -> dict:
         return {
-            "renamed": True,
+            "renamed": not dry_run,
             "old_id": old_id,
             "new_id": new_id,
             "files_rewritten": files_rewritten,

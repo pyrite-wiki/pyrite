@@ -14,11 +14,15 @@ runs without torch.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 
 import pytest
 
 import pyrite.services.embedding_service as es
 from pyrite.config import KBConfig
+from tests._world import build_world
 from tests.cli_help import plain
 from tests.search_verdict_seed import install_fake_model, vector_at
 
@@ -504,3 +508,205 @@ def test_semantic_search_unavailable_is_the_single_searchs_answer_per_slot(b, mo
     assert body["searches"][2] == expected
     assert body["searches"][1] == b.single("falcon", "-k", KB)[1]
     assert "warnings" not in body["searches"][1]
+
+
+# --- real subprocess stdin under LC_ALL=C (#1728) ----------------------------
+
+
+def _build_subprocess_world(tmp_path):
+    """A real world on disk for subprocess tests, closed before spawning."""
+    world = build_world(
+        tmp_path,
+        kbs=[KBConfig(name=KB, path=tmp_path / KB, kb_type="generic")],
+        rest=False,
+    )
+    try:
+        world.add_entry(
+            KB,
+            "---\nid: kestrel\ntype: note\ntitle: Kestrel notes\n---\n"
+            "a small falcon that hovers over fields\n",
+        )
+        world.add_entry(
+            KB,
+            "---\nid: crane\ntype: note\ntitle: Crane notes 🦢 鶴\n---\n"
+            "a tall wading bird 🦢 鶴 in the marsh\n",
+        )
+        return world.config_dir
+    finally:
+        world.close()
+
+
+def _subprocess_env(config_dir, home, *, c_locale: bool) -> dict[str, str]:
+    env = dict(os.environ)
+    for key in (
+        "PYTHONIOENCODING",
+        "PYTHONUTF8",
+        "PYTHONCOERCECLOCALE",
+        "LC_ALL",
+        "LC_CTYPE",
+        "LANG",
+        "PYRITE_DATA_DIR",
+        "PYRITE_FORMAT",
+    ):
+        env.pop(key, None)
+    env["HOME"] = str(home)
+    env["PYRITE_CONFIG_DIR"] = str(config_dir)
+    if c_locale:
+        env["LC_ALL"] = "C"
+        env["PYTHONUTF8"] = "0"
+        env["PYTHONCOERCECLOCALE"] = "0"
+    else:
+        env["PYTHONUTF8"] = "1"
+    return env
+
+
+def _run_pyrite_batch_subprocess(env: dict[str, str], batch_arg: str, *, raw_stdin: bytes | None):
+    return subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from pyrite.cli import main; main()",
+            "search",
+            "--batch",
+            batch_arg,
+            "--format",
+            "json",
+        ],
+        env=env,
+        input=raw_stdin,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="LC_ALL=C surrogateescape stdin is POSIX-only")
+def test_non_utf8_stdin_under_c_locale_is_refused_in_its_own_slot_and_siblings_run(tmp_path):
+    """Real stdin under LC_ALL=C uses surrogateescape; non-UTF-8 bytes are
+    refused per slot as VALIDATION_FAILED (exit 3) while sibling slots run (#1728)."""
+    config_dir = _build_subprocess_world(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = _subprocess_env(config_dir, home, c_locale=True)
+
+    # Prove the child's stdin is actually lenient before testing batch refusal,
+    # so modern Python's C-locale UTF-8 coercion cannot make this pass vacuously.
+    probe = subprocess.run(
+        [sys.executable, "-c", "import sys; print(sys.stdin.errors)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "surrogateescape"
+
+    kb_bytes = KB.encode("ascii")
+    raw = (
+        b'[{"query": "fal\xffcon", "kb": "'
+        + kb_bytes
+        + b'"}, {"query": "falcon", "kb": "'
+        + kb_bytes
+        + b'"}]'
+    )
+    proc = _run_pyrite_batch_subprocess(env, "-", raw_stdin=raw)
+
+    stdout = proc.stdout.decode("utf-8")
+    stderr = proc.stderr.decode("utf-8", "replace")
+    assert proc.returncode == 3, (stdout, stderr)
+    assert "Traceback" not in stdout and "Traceback" not in stderr
+    assert "UnicodeEncodeError" not in stdout and "UnicodeEncodeError" not in stderr
+    assert "UnicodeDecodeError" not in stdout and "UnicodeDecodeError" not in stderr
+    assert "SEARCH_FAILED" not in stdout
+
+    body = json.loads(stdout)
+    assert body["count"] == 2
+    slot0, slot1 = body["searches"]
+    assert slot0["error_code"] == "VALIDATION_FAILED"
+    assert "UTF-8" in slot0["error"]
+    assert "codec" not in slot0["error"]
+    assert "surrogates not allowed" not in slot0["error"]
+    assert "surrogateescape" not in slot0["error"]
+    assert slot0["retryable"] is False
+    assert slot0["count"] == 0 and slot0["results"] == []
+
+    assert "error" not in slot1
+    assert slot1["query"] == "falcon"
+    assert slot1["count"] == 1
+    assert [r["id"] for r in slot1["results"]] == ["kestrel"]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="LC_ALL=C surrogateescape stdin is POSIX-only")
+def test_non_utf8_stdin_all_bad_exits_1_and_file_refuses_whole_batch_under_c_locale(tmp_path):
+    """Under LC_ALL=C, an all-bad stdin batch exits 1 per slot while the same
+    bytes in a batch file refuse the whole batch up front with no `searches` (#1728)."""
+    config_dir = _build_subprocess_world(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = _subprocess_env(config_dir, home, c_locale=True)
+
+    probe = subprocess.run(
+        [sys.executable, "-c", "import sys; print(sys.stdin.errors)"],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.strip() == "surrogateescape"
+
+    kb_bytes = KB.encode("ascii")
+    all_bad = b'[{"query": "fal\xffcon", "kb": "' + kb_bytes + b'"}]'
+    stdin_proc = _run_pyrite_batch_subprocess(env, "-", raw_stdin=all_bad)
+    stdin_out = stdin_proc.stdout.decode("utf-8")
+    stdin_err = stdin_proc.stderr.decode("utf-8", "replace")
+    assert stdin_proc.returncode == 1, (stdin_out, stdin_err)
+    assert "Traceback" not in stdin_out and "Traceback" not in stdin_err
+    assert "SEARCH_FAILED" not in stdin_out
+    stdin_body = json.loads(stdin_out)
+    assert stdin_body["count"] == 1
+    assert stdin_body["searches"][0]["error_code"] == "VALIDATION_FAILED"
+    assert "codec" not in stdin_body["searches"][0]["error"]
+
+    batch_file = tmp_path / "bad.json"
+    batch_file.write_bytes(
+        b'[{"query": "fal\xffcon", "kb": "'
+        + kb_bytes
+        + b'"}, {"query": "falcon", "kb": "'
+        + kb_bytes
+        + b'"}]'
+    )
+    file_proc = _run_pyrite_batch_subprocess(env, str(batch_file), raw_stdin=None)
+    file_out = file_proc.stdout.decode("utf-8")
+    file_err = file_proc.stderr.decode("utf-8", "replace")
+    assert file_proc.returncode == 1, (file_out, file_err)
+    assert "Traceback" not in file_out and "Traceback" not in file_err
+    file_body = json.loads(file_out)
+    assert file_body["error_code"] == "VALIDATION_FAILED"
+    assert "UTF-8" in file_body["error"]
+    assert "searches" not in file_body
+
+
+@pytest.mark.control(reason="valid UTF-8 multi-byte Unicode batch stdin stays green")
+def test_valid_utf8_stdin_batch_with_multibyte_unicode_succeeds(tmp_path):
+    """Valid UTF-8 stdin (including CJK and emoji) succeeds with exit 0."""
+    config_dir = _build_subprocess_world(tmp_path)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = _subprocess_env(config_dir, home, c_locale=False)
+
+    raw = json.dumps(
+        [{"query": "鶴", "kb": KB}, {"query": "falcon", "kb": KB}],
+        ensure_ascii=False,
+    ).encode("utf-8")
+    proc = _run_pyrite_batch_subprocess(env, "-", raw_stdin=raw)
+
+    stdout = proc.stdout.decode("utf-8")
+    stderr = proc.stderr.decode("utf-8", "replace")
+    assert proc.returncode == 0, (stdout, stderr)
+    assert "Traceback" not in stdout and "Traceback" not in stderr
+    body = json.loads(stdout)
+    assert body["count"] == 2
+    assert "error" not in body["searches"][0]
+    assert [r["id"] for r in body["searches"][0]["results"]] == ["crane"]
+    assert "error" not in body["searches"][1]
+    assert [r["id"] for r in body["searches"][1]["results"]] == ["kestrel"]

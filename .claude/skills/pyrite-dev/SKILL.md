@@ -1,6 +1,6 @@
 ---
 name: pyrite-dev
-description: "This skill should be used by an agent developing Pyrite code — fixing a bug, adding a feature, writing or running tests, debugging, or completing a backlog item — on its own branch in its own worktree. Enforces TDD, root-cause debugging and evidence-before-claims, and ends with a report for the PR. Opens a draft PR after the first push; the maintainer reviews and merges it. Process commands (setup, hooks, branches, PRs) live in CONTRIBUTING.md."
+description: "This skill should be used by an agent developing Pyrite code — fixing a bug, adding a feature, writing or running tests, debugging, completing a backlog item, changing or removing a CLI flag, MCP argument, REST field or error code, or writing a proposal, groom or refactor plan for the codebase — on its own branch in its own worktree. Enforces TDD, root-cause debugging and evidence-before-claims, the rules for public surfaces (no one-step removals; removals are the maintainer's call), and checked references in proposals; ends with a report for the PR. Opens a draft PR after the first push; the maintainer reviews and merges it. Process commands (setup, hooks, branches, PRs) live in CONTRIBUTING.md."
 ---
 
 # Pyrite Development Skill
@@ -62,6 +62,16 @@ pwd                           # your checkout; a worktree under ../pyrite-wt/ if
    included), what is out of scope, and open questions. Wait for the answer.
 4. The groom's open questions are yours to explore; overturn its
    recommendation when the evidence says so.
+5. **When the property says "every" or "all", list the instances before you
+   write code.** Find them by searching the code, not from the ticket: each
+   caller, reader, writer, entry point and extension the property covers. Put
+   the list on the draft PR, each marked guarded (and the test that proves it,
+   run through that caller's own entry point), already safe (why), or out of
+   scope (why). A review of your own diff cannot find the guard you never
+   wrote; this list can. It becomes the report's `Covers` line.
+6. **Run the tests before you change anything.** If they are already red,
+   report that and stop: a red baseline hides whether your change broke
+   something.
 
 Bugs and user requests live in GitHub Issues, the roadmap (epics, backlog
 items, ADRs) in `kb/`, never both (ADR-0033). A bug you fix here needs no
@@ -71,6 +81,40 @@ private. A security finding goes to the maintainer privately (SECURITY.md), neve
 
 Editing a function on the `tests/test_layer_boundaries.py` allowlist? Remove
 its entry: move the storage access behind a service.
+
+## Changing a public surface
+
+A public surface is anything users or agents call or read: a CLI command or
+flag, an MCP tool or argument, a REST field, an error code, a file format.
+Code that is right can still break these, so they carry rules of their own:
+
+- **Nothing public leaves in one step.** Removing or renaming an option takes
+  a release that warns (a runtime warning naming the replacement and the
+  removal release; a `--help` label is not a warning), then a later release
+  that removes it everywhere at once. CONTRIBUTING, "Removing or renaming a
+  public option", has the steps.
+- **Whether to remove or redesign a public option is the maintainer's
+  decision**, and so is a choice between two designs that both look right.
+  Write the choice and your recommendation on the issue or PR, and wait. An
+  issue that lists removals asks you to carry out decisions already made; if
+  one has no recorded decision, ask.
+- **Update every place the interface is described** in the same PR: the tool
+  description and input schema, the other surfaces, `docs/json-contracts.md`,
+  the goldens, a changelog fragment (CONTRIBUTING, "Regenerating goldens").
+- **A test you are told not to edit stops you.** Some guard tests are
+  protected because they catch exactly the change you are making. If one
+  blocks you, say so on the PR and ask; never weaken it to pass. The
+  maintainer may let you remove one entry; that is their call, not yours.
+
+## Proposing instead of building
+
+A proposal, a groom or a refactor plan is read as authoritative, so its
+references must be real. Cite every function as `file:function` (and a line
+only if you read it), checked on a named `dev` commit, and mark each claim
+**checked** (you read the code) or **assumed** (you did not). A name that does
+not exist, or a line range that is off, costs the reviewer more than leaving
+it out. Search for what already tracks each part (`gh issue list --search`,
+`pyrite search -k pyrite`) and say what is new.
 
 ## Test-driven development
 
@@ -110,6 +154,16 @@ slow local run of the whole affected set (how the hooks, the heavy-run lock
 and a verified commit work: CONTRIBUTING, [Running the
 tests](../../../CONTRIBUTING.md#running-the-tests)).
 
+**The exception: run the full suite before pushing** a change to a public
+surface, storage or migrations, or anything cross-cutting
+(`PYRITE_PUSH_FULL=1 git push`, which runs it in the pre-push hook, or
+`scripts/test-affected --run --full` on a committed tree, which stamps the
+tree so the push skips; a bare `pytest` run records nothing and the hook
+would test again).
+Tests across the repo pin flags, keys and messages by name, and the affected
+selection does not find them all: a removed flag once failed 25 to 37 tests
+per CI shard in files the change never touched.
+
 | Claim | Run | Look for |
 |---|---|---|
 | Backend tests pass (local) | `scripts/test-affected --run` | `N passed, 0 failed` |
@@ -147,9 +201,6 @@ tests](../../../CONTRIBUTING.md#running-the-tests)).
   its CI is the authority. Leave it a draft until your report is done (steps
   and fork flags: CONTRIBUTING, [Branches, hooks and pull
   requests](../../../CONTRIBUTING.md#branches-hooks-and-pull-requests)).
-- Commit each passing step as you reach it, with the reason in the message.
-  Uncommitted work and the thinking behind it are lost when a session stops
-  (2026-10-02: a worker died with eight files edited and no note of why).
 - Test each tree once, and after a load-caused failure re-run only the
   failures (`scripts/test-affected --run -- --lf`). Never start a second heavy
   run while one is running; the lock and its wrapper are in CONTRIBUTING,
@@ -216,8 +267,9 @@ Evidence:    the test-affected line; the draft PR's CI on the pushed SHA; the
              Regimes, one line each
 Guards:      each check you added -> the test that fails when it alone is removed
 Changed:     files, new vs existing; the count against the groom's prediction
-Covers:      for a property that says "every" or "all": each instance found by
-             search, marked guarded (test) | already safe (why) | out of scope (why)
+Covers:      for a property that says "every" or "all": the list from "Before
+             you build" step 5, updated: guarded (test) | already safe (why) |
+             out of scope (why)
 Learned:     the riskiest-assumption result, then what the groom got wrong,
              what the code turned out to do, contracts you found; one line
              each, with file:line

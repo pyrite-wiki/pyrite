@@ -789,3 +789,53 @@ def test_a_kb_yaml_that_leads_outside_keeps_its_rows_through_every_reconcile(kin
         assert _json_doc(health)["status"] == "unhealthy"
     finally:
         world.close()
+
+
+@pytest.mark.parametrize("kind", ["deep-block", "deep-flow"])
+def test_deep_yaml_refusal_leaves_no_unraisable_exception_or_deep_traceback(
+    kind, tmp_path, monkeypatch
+):
+    """Refusing deep-block / deep-flow kb.yaml is deterministic (#1899): no
+    deep traceback chain or retained ``__context__`` outlives ``read_kb_yaml``."""
+    from pyrite.exceptions import KBConfigInvalidError
+    from pyrite.utils import yaml as yaml_utils
+
+    kb_dir = tmp_path / "deep-kb"
+    kb_dir.mkdir()
+    (kb_dir / "kb.yaml").write_text("", encoding="utf-8")
+    _make(kind, kb_dir)
+
+    def _tb_depth(tb) -> int:
+        depth = 0
+        while tb is not None:
+            depth += 1
+            tb = tb.tb_next
+        return depth
+
+    with pytest.raises(KBConfigInvalidError) as exc_info:
+        yaml_utils.read_kb_yaml(kb_dir)
+    assert exc_info.value.error_code == "KB_CONFIG_INVALID"
+    assert exc_info.value.__context__ is None
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, RecursionError)
+    assert cause.__traceback__ is None
+    assert _tb_depth(exc_info.value.__traceback__) <= 10
+
+    # Also prove that if load_yaml_file itself raises RecursionError from a deep
+    # call stack, read_kb_yaml strips both __context__ and __cause__ frames.
+    def _deep_recurse(depth: int) -> None:
+        if depth > 0:
+            _deep_recurse(depth - 1)
+        raise RecursionError("simulated deep recursion")
+
+    def _failing_load(*_args, **_kwargs):
+        _deep_recurse(50)
+
+    monkeypatch.setattr(yaml_utils, "load_yaml_file", _failing_load)
+    with pytest.raises(KBConfigInvalidError) as fallback_exc:
+        yaml_utils.read_kb_yaml(kb_dir)
+    assert fallback_exc.value.error_code == "KB_CONFIG_INVALID"
+    assert fallback_exc.value.__context__ is None
+    assert isinstance(fallback_exc.value.__cause__, RecursionError)
+    assert str(fallback_exc.value.__cause__) == "simulated deep recursion"
+    assert fallback_exc.value.__cause__.__traceback__ is None

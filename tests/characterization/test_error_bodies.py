@@ -41,7 +41,7 @@ import pytest
 from tests.characterization.error_bodies import all_error_body_cases
 from tests.characterization.golden_io import MismatchCollector, load, save, regenerating
 from tests.characterization.normalize import normalize
-from tests.characterization.world import PRIVATE, READABLE
+from tests.characterization.world import PRIVATE, READABLE, READ_ONLY, READ_ONLY_ENTRY
 
 # Not @pytest.mark.core -- see test_global_access.py's comment: core is an
 # exact, pinned smoke-set file list (tests/test_test_affected.py), and this
@@ -119,23 +119,42 @@ def test_query_too_long_live_over_rest(world):
     assert resp.json()["detail"]["code"] == "QUERY_TOO_LONG"
 
 
-def test_kb_read_only_live_over_rest(world):
-    from tests.characterization.world import READ_ONLY
-
-    # Oddity (reported): this route's own `except KBReadOnlyError` answers
-    # {"code": "READ_ONLY", ...} -- not the central handler's KB_READ_ONLY
-    # (pyrite/server/endpoints/entries.py:776 and 3 siblings), a THIRD
-    # spelling alongside MCP/CLI's own "READ_ONLY" (which happens to
-    # coincide here) and the central table's "KB_READ_ONLY". The golden
-    # below pins today's real code, not the central table's.
-    p = world.principals["admin_key"]
-    resp = world.client.post(
-        "/api/entries",
-        json={"kb": READ_ONLY, "entry_type": "note", "title": "nope", "body": "x"},
+@pytest.mark.parametrize(
+    ("method", "path", "params", "payload"),
+    [
+        (
+            "POST",
+            "/api/entries",
+            None,
+            {"kb": READ_ONLY, "entry_type": "note", "title": "nope", "body": "x"},
+        ),
+        (
+            "PUT",
+            f"/api/entries/{READ_ONLY_ENTRY}",
+            None,
+            {"kb": READ_ONLY, "body": "updated"},
+        ),
+        (
+            "PATCH",
+            f"/api/entries/{READ_ONLY_ENTRY}",
+            None,
+            {"kb": READ_ONLY, "field": "body", "value": "updated"},
+        ),
+        ("DELETE", f"/api/entries/{READ_ONLY_ENTRY}", {"kb": READ_ONLY}, None),
+    ],
+)
+def test_read_only_entry_writes_use_shared_rest_error(write_world, method, path, params, payload):
+    p = write_world.principals["admin_key"]
+    resp = write_world.client.request(
+        method,
+        path,
+        params=params,
+        json=payload,
         headers=p.rest_headers,
     )
-    assert resp.status_code == 403
-    assert resp.json()["detail"]["code"] == "READ_ONLY"
+    assert resp.status_code == 403, resp.text
+    assert resp.json()["detail"]["code"] == "KB_READ_ONLY"
+    assert resp.json()["detail"]["retryable"] is False
 
 
 def test_kb_protected_live_over_rest(world):

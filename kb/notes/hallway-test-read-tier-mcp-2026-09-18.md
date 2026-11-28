@@ -4,6 +4,7 @@ title: "Hallway test: the read tier over MCP, cold start (2026-09-18)"
 type: note
 tags: [hallway-test, mcp, usability, read-tier, evidence]
 created: "2026-09-18"
+lifecycle: archived
 ---
 
 A cold-start session (Claude Cowork, no prior Pyrite context) used the MCP

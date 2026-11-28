@@ -175,7 +175,7 @@ class DocumentManager:
             )
             if result.returncode == 0:
                 subprocess.run(
-                    ["git", "rm", "--quiet", "--force", str(old_path)],
+                    ["git", "rm", "--quiet", "--force", "--", str(old_path)],
                     cwd=str(kb_root),
                     capture_output=True,
                     timeout=10,

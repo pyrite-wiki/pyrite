@@ -1,4 +1,4 @@
-"""Task writers reject priorities outside their documented range (#1394)."""
+"""Task commands reject priorities outside their documented range (#1394, #1559)."""
 
 import json
 
@@ -60,6 +60,30 @@ def test_update_rejects_priority_without_changing_file(task_world, priority):
     assert error["error_code"] == "USAGE_ERROR"
     assert "--priority" in error["error"]
     assert path.read_bytes() == before
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize("priority", [0, 11, -1, 100])
+def test_list_rejects_priority_filter_out_of_range(task_world, priority):
+    _create_task(task_world, "--priority", "5")
+    result = task_world.cli("task", "list", "-k", "tasks", "--priority", str(priority))
+
+    assert result.exit_code == 2, result.output
+    error = json.loads(result.stdout)
+    assert error["error_code"] == "USAGE_ERROR"
+    assert "--priority" in error["error"]
+
+
+@pytest.mark.cli
+@pytest.mark.control(reason="filtering the task list at either valid boundary already works")
+@pytest.mark.parametrize("priority", [1, 10])
+def test_list_accepts_priority_filter_boundaries(task_world, priority):
+    _, entry_id = _create_task(task_world, "--priority", str(priority))
+    result = task_world.cli("task", "list", "-k", "tasks", "--priority", str(priority))
+
+    assert result.exit_code == 0, result.output
+    tasks = json.loads(result.stdout)["tasks"]
+    assert [task["id"] for task in tasks] == [entry_id]
 
 
 @pytest.mark.cli

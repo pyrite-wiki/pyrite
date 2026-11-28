@@ -1,0 +1,1 @@
+CONTRIBUTING now says how to refresh the MCP input-schema snapshots, which the characterization regenerate command does not cover, and lists what a public-interface change updates in the same PR (tool description and schema, the other surfaces, json-contracts, goldens, changelog).

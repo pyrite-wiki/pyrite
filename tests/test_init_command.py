@@ -402,3 +402,127 @@ class TestInitCommand:
 
         assert result.exit_code == 1
         assert "Unknown template" in result.output
+
+
+# --- #1405: a template a plugin supplies registers with the plugin's KB type ---
+
+# The presets an installed extension supplies under the name of a KB type the
+# same extension declares (checked against the extensions in this repo; the
+# registry test below fails if the list drifts from the installed plugins).
+PLUGIN_PRESETS = [
+    ("software", "software"),
+    ("zettelkasten", "zettelkasten"),
+    ("encyclopedia", "encyclopedia"),
+    ("social", "social"),
+    ("journalism-investigation", "journalism-investigation"),
+    ("known-entities", "known-entities"),
+]
+
+
+def _registered_type(world, name):
+    result = world.cli("kb", "list", "--format", "json")
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.output)
+    rows = rows.get("kbs", rows) if isinstance(rows, dict) else rows
+    return next(r["type"] for r in rows if r["name"] == name)
+
+
+@pytest.mark.cli
+@pytest.mark.parametrize(("template", "expected"), PLUGIN_PRESETS, ids=lambda v: v)
+def test_init_registers_the_plugin_template_kb_type_through_the_cli(
+    cli_world, tmp_path, template, expected
+):
+    world = cli_world()
+    result = world.cli(
+        "init", "-t", template, "-p", str(tmp_path / "made"), "-n", "made", "--no-examples"
+    )
+    assert result.exit_code == 0, result.output
+    assert _registered_type(world, "made") == expected
+
+
+@pytest.mark.cli
+@pytest.mark.control(reason="built-in templates register generic before and after #1405")
+def test_init_builtin_template_registers_generic_through_the_cli(cli_world, tmp_path):
+    world = cli_world()
+    result = world.cli(
+        "init", "-t", "research", "-p", str(tmp_path / "made"), "-n", "made", "--no-examples"
+    )
+    assert result.exit_code == 0, result.output
+    assert _registered_type(world, "made") == "generic"
+
+
+@pytest.mark.cli
+@pytest.mark.control(reason="guards the hand-written preset list above against drift")
+def test_plugin_presets_list_matches_the_installed_extensions():
+    """A plugin supplying a preset named like a KB type it declares is a case to list."""
+    from pyrite.plugins import get_registry
+
+    registry = get_registry()
+    declared = set(registry.get_all_kb_types())
+    assert {name for name in registry.get_all_kb_presets() if name in declared} == {
+        t for t, _ in PLUGIN_PRESETS
+    }
+
+
+@pytest.mark.cli
+@pytest.mark.control(reason="--schema-file registers generic before and after #1405")
+def test_schema_file_keeps_generic_even_for_a_plugin_template_name(cli_world, tmp_path):
+    world = cli_world()
+    schema = tmp_path / "schema.yaml"
+    schema.write_text("name: custom\ntypes:\n  note:\n    description: n\n")
+    result = world.cli(
+        "init", "-t", "software", "-p", str(tmp_path / "made"), "-n", "made",
+        "--schema-file", str(schema), "--no-examples",
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    assert _registered_type(world, "made") == "generic"
+
+
+@pytest.mark.cli
+def test_init_made_software_kb_answers_like_one_added_with_kb_add_type(
+    cli_world, tmp_path, request
+):
+    """The audit's test (#1405 groom 2026-11-16): the same files, registered two ways."""
+    import shutil
+
+    from pyrite.plugins import get_registry
+
+    # The CLI runs a plugin without a context. Another test may have left one on
+    # the process-wide plugin (tests/test_orient_software.py does), and orient
+    # would then resolve `sw` against that test's config and answer "not found".
+    registry = get_registry()
+    registry.discover()
+    for plugin_name in registry.list_plugins():
+        plugin = registry.get_plugin(plugin_name)
+        if getattr(plugin, "ctx", None) is not None:
+            request.addfinalizer(lambda p=plugin, c=plugin.ctx: setattr(p, "ctx", c))
+            plugin.ctx = None
+
+    world = cli_world()
+    made = world.cli(
+        "init", "-t", "software", "-p", str(tmp_path / "sw"), "-n", "sw", "--no-examples"
+    )
+    assert made.exit_code == 0, made.output
+    shutil.copytree(tmp_path / "sw", tmp_path / "sw2")
+    kb_yaml = tmp_path / "sw2" / "kb.yaml"
+    kb_yaml.write_text(kb_yaml.read_text().replace("name: sw\n", "name: sw2\n", 1))
+    added = world.cli("kb", "add", str(tmp_path / "sw2"), "--name", "sw2", "--type", "software")
+    assert added.exit_code == 0, added.output
+
+    def create(kb):
+        r = world.cli(
+            "create", "-k", kb, "-t", "adr", "--title", "Use sqlite", "-b", "x",
+            "--allow-undeclared", "--format", "json",
+        )  # fmt: skip
+        assert r.exit_code == 0, r.output
+        return json.loads(r.output)
+
+    def has_orient_block(kb):
+        r = world.cli("orient", "-k", kb, "--format", "json")
+        assert r.exit_code == 0, r.output
+        return '"software": {' in r.output
+
+    for kb in ("sw", "sw2"):
+        warnings = create(kb).get("warnings", [])
+        assert [w["rule"] for w in warnings] == ["date_recommended"], (kb, warnings)
+        assert has_orient_block(kb), kb

@@ -44,11 +44,9 @@ still shown. Enforced by
 
 Codes live on the exception class (ADR-0037 theme 2): every `PyriteError`
 subclass (`pyrite/exceptions.py`) carries an `error_code`, and every surface
-derives its code from the class, with no per-transport lookup table. The
-wire shape per surface (CLI/MCP flat object, REST `detail` wrapper), the
-`legacy_error_code` transition and every code with its remedy are in
-`docs/json-contracts.md`, the one home for them; this standard does not
-restate them. For an extension author the rule is:
+derives its code from the class, with no per-transport lookup table. The wire shape per surface (CLI/MCP flat object, REST `detail` wrapper) and
+every code with its remedy are in `docs/json-contracts.md`, the one home for
+them; this standard does not restate them. For an extension author the rule is:
 
 Build errors via the shared helper (`pyrite/utils/errors.py`'s
 `build_error`/`cli_error`/`cli_error_from` for CLI, MCP's `_error()`/

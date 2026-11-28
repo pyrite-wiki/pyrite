@@ -58,9 +58,11 @@ class TestTestSide:
         ("path", "test_side"),
         [
             ("tests/test_x.py", True),
+            ("tests/conftest.py", True),
             ("tests/unit/helpers.py", True),
             ("tests/fixtures/data.json", True),
-            ("conftest.py", True),
+            ("conftest.py", False),
+            ("pkg/conftest.py", False),
             ("extensions/social/tests/test_plugin.py", True),
             ("extensions/social/tests/conftest.py", True),
             ("pyrite/services/kb_service.py", False),
@@ -661,6 +663,43 @@ def test_a_conftest_that_needs_the_fix_is_no_claim_not_a_crash(repo: Path, tmp_p
     assert "the without run recorded no test" in result.stderr
 
 
+def test_a_fix_in_the_root_conftest_is_judged_as_code(repo: Path, tmp_path: Path) -> None:
+    # #1814: a PR whose only non-test change is the repo-root conftest.py must
+    # revert that conftest for the run without the fix so its new test is judged.
+    (repo / "conftest.py").write_text("import os\n")
+    commit_all(repo, "base: root conftest")
+    git(repo, "branch", "-f", "dev", "HEAD")
+    (repo / "conftest.py").write_text('import os\n\nos.environ["ROOT_GUARD"] = "active"\n')
+    (repo / "tests" / "test_root_conftest.py").write_text(
+        'import os\n\n\ndef test_root_guard():\n    assert os.environ.get("ROOT_GUARD") == "active"\n'
+    )
+    commit_all(repo, "fix: enable root conftest guard")
+    result, summary = run_vr(repo, tmp_path)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary, summary
+
+
+def test_a_root_conftest_fix_alongside_other_code_is_reverted_without_the_fix(
+    repo: Path, tmp_path: Path
+) -> None:
+    # #1814: even when another non-test file changes, root conftest.py must not
+    # be overlaid as test-side or tests of the conftest read as unexpected pass.
+    (repo / "conftest.py").write_text("import os\n")
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "helper.py").write_text("VERSION = 1\n")
+    commit_all(repo, "base: root conftest and script")
+    git(repo, "branch", "-f", "dev", "HEAD")
+    (repo / "conftest.py").write_text('import os\n\nos.environ["ROOT_GUARD"] = "active"\n')
+    (repo / "scripts" / "helper.py").write_text("VERSION = 2\n")
+    (repo / "tests" / "test_root_conftest.py").write_text(
+        'import os\n\n\ndef test_root_guard():\n    assert os.environ.get("ROOT_GUARD") == "active"\n'
+    )
+    commit_all(repo, "fix: enable root conftest guard")
+    result, summary = run_vr(repo, tmp_path)
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    assert "verify-red: 1 red · 0 import-only · 0 unexpected pass · 0 n/a" in summary, summary
+
+
 def test_a_test_only_pr_with_a_fragment_kb_and_docs_is_nothing_to_verify(
     repo: Path, tmp_path: Path
 ) -> None:
@@ -691,7 +730,7 @@ def test_a_test_only_pr_with_a_fragment_kb_and_docs_is_nothing_to_verify(
             "tests-only change: 2 test-side files, 0 inert files, no fix to grade against",
         ),
         (
-            ("conftest.py",),
+            ("tests/conftest.py",),
             "tests-only change: 1 test-side file, 0 inert files, no fix to grade against",
         ),
         (

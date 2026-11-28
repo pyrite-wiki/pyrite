@@ -148,6 +148,7 @@ the bound.
 | Input | Bound | Where |
 |---|---|---|
 | YAML aliases in one document | 1,000 aliases, or an expanded size of 1,000,000 nodes (measured from parse events, without building the expansion) | `pyrite/utils/yaml.py` (`MAX_YAML_ALIASES`, `MAX_YAML_EXPANDED_NODES`); refused as `INVALID_FRONTMATTER` (import: `400 PARSE_ERROR`; index sync: the file is listed as malformed) |
+| YAML nesting depth in one document | 200 nested mappings/sequences (checked iteratively from parse events before `load()` recurses) | `pyrite/utils/yaml.py` (`MAX_YAML_DEPTH`); raises `RecursionError` (`kb.yaml`: `KB_CONFIG_INVALID`; `board.yaml`: `VALIDATION_FAILED`) |
 | A page fetched by the web clipper | 5 MiB counted after decoding, memory bounded at every decoding step (one gzip or deflate coding is decoded in 64 KiB steps; a stack of codings, br and zstd are refused), and twice the request timeout in all | `pyrite/services/clipper.py` (`MAX_CLIP_BYTES`); `413 CLIP_TOO_LARGE` |
 | Anonymous WebSocket sockets | 100 in all, 5 per client; a client is its IPv4 address or its IPv6 /64 (below) | `pyrite/server/websocket.py`, `pyrite/server/client_key.py` |
 | A lookup of an id the index lacks | reads at most 200 files, only those the index is behind on | `pyrite/services/kb_service.py` (`MISS_SCAN_MAX_FILES`) |
@@ -490,7 +491,7 @@ email, unless the KB's repository sets its own `user.name`/`user.email` in
 operator's own git (Pyrite writes `git_identity` into its own global git
 config, which repository config ranks above). Unset, they carry the
 `user.name` and `user.email` of the account's global git config, as before;
-**that fallback is removed in 0.27.0**, and Pyrite logs a warning once per
+**that fallback is removed in 0.28.0**, and Pyrite logs a warning once per
 process while it is in use. The operator's own commits at the CLI keep their
 own git setup.
 
@@ -532,7 +533,7 @@ the account's environment: the operator chose that destination.
   `ssh_key` entry with `known_hosts`; for https, a token entry.
 - **Set `git_identity`** if worktree submits, merges or exports over the
   network should not rely on the account's global identity (required from
-  0.27.0).
+  0.28.0).
 - **Signed commits:** commits made for network callers are no longer signed
   through a global `commit.gpgsign`; the global config is not read.
 - **Behind a proxy:** network git, the GitHub API calls made for network
@@ -551,7 +552,7 @@ the account's environment: the operator chose that destination.
 | Variable | Default | Meaning |
 |---|---|---|
 | `PYRITE_AUTH_ENABLED` | `false` | Turn on user accounts and per-KB permissions |
-| `PYRITE_AUTH_ANONYMOUS_TIER` | unset | What an unauthenticated request may do when auth is enabled: `read`, `write`, or `none` for nothing. Any other value, including `admin`, is refused at startup. It is a ceiling: on each KB the visitor gets the lower of this and the KB's `default_role` (a `default_role: none` KB stays hidden, a `default_role: read` KB stays read-only, and `default_role: write` never lifts a `read` visitor to write). Unset falls back to the API-key role. |
+| `PYRITE_AUTH_ANONYMOUS_TIER` | unset | What a request that sends no credential may do when auth is enabled (a key or session cookie that does not verify gets `401` instead, whatever this says): `read`, `write`, or `none` for nothing. Any other value, including `admin`, is refused at startup. It is a ceiling: on each KB the visitor gets the lower of this and the KB's `default_role` (a `default_role: none` KB stays hidden, a `default_role: read` KB stays read-only, and `default_role: write` never lifts a `read` visitor to write). Unset falls back to the API-key role. |
 | `PYRITE_AUTH_ALLOW_REGISTRATION` | `true` | Let people create accounts on the web (still closed until an admin exists; see below) |
 | `PYRITE_AUTH_LOGIN_RATE_LIMIT` | `20/minute;200/hour` | `/auth/login` attempts per client (`settings.auth.login_rate_limit`) |
 | `PYRITE_AUTH_LOGIN_RATE_LIMIT_PER_USERNAME` | `5/minute;30/hour` | Failed `/auth/login` attempts per username (`settings.auth.login_rate_limit_per_username`) |
@@ -604,6 +605,17 @@ global access to every user present at that time, self-registered ones
 included. To share a KB with every signed-in user,
 set its `default_role` to `read` (which also opens it to anonymous readers, below),
 or grant it per user.
+
+**A credential that does not verify is refused, never anonymous.** With auth
+enabled, a wrong, empty, expired or revoked key or session cookie gets `401`
+on REST, `/mcp` and the live-update socket, whatever `anonymous_tier` says.
+Two consequences, both accepted with #1754 (details in
+[REST API](rest-api.md#authenticate)): a request carrying a Bearer token is
+judged by that token alone, so a token a reverse proxy adds for itself is
+refused even next to a valid `X-API-Key`; and two instances on one host share
+the `pyrite_session` cookie name, so signing in to one can clear the other's
+session cookie and sign the user out there. Give each instance its own host
+name.
 
 Per-KB access: each KB in `config.yaml` may carry `default_role: read` (public
 to any authenticated user), `write`, or `none` (private: explicit grants only).
@@ -724,14 +736,29 @@ Limits on what the setting can do:
 | `PYRITE_AUTO_EMBED` | `true` | Embed entries when they are written. `0`/`false` turns it off: keyword search only, no torch import and no model download on the write path. `pyrite index embed` backfills later. |
 | `PYRITE_PREWARM_EMBEDDINGS` | `false` | Load the embedding model at server start instead of on the first write or semantic search |
 | `PYRITE_POSTGRES_EXPERIMENTAL_ACK` | unset | `1`/`true`/`yes` silences the once-per-process notice that the Postgres backend is experimental (#718). Shown by default. |
+| `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE` | unset | `1`/`true`/`yes` lets Postgres startup create a new, empty instance in the connection's own schema although a schema later on its `search_path` already holds one. Without it that startup is refused with `POSTGRES_SCHEMA_SHADOWED` (#718). |
 
 `config.yaml` also lists `embedding_model` (default `all-MiniLM-L6-v2`, ~90 MB,
 downloaded on first use).
 
-**The Postgres backend is experimental.** It has no migration for
-columns added after alembic revision 006, so an existing Postgres database may
-not upgrade between releases
-([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). Nothing
+**The Postgres backend is experimental.** Its schema upgrades through the
+alembic chain: `ensure_schema(engine)` runs `alembic upgrade head` (constructing
+`PostgresBackend` does not; whatever builds the backend calls `ensure_schema`
+first, as the test suite and `benchmarks/run_all.py` do), so a Postgres database from an earlier release
+gains the tables, columns and indexes this one reads, keeping its users, grants
+and stars ([#718](https://github.com/pyrite-wiki/pyrite/issues/718)). There is
+no separate upgrade step to run. A database no release ever stamped upgrades
+from the start of the chain, and each step skips what it already has.
+Startup refuses, before writing anything, when the connection's own schema
+(`current_schema()`) holds no Pyrite tables but a schema later on its
+`search_path` does (for example an empty `"$user"` schema in front of the
+instance in `public`): it would otherwise build a new, empty instance that
+hides the existing one. The refusal (`POSTGRES_SCHEMA_SHADOWED`, see
+[json-contracts.md](json-contracts.md#postgres-startup-refusals)) names both
+schemas. Put the existing instance's schema first on the `search_path`, or drop
+the empty schema; set `PYRITE_POSTGRES_ALLOW_NEW_INSTANCE=1` only to create a
+new instance there on purpose. A fresh install, with no Pyrite tables anywhere
+on the `search_path`, starts as before. Nothing
 reads the `search_backend` and `database_url` keys yet: the index is always
 SQLite, and only the test suite builds a Postgres backend. If code does
 construct it, Pyrite says so once per process, on stderr and in the server log

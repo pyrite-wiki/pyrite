@@ -3,7 +3,7 @@ id: pyrite-remove-static-renderer
 type: backlog_item
 title: "Remove the static site renderer after sitemap + SEO meta ship"
 kind: chore
-status: proposed
+status: done
 priority: low
 effort: M
 tags: [cleanup, publication, deprecation]

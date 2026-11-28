@@ -493,7 +493,7 @@ def test_a_rename_is_refused_only_for_the_entry_renamed(
     repo = KBRepository(config.knowledge_bases[0])
 
     plan = repo.rename("old-one", "new-one", dry_run=True)
-    assert plan["renamed"] and plan["dry_run"], plan
+    assert not plan["renamed"] and plan["dry_run"], plan
     assert _text(linker) == before
 
     result = repo.rename("old-one", "new-one")
@@ -593,7 +593,7 @@ def test_a_rename_completes_and_lists_every_linker_it_could_not_patch(
     repo = KBRepository(config.knowledge_bases[0])
 
     plan = repo.rename("old-one", "new-one", dry_run=True)
-    assert plan["renamed"] and plan["dry_run"], plan
+    assert not plan["renamed"] and plan["dry_run"], plan
     assert faulty.read_bytes() == before and all("[[old-one]]" in _text(p) for p in healthy)
 
     result = repo.rename("old-one", "new-one")

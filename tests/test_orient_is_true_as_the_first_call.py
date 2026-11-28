@@ -306,16 +306,12 @@ class TestABadNameIsKBNotFound:
         out = one_kb.mcp("kb_orient", {"kb_name": "nope"})
         assert out["error_code"] == "KB_NOT_FOUND", out
         assert out["retryable"] is False
-        assert out["legacy_error_code"] == "NOT_FOUND", (
-            "one refusal for every caller: the dispatcher's, not orient's own (#952)"
-        )
+        assert "legacy_error_code" not in out
 
     def test_mcp_scoped_caller_over_the_http_wiring(self, scoped):
         out = scoped.mcp("kb_orient", {"kb_name": ABSENT}, readable=scoped.peer)
         assert out["error_code"] == "KB_NOT_FOUND", out
-        assert out["legacy_error_code"] == "NOT_FOUND", (
-            "the code the scoping refusal reported before this release"
-        )
+        assert "legacy_error_code" not in out
 
     @pytest.mark.control(reason="the CLI already answered KB_NOT_FOUND, exit 1; pinned beside MCP")
     def test_cli(self, one_kb, monkeypatch):
@@ -383,7 +379,6 @@ class TestUnreadableAndAbsentAreOneAnswer:
             "retryable": False,
             "suggestion": SCOPED_REFUSAL_HINT,
             "did_you_mean": [],
-            "legacy_error_code": "NOT_FOUND",
         }
 
 
@@ -554,7 +549,8 @@ class TestDetail:
         )
         full = sw.svc.orient("sw")
         assert "detail" not in full and "detail_note" not in full
-        assert _write_side_keys_in(full["schema"]), "fixture: full must carry what brief drops"
+        assert "kb_authored" in full and "pyrite_guidance" in full
+        assert _write_side_keys_in(full["schema"]) == []
 
     def test_brief_omits_the_write_side_blocks_and_says_how_to_get_them(self, sw):
         full = sw.mcp("kb_orient", {"kb_name": "sw"})
@@ -621,6 +617,50 @@ class TestDetail:
         read = sw.mcp("kb_orient", args, tier="read")
         assert read["detail"] == "brief"
         assert read == sw.mcp("kb_orient", args, tier="write")
+
+
+class TestANegativeRecentIsRefused:
+    """A negative --recent is a usage error, not "no limit" (#1409).
+
+    SQLite reads LIMIT -1 as "no limit", so an unguarded -1 listed every
+    entry in the KB. The CLI refuses it the way --offset -1 already is
+    refused (exit 2); the service refuses it for REST and MCP too, the
+    way orient_overview refuses a negative offset."""
+
+    def test_a_negative_recent_is_a_usage_error_on_the_cli(self, sw, monkeypatch):
+        result = sw.cli(monkeypatch, "orient", "-k", "sw", "--recent", "-1")
+        assert result.exit_code == 2, result.output
+        assert "-1 is not in the range x>=0" in result.output
+        # CliRunner mixes the Click usage error with the JSON error envelope;
+        # the envelope is the last line.
+        envelope = json.loads(result.output.strip().splitlines()[-1])
+        assert envelope["error_code"] == "USAGE_ERROR"
+
+    def test_a_negative_recent_limit_is_a_validation_error_over_mcp(self, sw):
+        out = sw.dispatch("kb_orient", {"kb_name": "sw", "recent_limit": -1})
+        assert out.get("error_code") == "VALIDATION_FAILED", out
+        assert out["retryable"] is False
+        assert "recent_limit" in out["error"]
+
+    def test_a_negative_recent_is_a_validation_error_over_rest(self, sw):
+        r = sw.rest().get("/api/kbs/sw/orient", params={"recent": -1})
+        assert r.status_code == 422
+        assert "VALIDATION_FAILED" in r.text
+
+    def test_the_published_mcp_schema_declares_the_minimum(self):
+        """The refusal is part of the contract an agent reads, not only a
+        runtime error it finds by trying -1."""
+        from pyrite.server.tool_schemas import READ_TOOLS
+
+        props = READ_TOOLS["kb_orient"]["inputSchema"]["properties"]
+        assert props["recent_limit"].get("minimum") == 0
+
+    @pytest.mark.control(reason="zero is a real bound (an empty recent list), not a refusal")
+    def test_zero_recent_is_still_accepted(self, sw, monkeypatch):
+        assert sw.svc.orient("sw", recent_limit=0)["recent"] == []
+        cli = sw.cli(monkeypatch, "orient", "-k", "sw", "--recent", "0")
+        assert cli.exit_code == 0, cli.output
+        assert json.loads(cli.output)["recent"] == []
 
 
 class TestAPluginSupplementSurvivesBothDetails:
@@ -816,19 +856,22 @@ class TestTheScopedRefusalSaysWhatToDoNext:
 
 
 class TestBriefAgreesWithItself:
-    """Item 5: no top-level `guidelines` that contradicts the dropped block."""
+    """Item 5: no top-level `guidelines` in orient (#1369, #1901)."""
 
     def test_no_top_level_guidelines_under_brief(self, sw):
         brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
         assert "guidelines" not in brief and "guidelines" not in brief["schema"]
 
-    def test_a_configured_guideline_is_not_hidden_behind_an_empty_one(self, sw):
-        sw.config.get_kb("sw").guidelines = {"tone": "plain"}
+    def test_top_level_guidelines_is_removed_from_orient(self, sw):
         full = sw.mcp("kb_orient", {"kb_name": "sw"})
         brief = sw.mcp("kb_orient", {"kb_name": "sw", "detail": "brief"})
-        assert full["guidelines"] == {"tone": "plain"}
+        assert "guidelines" not in full
         assert "guidelines" not in brief
-        assert "guidelines" in brief["detail_note"]
+        assert (
+            "kb_authored" in brief["detail_note"]
+            and "pyrite_guidance" in brief["detail_note"]
+            and "kb_schema" in brief["detail_note"]
+        )
 
 
 class TestBriefKeepsTheRelationNames:

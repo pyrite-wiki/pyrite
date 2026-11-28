@@ -7,6 +7,8 @@ description: "Use when working with a software-type Pyrite KB for development wo
 
 Pull-based development workflow for software-type Pyrite knowledge bases. Covers the kanban cycle from backlog to done, using `sw_*` MCP tools (for agents) and `pyrite sw` CLI commands (for humans).
 
+Related: single-file developer skills for user repositories live in [`extensions/software-kb/skills/`](../../../extensions/software-kb/skills/) (`project-memory-bootstrap`, `session-start`, `session-wrap`; see [`docs/agent-instructions.md`](../../../docs/agent-instructions.md)).
+
 **Announce at start:** "I'm using the software-kb skill."
 
 ---

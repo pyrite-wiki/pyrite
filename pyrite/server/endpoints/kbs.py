@@ -141,9 +141,9 @@ def orient_kb(
 ):
     """One-shot KB orientation summary — types, tags, recent changes, and schema.
 
-    `detail=brief` omits the write-side schema blocks; absent or `full` is
-    everything. Any other value is the service's `VALIDATION_FAILED` (422),
-    the same refusal MCP and the CLI give.
+    `detail=brief` omits `kb_authored` (the KB's own text) and `pyrite_guidance`
+    (Pyrite's defaults); absent or `full` is everything. Any other value is the
+    service's `VALIDATION_FAILED` (422), the same refusal MCP and the CLI give.
     """
     try:
         result = svc.orient(kb_name, recent_limit=recent, detail=detail)

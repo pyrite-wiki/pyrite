@@ -163,10 +163,11 @@ def test_research_queue_orient_shows_ticket_fields_with_descriptions(cli_world, 
     assert "Knowledge base" in field_descs["target_kb"]
     assert "research question" in field_descs["question"]
 
-    assert "ai_instructions" in task_info
-    assert "autonomously" in task_info["ai_instructions"]
-    assert "guidelines" in task_info
-    assert "lineage" in task_info["guidelines"]
+    authored_task = orient_data.get("kb_authored", {}).get("types", {}).get("task", {})
+    assert "ai_instructions" in authored_task
+    assert "autonomously" in authored_task["ai_instructions"]
+    assert "guidelines" in authored_task
+    assert "lineage" in authored_task["guidelines"]
 
 
 def test_task_type_definition_lives_only_in_task_kb_preset():

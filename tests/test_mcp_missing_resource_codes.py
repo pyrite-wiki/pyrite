@@ -75,13 +75,13 @@ _LEGACY_MISSING_CODE = {
 
 
 @pytest.mark.parametrize("tool", sorted(_LEGACY_MISSING_CODE))
-def test_missing_entry_has_domain_code_and_legacy_code(mcp_server, tool):
+def test_missing_entry_has_domain_code(mcp_server, tool):
     args = {"kb_name": "notes", "entry_id": "missing"}
     if tool == "kb_update":
         args["title"] = "New title"
     result = _call(mcp_server, tool, args)
     assert result["error_code"] == "ENTRY_NOT_FOUND", result
-    assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
+    assert "legacy_error_code" not in result, result
     assert result["retryable"] is False
 
 
@@ -95,7 +95,7 @@ def test_missing_kb_has_domain_code(mcp_server, tool):
         args["title"] = "New title"
     result = _call(mcp_server, tool, args)
     assert result["error_code"] == "KB_NOT_FOUND", result
-    assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
+    assert "legacy_error_code" not in result, result
     assert result["retryable"] is False
 
 
@@ -111,7 +111,7 @@ def test_scoped_caller_cannot_distinguish_unreadable_kb_from_absent(mcp_server, 
     absent = _call(mcp_server, tool, {**args, "kb_name": "absent"}, scoped=True)
     assert private == {**absent, "error": "KB 'private' not found"}
     assert private["error_code"] == "KB_NOT_FOUND"
-    assert private["legacy_error_code"] == "NOT_FOUND"
+    assert "legacy_error_code" not in private
     assert private["retryable"] is False
 
 
@@ -162,7 +162,7 @@ def test_id_only_in_another_kb_is_entry_not_found_in_the_named_kb(mcp_server, to
         args["title"] = "Overwritten"
     result = _call(mcp_server, tool, args)
     assert result["error_code"] == "ENTRY_NOT_FOUND", result
-    assert result["legacy_error_code"] == _LEGACY_MISSING_CODE[tool], result
+    assert "legacy_error_code" not in result, result
     assert result["retryable"] is False
     assert "Private title" not in json.dumps(result)
     kept = _call(mcp_server, "kb_get", {"kb_name": "private", "entry_id": "elsewhere"})

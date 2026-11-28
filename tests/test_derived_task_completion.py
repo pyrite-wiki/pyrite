@@ -195,7 +195,9 @@ def _cli_json(config, args):
 
 
 def _list_cli(config, status):
-    return _cli_json(config, ["task", "list", "-k", KB, "--status", status, "-f", "json"])["tasks"]
+    return _cli_json(config, ["task", "list", "-k", KB, "--status", status, "--format", "json"])[
+        "tasks"
+    ]
 
 
 def _drain_check(config, status):
@@ -284,7 +286,7 @@ def test_every_status_filter_matches_the_effective_status(listings, ep, shape):
 
 
 def _get_cli(config, tid):
-    return _cli_json(config, ["task", "get", tid, "-k", KB, "-f", "json"])
+    return _cli_json(config, ["task", "get", tid, "-k", KB, "--format", "json"])
 
 
 def _get_mcp(config, tid):
@@ -358,7 +360,7 @@ def _claim_service(config, tid):
 def _claim_cli(config, tid):
     with patch("pyrite.cli.context.load_config", return_value=config):
         result = CliRunner().invoke(
-            app, ["task", "claim", tid, "-k", KB, "-a", "agent:t", "-f", "json"]
+            app, ["task", "claim", tid, "-k", KB, "-a", "agent:t", "--format", "json"]
         )
     return json.loads(result.stdout)
 
@@ -415,7 +417,9 @@ def test_claim_gets_the_same_answer(write_tree, ep, shape):
 
 
 def _decompose_cli(config, tid):
-    return _cli_json(config, ["task", "decompose", tid, "-k", KB, "-c", "One more", "-f", "json"])
+    return _cli_json(
+        config, ["task", "decompose", tid, "-k", KB, "-c", "One more", "--format", "json"]
+    )
 
 
 def _decompose_mcp(config, tid):

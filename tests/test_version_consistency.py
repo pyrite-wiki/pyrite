@@ -2,7 +2,7 @@
 
 It sat at 0.12.0 while pyproject.toml reached 0.24.1: a hand-maintained copy
 that nothing checked. See
-kb/backlog/single-source-of-truth-for-the-version-asserted-by-a-test.md.
+kb/backlog/done/single-source-of-truth-for-the-version-asserted-by-a-test.md.
 """
 
 import re

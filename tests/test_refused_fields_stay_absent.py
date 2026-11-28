@@ -133,8 +133,8 @@ def test_a_refused_field_is_absent_from_every_read_and_named(
     assert problem["rule"] == "load"
     # The loader's own text for the local process; a network read gets it only
     # when the loader raised a PyriteError, else Pyrite's withheld text (0.26.2).
-    # `pyrite-read` is local too, but binds no local process yet (#1460).
-    if surface == "cli":
+    # `pyrite-read` is local too, and binds local_process (#1460).
+    if surface in ("cli", "pyrite-read"):
         assert spec.loader in problem["message"]
     else:
         assert spec.loader in problem["message"] or OUTSIDE_TEXT_WITHHELD in problem["message"], (
@@ -201,6 +201,52 @@ def test_a_rest_read_omits_a_refused_list_column_rather_than_nulling_it(make_wor
     assert [p["field"] for p in data["load_problems"]] == [column]
     for other in {"tags", "participants", "sources", "outlinks", "backlinks"} - {column}:
         assert isinstance(data[other], list), (other, data[other])
+
+
+def test_openapi_documents_partial_entry_reads(make_world):
+    from tests.test_unloadable_file_is_never_written import Shape
+
+    world = make_world(_text("backlog_item", Shape()))
+    openapi = world.app.openapi()
+    schemas = openapi["components"]["schemas"]
+
+    def response_schema(path, method):
+        return openapi["paths"][path][method]["responses"]["200"]["content"]["application/json"][
+            "schema"
+        ]
+
+    entry_read = response_schema("/api/entries/{entry_id}", "get")
+    assert response_schema("/api/daily/{date_str}", "get") == entry_read
+    assert response_schema("/api/daily/{date_str}", "post") == entry_read
+    schema = schemas[entry_read["$ref"].rsplit("/", 1)[-1]]
+    properties = schema["properties"]
+
+    problems = properties["load_problems"]
+    assert problems["type"] == "array"
+    assert "only when" in problems["description"]
+    assert "could not load every field" in problems["description"]
+    item = problems["items"]
+    assert item["type"] == "object"
+    fields = {"field", "rule", "severity", "message"}
+    assert set(item["required"]) == fields
+    assert item["properties"] == {field: {"type": "string"} for field in fields}
+    required = schema["required"]
+    assert "load_problems" not in required
+    for column in ("tags", "participants", "sources", "metadata"):
+        assert column not in required
+        assert "Absent when load_problems names this column" in properties[column]["description"]
+
+    for path, method in (
+        ("/api/entries", "get"),
+        ("/api/collections/{collection_id}/entries", "get"),
+        ("/api/collections/query-preview", "post"),
+    ):
+        envelope = schemas[response_schema(path, method)["$ref"].rsplit("/", 1)[-1]]
+        item = envelope["properties"]["entries"]["items"]
+        shared_properties = schemas[item["$ref"].rsplit("/", 1)[-1]]["properties"]
+        assert "load_problems" not in shared_properties, path
+        for column in ("tags", "participants", "sources", "metadata"):
+            assert "load_problems" not in shared_properties[column].get("description", ""), path
 
 
 def _daily_note_text(column: str) -> str:

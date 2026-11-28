@@ -18,6 +18,8 @@ tags:
 
 Experimental multi-user backend, not yet selectable in 0.25.x (nothing builds it outside the tests and benchmarks), implementing the SearchBackend protocol against PostgreSQL. Uses tsvector for full-text search and pgvector for semantic search, and is conditionally imported only when its dependencies are available.
 
+Semantic search is an exact nearest-neighbour scan over the rows the filters admit, sorted on `(embedding <=> :vec) + 0, kb_name, id` so no index can serve it ([#1401](https://github.com/pyrite-wiki/pyrite/issues/1401)). `entry.embedding` has no index: alembic revision 013 drops the HNSW index `idx_entry_embedding` that `ensure_schema` built before 0.26.5, and nothing creates it again ([#1822](https://github.com/pyrite-wiki/pyrite/issues/1822)).
+
 ## Key Methods / Classes
 
 - Same public surface area as `SQLiteBackend` (full SearchBackend protocol)

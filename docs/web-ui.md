@@ -102,7 +102,7 @@ admin merges. The KB must be a git repository whose main branch is `main`, and
 the server needs a commit identity: set `git_identity` (name and email) in
 `config.yaml` ([configuration](configuration.md#the-identity-of-commits-made-for-network-callers)).
 Submitting commits in the worktree, and without an identity that commit fails.
-Until 0.27.0, an unset `git_identity` falls back to `git config --global
+Until 0.28.0, an unset `git_identity` falls back to `git config --global
 user.name` and `user.email` of the account that runs `pyrite serve`. For a KB
 that is not in git, a write on a review KB is refused with `LANDING_REFUSED`; see
 [the update contract](json-contracts.md#write-refusals-create-import-update).

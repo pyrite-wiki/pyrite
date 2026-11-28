@@ -164,7 +164,9 @@ def _stub_clipper(monkeypatch):
         return httpx.Response(200, html="<html><title>Clipped</title><p>clipped body</p></html>")
 
     def client(*args, **kwargs):
-        return real_client(*args, transport=httpx.MockTransport(page), **kwargs)
+        # The answering transport replaces the clipper's own (pinned) one.
+        kwargs["transport"] = httpx.MockTransport(page)
+        return real_client(*args, **kwargs)
 
     monkeypatch.setattr(
         "pyrite.utils.public_destination.socket.getaddrinfo",
@@ -301,6 +303,15 @@ REST_CASES: dict[str, Case] = {
         WRITES,
         lambda s: {"url": f"/api/tasks/{s[0]}/start", "params": {"kb": NOTES}, "json": {}},
         seeds=((NOTES, "task", "status: open\n"),),
+    ),
+    "POST /api/tasks/{task_id}/finish": Case(
+        WRITES,
+        lambda s: {
+            "url": f"/api/tasks/{s[0]}/finish",
+            "params": {"kb": NOTES},
+            "json": {"reason": "shipped"},
+        },
+        seeds=((NOTES, "task", "status: in_progress\nassignee: {holder}\n"),),
     ),
     # -- reads by POST, and writes that are not KB files ---------------------
     "POST /api/entries/resolve-batch": Case(
@@ -448,6 +459,16 @@ MCP_CASES: dict[str, Case] = {
         # is held by that principal's own account.
         lambda s: {"kb_name": NOTES, "task_id": s[0], "reason": "shipped"},
         seeds=((NOTES, "task", "status: in_progress\nassignee: {holder}\n"),),
+    ),
+    "task_park": Case(
+        WRITES,
+        lambda s: {"kb_name": NOTES, "task_id": s[0], "reason": "reply"},
+        seeds=((NOTES, "task", "status: open\n"),),
+    ),
+    "task_unpark": Case(
+        WRITES,
+        lambda s: {"kb_name": NOTES, "task_id": s[0]},
+        seeds=((NOTES, "task", "status: open\nparked_awaiting: reply\n"),),
     ),
     "task_decompose": Case(
         WRITES,
