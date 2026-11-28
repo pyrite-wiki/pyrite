@@ -1028,6 +1028,23 @@ class QueryTooLongError(ValidationError):
     error_code = "QUERY_TOO_LONG"
 
 
+class InvalidParameterError(ValidationError):
+    """A tool argument's value cannot be read as its declared type.
+
+    Raised by the MCP dispatcher when a declared-boolean argument is
+    neither a JSON bool nor the string "true"/"false" (#1744). MCP
+    answered this refusal with the ``INVALID_PARAMETER`` literal at each
+    handler before the class existed; the class carries that same code,
+    so the answer a client sees is unchanged. It bases on
+    ``ValidationError``, not ``PyriteError``, so REST maps it to 422, not
+    500: the caller's argument is wrong, not the server. Deterministic
+    and not retryable: the value needs to change, retrying unchanged
+    will fail identically.
+    """
+
+    error_code = "INVALID_PARAMETER"
+
+
 class ClipperBlockedHostError(PyriteError):
     """Raised when the web clipper refuses to fetch a URL because the
     resolved host is on the SSRF blocklist (loopback, link-local,

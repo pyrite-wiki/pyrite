@@ -28,6 +28,7 @@ from ..exceptions import (
     EntryLoadError,
     EntryNotFoundError,
     InvalidGitRefError,
+    InvalidParameterError,
     KBNotFoundError,
     KBPathNotAllowedError,
     KBProtectedError,
@@ -147,7 +148,11 @@ def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool
     """A boolean tool argument; ``None`` when it is neither a bool nor "true"/"false".
 
     A client that sends the string "false" must not get the truthy reading
-    ``bool("false")`` gives (#200).
+    ``bool("false")`` gives (#200). This is the parse the one reader for
+    declared-boolean MCP arguments applies (#1744):
+    ``_normalise_boolean_arguments``, run by the dispatcher before any
+    handler. The contract is stated in docs/json-contracts.md, "Boolean
+    MCP arguments".
     """
     value = args.get(name, default)
     if isinstance(value, bool):
@@ -155,6 +160,50 @@ def _boolean_arg(args: dict[str, Any], name: str, default: bool = False) -> bool
     if isinstance(value, str) and value.strip().lower() in ("true", "false"):
         return value.strip().lower() == "true"
     return None
+
+
+def _declared_boolean_keys(schema: dict[str, Any] | None) -> list[str]:
+    """The argument keys a tool's ``inputSchema`` declares as boolean.
+
+    A key typed ``["boolean", "null"]`` declares a boolean too, so it is
+    normalised like one (its ``null`` is the absent case below).
+    """
+    keys = []
+    for key, spec in ((schema or {}).get("properties") or {}).items():
+        declared = (spec or {}).get("type")
+        if declared == "boolean" or (isinstance(declared, list) and "boolean" in declared):
+            keys.append(key)
+    return keys
+
+
+def _normalise_boolean_arguments(
+    schema: dict[str, Any] | None, arguments: dict[str, Any]
+) -> dict[str, Any]:
+    """``arguments`` with every declared-boolean value read as a bool (#1744).
+
+    The one reader for declared booleans (kb/design.md P8): the dispatcher
+    runs this once, before the handler, for core and plugin tools alike,
+    so a handler's plain ``args.get(k, default)`` always sees a real bool.
+    A JSON bool passes; ``"true"``/``"false"`` (stripped, any case) become
+    a bool; ``null`` is dropped, so the handler's default applies, exactly
+    as if the key were absent (which keeps three-state arguments such as
+    ``task_list``'s ``parked`` working); an absent key stays absent.
+    Anything else (an integer, ``"yes"``, a list) raises
+    ``InvalidParameterError`` naming the argument.
+    """
+    keys = [k for k in _declared_boolean_keys(schema) if k in arguments]
+    if not keys:
+        return arguments
+    normalised = dict(arguments)
+    for key in keys:
+        if arguments[key] is None:
+            del normalised[key]
+            continue
+        parsed = _boolean_arg(arguments, key)
+        if parsed is None:
+            raise InvalidParameterError(f"{key} must be true or false")
+        normalised[key] = parsed
+    return normalised
 
 
 def _confirm_names(value: Any, *, kb_name: Any, background: Any) -> list[str] | None:
@@ -2025,7 +2074,9 @@ class PyriteMCPServer:
 
         include_empty = _boolean_arg(args, "include_empty")
         if include_empty is None:
-            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+            # Returns the refusal instead of raising: this handler is also
+            # called directly, where no dispatcher would render a raise.
+            return _refusal(InvalidParameterError("include_empty must be true or false"))
 
         svc = self.link_svc
         pairs = svc.batch_suggest(
@@ -2056,7 +2107,9 @@ class PyriteMCPServer:
 
         include_empty = _boolean_arg(args, "include_empty")
         if include_empty is None:
-            return _error("INVALID_PARAMETER", "include_empty must be true or false")
+            # Returns the refusal instead of raising: this handler is also
+            # called directly, where no dispatcher would render a raise.
+            return _refusal(InvalidParameterError("include_empty must be true or false"))
 
         svc = self.link_svc
         candidates = svc.discover_neighbors(
@@ -3337,6 +3390,17 @@ class PyriteMCPServer:
                         _free_form_map(self.tools[name].get("inputSchema") or {}),
                     )
                 )
+
+        # Declared booleans are normalised once, here, before any check
+        # below reads the arguments and before the handler runs (#1744):
+        # every key the tool's inputSchema declares boolean reaches its
+        # handler as a real bool, or the call is refused with
+        # INVALID_PARAMETER naming the key. Plugin tools pass through this
+        # same point, so the rule covers them without editing the plugin.
+        try:
+            arguments = _normalise_boolean_arguments(self.tools[name].get("inputSchema"), arguments)
+        except InvalidParameterError as e:
+            return _refusal(e)
 
         # Every KB argument has a shape the checks below can read, or the call
         # is refused here: a value they cannot read would reach the handler

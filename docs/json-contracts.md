@@ -219,6 +219,20 @@ Source of truth: `pyrite/server/mcp_server.py` (`_unknown_arguments`,
 `_declared_arguments`, `_dispatch_tool`); tests in
 `tests/test_mcp_unknown_arguments.py`.
 
+## Boolean MCP arguments
+
+An argument a tool's `inputSchema` declares as `boolean` is normalised
+once, by the dispatcher, before the tool runs (#1744): a JSON `true`/`false`
+passes, and the string `"true"`/`"false"` (stripped, any case) becomes a
+bool, so a client that serialises booleans as strings gets what it asked
+for, and the string `"false"` never reads as true. `null` is treated as
+absent: the argument's default applies. Any other value, such as `"yes"`,
+`0`, `1` or a list, answers `INVALID_PARAMETER` naming the argument. The
+rule covers plugin tools too, because every call passes the same
+dispatcher. Source of truth: `pyrite/server/mcp_server.py`
+(`_normalise_boolean_arguments`); tests in
+`tests/test_mcp_boolean_arguments.py`.
+
 ## Server and account codes
 
 These are the central REST mappings (`pyrite/server/errors.py`); an endpoint
@@ -1340,7 +1354,7 @@ only: an entry with no body still gets suggestions. `kb_search` and
 | Surface | Switch |
 |---|---|
 | CLI | `--include-empty`; the JSON document carries `"include_empty": true\|false` |
-| MCP | `include_empty` (boolean, default `false`); a value that is not a boolean answers `INVALID_PARAMETER` |
+| MCP | `include_empty` (boolean, default `false`); read under "Boolean MCP arguments" above, so a value that cannot be read as a boolean answers `INVALID_PARAMETER` |
 | REST | `include_empty` query parameter (default `false`) |
 
 ## Repo endpoint errors

@@ -79,7 +79,7 @@ unknown_code | 1 | pyrite/cli/init_command.py
 unknown_code | 3 | pyrite/cli/kb_commands.py
 unknown_code | 5 | pyrite/cli/repo_commands.py
 unknown_code | 1 | pyrite/read_cli.py
-unknown_code | 54 | pyrite/server/mcp_server.py
+unknown_code | 52 | pyrite/server/mcp_server.py
 unknown_code | 6 | pyrite/services/repo_service.py
 unknown_code | 2 | pyrite/utils/errors.py
 
