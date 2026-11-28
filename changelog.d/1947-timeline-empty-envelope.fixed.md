@@ -1,0 +1,1 @@
+`pyrite timeline` and `pyrite-read timeline` print an empty envelope (`{"count": 0, "events": []}`) for machine formats (JSON, YAML) when no events match, keeping "No timeline events found." for rich output (#1947).
