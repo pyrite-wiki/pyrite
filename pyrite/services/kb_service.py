@@ -79,6 +79,7 @@ from ..storage.file_operations import (
     apply,
     reason_for_read,
     unmodellable_in_text,
+    values_equal,
 )
 from ..storage.index import IndexManager, content_hash
 from ..storage.repository import KBRepository, _text_of
@@ -886,9 +887,12 @@ class KBService:
         """
         # A model row is the file's ("kept") only when the loaded entry has the
         # same row (field, rule, message) AND the value the rule judged is the
-        # same YAML value, type included (#1588 fix round 1). Pairing by the
-        # message alone let a different value whose row prints the same pass
-        # as kept and be written: `importance: 5.5` updated with "5.5".
+        # same value under the one comparison every update judgement uses,
+        # decision 3's `values_equal` (#1704; the pairing began with #1588
+        # fix round 1). Pairing by the message alone let a different value
+        # whose row prints the same pass as kept and be written:
+        # `importance: 5.5` updated with "5.5" -- a string over a number is
+        # still a different value under that comparison, so still judged.
         prior_rows = (
             [
                 (row, existing_entry.rule_input(row.get("field", "")))
@@ -910,7 +914,7 @@ class KBService:
                     for i, (prior, value) in enumerate(prior_rows)
                     if (prior.get("field"), prior.get("rule"), prior["message"])
                     == (row.get("field"), row.get("rule"), message)
-                    and _same_yaml_value(value, judged)
+                    and values_equal(value, judged)
                 ),
                 None,
             )
@@ -2372,9 +2376,11 @@ class KBService:
         for key, value in fields.items():
             if key in not_written or (value is None and key not in updatable):
                 ignored.append(key)
-            elif key in reading and _same_yaml_value(reading[key], value):
-                # The same YAML value, type included (#1588 fix round 1):
-                # `true` is not an echo of a reading of 1, so it is judged.
+            elif key in reading and values_equal(reading[key], value):
+                # The one comparison every update judgement uses, decision
+                # 3's `values_equal` (#1704; the echo rule began with #1588
+                # fix round 1): `true` is not an echo of a reading of 1, so
+                # it is judged.
                 unchanged.append(key)
             else:
                 updates[key] = value
@@ -5362,22 +5368,6 @@ def _frontmatter_span(text: str) -> FrontmatterSpan:
     split = split_frontmatter(text)
     assert isinstance(split, Frontmatter), split  # apply() just produced it
     return FrontmatterSpan(split.yaml_start, split.close_start, split.close_end)
-
-
-def _same_yaml_value(a: Any, b: Any) -> bool:
-    """``values_identical`` (the same YAML value, type included: ``True`` is not
-    ``1``, ``"5.5"`` is not ``5.5``), and ``.nan`` is the same value as itself.
-
-    What "the update sent the value the file holds" means for a kept model row
-    and for an echo's unchanged key (#1588 fix round 1). ``values_identical``
-    compares a float with ``==``, so ``.nan`` never equals itself there and a
-    file's own ``importance: .nan`` would stop an update of another field.
-    """
-    from ..schema.field_aliases import values_identical
-
-    if isinstance(a, float) and isinstance(b, float) and a != a and b != b:
-        return True
-    return values_identical(a, b)
 
 
 def _drop_emptied_metadata(file_values: dict[str, Any], ops: list[Any]) -> list[Any]:
