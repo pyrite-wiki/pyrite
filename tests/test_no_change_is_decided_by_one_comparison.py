@@ -1,16 +1,20 @@
 """An update decides "no change" in one place (#1704).
 
-The property: one function, ``same_yaml_value`` in
-``pyrite/schema/field_aliases.py``, decides whether the value an update
-names is the value the file already holds. ``apply``'s no-change check --
-the model in ``_model_apply`` and its narrow twin in ``_set_node``, with
-the list alignment in ``_plan``/``_lcs`` -- and the service's two
-judgements (the ``unchanged`` report in ``split_echoed_update``, the
-kept-row judgement in ``_validate_write``) all call it. Before, ``apply``
-compared numbers by value (decision 3's ``values_equal``) while the
-service compared type-strictly, so the two disagreed about a respelled
-number: the file stayed byte-identical, but the field was not reported
-under ``unchanged``.
+The property: one function, ADR-0042 decision 3's ``values_equal`` in
+``pyrite/storage/file_operations.py``, decides whether the value an
+update names is the value the file already holds. ``apply``'s no-change
+check -- the model in ``_model_apply`` and its narrow twin in
+``_set_node``, with the list alignment in ``_plan``/``_lcs`` -- already
+called it; the service's two judgements (the ``unchanged`` report in
+``split_echoed_update``, the kept-row judgement in ``_validate_write``)
+call it now too, and the service's own type-strict wrapper is deleted.
+Before, the service compared type-strictly while ``apply`` compared by
+decision 3, so the two disagreed about a respelled number: the file
+stayed byte-identical, but the field was not reported under
+``unchanged``. Because the one comparison is decision 3's own, every
+"same value" decision an update makes agrees with it, including the
+YAML loader's timestamp spellings (``+5``, a one-digit hour; #991): a
+value the file already holds is never respelled.
 
 The maintainer's decision on #1704 (2026-11-19) settles the reported
 case: "an update that sends `5` over a file's `5.0` is reported
@@ -29,12 +33,13 @@ changes: an accepted importance that actually changes a value is
 still stored as its int (#1588).
 
 ``values_identical`` keeps the type-strict rule the doubly spelled
-field merge needs, with the ``.nan`` clause folded in: ``.nan`` is the
-same value as itself, at the top level and inside a list or a mapping,
-so a file holding one stays updatable. ``same_yaml_value`` adds the
-number clause and decision 3's temporal clause to that rule: a string
-that spells a date or a timestamp (its ISO form, or the same instant)
-is the same value, so a date sent back as text is not a change.
+field merge needs; it is not an update judgement and no update path
+calls it for one. Decision 3's comparison carries the rest: ``.nan``
+is the same value as itself, at the top level and inside a list or a
+mapping, so a file holding one stays updatable; and a string that
+spells a date or a timestamp (its ISO form, or the same instant, in
+any spelling the YAML loader reads) is the same value, so a date sent
+back as text is not a change.
 
 The structural checker walks the three modules' sources with ``ast``.
 What it cannot see: a comparison inlined without calling the function
@@ -58,7 +63,7 @@ import pytest
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
 from pyrite.config import KBConfig, PyriteConfig, Settings
-from pyrite.schema.field_aliases import same_yaml_value, values_identical
+from pyrite.schema.field_aliases import values_identical
 from pyrite.services.kb_service import KBService, _frontmatter_span
 from pyrite.storage.database import PyriteDB
 from pyrite.storage.file_operations import (
@@ -66,6 +71,7 @@ from pyrite.storage.file_operations import (
     OperationRefusedError,
     Set,
     apply,
+    values_equal,
 )
 from pyrite.storage.index import IndexManager
 
@@ -336,6 +342,25 @@ def test_apply_a_date_sent_as_its_iso_text_is_unchanged():
     assert new == APPLY_TEXT
 
 
+def test_apply_a_yaml_only_timestamp_spelling_over_the_same_instant_is_unchanged():
+    """A plain (undeclared) field holding a timestamp: spellings only
+    the YAML loader reads (``+5``, a one-digit hour; #991) sent over
+    the same instant are the same value under decision 3, so the file
+    keeps its own spelling byte for byte. A different instant is
+    still a change."""
+    text = "---\nts: 2026-01-01 10:00:00+05:00\n---\n\nbody\n"
+    new, report = _apply(text, Set("ts", "2026-01-01 10:00:00 +5"))
+    assert report.results[0].outcome == "unchanged"
+    assert new == text
+    new, report = _apply(text, Set("ts", "2026-01-01 5:00:00 +0"))
+    assert report.results[0].outcome == "unchanged"
+    assert new == text
+    # The control: a different instant is a change, stored as sent.
+    new, report = _apply(text, Set("ts", "2026-01-01 6:00:00 +0"))
+    assert report.results[0].outcome == "changed"
+    assert new != text
+
+
 def test_apply_add_subkey_with_a_respelled_value_is_a_no_change():
     """AddSubkey over a key the file holds with the same number in another
     spelling: under the one comparison the value is the same, so the
@@ -357,30 +382,41 @@ def test_apply_add_subkey_with_a_different_value_is_refused_as_present():
 
 
 def test_the_comparison_itself():
-    from datetime import UTC, date, datetime
+    from datetime import UTC, date, datetime, timedelta, timezone
 
     nan = float("nan")
-    assert values_identical(nan, nan)
-    assert values_identical([nan], [nan])
-    assert values_identical({"a": nan}, {"a": nan})
+    # `values_identical` stays type-strict for the doubly spelled field
+    # merge; it is not the update comparison.
     assert not values_identical(1, 1.0)
     assert not values_identical(True, 1)
-    # The update comparison: a number in another spelling is the same
-    # value (the maintainer's decision on #1704), at any depth. A bool
-    # is not a number, and a string is not a number.
-    assert same_yaml_value(5, 5.0)
-    assert same_yaml_value(5.0, 5)
-    assert same_yaml_value([5], [5.0])
-    assert same_yaml_value({"a": 5}, {"a": 5.0})
-    assert not same_yaml_value(5, 5.5)
-    assert not same_yaml_value(True, 1)
-    assert not same_yaml_value(True, 1.0)
-    assert not same_yaml_value("5", 5)
-    assert same_yaml_value(date(2026, 1, 2), "2026-01-02")
-    assert same_yaml_value("2026-01-02", date(2026, 1, 2))
-    assert not same_yaml_value(date(2026, 1, 2), "2026-01-03")
-    assert same_yaml_value(datetime(2026, 1, 2, 10, 0, tzinfo=UTC), "2026-01-02T10:00:00+00:00")
-    assert same_yaml_value({"d": date(2026, 1, 2)}, {"d": "2026-01-02"})
+    # The update comparison, decision 3's `values_equal`: a number in
+    # another spelling is the same value (the maintainer's decision on
+    # #1704), at any depth. A bool is not a number, and a string is not
+    # a number. `.nan` is the same value as itself, at any depth.
+    assert values_equal(5, 5.0)
+    assert values_equal(5.0, 5)
+    assert values_equal([5], [5.0])
+    assert values_equal({"a": 5}, {"a": 5.0})
+    assert not values_equal(5, 5.5)
+    assert not values_equal(True, 1)
+    assert not values_equal(True, 1.0)
+    assert not values_equal("5", 5)
+    assert values_equal(nan, nan)
+    assert values_equal([nan], [nan])
+    assert values_equal({"a": nan}, {"a": nan})
+    assert values_equal(date(2026, 1, 2), "2026-01-02")
+    assert values_equal("2026-01-02", date(2026, 1, 2))
+    assert not values_equal(date(2026, 1, 2), "2026-01-03")
+    assert values_equal(datetime(2026, 1, 2, 10, 0, tzinfo=UTC), "2026-01-02T10:00:00+00:00")
+    assert values_equal({"d": date(2026, 1, 2)}, {"d": "2026-01-02"})
+    # The temporal clause includes the spellings only the YAML loader
+    # reads (`+5`, a one-digit hour; #991): the same instant in such a
+    # spelling is the same value, a different instant is not.
+    plus5 = timezone(timedelta(hours=5))
+    held = datetime(2026, 1, 1, 10, 0, tzinfo=plus5)
+    assert values_equal(held, "2026-01-01 10:00:00 +5")
+    assert values_equal(held, "2026-01-01 5:00:00 +0")
+    assert not values_equal(held, "2026-01-01 6:00:00 +0")
 
 
 # --- the structural pin: there is one comparison ------------------------------
@@ -420,56 +456,23 @@ def _violations(sources: dict[str, str]) -> list[str]:
                 problems.append(f"{role}: a second same-value wrapper, _same_yaml_value")
             if isinstance(node, ast.Name) and node.id == "_same_yaml_value":
                 problems.append(f"{role}: _same_yaml_value is still called")
-
-    defined = [role for role, by_name in funcs.items() if "same_yaml_value" in by_name]
-    if defined != ["schema"]:
-        problems.append(f"same_yaml_value is defined in {defined}, not only in schema")
-    elif "values_identical" not in _called_names(funcs["schema"]["same_yaml_value"][0]):
-        problems.append("schema: same_yaml_value does not build on values_identical")
+            if isinstance(node, ast.FunctionDef) and node.name == "same_yaml_value":
+                problems.append(f"{role}: a second same-value comparison, same_yaml_value")
+            if isinstance(node, ast.Name) and node.id == "same_yaml_value":
+                problems.append(f"{role}: same_yaml_value is still called")
 
     for name in ("split_echoed_update", "_validate_write"):
         calls = set().union(*(_called_names(fn) for fn in funcs["service"].get(name, [])))
-        if "same_yaml_value" not in calls:
-            problems.append(f"service: {name} does not call same_yaml_value")
+        if "values_equal" not in calls:
+            problems.append(f"service: {name} does not call values_equal")
+        if "values_identical" in calls:
+            problems.append(f"service: {name} still decides sameness with values_identical")
 
     storage = funcs["storage"]
     for name in ("_model_apply", "_set_node", "_plan", "_lcs"):
         calls = set().union(*(_called_names(fn) for fn in storage.get(name, [])))
-        if "same_yaml_value" not in calls:
-            problems.append(f"storage: {name} does not call same_yaml_value")
-    for name in ("_set_node", "_plan", "_lcs"):
-        calls = set().union(*(_called_names(fn) for fn in storage.get(name, [])))
-        if "values_equal" in calls:
-            problems.append(f"storage: {name} still decides sameness with values_equal")
-
-    # In _model_apply, values_equal may only match the item a Remove names;
-    # a Set or AddSubkey no-change decided by it is a second comparison.
-    for fn in storage.get("_model_apply", []):
-        parents: dict[ast.AST, ast.AST] = {}
-        for node in ast.walk(fn):
-            for child in ast.iter_child_nodes(node):
-                parents[child] = node
-        for node in ast.walk(fn):
-            if not (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Name)
-                and node.func.id == "values_equal"
-            ):
-                continue
-            cursor: ast.AST = node
-            under_remove = False
-            while cursor in parents:
-                cursor = parents[cursor]
-                # The first If the call sits in the body or orelse of decides
-                # (a call in an If's own test, `if values_equal(...)` under
-                # Remove, belongs to the If above that one).
-                if isinstance(cursor, ast.If) and any(
-                    node in ast.walk(stmt) for stmt in [*cursor.body, *cursor.orelse]
-                ):
-                    under_remove = ast.unparse(cursor.test) == "isinstance(op, Remove)"
-                    break
-            if not under_remove:
-                problems.append("storage: _model_apply decides a no-change with values_equal")
+        if "values_equal" not in calls:
+            problems.append(f"storage: {name} does not call values_equal")
     return problems
 
 
@@ -487,17 +490,15 @@ def test_the_checker_finds_a_second_wrapper():
     assert any("_same_yaml_value" in p for p in _violations(sources))
 
 
-def test_the_checker_finds_apply_deciding_with_values_equal():
+def test_the_checker_finds_a_resurrected_second_comparison():
     sources = _real_sources()
-    sources["storage"] = sources["storage"].replace(
-        "same_yaml_value(target, op.value)", "values_equal(target, op.value)", 1
-    )
-    assert any("_model_apply" in p for p in _violations(sources))
+    sources["schema"] += "\n\ndef same_yaml_value(a, b):\n    return True\n"
+    assert any("same_yaml_value" in p for p in _violations(sources))
 
 
 def test_the_checker_finds_the_unchanged_report_using_another_comparison():
     sources = _real_sources()
     sources["service"] = sources["service"].replace(
-        "same_yaml_value(reading[key], value)", "values_identical(reading[key], value)", 1
+        "values_equal(reading[key], value)", "values_identical(reading[key], value)", 1
     )
     assert any("split_echoed_update" in p for p in _violations(sources))
