@@ -135,7 +135,13 @@ def test_repeated_construction_and_registration_keep_sources_and_one_label(
             name = f"tier_label_{t}"
             assert server.tools[name] is not plugin.tools[name]
             assert server.tools[name]["handler"] is plugin.tools[name]["handler"]
-            assert server.tools[name]["inputSchema"] == plugin.tools[name]["inputSchema"]
+            # Registration publishes a closed copy (#1779): a source schema
+            # that does not declare itself free-form gains
+            # "additionalProperties": False, while the source stays untouched.
+            assert server.tools[name]["inputSchema"] == {
+                **plugin.tools[name]["inputSchema"],
+                "additionalProperties": False,
+            }
             assert server.tools[name]["description"] == f"[{t}] Describe a {t} tool."
     finally:
         server.close()

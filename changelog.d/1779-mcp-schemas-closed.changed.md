@@ -1,0 +1,1 @@
+- MCP `tools/list` now says which tools refuse undeclared argument keys (#1758): every checked tool's `inputSchema` publishes `"additionalProperties": false`, and the free-form tools (`kb_create`, `kb_update`) publish `true`, so a client can tell a closed tool from an open one before calling it (#1779).

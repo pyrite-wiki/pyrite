@@ -47,6 +47,11 @@ dependencies = [
     # below that has no such module to import and resources/read fails at
     # import time instead of at the call.
     "mcp>=1.27.2,<2.0.0",  # 1.27.2: SSE same-owner check (mcp_routes._session_owner)
+    # build_sdk_server validates tool arguments itself: the SDK's own
+    # check would pre-empt the dispatcher's #1758 answer for an
+    # undeclared key (#1779). The mcp SDK already requires jsonschema;
+    # this declares the direct use.
+    "jsonschema>=4.20.0",
 ]
 
 [project.optional-dependencies]
