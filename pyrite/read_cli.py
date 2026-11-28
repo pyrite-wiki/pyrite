@@ -261,13 +261,13 @@ def timeline(
         )
         results = results[:limit]
 
-        if not results:
-            console.print("[yellow]No timeline events found.[/yellow]")
-            return
-
         formatted = _format_output({"count": len(results), "events": results}, output_format)
         if formatted is not None:
             typer.echo(formatted)
+            return
+
+        if not results:
+            console.print("[yellow]No timeline events found.[/yellow]")
             return
 
         table = Table(title="Timeline Events")
