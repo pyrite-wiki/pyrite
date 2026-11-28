@@ -50,7 +50,7 @@ READ_TOOLS = {
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
     "kb_search": {
-        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "searched", the entry parts the legs that ran read ([] when none ran; a semantic-only search lists "body_prefix" with "body_prefix_chars": only the start of a body is embedded; tags and field values are not indexed, so a miss on one is not an absence; the contract is item 11 in the docstring of SearchService.search); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
+        "description": 'Full-text search across knowledge bases. Supports FTS5 query syntax (AND, OR, NOT, phrases in quotes). Keyword search reads entry titles and bodies only; tags and field values are not searched, so use the `tag` filter for tags. Returns entries with snippets ranked by relevance. Filters (entry_type, tags, date_from/date_to, fips, state, status) apply in every mode, on every search leg -- keyword, semantic and hybrid alike -- so a filtered result never contains an entry the filter excluded. When a leg cannot honour a filter it is dropped rather than returning unfiltered rows, and the response carries a "warnings" array naming it; no "warnings" key means every filter was applied on every leg (the key is absent, never null -- test for its presence). Every response says what its page is worth: "match" (strong, weak or none) with "match_basis", the reason in words; "legs_run", the search legs that ran (a hybrid search with only "keyword" there was a keyword search, and "warnings" says why); "searched", the entry parts the legs that ran read ([] when none ran; a semantic-only search lists "body_prefix" with "body_prefix_chars": only the start of a body is embedded; tags and field values are not indexed, so a miss on one is not an absence; the contract is item 11 in the docstring of SearchService.search); "keyword_match" (all_terms, some_terms, none) when a keyword leg ran; and "similarity" (cosine, the same on every backend) on each result the vector leg returned. '
         + HOW_TO_READ_MATCH
         + ' "none" is only said when the search ran as asked: if the semantic leg did not run the verdict is weak at worst. The results are returned whatever the verdict, and the verdict is the same on every page. The full contract is stated once, in the docstring of SearchService.search: "what a search response owes its caller". Auto-quote rule: special-char tokens (hyphens, dots, colons) are auto-quoted ONLY when the query has no AND/OR/NOT operator and no existing quote. Once you use an operator or a phrase quote, quote special-char tokens yourself (e.g. \'"family separation" "cross-link"\') or the query can fail with error_code QUERY_SYNTAX (deterministic, not retryable).',
         "inputSchema": {
@@ -282,7 +282,7 @@ READ_TOOLS = {
         },
     },
     "kb_orient": {
-        "description": "Use this first. With no kb_name it lists up to 50 KBs you can read (maximum 100 per page); pass offset to continue when has_more is true. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits the write-side schema blocks (ai_instructions, evaluation_rubric, guidelines, goals), which kb_schema returns when you need to write. brief keeps relationship_types, for following links.",
+        "description": "Use this first. With no kb_name it lists up to 50 KBs you can read (maximum 100 per page); pass offset to continue when has_more is true. With kb_name it returns a one-shot summary of that KB: description, entry counts by type, top tags, recent changes, and the schema of the types the KB accepts. Pass detail='brief' for a read session: it omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults), which kb_schema returns alongside the merged schema when you need to write. brief keeps relationship_types, for following links.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -294,12 +294,13 @@ READ_TOOLS = {
                 },
                 "recent_limit": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "Number of recent entries to include (default 5)",
                 },
                 "detail": {
                     "type": ["string", "null"],
                     "enum": ["brief", "full", None],
-                    "description": "full (default; null is the same): everything. brief: omits ai_instructions, evaluation_rubric, guidelines and goals.",
+                    "description": "full (default; null is the same): everything. brief: omits kb_authored (the KB's own text) and pyrite_guidance (Pyrite's defaults).",
                 },
                 "limit": {
                     "type": "integer",
@@ -437,13 +438,30 @@ READ_TOOLS = {
         },
     },
     "kb_recent": {
-        "description": "Get recently changed entries. Use to see what's new or changed in a KB. Thin wrapper over list-entries sorted by updated_at desc.",
+        "description": (
+            "Get recently changed entries, newest first, with list pagination. "
+            "`since` bounds updated_at (inclusive) before `limit` applies: the answer "
+            "holds up to `limit` entries updated at or after it, `has_more` says whether "
+            "more of them exist, and `offset` fetches the next page. Deleted entries are "
+            "not reported. `updated_at` is the time Pyrite last indexed the entry until "
+            "#670 lands."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "kb_name": {"type": "string", "description": "KB to query (optional)"},
                 "entry_type": {"type": "string", "description": "Filter by entry type"},
-                "limit": {"type": "integer", "description": "Max entries to return (default 20)"},
+                "limit": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 200,
+                    "description": "Max entries to return (default 20, max 200)",
+                },
+                "offset": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Pagination offset into the entries matching the filters (default 0)",
+                },
                 "since": {
                     "type": "string",
                     "description": (

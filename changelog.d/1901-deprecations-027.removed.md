@@ -1,0 +1,7 @@
+- **Removed deprecations scheduled for 0.27 (#1901):**
+  - `pyrite export --format` and `-f` alias for `--target` (now exit 2 as usage errors; calls passing `--format` / `-f` on `export` still emit the usage error as JSON; use `--target`).
+  - `-f` as a short form of `--format` on `pyrite task` commands (now exits 2 as a usage error; use `--format` or `PYRITE_FORMAT`).
+  - `pyrite task status` (now exits 2 as a usage error; use `pyrite task get`).
+  - Vector search `distance` key on semantic and hybrid result rows (read `similarity` instead; passing `distance` in `fields` now reports it as unmatched).
+  - `orient`'s deprecated `schema.guidelines`, `schema.goals`, `schema.evaluation_rubric`, per-type `ai_instructions`, `guidelines`, `goals` and `evaluation_rubric` under `schema.types`, and top-level `guidelines` (read `kb_authored` for the KB's text and `pyrite_guidance` for Pyrite's defaults, or `kb_schema` for a type's merged schema and default instructions; `kb_authored.notice` and `detail=brief`'s `detail_note` no longer mention those keys).
+  - MCP `legacy_error_code` on refusal responses (match `error_code` instead).

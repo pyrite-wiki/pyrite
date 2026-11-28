@@ -1271,7 +1271,9 @@ class TaskService:
                 ops.append(Set(key, value))
             elif key in present:
                 ops.append(Unset(key))
-        written = self.kb_svc.apply_operations(task_id, kb_name, ops, expect_holder=holder).entry
+        written = self.kb_svc.apply_operations(
+            task_id, kb_name, ops, expect_holder=holder, refuse_statuses=TASK_RESOLVED_STATUSES
+        ).entry
         result = {
             "task_id": task_id,
             "kb_name": kb_name,
@@ -1399,7 +1401,7 @@ class TaskService:
         task_id: str,
         kb_name: str,
         message: str,
-        confidence: float = 0.0,
+        confidence: float | None = None,
         partial_evidence: list[str] | None = None,
     ) -> dict[str, Any]:
         """Append a timestamped checkpoint to a task."""
@@ -1416,7 +1418,7 @@ class TaskService:
 
         # Build checkpoint section
         section = f"\n\n## Checkpoint {timestamp}\n\n{message}"
-        if confidence > 0:
+        if confidence is not None:
             section += f"\n\n**Confidence**: {int(confidence * 100)}%"
         if partial_evidence:
             evidence_str = ", ".join(f"`{e}`" for e in partial_evidence)
@@ -1428,7 +1430,7 @@ class TaskService:
         agent_ctx = dict(getattr(entry, "agent_context", {}) or {})
         agent_ctx["last_checkpoint"] = timestamp
         agent_ctx["last_message"] = message
-        if confidence > 0:
+        if confidence is not None:
             agent_ctx["confidence"] = confidence
         if partial_evidence:
             existing = agent_ctx.get("evidence", [])
@@ -1449,88 +1451,6 @@ class TaskService:
             "message": message,
             "confidence": confidence,
             "evidence": partial_evidence or [],
-        }
-
-    def unblock_dependents(self, task_id: str, kb_name: str) -> list[dict[str, Any]]:
-        """When a task resolves, auto-unblock tasks that depended on it.
-
-        Finds tasks with status='blocked' whose dependencies all resolve to a
-        terminal-resolved status (done or cancelled — a cancelled blocker is
-        resolved-by-removal), and transitions them onward.
-        """
-        from ..models.task import TASK_RESOLVED_STATUSES
-
-        # Find tasks that have this task as a dependency
-        rows = self._query(
-            """SELECT id, metadata FROM entry
-               WHERE kb_name = :kb_name AND entry_type = 'task'
-               AND status = 'blocked'""",
-            {"kb_name": kb_name},
-        )
-
-        unblocked = []
-        for row in rows:
-            meta = parse_metadata(row.get("metadata"))
-            deps = meta.get("dependencies", [])
-            if not deps or task_id not in deps:
-                continue
-
-            # Check if ALL dependencies are now resolved (done or cancelled)
-            all_done = True
-            for dep_id in deps:
-                dep_rows = self._query(
-                    "SELECT status FROM entry WHERE id = :id AND kb_name = :kb_name",
-                    {"id": dep_id, "kb_name": kb_name},
-                )
-                if not dep_rows or dep_rows[0].get("status") not in TASK_RESOLVED_STATUSES:
-                    all_done = False
-                    break
-
-            if all_done:
-                self.kb_svc.update_entry(row["id"], kb_name, status="in_progress")
-                unblocked.append({"id": row["id"], "title": row.get("title", "")})
-
-        return unblocked
-
-    def aggregate_evidence_to_parent(self, task_id: str, kb_name: str) -> dict[str, Any] | None:
-        """Aggregate evidence from a child task up to its parent.
-
-        When a child task accumulates evidence links, copy them to the parent
-        so querying the parent shows all evidence from its subtree.
-        """
-        task = self.get_task(task_id, kb_name, readable_kbs=UNSCOPED)
-        if not task:
-            return None
-
-        meta = parse_metadata(task.get("metadata") or {})
-        parent_id = meta.get("parent") or task.get("parent", "")
-        if not parent_id:
-            return None
-
-        child_evidence = meta.get("evidence", []) or task.get("evidence", []) or []
-        if not child_evidence:
-            return None
-
-        parent = self.get_task(parent_id, kb_name, readable_kbs=UNSCOPED)
-        if not parent:
-            return None
-
-        parent_meta = parse_metadata(parent.get("metadata") or {})
-        parent_evidence = parent_meta.get("evidence", []) or parent.get("evidence", []) or []
-
-        # Only what the parent lacks, each appended as one item in the
-        # child's order; the parent's own items keep their bytes (#955 P3b).
-        from ..storage.file_operations import Append
-
-        missing = [e for e in dict.fromkeys(child_evidence) if e not in parent_evidence]
-        if not missing:
-            return None  # Nothing new to add
-
-        self.kb_svc.apply_operations(parent_id, kb_name, [Append("evidence", e) for e in missing])
-        return {
-            "parent_id": parent_id,
-            "evidence_added": len(missing),
-            "total_evidence": len(parent_evidence) + len(missing),
         }
 
     def list_entries_needing_qa(self, kb_name: str | None = None) -> list[dict[str, Any]]:

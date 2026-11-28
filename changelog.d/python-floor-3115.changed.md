@@ -1,0 +1,1 @@
+- The minimum supported Python is now 3.11.5 (was 3.11.0), because the `soupsieve` release that fixes its open advisories needs Python 3.11.5 or newer; on 3.11.0 to 3.11.4, upgrade Python.

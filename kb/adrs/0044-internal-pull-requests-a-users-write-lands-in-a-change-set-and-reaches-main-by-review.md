@@ -213,6 +213,8 @@ set whose author has submitted it.
 - If the landing place cannot be reached (not a git repository, the working
   copy cannot be created), the write is refused. It never falls back to
   canonical.
+- **A read-only KB takes no change set** (decided 2026-11-26). It accepts no
+  write, so it has no landing place, canonical or review.
 - Every write response says where it landed.
 - **Claims follow the rule** (decided 2026-10-20). A claim on a
   `landing: canonical` KB is the shared compare-and-swap on main, as now. A

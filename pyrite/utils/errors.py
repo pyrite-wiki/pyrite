@@ -23,6 +23,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
@@ -142,9 +143,8 @@ def cli_error_from(
 
     The message shown is ``exc.public_message`` when the class sets one
     (safe by construction; see ``pyrite.exceptions``), else ``str(exc)``.
-    The CLI has no ``legacy_error_code`` concept -- that is MCP-only, for one
-    release, per the maintainer's decision (2026-09-25); a CLI caller was
-    never promised the old MCP spelling.
+    The CLI emits ``exc.error_code`` directly without any transitional code
+    field.
 
     ``error_code`` replaces the class's code for one documented CLI spelling
     (``NOT_FOUND``; see ``_CLI_CODE_OVERRIDES``), and ``extra`` adds keys as
@@ -221,30 +221,29 @@ def _default_format() -> str:
 
 
 def _format_in(argv: Sequence[str], ctx: Any = None) -> str:
-    """The format a usage error is printed in: the ``--format`` (or the
-    deprecated ``-f``) the caller typed, if it is a format the root prints (the
+    """The format a usage error is printed in: the ``--format`` (or a legacy
+    command's ``-f``) the caller typed, if it is a format the root prints (the
     parse that failed may be what never got to read it), else the default.
-    ``pyrite export`` is skipped: there ``--format`` and ``-f`` mean
-    ``--target``. Where the format cannot be read from the arguments, the
-    document is in ``PYRITE_FORMAT``, else JSON."""
+    ``pyrite export`` is skipped: there ``--format``/``-f`` (removed in 0.27)
+    meant ``--target``, so an old script still gets a JSON usage error. Where
+    the format cannot be read from the arguments, the document is in
+    ``PYRITE_FORMAT``, else JSON."""
     from ..cli.output import SHARED_FORMATS
 
     short_is_format = ctx is None
     if ctx is not None:
-        from ..cli.output import _record_short_format, requested_format
+        from ..cli.output import requested_format
 
         if value := requested_format(ctx):
             if isinstance(value, str) and value in SHARED_FORMATS:
                 return value
         for parameter in ctx.command.params:
             options = (*getattr(parameter, "opts", ()), *getattr(parameter, "secondary_opts", ()))
-            callback = getattr(parameter, "callback", None)
-            original = getattr(callback, "__wrapped__", callback)
             if "--format" in options:
                 value = ctx.params.get(parameter.name)
                 if isinstance(value, str) and value in SHARED_FORMATS:
                     return value
-            if "-f" in options and ("--format" in options or original is _record_short_format):
+            if "-f" in options and "--format" in options:
                 short_is_format = True
     if next((w for w in argv if not w.startswith("-")), None) == "export":
         return _default_format()
@@ -393,6 +392,72 @@ def _tell_a_person(error: Any) -> None:
         pass
 
 
+#: Top-level commands the first-party extensions register, by extension
+#: directory. A user who types one without the extension installed gets its
+#: install line instead of a bare "try --help". The names are checked against
+#: the extensions' own ``get_cli_commands`` in
+#: tests/test_cli_usage_error_plain.py, so a renamed command cannot leave this
+#: table behind.
+_EXTENSION_COMMAND_INSTALLS = {
+    "sw": "software-kb",
+    "zettel": "zettelkasten",
+    "wiki": "encyclopedia",
+    "social": "social",
+    "investigation": "journalism-investigation",
+}
+
+#: Each extension directory's distribution name: the ``name`` in its
+#: ``pyproject.toml`` (checked there by the same tests), which the no-clone
+#: ``pip install "<dist> @ git+...#subdirectory=..."`` form needs.
+_EXTENSION_DISTRIBUTIONS = {
+    "software-kb": "pyrite-software-kb",
+    "zettelkasten": "pyrite-zettelkasten",
+    "encyclopedia": "pyrite-encyclopedia",
+    "social": "pyrite-social",
+    "journalism-investigation": "pyrite-journalism-investigation",
+}
+
+
+def extension_install_line(directory: str) -> str:
+    """The sentence that tells a user how to install a first-party extension.
+
+    The form that works with no clone of the repository comes first, pinned to
+    the running Pyrite's release tag (the users who hit this installed from a
+    tag, #1457); the clone form follows. A Pyrite whose version is unknown
+    (``0+unknown``, no tag to pin) gets the clone form only.
+    """
+    from .. import __version__
+
+    clone = f"pip install -e extensions/{directory}"
+    if __version__.startswith("0+unknown"):
+        return f"Install it with '{clone}' from a clone of the repository."
+    dist = _EXTENSION_DISTRIBUTIONS[directory]
+    url = (
+        f"git+https://github.com/pyrite-wiki/pyrite@v{__version__}"
+        f"#subdirectory=extensions/{directory}"
+    )
+    return f"Install it with 'pip install \"{dist} @ {url}\"', or from a clone '{clone}'."
+
+
+def _extension_install_hint(ctx: Any, message: str) -> str | None:
+    """The install line for a first-party extension command typed without it.
+
+    Only a top-level unknown command on the ``pyrite`` root: a typo inside an
+    installed group (``pyrite sw adrz``) or on another root (``pyrite-admin``)
+    keeps the plain --help hint, because installing the extension would not
+    make that command exist there.
+    """
+    if ctx is None or ctx.parent is not None or ctx.command_path != "pyrite":
+        return None
+    match = re.fullmatch(r"No such command '([^']+)'\.", message)
+    if match is None:
+        return None
+    directory = _EXTENSION_COMMAND_INSTALLS.get(match.group(1))
+    if directory is None:
+        return None
+    return extension_install_line(directory)
+
+
 def _print_click_error(error: Any, fmt: str) -> None:
     """Answer a click error raised while parsing: one refusal document on
     stdout in ``fmt``, one plain line on stderr. The caller exits with the
@@ -406,18 +471,25 @@ def _print_click_error(error: Any, fmt: str) -> None:
     # Typer 0.29 flattens click's NoSuchCommand into a plain UsageError, so
     # recognise it by its message rather than by the exception class.
     if is_usage and ctx is not None and message.startswith("No such command "):
-        # A missing subcommand on a group: name the commands that do exist, so
-        # the refusal points at something runnable instead of only --help.
-        names = [
-            name
-            for name in ctx.command.list_commands(ctx)
-            if not getattr(ctx.command.get_command(ctx, name), "hidden", False)
-        ]
-        if names:
-            suggestion = (
-                f"{ctx.command_path} has: {', '.join(names)}. "
-                f"Try '{ctx.command_path} --help' for help."
-            )
+        install_line = _extension_install_hint(ctx, message)
+        if install_line is not None:
+            # A first-party extension command that is not installed: say how
+            # to install it (#1457); the commands the root has would not help.
+            suggestion = install_line
+        else:
+            # A missing subcommand on a group: name the commands that do exist,
+            # so the refusal points at something runnable instead of only
+            # --help.
+            names = [
+                name
+                for name in ctx.command.list_commands(ctx)
+                if not getattr(ctx.command.get_command(ctx, name), "hidden", False)
+            ]
+            if names:
+                suggestion = (
+                    f"{ctx.command_path} has: {', '.join(names)}. "
+                    f"Try '{ctx.command_path} --help' for help."
+                )
     payload = {
         "outcome": REFUSED,
         **build_error(message, "USAGE_ERROR" if is_usage else "ERROR", suggestion=suggestion),

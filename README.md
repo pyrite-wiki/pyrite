@@ -27,7 +27,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 ## Quick Start
 
 ```bash
-# Install (no PyPI wheel yet -- from source). Needs Python 3.11+ (3.11.5 or newer for the patched `soupsieve`).
+# Install (no PyPI wheel yet -- from source). Needs Python 3.11.5 or newer (the patched `soupsieve` needs it).
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
@@ -209,7 +209,7 @@ Five extensions ship:
 
 | Extension | Purpose | Key Types |
 |-----------|---------|-----------|
-| **software-kb** | Software project management | ADRs, components, backlog items, standards, runbooks |
+| **software-kb** | Software project management ([guide](extensions/software-kb/README.md), [tutorial](docs/tutorials/agentic-development.md)) | ADRs, components, backlog items, standards, runbooks |
 | **zettelkasten** *(example plugin)* | CEQRC maturity workflow | Notes with maturity progression |
 | **encyclopedia** *(example plugin)* | Articles with review workflow | Articles, reviews, voting |
 | **social** *(example plugin)* | Engagement tracking | Social interactions |
@@ -382,6 +382,17 @@ pip install -e extensions/social
 pip install -e extensions/journalism-investigation
 ```
 
+No clone (you installed from a release tag)? Install the extension from the same
+tag, with the same version as Pyrite itself:
+
+```bash
+pip install "pyrite-software-kb @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/software-kb"
+pip install "pyrite-zettelkasten @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/zettelkasten"
+pip install "pyrite-encyclopedia @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/encyclopedia"
+pip install "pyrite-social @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/social"
+pip install "pyrite-journalism-investigation @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/journalism-investigation"
+```
+
 (`zettelkasten`, `encyclopedia` and `social` are example plugins — see
 [Plugin Protocol](#plugin-protocol) above.)
 
@@ -415,7 +426,8 @@ Pyrite's own backlog and architecture docs live in `kb/`:
 pyrite sw backlog        # Prioritized backlog
 pyrite sw adrs           # Architecture Decision Records
 pyrite sw components     # Module documentation
-pyrite sw standards      # Coding conventions
+pyrite sw validations    # Coding validations
+pyrite sw conventions    # Coding conventions
 ```
 
 ## Documentation

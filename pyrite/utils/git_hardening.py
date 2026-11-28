@@ -187,7 +187,7 @@ def _account_values(*args: str) -> list[str]:
 def _network_gitconfig(identity: tuple[str, str] | None = None) -> str:
     """The global config a network-reach git process reads, in place of the
     account's: only ``user.name``/``user.email`` (the operator's
-    ``git_identity``; unset, the account's global identity, until 0.27.0) and
+    ``git_identity``; unset, the account's global identity, until 0.28.0) and
     the account's ``safe.directory`` entries (an ownership exception the
     operator made, not a credential; without it a KB on a volume owned by
     another uid is refused as "dubious ownership"). Nothing that names a

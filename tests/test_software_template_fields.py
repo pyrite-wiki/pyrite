@@ -49,7 +49,8 @@ def software(request, tmp_path):
         )
     assert result.exit_code == 0, result.output
     kb = config.get_kb("software")
-    assert kb.kb_type == "generic"
+    # The plugin's KB type, only when a plugin supplies the preset (#1405).
+    assert kb.kb_type == ("generic" if request.param == "builtin" else "software")
     db = PyriteDB(config.settings.index_path)
     try:
         yield KBService(config, db), kb
@@ -96,9 +97,15 @@ def test_update_refuses_off_list_value_without_changing_file(software, entry_typ
     assert entry.file_path.read_bytes() == before
 
 
+@pytest.mark.control(reason="schema-layer enforce_enums switch; run as generic, as before #1405")
 @pytest.mark.parametrize(("entry_type", "field"), CASES)
 def test_enforcement_disabled_preserves_warning(software, entry_type, field):
     svc, kb = software
+    # This tests the core schema's `enforce_enums` switch alone. Since #1405 a
+    # KB made from the plugin preset is registered `software`, so software-kb's
+    # own validator also refuses off-list values (the lines above); run as
+    # generic so only the schema layer is in play.
+    kb.kb_type = "generic"
     kb.kb_schema.validation["enforce_enums"] = False
     values = {field: "bogus"}
     if entry_type == "backlog_item":

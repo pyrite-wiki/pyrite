@@ -124,6 +124,8 @@ class TestRenameDryRun:
         assert "[[entry-a]]" in b.body
         # Result still reports what WOULD happen
         assert result["dry_run"] is True
+        assert result["renamed"] is False
+        assert result["file_path"] == str(Path("notes") / "entry-a.md")
         assert result["old_id"] == "entry-a"
         assert result["new_id"] == "renamed-a"
         assert result["files_rewritten"] == 2  # planned, not actual

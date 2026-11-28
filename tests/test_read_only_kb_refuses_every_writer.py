@@ -257,3 +257,93 @@ def test_a_kb_the_check_cannot_look_up_is_refused_not_let_through(server_with_an
         server.svc = real
     assert "error_code" in result, result
     assert reached == []
+
+
+# -- the REST git-ops routes (commit, push, publish) ------------------------
+
+
+def test_rest_git_ops_refuse_a_read_only_kb_with_kb_read_only(tmp_path, monkeypatch):
+    """The REST git operations (commit, push, publish) answer 403 ``KB_READ_ONLY``
+    with ``retryable: false`` through the central handler, leaving every KB file
+    byte-identical (#1950)."""
+    from tests.test_worktree_service import _init_git_repo
+
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "no-global-config"))
+
+    repo = tmp_path / "repo"
+    root = repo / "kb"
+    root.mkdir(parents=True)
+    (root / "kb.yaml").write_text("name: frozen\ntypes: {}\n", encoding="utf-8")
+    entry_path = root / "notes" / "existing.md"
+    entry_path.parent.mkdir(parents=True)
+    entry_path.write_text(
+        "---\nid: existing\ntitle: Existing\ntype: note\n---\n\nBody.\n",
+        encoding="utf-8",
+    )
+    _init_git_repo(repo)
+
+    # Add an uncommitted file so get_pending_changes sees changes and
+    # publish_changes proceeds to commit_kb (which refuses with KBReadOnlyError)
+    uncommitted = root / "notes" / "uncommitted.md"
+    uncommitted.write_text(
+        "---\nid: uncommitted\ntitle: Uncommitted\ntype: note\n---\n\nPending body.\n",
+        encoding="utf-8",
+    )
+
+    world = build_world(
+        tmp_path / "rest-world",
+        kbs=[KBConfig(name=RO, path=root, kb_type="generic", read_only=True)],
+        rest=True,
+    )
+    before = _tree(root)
+    head_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+    try:
+        calls = [
+            (
+                f"POST /api/kbs/{RO}/commit",
+                world.client.post(f"/api/kbs/{RO}/commit", json={"message": "nope"}),
+            ),
+            (
+                f"POST /api/kbs/{RO}/push",
+                world.client.post(f"/api/kbs/{RO}/push", json={"remote": "origin"}),
+            ),
+            (
+                f"POST /api/kbs/{RO}/publish",
+                world.client.post(f"/api/kbs/{RO}/publish", json={"summary": "nope"}),
+            ),
+        ]
+    finally:
+        world.close()
+
+    for label, resp in calls:
+        assert resp.status_code == 403, f"{label}: {resp.status_code} {resp.text}"
+        detail = resp.json()["detail"]
+        assert detail["code"] == "KB_READ_ONLY", f"{label}: {detail}"
+        assert detail["retryable"] is False, f"{label}: {detail}"
+    assert _tree(root) == before
+    head_after = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+    git_status = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    ).stdout
+    assert head_before == head_after
+    assert "kb/notes/uncommitted.md" in git_status

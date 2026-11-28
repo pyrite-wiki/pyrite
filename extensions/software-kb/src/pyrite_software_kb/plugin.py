@@ -510,6 +510,10 @@ class SoftwareKBPlugin:
                             "items": {"type": "string"},
                             "description": "Tags for the ADR",
                         },
+                        "body": {
+                            "type": "string",
+                            "description": "Full ADR body (under the generated heading)",
+                        },
                         "context": {"type": "string", "description": "Context section"},
                         "decision": {"type": "string", "description": "Decision section"},
                         "consequences": {"type": "string", "description": "Consequences section"},
@@ -1824,15 +1828,40 @@ class SoftwareKBPlugin:
         title = args["title"]
         status = args.get("status", "proposed")
 
-        # Build structured body
-        context = args.get("context", "")
-        decision = args.get("decision", "")
-        consequences = args.get("consequences", "")
-        body_parts = []
-        body_parts.append(f"## Context\n\n{context or 'TODO'}")
-        body_parts.append(f"## Decision\n\n{decision or 'TODO'}")
-        body_parts.append(f"## Consequences\n\n{consequences or 'TODO'}")
-        body = "\n\n".join(body_parts)
+        body_content = args.get("body")
+        context = args.get("context") or None
+        decision = args.get("decision") or None
+        consequences = args.get("consequences") or None
+        has_sections = any(s is not None for s in (context, decision, consequences))
+
+        if body_content is not None and has_sections:
+            return {
+                "created": False,
+                "error": "Cannot combine body with section fields (context, decision, consequences).",
+                "error_code": "VALIDATION_FAILED",
+            }
+
+        if body_content is not None:
+            from pyrite.utils.frontmatter import Frontmatter, split_frontmatter
+
+            if isinstance(split_frontmatter(body_content), Frontmatter):
+                return {
+                    "created": False,
+                    "error": "body: the text opens with a frontmatter block, and ADR bodies do not read frontmatter.",
+                    "error_code": "VALIDATION_FAILED",
+                }
+
+        # Build structured body (#1862)
+        from .adr_listing import build_adr_body
+
+        body = build_adr_body(
+            next_num,
+            title,
+            body_content=body_content,
+            context=context,
+            decision=decision,
+            consequences=consequences,
+        )
 
         from datetime import date
 

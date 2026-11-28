@@ -14,7 +14,10 @@ links:
 - container-deployment
 - per-kb-permissions
 - personal-kb-repo-backing
+lifecycle: archived
 ---
+
+> **Historical**: March 2026 launch plan.
 
 # Web Presence, Extension Registry & Community
 

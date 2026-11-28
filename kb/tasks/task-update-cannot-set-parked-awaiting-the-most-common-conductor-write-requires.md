@@ -3,8 +3,15 @@ id: task-update-cannot-set-parked-awaiting-the-most-common-conductor-write-requi
 title: task update cannot set parked_awaiting — the most common conductor write requires hand-editing YAML
 type: task
 importance: 5
-status: open
+status: done
 priority: 7
+status_reason: "Resolved by #1688"
+status_change_log:
+- date: "2026-11-26T17:27:12Z"
+  from: in_progress
+  to: done
+  by: operator
+  comment: "Resolved by #1688 (park and unpark commands exist)"
 ---
 
 ## The gap

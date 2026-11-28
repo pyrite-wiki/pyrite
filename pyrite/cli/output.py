@@ -76,8 +76,6 @@ def output_format_choice(*allowed: str):
 #: Where the shared option leaves the format for the root group. ``ctx.meta`` is
 #: one dict for the whole context chain, so the root reads what the leaf parsed.
 FORMAT_META_KEY = "pyrite.output_format"
-_LEGACY_META_KEY = "pyrite.output_format.short"
-_EXPLICIT_META_KEY = "pyrite.output_format.explicit"
 
 #: Where the root group (``PyriteCLIGroup.invoke``) leaves its guard for the
 #: shared option to find. The option tells it which command is about to run.
@@ -97,15 +95,6 @@ def validate_shared_format(value: str) -> str:
     raise typer.BadParameter(
         f"unknown format {value!r}; choose one of: {', '.join(SHARED_FORMATS)}"
     )
-
-
-def _given_on_the_command_line(ctx: typer.Context, param: typer.CallbackParam) -> bool:
-    source = ctx.get_parameter_source(param.name)
-    return getattr(source, "name", None) == "COMMANDLINE"
-
-
-def _two_answers() -> typer.BadParameter:
-    return typer.BadParameter("-f and --format were both given; use --format only.")
 
 
 #: Set when a command declares ``OUTPUT_FORMAT_UNASKED`` and no format was
@@ -131,13 +120,6 @@ def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str | 
     else:
         value = validate_shared_format(value)
         ctx.meta.pop(UNASKED_META_KEY, None)
-    if _given_on_the_command_line(ctx, param):
-        # Click runs the callbacks of options given on the command line in the
-        # order they were given, so whichever of -f and --format comes second
-        # sees the other and refuses: two answers are a usage error, not a race.
-        if _LEGACY_META_KEY in ctx.meta:
-            raise _two_answers()
-        ctx.meta[_EXPLICIT_META_KEY] = True
     ctx.meta[FORMAT_META_KEY] = value
     # Click is still parsing here: a later option may yet be a usage error, so
     # this is not the moment the body starts. The root's guard is handed the
@@ -150,21 +132,6 @@ def _record_format(ctx: typer.Context, param: typer.CallbackParam, value: str | 
             "invoke the main CLI instead of a standalone sub-app"
         )
     guard.watch_body_of(ctx)
-    return value
-
-
-def _record_short_format(ctx: typer.Context, value: str | None) -> str | None:
-    if value is None:
-        return None
-    if ctx.meta.get(_EXPLICIT_META_KEY):
-        raise _two_answers()
-    value = validate_shared_format(value)
-    typer.echo(
-        f"Warning: -f is deprecated and will stop meaning --format in 0.27; "
-        f"use --format {value} (or set PYRITE_FORMAT).",
-        err=True,
-    )
-    ctx.meta[_LEGACY_META_KEY] = value
     return value
 
 
@@ -199,11 +166,6 @@ OUTPUT_FORMAT_UNASKED = typer.Option(
     "PYRITE_FORMAT sets the default.",
 )
 
-#: ``-f`` meant ``--format`` on the task commands. #303: it keeps working until
-#: 0.27, with a warning on stderr, then goes. Declared beside OUTPUT_FORMAT on
-#: a command that had ``-f``; hidden from help.
-LEGACY_FORMAT_SHORT = typer.Option(None, "-f", hidden=True, callback=_record_short_format)
-
 
 def declares_shared_format(command) -> bool:
     """Is this click command on the outcome contract? It is when one of its
@@ -223,10 +185,7 @@ def declares_shared_format(command) -> bool:
 def requested_format(ctx) -> str | None:
     """The format the leaf command was asked for, or None when it declared no
     shared option (a legacy command, which renders itself)."""
-    meta = ctx.meta
-    if _LEGACY_META_KEY in meta:
-        return meta[_LEGACY_META_KEY]
-    return meta.get(FORMAT_META_KEY)
+    return ctx.meta.get(FORMAT_META_KEY)
 
 
 def format_output(data: dict, fmt: str, **kwargs) -> str | None:
@@ -255,6 +214,27 @@ def note_entry_warnings(data: Any) -> None:
             continue
         for warning in row.get(ENTRY_WARNINGS_KEY) or ():
             print(f"warning: {row.get('id', '')}: {warning}", file=sys.stderr)
+
+
+def print_rich_entry_warnings(console: Console, data: Any) -> None:
+    """Print entry-level warnings in Rich output, safely escaped (#1805)."""
+    from ..services.read_shaping import ENTRY_WARNINGS_KEY
+
+    if not isinstance(data, dict):
+        return
+    is_list = isinstance(data.get("results"), list) or isinstance(data.get("entries"), list)
+    rows = (data.get("results") or data.get("entries")) if is_list else [data]
+    for row in rows or ():
+        if not isinstance(row, dict):
+            continue
+        for warning in row.get(ENTRY_WARNINGS_KEY) or ():
+            prefix = f"{row['id']}: " if is_list and row.get("id") else ""
+            console.print(
+                Text.assemble(
+                    Text("Warning: ", style="yellow"),
+                    Text(f"{prefix}{warning}"),
+                )
+            )
 
 
 def backlinks_table(entry_id: str, links: list[dict]):

@@ -1,0 +1,1 @@
+- **Re-dated `pyrite sw standards`, `db.conn`, `FRONTMATTER_ALIASES`, and the global `git_identity` fallback for network commits to 0.28 (#1901).** `pyrite sw standards` now emits a runtime deprecation warning on stderr naming `0.28.0`; `db.conn`, `FRONTMATTER_ALIASES`, and `git_identity` warnings and documentation also name `0.28` (`0.28.0`) as the removal release.

@@ -16,7 +16,7 @@ from ..api import (
     requires_kb_tier,
 )
 from ..authz import authorize, read_scope
-from ..schemas import DailyDatesResponse, EntryResponse
+from ..schemas import DailyDatesResponse, SingleEntryResponse
 from .entries import apply_refused_columns, entry_response
 
 router = APIRouter(tags=["Daily Notes"])
@@ -61,7 +61,7 @@ def list_daily_dates(
 
 def _load_existing_daily_note(
     svc: KBService, entry_id: str, kb: str, readable_kbs: set[str] | None
-) -> EntryResponse | JSONResponse | None:
+) -> SingleEntryResponse | JSONResponse | None:
     """Return the daily note if it's already indexed or present on disk
     (indexing it first in the latter case). None if it doesn't exist yet.
 
@@ -85,7 +85,7 @@ def _load_existing_daily_note(
 
 def _create_daily_note(
     svc: KBService, entry_id: str, kb: str, date_str: str, readable_kbs: set[str] | None
-) -> EntryResponse:
+) -> SingleEntryResponse:
     """Create a new daily note from the ``daily`` template (if present) or
     a sensible default, save and index it, and return the result."""
     parsed_date = date.fromisoformat(date_str)
@@ -115,7 +115,7 @@ def _create_daily_note(
         )
     except ValueError:
         now = datetime.now(UTC)
-        return EntryResponse(
+        return SingleEntryResponse(
             id=entry_id,
             kb_name=kb,
             entry_type="note",
@@ -134,10 +134,10 @@ def _create_daily_note(
         result.setdefault("tags", [])
         result.setdefault("outlinks", [])
         result.setdefault("backlinks", [])
-        return EntryResponse(**result)
+        return SingleEntryResponse(**result)
 
     now = datetime.now(UTC)
-    return EntryResponse(
+    return SingleEntryResponse(
         id=entry_id,
         kb_name=kb,
         entry_type="note",
@@ -165,7 +165,7 @@ def _validate_date(date_str: str) -> None:
 
 @router.get(
     "/daily/{date_str}",
-    response_model=EntryResponse,
+    response_model=SingleEntryResponse,
 )
 @limiter.limit("60/minute")
 async def get_daily_note(
@@ -200,7 +200,7 @@ async def get_daily_note(
 
 @router.post(
     "/daily/{date_str}",
-    response_model=EntryResponse,
+    response_model=SingleEntryResponse,
     dependencies=[Depends(requires_kb_tier("write"))],
 )
 @limiter.limit("60/minute")

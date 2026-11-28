@@ -164,6 +164,9 @@ ALLOWLIST: dict[tuple[str, str], str] = {
     ),
     ("POST", "/api/tasks/{task_id}/claim"): "write route: requires_kb_tier('write') subsumes read",
     ("POST", "/api/tasks/{task_id}/start"): "write route: requires_kb_tier('write') subsumes read",
+    ("POST", "/api/tasks/{task_id}/finish"): (
+        "write route: requires_kb_tier('write') via authorize(Action.KB_WRITE, KB) subsumes read"
+    ),
     ("POST", "/api/reviews"): "write route: requires_kb_tier('write') subsumes read",
     ("DELETE", "/api/reviews/{review_id}"): "write route: requires_kb_tier('write') subsumes read",
     # -- part 2: meta/admin surfaces ------------------------------------

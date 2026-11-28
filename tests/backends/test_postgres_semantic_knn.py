@@ -1,19 +1,21 @@
 """Postgres semantic search must not depend on which plan the planner picks (#1401).
 
-``entry.embedding`` carries an HNSW index. When the planner serves
+``entry.embedding`` carried an HNSW index until #1822 dropped it (#1821 had
+already made it unusable by this query). When the planner served
 ``ORDER BY embedding <=> :vec LIMIT n`` from it, pgvector returns at most
-``hnsw.ef_search`` candidates (40 by default) and applies the ``WHERE`` only
-afterwards. A selective filter can then reject every candidate, and the
-result is empty without saying ``capped``. Whether that plan runs is a cost
+``hnsw.ef_search`` candidates (40 by default) and applied the ``WHERE`` only
+afterwards. A selective filter could then reject every candidate, and the
+result was empty without saying ``capped``. Whether that plan runs is a cost
 choice that follows table statistics, and autoanalyze refreshes those on its
 own schedule. That is why
 ``TestSemanticKnnBudget::test_rows_the_ceiling_hides_are_returned_or_the_result_says_capped[postgres]``
 failed on some runs and not others.
 
 These tests take the chance out. ``SET LOCAL enable_sort = off`` makes any
-index-ordered plan win, so the index path runs whenever it is available. The
-property must hold anyway: a row that matches the filter is returned, or the
-result says it was capped.
+index-ordered plan win, so an index path runs whenever one is available (today
+none is; the cells keep guarding the sort key should a vector index come back).
+The property must hold anyway: a row that matches the filter is returned, or
+the result says it was capped.
 
 Which plans exist depends on the Postgres version. Up to PG16 the index can
 serve only an ORDER BY it matches whole, so a ``(kb_name, id)`` tiebreaker

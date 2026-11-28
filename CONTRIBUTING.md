@@ -12,7 +12,7 @@ project is worth their time.
 
 ### Prerequisites
 
-- Python 3.11+ (3.13 recommended)
+- Python 3.11.5+ (3.13 recommended)
 - Git
 - Node.js 22.17 or later, only to build or test the web UI in `web/` (SvelteKit 3; `web/package.json` `engines`)
 - [uv](https://docs.astral.sh/uv/) (recommended) or pip
@@ -293,6 +293,49 @@ PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-i
 cd web && npx playwright install chromium && cd .. && scripts/e2e.sh      # large: browser; manual-only in CI while non-deterministic
 ```
 
+**Editing a page that runs as a test** (`docs/getting-started.md`, the 20-minute
+tutorial): the runner extracts the page's fenced bash blocks and runs them **in
+one shell session, top to bottom**, so a page's state carries forward: a `cd`
+in one block is still in effect in the next, a KB registered near the top is
+still registered at the bottom, a file created three sections up still exists.
+Write one command per line (no `a && b` lists). HTML comments a reader never
+sees tell the runner what to check, such as `<!-- runner: expect-text WORD -->`
+after a block or `<!-- runner: expect-exit N -->` before one; the header
+docstring of [`scripts/run_tutorial.py`](scripts/run_tutorial.py) lists every
+marker and what it checks. To run one page locally, pass its path:
+`PATH="$PWD/.venv/bin:$PATH" bash scripts/run_tutorial.sh docs/tutorials/pyrite-in-20-minutes.md`.
+When you add a section in the middle of a page, account for the state the page
+has built up by that point (which directory the shell is in, which KBs and
+names already exist); otherwise say that the section starts fresh and have it
+do the `cd` or use a new name itself.
+
+Six things to know about an executable page:
+
+1. The runner does not compare a page's shown output with what the command
+   prints. It checks only what the markers name (the words in `expect-text`,
+   the entries in `expect-ids`, the exit code), so a JSON key or a line the
+   command never prints still passes. Run each command before showing its
+   output, paste its real output, and list in `expect-text` the words a reader
+   relies on.
+2. CI runs both pages in the `smoke` job of `.github/workflows/ci.yml`, which
+   runs on the push to `dev` after a merge (and on a manual run), not on the
+   pull request. Run the page locally before you push.
+3. The whole page shares one temp `HOME` and one Pyrite configuration, so a
+   "second machine" or "teammate" step that clones a repository and registers
+   a KB under a name already registered is skipped by `kb discover --add`
+   without an error, and later searches answer from the first KB. Give such a
+   step its own KB name, or its own `PYRITE_DATA_DIR` (the runner sets it, and
+   it wins over `PYRITE_CONFIG_DIR`), and an `expect-text` that proves which
+   KB answered.
+4. A `seed` fixture that stands for a real project (an ADR, component or
+   backlog item for a pinned upstream repository) states only what that
+   project's README, changelog or code state, and cites only history they
+   contain.
+5. Sample output on a page is copied from a real run, and any directive that
+   checks output asserts text only the real output carries.
+6. Example or fixture records (ADRs, decisions) cite only rationale that is
+   actually recorded; anything else goes under "Open questions".
+
 Use `-n 4`, not `-n auto`, on a laptop: `-n auto` starts a worker per core,
 each with its own databases and temp trees, and several worktrees doing that
 at once ran a 16 GB machine out of memory (#168) and filled its disk (#356).
@@ -476,7 +519,7 @@ and stamps it.
 | Before a push | the pre-push hook runs `scripts/test-affected --run` on `PYRITE_PUSH_WORKERS` (default 4) workers, unless your own `--run` already passed on the tree being pushed (see *Each tree is tested once* above) or the commit being pushed is already verified by CI (see *A verified commit is not tested again at the push*). It already runs everything for conftest, fixtures, pyproject and config changes; set `PYRITE_PUSH_FULL=1` yourself for storage or migration changes and cross-cutting refactors |
 | On the pull request | nothing: CI runs the backend suite on one interpreter (a failure is the first thing in its log; the 25 slowest tests go to the step summary and a junit artifact is kept 30 days; mypy is its own advisory job: it fails only when a file has more type errors than the change's base commit (a PR's merge-ref parent, a push's previous tip; `.mypy-baseline.json` is the fallback when there is none), and after you fix errors you lower the baseline with `mypy pyrite/ --ignore-missing-imports > mypy.out; python scripts/mypy_ratchet.py mypy.out --update`); the backend suite runs as 3 parallel shards per interpreter balanced by `.test_durations.gz`, and `shard-report` proves they ran every test once) (all three Pythons when test infrastructure changes), KB validation, the frontend job when `web/` changes, the advisory `verify-red` job (your new tests, without and with your change, graded against the merge commit's first parent; it is not in `gate` and never blocks a merge, and CI does not pass it `--enforce-fix`; its claim rule handles module-level tables on the test function itself, grades the whole function for an inline `parametrize` list, and selects nothing for class-level, fixture-params, generate-hook and imported tables; a `control` counts only when written on the test or one of its parameters, and one added another way (class or module `pytestmark`, a hook, a fixture, the test body) turns the job red; it runs on pull requests, not in the merge queue, and CI's environment, which has no Postgres, is the one it reports in; gating waits for #1104's model; see `docs/testing.md`) and diff coverage; the merge queue runs the full three-Python matrix on the exact commit about to land (#400); the push to `dev` after the merge runs the e2e smoke and the tutorial, and the matrix and frontend again only if the queue did not already pass that SHA |
 | A frontend change | `cd web && npm run check && npm run test:unit && npm run build` |
-| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- untracked files, the changelog section's date, the branch, whether the commit is verified, whether the private fixes repository (the `security` remote; `--private-remote`, or `--no-private-remote` for a project that keeps none) holds a change `dev` lacks, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
+| A release | first the rehearsal: `scripts/release.py <version>` (a dry run) runs every check and names each one that would stop `--execute` on this machine -- files that must move together with the version (`pyproject.toml`, the README install tag and `extensions/software-kb/README.md`'s, `pyrite-mcp/pyproject.toml`'s version and its `pyrite @ git+...@v<tag>` dependency, the tags in `pyrite-mcp/README.md`; bump all of them on `dev` before the dry run), untracked files, the changelog section's date, the branch, whether the commit is verified, whether the private fixes repository (the `security` remote; `--private-remote`, or `--no-private-remote` for a project that keeps none) holds a change `dev` lacks, and what the pre-push hook will do for the pushes. Then the large tests: `scripts/release.py` installs the release commit into a fresh venv and runs the tutorial against it; Playwright and the smoke layer per the release runbook |
 
 **What CI guarantees:** no pull request merges until the full backend suite
 has passed on top of current `dev`. Run the full suite locally to reproduce a
@@ -509,6 +552,8 @@ uv pip install --python .venv/bin/python -c "$(scripts/lock-constraints.sh)" -e 
 ```
 
 ### Writing Tests
+
+Use [`build_world`](tests/_world.py) (or its fixture wrappers `make_client`, `rest_api_env`, `cli_world`, and `mcp_server`) for real-wiring tests: it writes `config.yaml` and reads it back through `load_config`, indexes KB files on disk, runs the FastAPI `TestClient` with `create_app`'s own `get_db` and lifespan (or `rest=False`), exposes `.cli(...)` and `.mcp(...)`, and closes every database and worker in `.close()`. New tests must use it rather than overriding `get_db` in `dependency_overrides` or patching `load_config`, which [`test_production_wiring_guard.py`](tests/test_production_wiring_guard.py) rejects on any new site. See [`test_malformed_files_are_findings.py`](tests/test_malformed_files_are_findings.py) for a short example.
 
 - Follow the [deadline rule](kb/standards/testing-standards.md#deadlines-and-waits);
   [test_test_rules.py](tests/test_test_rules.py) enforces it.
@@ -560,7 +605,32 @@ A migration PR may not change a golden (ADR-0037). When an intentional behavior 
 PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest tests/characterization/
 ```
 
+The MCP input-schema snapshots (`tests/characterization/goldens/mcp-input-schemas.*.json`) are written by a test outside that directory, so the command above does not refresh them. After you add, remove or change an MCP tool argument, or a tool's description, also run:
+
+```bash
+PYRITE_CHARACTERIZATION_REGENERATE=1 .venv/bin/pytest tests/test_mcp_schema_snapshots.py
+```
+
+A public-interface change touches more than the code. When you change an MCP argument, a REST field or a CLI flag, update in the same PR:
+
+- the tool's description and input schema in `pyrite/server/tool_schemas.py`, so an agent reading the tool list sees the new argument;
+- the same option on the other surfaces (CLI, REST, MCP), or say in the PR why one surface differs;
+- `docs/json-contracts.md`, when the change adds an error code or changes a response shape;
+- the goldens above, then read `git diff tests/characterization/goldens/`;
+- a `changelog.d/` fragment that names the new option;
+- `docs/configuration.md`, "Fixed bounds on untrusted input", when the change adds a parser or a size bound on untrusted input: add a row there, and say so in the changelog fragment.
+
 Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration under pytest-xdist because each worker records only the goldens its own tests observed (#712, fixed by #1225). The per-principal file lock does not make parallel regeneration supported. Review `git diff tests/characterization/goldens/` carefully before committing.
+
+### Removing or renaming a public option
+
+A CLI flag, MCP argument, REST field, error code or command that users and agents may call leaves in two releases, never one:
+
+1. **The release that warns.** The option still works and prints a warning on every use (stderr for the CLI, a warning or deprecation field in the MCP or REST response), naming its replacement and the release that removes it. Add a row to `docs/json-contracts.md`, "Deprecated, still accepted", and a `changelog.d/` fragment. A note in `--help` alone does not count: nobody running a script sees it.
+2. **The release that removes.** Only a release after one that shipped the warning may remove the option. Remove it everywhere at once: the code, the docs row, every test that pins it, and any instruction that names it (`AGENTS.md`, the skills). Grep the whole repo for the old name, then run the full suite.
+3. **Before you push either release's change,** grep the whole repo (`docs/`, `kb/`, `README*`, `AGENTS.md`, `extensions/*/README*`, and the skills under `.claude/`) for the old command or option name and for the release number the deprecation named, and update or date every mention.
+
+Whether to remove a public option at all is the maintainer's decision. An issue that lists removals asks you to carry out decisions already made; if one has no recorded decision, ask on the issue first.
 
 ## Branches, hooks and pull requests
 
@@ -572,6 +642,9 @@ Run the regenerate serially without `-n`. `golden_io.py` refuses regeneration un
   holds: `fix/*`, `feature/*`, `docs/*`, `kb/*` (KB entries only) or
   `process/*` (tooling and workflow). Never push to `dev`. The merge queue squashes
   each pull request into a single commit on `dev` by default.
+- A `[[link]]` in a `kb/` entry takes the entry's id, which can differ from its
+  file name; check the id with `pyrite get <id> -k pyrite` before you write the
+  link.
 - A PR merges when its checks are green **on top of current `dev`** — one
   required check, `gate`, summarizes the Python suite, the frontend build and
   KB validation (whichever the change needs), and the branch must be up to
@@ -626,9 +699,16 @@ the issue. The plan scales with the change: for a `good first issue` one
 sentence is enough ("I'll add `id`/`kb_name` to the three projections and a
 test per command").
 
+An issue assigned to a maintainer is not open for contributors; pick one
+labelled `help wanted` or `good first issue`.
+
 A claim with no PR after 5 days lapses. Two people on one issue is fine — the
 first PR that meets the acceptance criteria merges, and we credit the other
 in the changelog entry for the change.
+
+Before you start on an issue, search its open pull requests
+(`gh pr list --state open --search "<issue number>"`); if one exists, review
+it, extend it or comment there instead of opening another.
 
 A placeholder commit or file is not a claim, and we don't merge placeholders.
 
@@ -717,6 +797,8 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
   Anyone can file one; use the templates. Issues labelled
   [`good first issue`](https://github.com/pyrite-wiki/pyrite/labels/good%20first%20issue)
   are small, well-specified and a fine place to start.
+  An issue assigned to a maintainer is not open for contributors; pick one
+  labelled `help wanted` or `good first issue`.
 - **The roadmap → `kb/`** in this repo: epics, planned work and architecture
   decisions, browsable with the tool itself:
 
@@ -728,6 +810,11 @@ Two places, one rule — an item lives in exactly one of them (ADR-0033):
 
   `kb/roadmap.md` is the plan for the next releases. A request we accept gets a
   roadmap item that links back to the issue.
+
+  An ADR amendment is headed and worded as proposed until the maintainer
+  accepts its text. A maintainer decision about behaviour is not acceptance of
+  the amendment's text, so never write "accepted" in its heading, its status or
+  a code comment before then.
 
 **Contributing a fix.** The PRs that merge fastest here look like this — and
 the ones that arrived on 2026-09-18 from four first-time contributors all did:
@@ -771,6 +858,8 @@ the ones that arrived on 2026-09-18 from four first-time contributors all did:
   ```
   Changelog: none
   ```
+  A change that alters public output beyond what its issue asked for says so
+  in the pull-request description and in its changelog fragment.
 - AI-assisted contributions are welcome here. If an AI coding agent wrote or
   co-wrote your change, declare it with a `Co-authored-by:` trailer on the
   commit (most agent tools add this automatically) — it is machine-readable,

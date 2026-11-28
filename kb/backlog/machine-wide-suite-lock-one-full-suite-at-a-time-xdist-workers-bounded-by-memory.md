@@ -9,7 +9,7 @@ tags:
 - conductor
 importance: 5
 kind: tech_debt
-status: in_progress
+status: done
 priority: high
 effort: M
 rank: 0

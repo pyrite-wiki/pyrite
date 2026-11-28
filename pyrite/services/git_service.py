@@ -222,14 +222,14 @@ def _network_git_env(plan: _NetworkPlan) -> dict[str, str]:
 
 def _warn_identity_fallback() -> None:
     """Once per process: a network caller's commit with no `git_identity`
-    falls back to the account's global identity, until 0.27.0."""
+    falls back to the account's global identity, until 0.28.0."""
     global _IDENTITY_FALLBACK_WARNED
     if not _IDENTITY_FALLBACK_WARNED:
         _IDENTITY_FALLBACK_WARNED = True
         logger.warning(
             "settings.git_identity is unset: commits made for network callers use "
             "the server account's global git user.name/user.email. That fallback "
-            "is removed in 0.27.0; set git_identity in config.yaml."
+            "is removed in 0.28.0; set git_identity in config.yaml."
         )
 
 
@@ -1070,11 +1070,10 @@ class GitService:
             "--format=%H|%an|%ae|%aI|%s",
             "--name-status",
             "-z",
-            "--",
-            file_path,
         ]
         if since_commit:
-            cmd.insert(2, f"{since_commit}..HEAD")
+            cmd.extend(["--end-of-options", f"{since_commit}..HEAD"])
+        cmd.extend(["--", file_path])
 
         try:
             result = subprocess.run(
@@ -1265,6 +1264,7 @@ class GitService:
                 "--no-ext-diff",
                 "--no-textconv",
                 "--name-only",
+                "--end-of-options",
                 f"{since_commit}..HEAD",
                 "--",
                 "*.md",
@@ -2303,9 +2303,10 @@ class GitService:
         repo_path: Path, worktree_path: Path, force: bool = False
     ) -> tuple[bool, str]:
         """Remove a git worktree."""
-        cmd = ["git", "worktree", "remove", str(worktree_path)]
+        cmd = ["git", "worktree", "remove"]
         if force:
             cmd.append("--force")
+        cmd.extend(["--", str(worktree_path)])
         try:
             result = subprocess.run(
                 cmd,

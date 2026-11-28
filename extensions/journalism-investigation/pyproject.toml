@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "pyrite-journalism-investigation"
 version = "0.1.0"
 description = "Journalism investigation extension for pyrite — entity, event, and connection types for investigative research"
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 dependencies = []  # pyrite is a peer dependency, installed separately
 
 [project.entry-points."pyrite.plugins"]

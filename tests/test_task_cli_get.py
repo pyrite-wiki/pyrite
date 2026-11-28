@@ -56,9 +56,9 @@ def task_cli_env():
 
 @pytest.mark.cli
 def test_task_get_json_is_parseable(task_cli_env):
-    """`task get -f json` returns clean parseable JSON for the task."""
+    """`task get --format json` returns clean parseable JSON for the task."""
     result = runner.invoke(
-        app, ["task", "get", task_cli_env["task_id"], "-k", "test-tasks", "-f", "json"]
+        app, ["task", "get", task_cli_env["task_id"], "-k", "test-tasks", "--format", "json"]
     )
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
@@ -67,18 +67,12 @@ def test_task_get_json_is_parseable(task_cli_env):
 
 
 @pytest.mark.cli
-def test_task_status_alias_warns_on_stderr_but_keeps_stdout_clean(task_cli_env):
-    """Deprecated `task status` still works; the deprecation notice goes to
-    stderr so stdout stays valid JSON."""
+def test_task_status_alias_is_removed(task_cli_env):
+    """Removed `task status` is refused as an unknown command (#1901)."""
     result = runner.invoke(
         app, ["task", "status", task_cli_env["task_id"], "-k", "test-tasks", "--format", "json"]
     )
-    assert result.exit_code == 0, result.stdout
-    data = json.loads(result.stdout)  # stdout must be pure JSON
-    assert data["id"] == task_cli_env["task_id"]
-    warning = " ".join(result.stderr.split())
-    assert "`task status` is deprecated and will be removed in 0.27" in warning
-    assert "use `task get` instead" in warning
+    assert result.exit_code == 2
 
 
 @pytest.mark.cli
@@ -92,7 +86,7 @@ def test_task_get_reflects_claim_made_before_read(task_cli_env):
     TaskService(config, db).claim_task(task_id, "test-tasks", "agent:cli")
     db.close()
 
-    result = runner.invoke(app, ["task", "get", task_id, "-k", "test-tasks", "-f", "json"])
+    result = runner.invoke(app, ["task", "get", task_id, "-k", "test-tasks", "--format", "json"])
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
     assert data["status"] == "claimed"

@@ -544,7 +544,7 @@ class TestClassification:
         )
         result = mcp_server._dispatch_tool("kb_search", {"query": "hello", "mode": "hybrid"})
         assert result["error_code"] == "STORAGE_ERROR", result
-        assert result["legacy_error_code"] == "REQUEST_REFUSED", result
+        assert "legacy_error_code" not in result, result
         assert result["retryable"] is True
 
 
@@ -557,7 +557,7 @@ def _mcp_retryable(server, monkeypatch, error) -> bool:
     monkeypatch.setattr(server.db, "search", _raise(error))
     result = server._dispatch_tool("kb_search", {"query": "hello", "mode": "keyword"})
     assert result["error_code"] == "STORAGE_ERROR", result
-    assert result["legacy_error_code"] == "REQUEST_REFUSED", result
+    assert "legacy_error_code" not in result, result
     return result["retryable"]
 
 
@@ -620,7 +620,7 @@ class TestMcpContract:
         result = self._search(mcp_server, caplog)
         assert result["retryable"] is True, result
         assert result["error_code"] == "STORAGE_ERROR"
-        assert result["legacy_error_code"] == "REQUEST_REFUSED"
+        assert "legacy_error_code" not in result
         records = _error_records(caplog)
         assert len(records) == 1, [r.getMessage() for r in records]
         assert records[0].exc_info and records[0].exc_info[0] is not None
@@ -632,7 +632,7 @@ class TestMcpContract:
         result = self._search(mcp_server, caplog)
         assert result["retryable"] is False, result
         assert result["error_code"] == "STORAGE_ERROR"
-        assert result["legacy_error_code"] == "REQUEST_REFUSED"
+        assert "legacy_error_code" not in result
         records = _error_records(caplog)
         assert len(records) == 1, [r.getMessage() for r in records]
         assert records[0].exc_info and records[0].exc_info[0] is not None
@@ -646,7 +646,7 @@ class TestMcpContract:
         monkeypatch.setattr(EmbeddingService, "search_similar", _raise(_real_missing_table_error()))
         result = self._search(mcp_server, caplog, mode="semantic")
         assert result["error_code"] == "STORAGE_ERROR", result
-        assert result["legacy_error_code"] == "REQUEST_REFUSED", result
+        assert "legacy_error_code" not in result, result
         assert result["retryable"] is False
         # ADR-0037 theme 2 fix round 1: StorageError has a fixed, safe
         # public_message now (ADR §3) -- the real detail ("no such table")
@@ -1060,6 +1060,4 @@ def test_the_rows_fields_are_a_known_set():
     """`PYRITE_SEARCH_FIELDS` is checked against this: it is the keys a row can carry."""
     from pyrite.services.read_shaping import SEARCH_ROW_FIELDS
 
-    assert _OLD_ROW_KEYS | {"body", "similarity", "distance", "rrf_score", "legs"} == set(
-        SEARCH_ROW_FIELDS
-    )
+    assert _OLD_ROW_KEYS | {"body", "similarity", "rrf_score", "legs"} == set(SEARCH_ROW_FIELDS)

@@ -387,3 +387,49 @@ class TestMergeEntityView:
         self._seed(multi_kb_db)
         view = merge_entity_view(multi_kb_db, "entity-b", "kb2", readable_kbs={"kb1"})
         assert view["appearances"] == [] and view["canonical"]["title"] == ""
+
+
+class TestSameAsLinksKeepDerivedRows:
+    """Linking duplicates writes both entries back from a read; that write
+    must not drop their object-ref rows until the next index (#1733)."""
+
+    def test_create_links_keeps_both_entries_refs(self, multi_kb_db):
+        multi_kb_db.upsert_entry(
+            {
+                "id": "person-a",
+                "kb_name": "kb1",
+                "title": "Jane Doe",
+                "entry_type": "person",
+                "body": "",
+                "_refs": [
+                    {"target_id": "org-1", "field_name": "works_for", "target_type": "organization"}
+                ],
+            }
+        )
+        multi_kb_db.upsert_entry(
+            {
+                "id": "person-b",
+                "kb_name": "kb2",
+                "title": "Jane Doe",
+                "entry_type": "person",
+                "body": "",
+                "_refs": [
+                    {"target_id": "org-2", "field_name": "works_for", "target_type": "organization"}
+                ],
+            }
+        )
+        assert [r["id"] for r in multi_kb_db.get_refs_from("person-a", "kb1")] == ["org-1"]
+        assert [r["id"] for r in multi_kb_db.get_refs_from("person-b", "kb2")] == ["org-2"]
+
+        result = create_same_as_links(
+            multi_kb_db,
+            "person-a",
+            "kb1",
+            [{"id": "person-b", "kb_name": "kb2"}],
+        )
+        assert result["linked"] == 1
+
+        # No reindex has run: the refs are still there, read straight back.
+        assert [r["id"] for r in multi_kb_db.get_refs_from("person-a", "kb1")] == ["org-1"]
+        assert [r["id"] for r in multi_kb_db.get_refs_from("person-b", "kb2")] == ["org-2"]
+        assert [r["id"] for r in multi_kb_db.get_refs_to("org-1", "kb1")] == ["person-a"]

@@ -50,8 +50,7 @@ is an object that says what happened.
 
 **On the contract** means: declares the shared `--format` option
 (`OUTPUT_FORMAT` in `pyrite/cli/output.py`: `json` default, `yaml`, `rich`;
-`PYRITE_FORMAT`; plus `LEGACY_FORMAT_SHORT`, a hidden `-f` that warns, for a
-module that had it). `declares_shared_format(command)` is the one definition;
+`PYRITE_FORMAT`). `declares_shared_format(command)` is the one definition;
 the root's guard and the tests both ask it.
 
 **How the root enforces it (two hooks, one decision).** The root cannot tell
@@ -97,9 +96,8 @@ question is decided).
 in a body is a `ValidationError` (exit 1), not `typer.BadParameter`: after the
 body starts, a click usage error is `NO_OUTCOME`; so `links asymmetric`'s
 hand-raised `Exit(2)` became a refusal. (2) `-f` means `--field`, `--file` or
-`--force` on some commands: those do not declare `LEGACY_FORMAT_SHORT`, and
-the walk and the hint scan find the format alias by its callback
-(`tests/outcome_walk.py`'s `takes_short_format`), never by `hidden`. (3)
+`--force` on commands where those apply (`-f` as `--format` left in 0.27;
+#1901). (3)
 `delete` stays legacy, exactly as before: it asks, a prompt writes stdout, and
 the rule for prompts is the maintainer's open question (a local stderr prompt
 was tried and withdrawn: it decided that rule in one module). (4) `get` stays

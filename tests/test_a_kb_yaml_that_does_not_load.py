@@ -54,6 +54,12 @@ SHAPES: dict[str, bytes] = {
     "yaml-1.3": b"%YAML 1.3\n---\nname: bad\n",
     "too-many-aliases": b"a: &a [x, x, x]\n"
     + b"".join(b"k%d: [*a, *a, *a, *a, *a]\n" % i for i in range(250)),
+    "types-scalar-float": b"name: bad\ntypes: 3.5\n",
+    "types-scalar-string": b"name: bad\ntypes: hello\n",
+    "types-list": b"name: bad\ntypes: [memo, 2]\n",
+    "types-scalar-type-def": b"name: bad\ntypes: {memo: 7}\n",
+    "types-fields-scalar": b"name: bad\ntypes: {memo: {fields: hello}}\n",
+    "types-endpoints-list": b"name: bad\ntypes: {memo: {endpoints: [a]}}\n",
 }
 
 #: The two ways a KB is registered: in config.yaml, or by `pyrite kb add`
@@ -506,6 +512,28 @@ def test_an_empty_kb_yaml_is_a_kb_with_no_schema(tmp_path):
     assert kb.load_kb_yaml() is True and kb.unreadable is None
     kb.check_readable()
     assert kb.kb_schema.types == {}
+
+
+#: A null schema block is the block left out, not a wrong-kind block (#1591).
+NULL_BLOCKS: dict[str, tuple[bytes, dict[str, set[str]]]] = {
+    "types-null": (b"name: ok\ntypes: null\n", {}),
+    "type-def-null": (b"name: ok\ntypes: {memo: }\n", {"memo": set()}),
+    "fields-null": (b"name: ok\ntypes: {memo: {fields: }}\n", {"memo": set()}),
+    "endpoints-null": (b"name: ok\ntypes: {memo: {endpoints: }}\n", {"memo": set()}),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(NULL_BLOCKS))
+def test_a_null_schema_block_reads_as_absent(shape, tmp_path):
+    text, expected = NULL_BLOCKS[shape]
+    kb_dir = tmp_path / "ok"
+    kb_dir.mkdir()
+    (kb_dir / "kb.yaml").write_bytes(text)
+    kb = KBConfig(name="ok", path=kb_dir)
+    assert kb.load_kb_yaml() is True and kb.unreadable is None
+    kb.check_readable()
+    types = kb.kb_schema.types
+    assert {name: set(t.fields) | set(t.endpoints) for name, t in types.items()} == expected
 
 
 def test_one_bad_kb_yaml_does_not_stop_the_load(tmp_path):

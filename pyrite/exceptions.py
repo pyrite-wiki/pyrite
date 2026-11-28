@@ -10,10 +10,9 @@ code from the class alone, with no external table keyed by type to keep in
 sync. Where REST and MCP used to disagree (``NOT_FOUND`` vs
 ``ENTRY_NOT_FOUND``/``KB_NOT_FOUND``, ``READ_ONLY`` vs ``KB_READ_ONLY``,
 ``CONFIG_ERROR`` vs ``CONFIG_CONFLICT``), the maintainer's decision
-(2026-09-25) is that REST's more specific code is the one on the class; MCP
-keeps emitting its old code until 0.27 in a transitional
-``legacy_error_code`` field it builds itself (see
-``server/mcp_server._refusal``), never on the class.
+(2026-09-25) is that REST's more specific code is the one on the class; all
+transports now emit that code directly (the transitional ``legacy_error_code``
+field was removed in 0.27; #1901).
 
 **The base ``ValidationError`` is the one exception, by conductor decision
 (fix round 1, cold read of #501):** REST itself used two different spellings
@@ -29,8 +28,7 @@ central handler's less-visited one, not the reverse -- so the base code is
 ``ValidationError`` that changes (previously ``VALIDATION_ERROR``, an
 under-used path few things exercise directly). MCP already said
 ``VALIDATION_FAILED`` too, so this is the one base class where REST, MCP and
-the CLI all already agreed, and continue to agree -- no ``legacy_error_code``
-for it.
+the CLI all already agreed, and continue to agree.
 
 **Messages are public or private by construction.** ``public_message`` is
 ``None`` by default -- every transport's ``public_text(exc)`` (which returns
@@ -544,10 +542,16 @@ class SchemaViolationError(ValidationError):
 
     error_code = "SCHEMA_VIOLATION"
 
-    def __init__(self, message: str, errors: list[dict] | None = None):
+    def __init__(
+        self,
+        message: str,
+        errors: list[dict] | None = None,
+        *,
+        suggestion: str | None = None,
+    ):
         # Positional, because `services/kb_service.py` raises it that way; the
         # base class keeps ``None`` for "not about a field".
-        super().__init__(message, errors=errors)
+        super().__init__(message, errors=errors, suggestion=suggestion)
 
 
 class TruncatedBodyError(ValidationError):
@@ -816,6 +820,27 @@ class IndexSchemaRefusedError(StorageError):
     base class's fixed sentence would hide the one thing the user needs.
     """
 
+    public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
+
+
+class PostgresSchemaShadowedError(StorageError):
+    """A Postgres startup that would hide an existing instance is refused (#718).
+
+    The connection's own schema (``current_schema()``) holds no Pyrite tables,
+    but a schema later on its ``search_path`` does: the default ``"$user",
+    public`` with a newly created, empty ``"$user"`` schema in front of an
+    instance in ``public`` is the usual way to get here. Upgrading would build
+    a new, empty instance in the first schema, and every query would then read
+    it instead of the real one: nothing deleted, but the data no longer
+    visible. So `alembic_chain.upgrade_to_head` refuses before anything is
+    written, unless ``PYRITE_POSTGRES_ALLOW_NEW_INSTANCE`` asks for a new
+    instance there on purpose (maintainer decision on #1820, option b).
+
+    The message names only schema names (operator configuration, never a path
+    or the driver's text), so it is shown as is, like `IndexSchemaRefusedError`.
+    """
+
+    error_code = "POSTGRES_SCHEMA_SHADOWED"
     public_message = None  # type: ignore[assignment]  # the base pins str; None shows str(exc)
 
 

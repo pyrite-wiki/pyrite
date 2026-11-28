@@ -23,7 +23,7 @@ from typer.core import TyperCommand
 from ..exceptions import EntryNotFoundError, ValidationError
 from ..services.access_policy import UNSCOPED
 from .outcome import Outcome
-from .output import LEGACY_FORMAT_SHORT, OUTPUT_FORMAT, cli_console
+from .output import OUTPUT_FORMAT
 
 if TYPE_CHECKING:
     from ..services.task_service import TaskService
@@ -285,7 +285,6 @@ def task_create(
         None, "--field", help="Extra field as key=value (repeatable)"
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Create a new task.
 
@@ -295,8 +294,7 @@ def task_create(
 
     ``--field key=value`` (repeatable) sets any field a KB's schema requires
     or allows for ``task`` beyond the built-in options -- e.g. the desk
-    schema's ``project``/``kind``. It has no short flag: ``-f`` was
-    ``--format`` on this command and is deprecated (#303).
+    schema's ``project``/``kind`` (`-f` for `--format` left in 0.27; #1901).
     """
     if title_arg and title_opt:
         raise ValidationError("Provide the title either positionally or with --title, not both.")
@@ -414,8 +412,9 @@ def task_list(
     assignee: str | None = typer.Option(None, "--assignee", "-a", help="Filter by assignee"),
     parent: str | None = typer.Option(None, "--parent", "-p", help="Filter by parent task"),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
-    priority: int | None = typer.Option(None, "--priority", help="Filter by priority"),
+    priority: int | None = typer.Option(
+        None, "--priority", min=1, max=10, help="Filter by priority (1-10)"
+    ),
     dispatchable: bool = typer.Option(
         False,
         "--dispatchable",
@@ -487,26 +486,8 @@ def task_get(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str | None = typer.Option(None, "--kb", "-k", help="Knowledge base name"),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Show task details with children, dependencies, and evidence."""
-    return _task_get_impl(task_id, kb_name)
-
-
-@task_app.command("status")
-def task_status(
-    task_id: str = typer.Argument(..., help="Task entry ID"),
-    kb_name: str | None = typer.Option(None, "--kb", "-k", help="Knowledge base name"),
-    output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
-) -> Outcome:
-    """[Deprecated] Alias for `task get`. Use `task get` instead."""
-    # Deprecation notice goes to stderr so it never corrupts JSON on stdout.
-    cli_console(stderr=True).print(
-        "[yellow]Warning:[/yellow] `task status` is deprecated and will be "
-        "removed in 0.27; use `task get` instead.",
-        style="dim",
-    )
     return _task_get_impl(task_id, kb_name)
 
 
@@ -539,7 +520,7 @@ def _render_task(console, result: dict) -> None:
 
 
 def _task_get_impl(task_id: str, kb_name: str | None) -> Outcome:
-    """Shared implementation for `task get` and the deprecated `task status`."""
+    """Implementation for `task get`."""
     svc, db = _get_service(kb_name)
     try:
         task_detail = svc.get_task_detail(task_id, kb_name, readable_kbs=UNSCOPED)
@@ -589,7 +570,6 @@ def task_update(
         None, "--by", help="Who made the change, for the status_change_log entry"
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Update task fields (status, assignee, priority, body, reason)."""
     updates: dict[str, Any] = {}
@@ -641,7 +621,6 @@ def task_claim(
         ..., "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Atomically claim an open task."""
     svc, db = _get_service(kb_name)
@@ -672,7 +651,6 @@ def task_start(
         ..., "--assignee", "-a", help="Assignee (e.g. agent:claude-code-7a3f)"
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Claim and start an open task in one atomic write.
 
@@ -732,7 +710,6 @@ def task_finish(
         help="As the operator, finish a task you do not hold; recorded as by: operator, override: true",
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Move a held task to done in one write.
 
@@ -773,7 +750,6 @@ def task_reset(
         "operator", "--operator", help="Who is performing the reset (e.g. conductor)"
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Release a stale in_progress/blocked claim back to `open`.
 
@@ -820,7 +796,6 @@ def task_park(
         help="As the operator, act on a task you do not hold",
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Park a task until a date, because of a reason. The status does not change.
 
@@ -870,7 +845,6 @@ def task_unpark(
         help="As the operator, act on a task you do not hold",
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Unpark a task: remove parked_awaiting, park_kind and retest_after.
 
@@ -910,7 +884,6 @@ def task_decompose(
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     child: list[str] = typer.Option(..., "--child", "-c", help="Child task title (repeatable)"),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Decompose a parent task into child tasks."""
     children = [{"title": t} for t in child]
@@ -937,7 +910,6 @@ def task_migrate_relaxed_mode(
     kb_name: str = typer.Argument(..., help="Knowledge base to migrate"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show the plan without writing"),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Backfill status_reason='pre-relaxed-mode' for tasks of types
     that have opted into relaxed-reason mode but lack a reason.
@@ -968,14 +940,13 @@ def task_checkpoint(
     task_id: str = typer.Argument(..., help="Task entry ID"),
     kb_name: str = typer.Option(..., "--kb", "-k", help="Knowledge base name"),
     message: str = typer.Option(..., "--message", "-m", help="Checkpoint message"),
-    confidence: float = typer.Option(
-        0.0, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
+    confidence: float | None = typer.Option(
+        None, "--confidence", min=0.0, max=1.0, help="Confidence 0.0-1.0"
     ),
     evidence: list[str] | None = typer.Option(
         None, "--evidence", "-e", help="Evidence entry IDs (repeatable)"
     ),
     output_format: str = OUTPUT_FORMAT,
-    legacy_format: str | None = LEGACY_FORMAT_SHORT,
 ) -> Outcome:
     """Log a checkpoint on a task."""
     svc, db = _get_service(kb_name)
@@ -993,7 +964,7 @@ def task_checkpoint(
     def rich(console, _result):
         console.print(f"[green]Checkpoint logged:[/green] {task_id}")
         console.print(f"  {message}")
-        if confidence > 0:
+        if confidence is not None:
             console.print(f"  Confidence: {int(confidence * 100)}%")
 
     return Outcome.done(result, rich=rich)

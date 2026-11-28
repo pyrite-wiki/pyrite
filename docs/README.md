@@ -7,6 +7,7 @@ guides solve a task; references describe contracts; explanations describe why.
 
 - [Getting started](getting-started.md) — how-to: how do I install Pyrite, create a KB, and connect an AI?
 - [Pyrite in 20 minutes](tutorials/pyrite-in-20-minutes.md) — tutorial: how do I use a KB from creation through querying and updates?
+- [Agentic development: give your coding agent a project memory](tutorials/agentic-development.md) — tutorial: how do I seed a software KB in a code repository and run the backlog cycle with an agent?
 - [Troubleshooting](troubleshooting.md) — diagnose read/write and upgrade symptoms.
 
 ## Organize work
@@ -24,6 +25,7 @@ guides solve a task; references describe contracts; explanations describe why.
 
 ## Agent and API integrators
 
+- [Agent instructions](agent-instructions.md) — how-to: what do I put in `AGENTS.md`, and how do I install the developer skills?
 - [JSON contracts](json-contracts.md) — reference: what result and error shapes do CLI, MCP, and REST return?
 - [REST API](rest-api.md) — how-to: how do I authenticate to the REST API and find its reference?
 - [Agent write path](agent-write-path.md) — how-to: how does an agent request a safe entry change?

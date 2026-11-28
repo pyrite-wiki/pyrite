@@ -10,7 +10,10 @@ links:
 - launch-plan
 - launch-messaging
 - launch-channels
+lifecycle: archived
 ---
+
+> **Historical**: March 2026 launch plan.
 
 # User Types & What They Care About
 

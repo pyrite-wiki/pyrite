@@ -1,0 +1,1 @@
+- `pyrite task list --priority` now refuses a value outside 1-10 with a usage error (exit 2, `USAGE_ERROR`), like `task create` and `task update` already do, instead of answering an empty list that read as "no tasks have that priority". A task file with a hand-written priority outside 1-10 can no longer be filtered for; `pyrite qa validate` reports such a file (#1559).

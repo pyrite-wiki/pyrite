@@ -234,7 +234,7 @@ Wraps existing `PyriteDB` + `IndexManager` + FTS5 + embedding pipeline behind th
 ### PostgresBackend (done)
 
 - Entries in a `knowledge_entries` table with JSONB metadata
-- pgvector HNSW for cosine similarity embeddings
+- pgvector for cosine similarity embeddings (built with an HNSW index; since #1822 exact search, no index)
 - tsvector/tsquery with GIN index for weighted FTS
 - Hybrid search combining both with application-level RRF reranking
 - 66/66 conformance tests passing — full parity with SQLiteBackend
@@ -269,7 +269,7 @@ Evaluated and rejected. 49-66x slower indexing, 60-280x slower queries, 25-54x l
 ### Phase 4: Postgres backend (M) — DONE
 
 - Implemented `PostgresBackend` satisfying `SearchBackend` protocol (66/66 conformance tests)
-- tsvector/tsquery with GIN for FTS, pgvector HNSW for cosine similarity
+- tsvector/tsquery with GIN for FTS, pgvector HNSW for cosine similarity (the HNSW index was dropped in #1822: semantic search is exact)
 - ~3x slower indexing, ~2x slower queries vs SQLite — acceptable for server deployments
 
 ## Relationship to Existing Architecture

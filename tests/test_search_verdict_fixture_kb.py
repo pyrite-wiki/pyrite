@@ -71,6 +71,7 @@ def search(tmp_path_factory):
         assert "error" not in result, result
         return result
 
+    _search.db = db
     yield _search
     server.close()
     db.close()
@@ -119,10 +120,17 @@ def test_the_issue_s_report(search):
 
 
 def test_similarity_is_a_cosine_of_unit_vectors(search):
+    import math
+
+    from pyrite.services.embedding_service import _blob_to_embedding
+
     rows = search("Andon cord", "tps", "semantic")["results"]
     assert rows[0]["id"] == "andon"
     assert all(0.155 <= r["similarity"] <= 1.0 for r in rows)
-    # sqlite-vec's `distance` is L2; for unit vectors cos = 1 - d**2 / 2. The
-    # two are computed independently, so this also checks the model normalises.
-    for r in rows:
-        assert abs(r["similarity"] - (1 - r["distance"] ** 2 / 2)) < 0.002
+    assert all("distance" not in r for r in rows)
+
+    vec_rows = search.db._raw_conn.execute("SELECT embedding FROM vec_entry").fetchall()
+    assert len(vec_rows) == 22
+    for (blob,) in vec_rows:
+        norm = math.sqrt(sum(x * x for x in _blob_to_embedding(blob)))
+        assert abs(norm - 1.0) < 0.002

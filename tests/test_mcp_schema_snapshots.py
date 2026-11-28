@@ -18,9 +18,16 @@ from mcp.types import ListToolsRequest
 from pyrite.config import PyriteConfig, Settings
 from pyrite.plugins.registry import PluginRegistry
 from pyrite.server.mcp_server import PyriteMCPServer
-from tests.characterization.golden_io import REGENERATE_ENV, regenerating
+from tests.characterization.golden_io import (
+    REGENERATE_ENV,
+    refuse_ambiguous_regenerate,
+    regenerating,
+)
 
 GOLDENS = Path(__file__).parent / "characterization" / "goldens"
+_SERIAL_REGENERATE_COMMAND = (
+    f"{REGENERATE_ENV}=1 .venv/bin/pytest tests/test_mcp_schema_snapshots.py"
+)
 PLUGINS = {
     "pyrite_zettelkasten.plugin": "ZettelkastenPlugin",
     "pyrite_software_kb.plugin": "SoftwareKBPlugin",
@@ -135,6 +142,7 @@ def test_regenerate_goldens(tmp_path, monkeypatch):
     published is dropped. Review the diff, then run the file again without the switch.
     """
     assert os.environ[REGENERATE_ENV] == "1"
+    refuse_ambiguous_regenerate(serial_command=_SERIAL_REGENERATE_COMMAND)
     for profile in ("core", "in-tree"):
         path = GOLDENS / f"mcp-input-schemas.{profile}.json"
         old = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -148,6 +156,33 @@ def test_regenerate_goldens(tmp_path, monkeypatch):
                     arguments = _required_arguments(schema)
                 new[tier][name] = {"arguments": arguments, "inputSchema": schema}
         path.write_text(json.dumps(new, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "xdist_env",
+    [
+        {"PYTEST_XDIST_WORKER": "gw0"},
+        {"PYTEST_XDIST_WORKER_COUNT": "4"},
+    ],
+)
+def test_regenerate_goldens_refuses_under_xdist(tmp_path, monkeypatch, xdist_env):
+    """Regenerating MCP schema snapshots under pytest-xdist refuses before writing."""
+    target_dir = tmp_path / "goldens"
+    target_dir.mkdir()
+    monkeypatch.setitem(globals(), "GOLDENS", target_dir)
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    monkeypatch.delenv("PYTEST_XDIST_WORKER_COUNT", raising=False)
+    monkeypatch.setenv(REGENERATE_ENV, "1")
+    for key, value in xdist_env.items():
+        monkeypatch.setenv(key, value)
+
+    with pytest.raises(RuntimeError) as raised:
+        test_regenerate_goldens(tmp_path / "work", monkeypatch)
+
+    message = str(raised.value)
+    assert "without `-n`" in message
+    assert _SERIAL_REGENERATE_COMMAND in message
+    assert list(target_dir.iterdir()) == []
 
 
 @pytest.mark.parametrize("tier", ["read", "write", "admin"])

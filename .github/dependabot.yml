@@ -30,6 +30,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 1
+    # TypeScript 7 is held until SvelteKit and svelte-check accept it (#1953);
+    # minor and patch updates of 6.x still come in with the group.
+    ignore:
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]
