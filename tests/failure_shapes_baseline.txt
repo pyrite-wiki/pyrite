@@ -191,6 +191,7 @@ broad_except | pyrite/services/auth_service.py | AuthService.get_github_token_fo
 broad_except | pyrite/services/auth_service.py | AuthService.get_user_api_key | swallow-to-default | 1 |
 broad_except | pyrite/services/embedding_service.py | EmbeddingService.embed_all | boundary-backstop | 1 | puts the failure in an error list or entry of its result
 broad_except | pyrite/services/embedding_service.py | EmbeddingService.prewarm | swallow-to-default | 1 |
+broad_except | pyrite/services/embedding_service.py | EmbeddingService.body_cut_by_window | swallow-to-default | 1 |
 broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker._entry_is_gone | swallow-to-default | 1 |
 broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker._get_embedding_svc | swallow-to-default | 1 |
 broad_except | pyrite/services/embedding_worker.py | EmbeddingWorker.has_pending | swallow-to-default | 1 |

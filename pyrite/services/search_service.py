@@ -785,7 +785,11 @@ class SearchService:
            and ``body_prefix``, with ``body_prefix_chars`` giving the length the
            body is cut to before it is embedded (a character count: the model's
            token window may cut sooner), so a word past that point is not
-           searched. Declared field values and tags are in no leg's index,
+           searched. When the window cut the body of an entry the response
+           returns, derived from that entry as it reads now, the response
+           also carries ``body_truncated_by_model: true``, which marks the
+           number as an upper bound (#1785); its absence claims nothing
+           either way. Declared field values and tags are in no leg's index,
            so they are never listed: a keyword search does not find a word that
            appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
@@ -1034,7 +1038,7 @@ class SearchService:
 
         Takes what ``search`` takes. Returns a mapping with ``results`` (the
         rows ``search`` returns), ``match`` and ``match_basis``, ``legs_run`` (the
-        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
+        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``body_prefix_chars`` when only the vector leg ran (with ``body_truncated_by_model`` when the model's token window cut a returned entry's body short of that cut), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
         are any (absent otherwise; see ``search``'s docstring, which states
         what each key means).
 
@@ -1087,11 +1091,28 @@ class SearchService:
         response["searched"] = searched
         if body_chars is not None:
             response["body_prefix_chars"] = body_chars
+            if self._a_returned_hit_was_cut(results):
+                response["body_truncated_by_model"] = True
         if "keyword_match" in signal:
             response["keyword_match"] = signal["keyword_match"]
         if warnings:
             response["warnings"] = warnings
         return response
+
+    def _a_returned_hit_was_cut(self, results: list[dict[str, Any]]) -> bool:
+        """Whether the model's token window cut any returned hit's body (#1785).
+
+        Derived at response time from the rows being returned, as they
+        read now (a vector can be older than its row; #688 tracks that
+        lag, and the contracts say "as the entry reads now"): the flag is
+        true only for a cut in an entry this response is about, never
+        for one in another KB, one not returned, or one edited since.
+        The model is already loaded: the semantic leg ran.
+        """
+        if not results:
+            return False
+        svc = self._embedder()
+        return any(svc.body_cut_by_window(row) for row in results)
 
     def _searched(
         self, query: str, kwargs: dict[str, Any], legs_run: list[str], signal: dict[str, Any]

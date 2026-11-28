@@ -30,7 +30,7 @@ from pyrite.services.search_service import SearchService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import seed_and_sign_in
 from tests.cli_help import plain
-from tests.search_verdict_seed import install_fake_model, vector_at
+from tests.search_verdict_seed import FakeModel, install_fake_model, vector_at
 
 OPEN, SECRET = "open", "secret"
 SECRET_SCORES = (0.87, 0.86)  # the similarities seeded into `secret` below
@@ -266,6 +266,29 @@ class TestEverySearchSaysWhatItSearched:
         for surface, payload in walk(env, "falcon", mode).items():
             assert payload["searched"] == want, surface
             assert payload.get("body_prefix_chars") == service.get("body_prefix_chars"), surface
+            assert payload.get("body_truncated_by_model") == service.get(
+                "body_truncated_by_model"
+            ), surface
+
+    def test_a_model_window_cut_is_named_on_every_surface(self, env, monkeypatch):
+        """#1785: when the model's token window cut a returned entry's
+        body, every surface carries the flag, in the same words."""
+
+        class _WordTokenizer:
+            def __call__(self, text):
+                return {"input_ids": text.split()}
+
+        class _WindowedModel(FakeModel):
+            max_seq_length = 3
+            tokenizer = _WordTokenizer()
+
+        install_fake_model(monkeypatch, _WindowedModel())
+        service = SearchService(env["db"], settings=env["config"].settings).search_response(
+            "falcon", kb_name=OPEN, mode="semantic"
+        )
+        assert service["body_truncated_by_model"] is True
+        for surface, payload in walk(env, "falcon", "semantic").items():
+            assert payload.get("body_truncated_by_model") is True, surface
 
     def test_present_on_a_miss_and_under_projection(self, env):
         payloads = walk(env, ABSENT, "keyword")

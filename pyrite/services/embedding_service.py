@@ -207,6 +207,21 @@ def max_body_chars_for_model(model_name: str) -> int:
     return _MODEL_MAX_BODY_CHARS.get(model_name, _DEFAULT_MAX_BODY_CHARS)
 
 
+def _model_token_window(model: Any) -> tuple[Any, int] | None:
+    """``(tokenizer, window)`` for a loaded model, or None when it cannot say.
+
+    A sentence-transformers model carries both: ``max_seq_length`` is the
+    token window its tokenizer truncates to. A model without them (a test
+    double, another embedding backend) cannot say, and nothing is claimed
+    for it.
+    """
+    window = getattr(model, "max_seq_length", None)
+    tokenizer = getattr(model, "tokenizer", None)
+    if not isinstance(window, int) or isinstance(window, bool) or window < 1 or tokenizer is None:
+        return None
+    return tokenizer, window
+
+
 def _entry_text(entry: dict[str, Any], max_body_chars: int = 500) -> str:
     """Combine entry fields into text for embedding.
 
@@ -515,6 +530,38 @@ class EmbeddingService:
         model = self._get_model()
         embedding = model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
+
+    def body_cut_by_window(self, entry: dict[str, Any]) -> bool:
+        """Whether this model's token window cuts ``entry``'s embedded body.
+
+        Rebuilds the text `_entry_text` embeds for the entry as it reads
+        now -- title, summary, then ``body[:max_body_chars]`` -- and
+        tokenises it with the loaded model's own tokenizer. The body is
+        the tail of that text, so when the whole text tokenizes past
+        ``max_seq_length`` the tokens the model never read are body
+        tokens: the window cut the body before the character cut was
+        reached (#1785). The count is the tokenizer's own, special tokens
+        included, exactly what the model truncates, so a text that
+        exactly fills the window is not reported cut. Derived from the
+        entry at the moment of asking, so it is scoped to that entry and
+        follows edits; no state is kept. A model that cannot say (no
+        tokenizer, no window) answers False: not claiming a cut is the
+        honest direction, as `searched` understates (#1772). A tokenizer
+        that raises answers False too: this measurement is a side
+        observation about a response and must never break the search
+        itself, and a tokenizer's failure set is not enumerable.
+        """
+        if not self.max_body_chars or not (entry.get("body") or ""):
+            return False
+        pair = _model_token_window(self._get_model())
+        if pair is None:
+            return False
+        tokenizer, window = pair
+        try:
+            token_ids = tokenizer(_entry_text(entry, self.max_body_chars))["input_ids"]
+        except Exception:
+            return False
+        return len(token_ids) > window
 
     def embed_entry(self, entry_id: str, kb_name: str) -> bool:
         """Embed a single entry and store via backend. Returns True on success."""
