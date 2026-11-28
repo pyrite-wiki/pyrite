@@ -24,6 +24,7 @@ from ..exceptions import (
 )
 from ..storage.errors import storage_error_from
 from ..storage.virtual_tables import EMBEDDED_PARTS, KEYWORD_SEARCHED_PARTS
+from .importance_reading import attach_importance_warnings
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB
@@ -609,6 +610,12 @@ class SearchService:
         apply: a single term (nothing to relax), an empty query, or a query the
         user already wrote with explicit operators or quoted phrases (we honor
         their intent rather than widening it).
+
+        Lowercase stop words are left out of the retry. An OR join of "who is
+        the design work" would otherwise match any entry containing "is" and
+        report a keyword hit where the caller's terms never appeared (#1509).
+        As in `build_or_query`, capitalised tokens such as "IT" and "US" are
+        kept: those are acronyms, not stop words.
         """
         if not query or not query.strip():
             return None
@@ -618,6 +625,9 @@ class SearchService:
             return None
         terms = query.split()
         if len(terms) < 2:
+            return None
+        terms = [term for term in terms if not (term.lower() in _STOP_WORDS and not term.isupper())]
+        if not terms:
             return None
         quoted_terms = [re.sub(r"(\S*[^\w\s]\S*)", r'"\1"', term) for term in terms]
         return " OR ".join(quoted_terms)
@@ -775,18 +785,18 @@ class SearchService:
            and ``body_prefix``, with ``body_prefix_chars`` giving the length the
            body is cut to before it is embedded (a character count: the model's
            token window may cut sooner), so a word past that point is not
-           searched. When this process has measured the window cutting a body
-           before that length, the response also carries
-           ``body_truncated_by_model: true``, which marks the number as an
-           upper bound (#1785); its absence claims nothing either way. Declared field values and tags are in no leg's index,
+           searched. When the window cut the body of an entry the response
+           returns, derived from that entry as it reads now, the response
+           also carries ``body_truncated_by_model: true``, which marks the
+           number as an upper bound (#1785); its absence claims nothing
+           either way. Declared field values and tags are in no leg's index,
            so they are never listed: a keyword search does not find a word that
            appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
            similarity, 3 places, the same number on every backend. A hybrid
-           row carries ``legs``, the legs that returned it. ``distance`` (the
-           backend's own measure), ``rank`` (raw BM25) and ``rrf_score`` (rank
-           arithmetic) order results and are not scores; ``distance`` leaves
-           the response in 0.27; use ``similarity`` instead.
+           row carries ``legs``, the legs that returned it. ``rank`` (raw BM25)
+           and ``rrf_score`` (rank arithmetic) order results and are not
+           scores; use ``similarity`` for vector similarity.
         8. The thresholds behind ``match`` belong to an embedding model. With a
            model that has no row in ``_MODEL_MATCH_THRESHOLDS`` the vector leg
            is not judged: ``match_basis`` says ``uncalibrated model <name>``,
@@ -1028,7 +1038,7 @@ class SearchService:
 
         Takes what ``search`` takes. Returns a mapping with ``results`` (the
         rows ``search`` returns), ``match`` and ``match_basis``, ``legs_run`` (the
-        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``body_prefix_chars`` when only the vector leg ran (with ``body_truncated_by_model`` when the model's token window was measured cutting a body short of that cut), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
+        legs that ran), ``searched`` (the entry parts searched; not tags or field values), ``body_prefix_chars`` when only the vector leg ran (with ``body_truncated_by_model`` when the model's token window cut a returned entry's body short of that cut), ``keyword_match`` when a keyword leg ran, and ``warnings`` when there
         are any (absent otherwise; see ``search``'s docstring, which states
         what each key means).
 
@@ -1068,6 +1078,8 @@ class SearchService:
             )
             if ran
         ]
+        # A refused importance keeps its legacy reading in the row; say so (#1761, #1805).
+        attach_importance_warnings(self.db, results)
         response: dict[str, Any] = {
             "results": results,
             "match": match,
@@ -1079,13 +1091,28 @@ class SearchService:
         response["searched"] = searched
         if body_chars is not None:
             response["body_prefix_chars"] = body_chars
-            if signal.get("body_truncated_by_model"):
+            if self._a_returned_hit_was_cut(results):
                 response["body_truncated_by_model"] = True
         if "keyword_match" in signal:
             response["keyword_match"] = signal["keyword_match"]
         if warnings:
             response["warnings"] = warnings
         return response
+
+    def _a_returned_hit_was_cut(self, results: list[dict[str, Any]]) -> bool:
+        """Whether the model's token window cut any returned hit's body (#1785).
+
+        Derived at response time from the rows being returned, as they
+        read now (a vector can be older than its row; #688 tracks that
+        lag, and the contracts say "as the entry reads now"): the flag is
+        true only for a cut in an entry this response is about, never
+        for one in another KB, one not returned, or one edited since.
+        The model is already loaded: the semantic leg ran.
+        """
+        if not results:
+            return False
+        svc = self._embedder()
+        return any(svc.body_cut_by_window(row) for row in results)
 
     def _searched(
         self, query: str, kwargs: dict[str, Any], legs_run: list[str], signal: dict[str, Any]
@@ -1212,10 +1239,6 @@ class SearchService:
             # How many characters of a body the vectors were built from (0: none of it,
             # as `_entry_text` takes `body[:0]`).
             signal["body_chars"] = svc.max_body_chars
-            # Whether the model's token window was measured cutting a body
-            # before that many characters, which makes the number an upper
-            # bound (#1785).
-            signal["body_truncated_by_model"] = svc.body_truncated_by_model()
         # Asked of the KBs this search covers, not of the index (#668): whether
         # some other KB has vectors must not change what a scoped caller is
         # told, and a KB with none has not been searched by this leg even when
@@ -1354,7 +1377,9 @@ class SearchService:
             # be warned about (#668).
             kwargs["kb_names"] = kb_names
         try:
-            return self.db.count_entries(**kwargs) > 0
+            # "Is anything indexed?" — archived entries count, so an
+            # archived-only index is not reported as empty (#1860 review).
+            return self.db.count_entries(include_archived=True, **kwargs) > 0
         except Exception:
             logger.debug("Could not count entries for the embed warning", exc_info=True)
             return False
@@ -1523,7 +1548,6 @@ class SearchService:
                 kept = entries[key]
                 kept["legs"] = ["keyword", "semantic"]
                 kept["similarity"] = result["similarity"]
-                kept["distance"] = result.get("distance")
 
         # Sort by RRF score descending
         sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
