@@ -207,16 +207,6 @@ def max_body_chars_for_model(model_name: str) -> int:
     return _MODEL_MAX_BODY_CHARS.get(model_name, _DEFAULT_MAX_BODY_CHARS)
 
 
-#: (model name, max_body_chars) pairs where the model's token window was
-#: measured, while embedding in this process, cutting an entry's body before
-#: the character cut was reached (#1785). `EmbeddingService` records a pair
-#: in `_note_token_truncation`; the search response reads it through
-#: `body_truncated_by_model`. A pair absent here is not a claim the window
-#: never cuts, only that this process has not measured it cutting: the
-#: response understates rather than overstates, as `searched` does (#1772).
-_BODY_TRUNCATED_BY_MODEL: set[tuple[str, int]] = set()
-
-
 def _model_token_window(model: Any) -> tuple[Any, int] | None:
     """``(tokenizer, window)`` for a loaded model, or None when it cannot say.
 
@@ -541,43 +531,37 @@ class EmbeddingService:
         embedding = model.encode(text, convert_to_numpy=True)
         return embedding.tolist()
 
-    def _note_token_truncation(self, entry: dict[str, Any], text: str) -> None:
-        """Record when the model's token window cuts an entry's body short.
+    def body_cut_by_window(self, entry: dict[str, Any]) -> bool:
+        """Whether this model's token window cuts ``entry``'s embedded body.
 
-        ``text`` is what `_entry_text` built for ``entry``: title, summary,
-        then the body cut to `max_body_chars`. The body is the tail of the
-        text, so when the whole text tokenizes past the model's window the
-        model never read the body's end: it truncated by tokens before the
-        character cut was reached (#1785). Measured with the model's own
-        tokenizer, so the record is exact for the bundled local model; a
-        model that cannot say (no window, no tokenizer) records nothing.
+        Rebuilds the text `_entry_text` embeds for the entry as it reads
+        now -- title, summary, then ``body[:max_body_chars]`` -- and
+        tokenises it with the loaded model's own tokenizer. The body is
+        the tail of that text, so when the whole text tokenizes past
+        ``max_seq_length`` the tokens the model never read are body
+        tokens: the window cut the body before the character cut was
+        reached (#1785). The count is the tokenizer's own, special tokens
+        included, exactly what the model truncates, so a text that
+        exactly fills the window is not reported cut. Derived from the
+        entry at the moment of asking, so it is scoped to that entry and
+        follows edits; no state is kept. A model that cannot say (no
+        tokenizer, no window) answers False: not claiming a cut is the
+        honest direction, as `searched` understates (#1772). A tokenizer
+        that raises answers False too: this measurement is a side
+        observation about a response and must never break the search
+        itself, and a tokenizer's failure set is not enumerable.
         """
-        key = (self.model_name, self.max_body_chars)
-        if key in _BODY_TRUNCATED_BY_MODEL or not self.max_body_chars:
-            return
-        if not (entry.get("body") or "") or self._model is None:
-            return
-        pair = _model_token_window(self._model)
+        if not self.max_body_chars or not (entry.get("body") or ""):
+            return False
+        pair = _model_token_window(self._get_model())
         if pair is None:
-            return
+            return False
         tokenizer, window = pair
         try:
-            token_ids = tokenizer(text)["input_ids"]
+            token_ids = tokenizer(_entry_text(entry, self.max_body_chars))["input_ids"]
         except Exception:
-            return
-        if len(token_ids) > window:
-            _BODY_TRUNCATED_BY_MODEL.add(key)
-
-    def body_truncated_by_model(self) -> bool:
-        """Whether this process has measured this model's token window
-        cutting an entry's body before the character cut (#1785).
-
-        The search response reports it as ``body_truncated_by_model``, which
-        marks ``body_prefix_chars`` as an upper bound. False is not a claim
-        the window never cuts, only that it has not been measured cutting
-        here.
-        """
-        return (self.model_name, self.max_body_chars) in _BODY_TRUNCATED_BY_MODEL
+            return False
+        return len(token_ids) > window
 
     def embed_entry(self, entry_id: str, kb_name: str) -> bool:
         """Embed a single entry and store via backend. Returns True on success."""
@@ -604,7 +588,6 @@ class EmbeddingService:
             return False
 
         embedding = self.embed_text(text)
-        self._note_token_truncation(entry, text)
         return backend.upsert_embedding(entry_id, kb_name, embedding)
 
     def embed_all(
@@ -668,7 +651,6 @@ class EmbeddingService:
                     continue
 
                 embedding = self.embed_text(text)
-                self._note_token_truncation(row, text)
                 backend.upsert_embedding(row["id"], row["kb_name"], embedding)
                 stats["embedded"] += 1
             except EmbeddingModelUnavailableError:
@@ -729,8 +711,7 @@ class EmbeddingService:
                 (#200); applied inside the KNN like the others.
 
         Returns list of entry dicts with ``similarity`` (cosine, 3 places, the
-        same on every backend), ``snippet``, and ``distance`` (backend-specific:
-        sqlite-vec's L2, pgvector's cosine distance; kept until 0.27; use ``similarity``).
+        same on every backend) and ``snippet``.
         """
         backend = self.db.backend
         if not backend.vec_available:
