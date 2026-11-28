@@ -8,7 +8,7 @@ version = "0.26.4"
 description = "Knowledge-as-Code for you and your agents"
 readme = "README.md"
 license = {text = "MIT"}
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -86,6 +86,8 @@ semantic = [
 postgres = [
     "psycopg2-binary>=2.9.0",
     "pgvector>=0.3.0",
+    # ensure_schema runs the alembic chain on every startup (#718).
+    "alembic>=1.13.0",
 ]
 dev = [
     # Pinned exactly (#128): CI resolved pytest 9.1.1 on 3.12 and 9.0.2 on
