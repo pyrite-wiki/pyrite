@@ -30,7 +30,7 @@ Schema versioning is **decoupled from the ODM layer** and ships independently (p
 
 The ODM layer (see [[odm-layer]]) ships post-launch (0.9+) as a backend abstraction refactor. When it lands, the schema versioning hooks move from `KBRepository` into `DocumentManager` — a straightforward relocation, not a redesign.
 
-See [ADR-0015 addendum](../adrs/0015-odm-layer-and-schema-migration.md) for the rationale.
+See [ADR-0015 addendum](../../adrs/0015-odm-layer-and-schema-migration.md) for the rationale.
 
 ## Solution
 

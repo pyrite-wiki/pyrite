@@ -60,7 +60,7 @@ def task_cli_env():
 def test_task_create_with_positional_title(task_cli_env):
     """The original positional form still works."""
     result = runner.invoke(
-        app, ["task", "create", "Positional title", "-k", "test-tasks", "-f", "json"]
+        app, ["task", "create", "Positional title", "-k", "test-tasks", "--format", "json"]
     )
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
@@ -71,7 +71,7 @@ def test_task_create_with_positional_title(task_cli_env):
 def test_task_create_with_title_flag(task_cli_env):
     """`--title` flag now works as an alternative to the positional argument."""
     result = runner.invoke(
-        app, ["task", "create", "--title", "Flag title", "-k", "test-tasks", "-f", "json"]
+        app, ["task", "create", "--title", "Flag title", "-k", "test-tasks", "--format", "json"]
     )
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
@@ -91,7 +91,8 @@ def test_task_create_missing_title_is_clear_error(task_cli_env):
 def test_task_create_persists_comma_separated_tags(task_cli_env, tags):
     """Tags are split on commas and stripped before the task is saved."""
     result = runner.invoke(
-        app, ["task", "create", "Tagged task", "-k", "test-tasks", "--tags", tags, "-f", "json"]
+        app,
+        ["task", "create", "Tagged task", "-k", "test-tasks", "--tags", tags, "--format", "json"],
     )
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)
@@ -102,7 +103,7 @@ def test_task_create_persists_comma_separated_tags(task_cli_env, tags):
 def test_task_create_without_tags_preserves_existing_behavior(task_cli_env):
     """Omitting --tags leaves the persisted task without a tags field."""
     result = runner.invoke(
-        app, ["task", "create", "Untagged task", "-k", "test-tasks", "-f", "json"]
+        app, ["task", "create", "Untagged task", "-k", "test-tasks", "--format", "json"]
     )
     assert result.exit_code == 0, result.stdout
     data = json.loads(result.stdout)

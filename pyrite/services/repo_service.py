@@ -148,7 +148,9 @@ class RepoService:
             "path": str(workspace_path),
             "kbs": kb_names,
             "kb_default_role": None,
-            "entries_indexed": sum(self.db.count_entries(kb) for kb in kb_names),
+            "entries_indexed": sum(
+                self.db.count_entries(kb, include_archived=True) for kb in kb_names
+            ),
         }
 
     def fork_and_subscribe(self, remote_url: str) -> dict:
@@ -432,8 +434,8 @@ class RepoService:
         return [row["name"] for row in self.db.get_kbs_for_repo(repo_id)]
 
     def kb_entry_count(self, kb_name: str) -> int:
-        """How many indexed entries ``kb_name`` has."""
-        return self.db.count_entries(kb_name)
+        """How many indexed entries ``kb_name`` has (archived included)."""
+        return self.db.count_entries(kb_name, include_archived=True)
 
     def get_repo_status(self, repo_name: str) -> dict:
         """Get detailed status for a repo."""
@@ -456,7 +458,9 @@ class RepoService:
         status["kb_count"] = len(kb_rows)
         status["kb_names"] = [r["name"] for r in kb_rows]
 
-        total_entries = sum(self.db.count_entries(r["name"]) for r in kb_rows)
+        total_entries = sum(
+            self.db.count_entries(r["name"], include_archived=True) for r in kb_rows
+        )
         status["total_entries"] = total_entries
 
         # Contributors

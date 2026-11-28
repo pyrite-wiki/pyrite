@@ -111,9 +111,12 @@ def test_sw_list_commands_limit_zero_and_paging(
             # --limit 0 returns all 3 items
             res0 = runner.invoke(cli.sw_app, [cmd, "-k", "sw-kb", "--limit", "0", "-f", "json"])
             assert res0.exit_code == 0, res0.output
-            items0 = json.loads(res0.output)
+            items0 = json.loads(res0.stdout)
             assert len(items0) == 3
             assert {i["title"] for i in items0} == expected_titles
+            if cmd == "standards":
+                assert "0.28.0" in res0.stderr
+                assert "deprecated" in res0.stderr.lower()
 
             # --limit 1 --offset 1 returns 1 item, matching the second item of items0
             res1 = runner.invoke(
@@ -121,7 +124,7 @@ def test_sw_list_commands_limit_zero_and_paging(
                 [cmd, "-k", "sw-kb", "--limit", "1", "--offset", "1", "-f", "json"],
             )
             assert res1.exit_code == 0, res1.output
-            items1 = json.loads(res1.output)
+            items1 = json.loads(res1.stdout)
             assert len(items1) == 1
             assert items1 == items0[1:2]
     finally:

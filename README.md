@@ -27,7 +27,7 @@ Your AI agents have no memory. Your knowledge is trapped in platform silos. Ever
 ## Quick Start
 
 ```bash
-# Install (no PyPI wheel yet -- from source). Needs Python 3.11+ (3.11.5 or newer for the patched `soupsieve`).
+# Install (no PyPI wheel yet -- from source). Needs Python 3.11.5 or newer (the patched `soupsieve` needs it).
 git clone https://github.com/pyrite-wiki/pyrite.git && cd pyrite
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[all]"
@@ -108,7 +108,7 @@ Three permission tiers. Each tier includes the tools from lower tiers. Counts be
 | Tier | Core tools |
 |------|-------|
 | **read** (29) | `kb_list`, `kb_search`, `kb_get`, `kb_timeline`, `kb_tags`, `kb_backlinks`, `kb_stats`, `kb_schema`, `kb_orient`, `kb_batch_read`, `kb_batch_suggest`, `kb_discover_neighbors`, `kb_list_entries`, `kb_recent`, `kb_qa_validate`, `kb_qa_status`, `kb_read_body`, `kb_find_by_status`, `kb_find_by_assignee`, `kb_find_by_location`, `kb_find_overdue`, `kb_index_job_status`, `list_edge_types`, `task_list`, `task_status`, `task_ancestors`, `task_blocked_by`, `task_critical_path`, `task_subtree` |
-| **write** (+13) | read + `kb_create`, `kb_bulk_create`, `kb_update`, `kb_delete`, `kb_link`, `kb_qa_assess`, `task_create`, `task_update`, `task_claim`, `task_start`, `task_finish`, `task_checkpoint`, `task_decompose` |
+| **write** (+15) | read + `kb_create`, `kb_bulk_create`, `kb_update`, `kb_delete`, `kb_link`, `kb_qa_assess`, `task_create`, `task_update`, `task_claim`, `task_start`, `task_finish`, `task_park`, `task_unpark`, `task_checkpoint`, `task_decompose` |
 | **admin** (+8) | write + `kb_index_sync`, `kb_manage`, `kb_commit`, `kb_push`, `kb_registry_add`, `kb_registry_remove`, `kb_registry_reindex`, `kb_registry_health` |
 
 Pagination and totals differ by tool and by transport (CLI/MCP/REST) — see `docs/json-contracts.md` for the measured shape of each, rather than assuming a uniform `has_more`/`total` contract. `kb_bulk_create` handles up to 50 entries per call. After parameter validation, a missing or empty title is reported per entry without rejecting valid siblings, and results preserve input order. Invalid parameter types, an unavailable KB, or an invalid batch size still reject the whole call. `kb_orient` provides a one-shot KB summary for agent onboarding. `kb_batch_read` fetches multiple entries in one call. Search results return snippets by default (use `include_body` for full text, `fields` for projection).
@@ -209,7 +209,7 @@ Five extensions ship:
 
 | Extension | Purpose | Key Types |
 |-----------|---------|-----------|
-| **software-kb** | Software project management | ADRs, components, backlog items, standards, runbooks |
+| **software-kb** | Software project management ([guide](extensions/software-kb/README.md), [tutorial](docs/tutorials/agentic-development.md)) | ADRs, components, backlog items, standards, runbooks |
 | **zettelkasten** *(example plugin)* | CEQRC maturity workflow | Notes with maturity progression |
 | **encyclopedia** *(example plugin)* | Articles with review workflow | Articles, reviews, voting |
 | **social** *(example plugin)* | Engagement tracking | Social interactions |
@@ -352,6 +352,8 @@ pip install -e ".[all]"      # Core + AI + semantic search + dev tools
 cd web && npm ci && npm run build && cd ..   # the web UI (optional)
 ```
 
+Building the web UI needs Node.js 22.17 or later.
+
 Or straight from a release tag, no clone:
 
 ```bash
@@ -378,6 +380,17 @@ pip install -e extensions/zettelkasten
 pip install -e extensions/encyclopedia
 pip install -e extensions/social
 pip install -e extensions/journalism-investigation
+```
+
+No clone (you installed from a release tag)? Install the extension from the same
+tag, with the same version as Pyrite itself:
+
+```bash
+pip install "pyrite-software-kb @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/software-kb"
+pip install "pyrite-zettelkasten @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/zettelkasten"
+pip install "pyrite-encyclopedia @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/encyclopedia"
+pip install "pyrite-social @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/social"
+pip install "pyrite-journalism-investigation @ git+https://github.com/pyrite-wiki/pyrite@v0.26.4#subdirectory=extensions/journalism-investigation"
 ```
 
 (`zettelkasten`, `encyclopedia` and `social` are example plugins — see
@@ -413,7 +426,8 @@ Pyrite's own backlog and architecture docs live in `kb/`:
 pyrite sw backlog        # Prioritized backlog
 pyrite sw adrs           # Architecture Decision Records
 pyrite sw components     # Module documentation
-pyrite sw standards      # Coding conventions
+pyrite sw validations    # Coding validations
+pyrite sw conventions    # Coding conventions
 ```
 
 ## Documentation

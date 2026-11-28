@@ -385,6 +385,8 @@ REST_EXCLUDED = {
     "the named KB only",
     ("POST", "/api/tasks/{task_id}/start"): "kb required by the write guard; starts in "
     "the named KB only",
+    ("POST", "/api/tasks/{task_id}/finish"): "kb required by the write guard; finishes in "
+    "the named KB only",
     ("PUT", "/api/entries/{entry_id}"): "kb in the body, required by the write guard",
     ("PATCH", "/api/entries/{entry_id}"): "as PUT",
 }
@@ -551,7 +553,6 @@ def test_rest_get_without_kb_refuses_an_ambiguous_id(world):
 CLI_CASES = {
     "pyrite get": ["get", DUPLICATE, "--format", "json"],
     "pyrite task get": ["task", "get", DUP_TASK, "--format", "json"],
-    "pyrite task status": ["task", "status", DUP_TASK, "--format", "json"],
     "pyrite-read get": ["get", DUPLICATE, "--format", "json"],
 }
 CLI_BLANK_KB_CASES = {

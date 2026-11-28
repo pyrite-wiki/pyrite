@@ -14,7 +14,10 @@ links:
 - launch-channels
 - launch-staging
 - launch-web-presence
+lifecycle: archived
 ---
+
+> **Historical**: March 2026 launch plan.
 
 # Launch Plan: Content Matrix & User Acquisition Strategy
 

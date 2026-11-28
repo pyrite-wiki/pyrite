@@ -50,66 +50,55 @@ class TestCodesThatChanged:
     def test_entry_not_found(self):
         out = _refusal(EntryNotFoundError("no entry here"))
         assert out["error_code"] == "ENTRY_NOT_FOUND"
-        assert out["legacy_error_code"] == "NOT_FOUND"
+        assert "legacy_error_code" not in out
 
     def test_kb_not_found(self):
         out = _refusal(KBNotFoundError("no kb here"))
         assert out["error_code"] == "KB_NOT_FOUND"
-        assert out["legacy_error_code"] == "NOT_FOUND"
+        assert "legacy_error_code" not in out
 
     def test_kb_read_only(self):
         out = _refusal(KBReadOnlyError("read-only"))
         assert out["error_code"] == "KB_READ_ONLY"
-        assert out["legacy_error_code"] == "READ_ONLY"
+        assert "legacy_error_code" not in out
 
     def test_base_config_error(self):
         out = _refusal(ConfigError("dup kb"))
         assert out["error_code"] == "CONFIG_CONFLICT"
-        assert out["legacy_error_code"] == "CONFIG_ERROR"
+        assert "legacy_error_code" not in out
 
     def test_frontmatter_error(self):
-        """Never had its own error_code before this theme, so it inherited
-        ValidationError's old literal (VALIDATION_FAILED) via normal
-        attribute lookup -- not the domain table's isinstance walk. Its new
-        class code (INVALID_FRONTMATTER) is REST's long-standing status-table
-        entry for this specific case."""
         out = _refusal(FrontmatterError("bad yaml"))
         assert out["error_code"] == "INVALID_FRONTMATTER"
-        assert out["legacy_error_code"] == "VALIDATION_FAILED"
+        assert "legacy_error_code" not in out
 
     def test_plugin_error(self):
-        """Fell all the way to the REQUEST_REFUSED fallback before this
-        theme: not in the old domain table, no error_code of its own."""
         out = _refusal(PluginError("missing sdk"))
         assert out["error_code"] == "PLUGIN_ERROR"
-        assert out["legacy_error_code"] == "REQUEST_REFUSED"
+        assert "legacy_error_code" not in out
 
     def test_storage_error(self):
         out = _refusal(StorageError("disk gone"))
         assert out["error_code"] == "STORAGE_ERROR"
-        assert out["legacy_error_code"] == "REQUEST_REFUSED"
+        assert "legacy_error_code" not in out
         assert out["retryable"] is False
 
     def test_storage_busy_error(self):
         out = _refusal(StorageBusyError("database is locked"))
         assert out["error_code"] == "STORAGE_ERROR"
-        assert out["legacy_error_code"] == "REQUEST_REFUSED"
+        assert "legacy_error_code" not in out
         assert out["retryable"] is True
 
     def test_config_save_refused_error(self):
-        """ConfigSaveRefusedError used to answer MCP's CONFIG_ERROR (via the
-        old domain table's isinstance match on its ConfigError parent); its
-        new class code (CONFIG_SAVE_REFUSED) is its own, distinct from the
-        base ConfigError's CONFIG_CONFLICT."""
         exc = ConfigSaveRefusedError("real path leaked", dropped=[])
         out = _refusal(exc)
         assert out["error_code"] == "CONFIG_SAVE_REFUSED"
-        assert out["legacy_error_code"] == "CONFIG_ERROR"
+        assert "legacy_error_code" not in out
 
     def test_base_pyrite_error(self):
         out = _refusal(PyriteError("generic domain error"))
         assert out["error_code"] == "INTERNAL_ERROR"
-        assert out["legacy_error_code"] == "REQUEST_REFUSED"
+        assert "legacy_error_code" not in out
 
 
 class TestAccessDeniedGetsNoLegacyCode:
@@ -202,31 +191,20 @@ class TestValidationSubclassesUnaffected:
         assert "legacy_error_code" not in out
 
 
-class TestKbUpdatesOwnOldCode:
-    """``kb_update``'s old handler answered every failure it did not name
-    with ``UPDATE_FAILED`` (its ``except PyriteError`` catch-all), so that,
-    not the module-wide ``REQUEST_REFUSED`` fallback, is the legacy code it
-    carries for a storage fault and for a write that lost the race for its
-    file (#990, the #992 merge review). The storage fault is driven through
-    ``_dispatch_tool`` with a real hard link in
-    ``test_update_walks_every_surface.py``; the race itself (a file that
-    keeps changing under the update) cannot be timed by a test, so the lost
-    race is pinned here, on the one helper both branches of ``_kb_update``
-    answer through."""
+class TestKbUpdatesOwnCode:
+    """``kb_update`` reports the exception class's own code and no longer
+    carries ``legacy_error_code`` (#1901)."""
 
     def test_a_lost_race(self):
         from pyrite.exceptions import ConflictError
-        from pyrite.server.mcp_server import _with_old_kb_update_code
 
-        out = _with_old_kb_update_code(_refusal(ConflictError("the file kept changing")))
+        out = _refusal(ConflictError("the file kept changing"))
         assert out["error_code"] == "CONFLICT"
-        assert out["legacy_error_code"] == "UPDATE_FAILED"
+        assert "legacy_error_code" not in out
         assert out["retryable"] is True
 
     def test_a_storage_fault(self):
-        from pyrite.server.mcp_server import _with_old_kb_update_code
-
-        out = _with_old_kb_update_code(_refusal(StorageError("disk gone")))
+        out = _refusal(StorageError("disk gone"))
         assert out["error_code"] == "STORAGE_ERROR"
-        assert out["legacy_error_code"] == "UPDATE_FAILED"
+        assert "legacy_error_code" not in out
         assert out["retryable"] is False

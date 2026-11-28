@@ -4,9 +4,10 @@ type: design_doc
 title: "SSR Public Site: kb.pyrite.wiki via route groups"
 tags: [web, seo, publishing, architecture]
 date: "2026-03-24"
+lifecycle: archived
 ---
 
-> The built-in public site (`/site`, ADR-0023) was removed by #953 (2026-10). Kept as history.
+> The built-in public site (`/site`, ADR-0023) was removed by #953 (2026-10); see [[alpha-supported-surface]]. Kept as history.
 
 ## Summary
 

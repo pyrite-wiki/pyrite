@@ -58,12 +58,28 @@ name = "pyrite"
 version = "0.24.2"
 """
 
+GOOD_MCP_PYPROJECT = """[project]
+name = "pyrite-mcp"
+version = "0.24.2"
+dependencies = [
+    "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.24.2",
+]
+"""
+
+GOOD_MCP_README = """pip install "pyrite @ git+https://github.com/pyrite-wiki/pyrite@v0.24.2" \\
+  "pyrite-mcp @ git+https://github.com/pyrite-wiki/pyrite@v0.24.2#subdirectory=pyrite-mcp"
+"""
+
 
 @pytest.fixture
 def repo(tmp_path):
     """A tmp checkout whose CHANGELOG and pyproject are release-ready."""
     (tmp_path / "CHANGELOG.md").write_text(GOOD_CHANGELOG.format(today=date.today().isoformat()))
     (tmp_path / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (tmp_path / "README.md").write_text("git+https://github.com/pyrite-wiki/pyrite@v0.24.2\n")
+    (tmp_path / "pyrite-mcp").mkdir()
+    (tmp_path / "pyrite-mcp" / "pyproject.toml").write_text(GOOD_MCP_PYPROJECT)
+    (tmp_path / "pyrite-mcp" / "README.md").write_text(GOOD_MCP_README)
     (tmp_path / "uv.lock").write_text("version = 1\n")  # the check applies to a checkout with one
     return tmp_path
 
@@ -170,6 +186,10 @@ def dry_run(no_network, monkeypatch, tmp_path_factory):
         "- A release script.\n\n## [0.24.1] - 2026-09-17\n\n- Older.\n"
     )
     (fake_repo / "pyproject.toml").write_text(GOOD_PYPROJECT)
+    (fake_repo / "README.md").write_text("git+https://github.com/pyrite-wiki/pyrite@v0.24.2\n")
+    (fake_repo / "pyrite-mcp").mkdir()
+    (fake_repo / "pyrite-mcp" / "pyproject.toml").write_text(GOOD_MCP_PYPROJECT)
+    (fake_repo / "pyrite-mcp" / "README.md").write_text(GOOD_MCP_README)
     (fake_repo / "uv.lock").write_text("version = 1\n")
 
     def _go(argv=("0.24.2",)):
@@ -177,6 +197,7 @@ def dry_run(no_network, monkeypatch, tmp_path_factory):
         code, runner = release.run_release(args)
         return code, runner, no_network
 
+    _go.repo = fake_repo  # tests that drift one file write it before calling
     return _go
 
 
@@ -273,6 +294,144 @@ class TestReadVersion:
     def test_missing_pyproject_is_an_error(self, tmp_path):
         with pytest.raises(release.ReleaseError, match="pyproject.toml"):
             release.read_pyproject_version(tmp_path)
+
+
+class TestReadmeInstallTag:
+    def test_matching_tag_passes(self, repo):
+        release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_mismatched_tags_name_both_versions(self, repo):
+        (repo / "README.md").write_text(
+            "git+https://github.com/pyrite-wiki/pyrite@v0.24.2\n"
+            "git+https://github.com/pyrite-wiki/pyrite@v0.24.1\n"
+        )
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_readme_install_tag(repo, "0.24.2")
+        assert all(part in str(excinfo.value) for part in ("README.md", "0.24.1", "0.24.2"))
+
+    def test_missing_install_line_is_rejected(self, repo):
+        (repo / "README.md").write_text("No install instructions here.\n")
+        with pytest.raises(release.ReleaseError, match="README.md.*no"):
+            release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_missing_readme_is_rejected(self, repo):
+        (repo / "README.md").unlink()
+        with pytest.raises(release.ReleaseError, match="README.md.*missing"):
+            release.check_readme_install_tag(repo, "0.24.2")
+
+    def _software_kb_readme(self, repo, tag):
+        path = repo / "extensions" / "software-kb" / "README.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            f'pip install "pyrite-software-kb @ git+https://github.com/pyrite-wiki/pyrite@v{tag}'
+            '#subdirectory=extensions/software-kb"\n'
+        )
+
+    def test_software_kb_readme_with_the_version_passes(self, repo):
+        self._software_kb_readme(repo, "0.24.2")
+        release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_a_stale_software_kb_readme_tag_names_the_file_and_both_versions(self, repo):
+        self._software_kb_readme(repo, "0.24.1")
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_readme_install_tag(repo, "0.24.2")
+        message = str(excinfo.value)
+        assert "extensions/software-kb/README.md" in message
+        assert "v0.24.1" in message and "0.24.2" in message
+
+    def test_a_checkout_without_the_extension_has_nothing_to_check(self, repo):
+        assert not (repo / "extensions").exists()
+        release.check_readme_install_tag(repo, "0.24.2")
+
+    def test_stale_tutorial_install_tag_raises(self, repo):
+        (repo / "docs" / "tutorials").mkdir(parents=True)
+        (repo / "docs" / "tutorials" / "agentic-development.md").write_text(
+            "git+https://github.com/pyrite-wiki/pyrite@v0.20.0\n"
+        )
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_readme_install_tag(repo, "0.24.2")
+        assert all(
+            part in str(excinfo.value)
+            for part in ("docs/tutorials/agentic-development.md", "0.20.0", "0.24.2")
+        )
+
+
+class TestPyriteMcpMatchesRelease:
+    """`pyrite-mcp` carries Pyrite's version (#1582): its own version, the tag
+    its `pyrite @ git+...` dependency names, and both tags in its README."""
+
+    def test_matching_files_pass(self, repo):
+        release.check_pyrite_mcp_matches(repo, "0.24.2")
+
+    def test_a_checkout_with_no_pyrite_mcp_has_nothing_to_check(self, repo):
+        # the script takes its repository from `origin`; it is not Pyrite-only
+        import shutil
+
+        shutil.rmtree(repo / "pyrite-mcp")
+        release.check_pyrite_mcp_matches(repo, "0.24.2")
+
+    def test_a_stale_version_names_the_file_and_both_values(self, repo):
+        (repo / "pyrite-mcp" / "pyproject.toml").write_text(
+            GOOD_MCP_PYPROJECT.replace('version = "0.24.2"', 'version = "0.20.0"')
+        )
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+        message = str(excinfo.value)
+        assert "pyrite-mcp/pyproject.toml" in message
+        assert "0.20.0" in message and "0.24.2" in message
+
+    def test_a_stale_dependency_tag_names_the_file_and_both_values(self, repo):
+        (repo / "pyrite-mcp" / "pyproject.toml").write_text(
+            GOOD_MCP_PYPROJECT.replace("@v0.24.2", "@v0.24.1")
+        )
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+        message = str(excinfo.value)
+        assert "pyrite-mcp/pyproject.toml" in message
+        assert "v0.24.1" in message and "0.24.2" in message
+
+    def test_no_git_dependency_is_rejected(self, repo):
+        (repo / "pyrite-mcp" / "pyproject.toml").write_text(
+            '[project]\nname = "pyrite-mcp"\nversion = "0.24.2"\ndependencies = ["pyrite>=0.20.0"]\n'
+        )
+        with pytest.raises(release.ReleaseError, match=r"pyrite-mcp/pyproject\.toml.*pyrite @ git"):
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+
+    @pytest.mark.parametrize("line", [0, 1])
+    def test_a_stale_readme_tag_names_the_file_and_both_values(self, repo, line):
+        lines = GOOD_MCP_README.splitlines(keepends=True)
+        lines[line] = lines[line].replace("@v0.24.2", "@v0.24.1")
+        (repo / "pyrite-mcp" / "README.md").write_text("".join(lines))
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+        message = str(excinfo.value)
+        assert "pyrite-mcp/README.md" in message
+        assert "v0.24.1" in message and "0.24.2" in message
+
+    def test_a_readme_with_no_install_line_is_rejected(self, repo):
+        (repo / "pyrite-mcp" / "README.md").write_text("Nothing to install.\n")
+        with pytest.raises(release.ReleaseError, match=r"pyrite-mcp/README\.md.*no"):
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+
+    def test_a_missing_file_inside_pyrite_mcp_is_named(self, repo):
+        (repo / "pyrite-mcp" / "README.md").unlink()
+        with pytest.raises(release.ReleaseError, match=r"pyrite-mcp/README\.md.*missing"):
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+
+    def test_every_file_that_is_wrong_is_named_in_one_message(self, repo):
+        (repo / "pyrite-mcp" / "pyproject.toml").write_text(
+            GOOD_MCP_PYPROJECT.replace("0.24.2", "0.20.0")
+        )
+        (repo / "pyrite-mcp" / "README.md").write_text(GOOD_MCP_README.replace("0.24.2", "0.20.0"))
+        with pytest.raises(release.ReleaseError) as excinfo:
+            release.check_pyrite_mcp_matches(repo, "0.24.2")
+        message = str(excinfo.value)
+        assert "pyrite-mcp/pyproject.toml" in message and "pyrite-mcp/README.md" in message
+
+    def test_the_readme_tag_is_not_confused_by_the_subdirectory_fragment(self, repo):
+        # `...@v0.24.2#subdirectory=pyrite-mcp` names v0.24.2, not a longer tag
+        release.check_pyrite_mcp_matches(repo, "0.24.2")
+        release.check_readme_install_tag(repo, "0.24.2")
 
 
 class TestValidateVersionMatches:
@@ -1396,6 +1555,37 @@ class TestDryRunOverThisRepo:
         captured = capsys.readouterr()
         assert "gh release create" not in captured.out
 
+    def test_stale_readme_install_tag_fails_dry_run(self, dry_run, monkeypatch, capsys):
+        check = release.check_readme_install_tag
+
+        def stale_readme(repo, version):
+            (repo / "README.md").write_text("git+https://github.com/pyrite-wiki/pyrite@v0.24.1\n")
+            check(repo, version)
+
+        monkeypatch.setattr(release, "check_readme_install_tag", stale_readme)
+        code, runner, _calls = dry_run()
+        assert code != 0
+        assert runner.planned == []
+        out = capsys.readouterr().out
+        assert "README.md" in out and "0.24.1" in out and "0.24.2" in out
+
+    @pytest.mark.parametrize(
+        ("name", "stale"),
+        [
+            ("pyproject.toml", lambda t: t.replace('version = "0.24.2"', 'version = "0.20.0"')),
+            ("pyrite-mcp/pyproject.toml", lambda t: t.replace("@v0.24.2", "@v0.24.1")),
+            ("pyrite-mcp/README.md", lambda t: t.replace("@v0.24.2", "@v0.24.1")),
+        ],
+    )
+    def test_a_stale_pyrite_mcp_file_fails_dry_run_and_is_named(self, dry_run, capsys, name, stale):
+        # the dry run stops before anything is planned, naming the file (#1582)
+        path = dry_run.repo / name
+        path.write_text(stale(path.read_text()))
+        code, runner, _calls = dry_run()
+        assert code != 0
+        assert runner.planned == []
+        assert name in capsys.readouterr().out
+
     def test_the_failure_reads_in_order_when_piped(self, tmp_path):
         """Found running it by hand: piped, stdout block-buffers while stderr
         does not, so `FAIL at preconditions` printed ABOVE the header and the
@@ -1622,6 +1812,41 @@ class TestInstallCheckMatchesTheTutorial:
         installs = [c for c in calls if c[:2] == ["uv", "pip"]]
         assert installs, "no install was composed"
         assert any(f"pyrite[{release.INSTALL_CHECK_EXTRAS}]" in " ".join(c) for c in installs)
+        assert any(
+            "pyrite-software-kb @ git+https://github.com/" in " ".join(c)
+            and f"@{FAKE_SHA}#subdirectory=extensions/software-kb" in " ".join(c)
+            for c in installs
+        ), installs
+
+    def test_the_execute_path_runs_all_three_tutorials(self, monkeypatch):
+        cmds = []
+
+        def fake(cmd, cwd=None, env=None):
+            cmds.append(list(cmd))
+            if cmd and str(cmd[0]).endswith("pyrite"):
+                return "pyrite 0.24.2"
+            return ""
+
+        monkeypatch.setattr(release, "_check_output", fake)
+        monkeypatch.setattr(release.shutil, "which", lambda name: f"/usr/bin/{name}")
+        ctx = release.Context(
+            repo=REPO,
+            version="0.24.2",
+            runner=release.Runner(execute=False),
+            wait_ci_minutes=0,
+            rehearse_install_check=True,
+            sha=FAKE_SHA,
+        )
+        release.step_release_layer(ctx)
+        tutorial_runs = [c for c in cmds if c and str(c[0]).endswith("run_tutorial.sh")]
+        assert tutorial_runs == [
+            [str(REPO / "scripts" / "run_tutorial.sh")],
+            [str(REPO / "scripts" / "run_tutorial.sh"), "docs/tutorials/pyrite-in-20-minutes.md"],
+            [
+                str(REPO / "scripts" / "run_tutorial.sh"),
+                "docs/tutorials/agentic-development.md",
+            ],
+        ]
 
 
 class TestDockerBuildIsOptIn:

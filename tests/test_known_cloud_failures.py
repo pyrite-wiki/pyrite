@@ -104,6 +104,36 @@ def test_no_registry_text_leaves_a_data_line(tmp_path):
             assert DATA_LINE.match(line), line
 
 
+def _run_script(path):
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True, timeout=10
+    )
+
+
+# Every wording the script can print about a registry it did not read. Only the
+# malformed notice may describe the expected shape: the other two are true of a
+# file that has no shape problem.
+MALFORMED_TEXT = "registry is malformed"
+MISSING_TEXT = "registry is missing and was not read"
+UNREADABLE_TEXT = "registry exists but could not be read"
+SHAPE_HINT = "(expected a JSON list of entries with string test, issue, reason)"
+
+
+def _assert_notice(result, wording):
+    # Exit 2: the hook prints its own warning and goes on
+    # (test_dev_process_config: test_a_broken_optional_brief_does_not_prevent_session_setup).
+    assert result.returncode == 2, result.stderr
+    assert "Traceback" not in result.stderr
+    assert wording in result.stdout
+    for other in {MALFORMED_TEXT, MISSING_TEXT, UNREADABLE_TEXT} - {wording}:
+        assert other not in result.stdout
+    assert ("expected a JSON list" in result.stdout) == (wording == MALFORMED_TEXT)
+    assert (SHAPE_HINT in result.stdout) == (wording == MALFORMED_TEXT)
+    assert "CI remains required" in result.stdout
+    assert len(result.stdout.splitlines()) == 2  # the notice, then the trailer
+    assert "just a string" not in result.stdout
+
+
 @pytest.mark.parametrize(
     "content",
     [
@@ -113,7 +143,6 @@ def test_no_registry_text_leaves_a_data_line(tmp_path):
         b"42",
         b"[{,}",
         b"\xff\xfe not utf-8",
-        None,
         b"[" * 200000,
     ],
     ids=[
@@ -123,27 +152,23 @@ def test_no_registry_text_leaves_a_data_line(tmp_path):
         "number",
         "invalid-json",
         "not-utf-8",
-        "missing",
         "nested-200000-deep",
     ],
 )
-def test_a_malformed_or_missing_registry_is_a_notice_and_the_trailer_with_no_traceback(
-    tmp_path, content
-):
+def test_a_malformed_registry_is_a_notice_and_the_trailer_with_no_traceback(tmp_path, content):
     path = tmp_path / "registry.json"
-    if content is not None:
-        path.write_bytes(content)
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), str(path)], capture_output=True, text=True, timeout=10
-    )
-    # Exit 2: the hook prints its own warning and goes on
-    # (test_dev_process_config: test_a_broken_optional_brief_does_not_prevent_session_setup).
-    assert result.returncode == 2, result.stderr
-    assert "Traceback" not in result.stderr
-    assert "registry is malformed" in result.stdout
-    assert "CI remains required" in result.stdout
-    assert len(result.stdout.splitlines()) == 2  # the notice, then the trailer
-    assert "just a string" not in result.stdout
+    path.write_bytes(content)
+    _assert_notice(_run_script(path), MALFORMED_TEXT)
+
+
+def test_a_missing_registry_says_missing_not_malformed(tmp_path):
+    _assert_notice(_run_script(tmp_path / "registry.json"), MISSING_TEXT)
+
+
+def test_a_registry_that_is_a_directory_says_could_not_be_read(tmp_path):
+    path = tmp_path / "registry.json"
+    path.mkdir()
+    _assert_notice(_run_script(path), UNREADABLE_TEXT)
 
 
 def test_a_long_reason_is_cut(tmp_path):

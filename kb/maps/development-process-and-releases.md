@@ -117,7 +117,8 @@ search vocabulary, not a second copy of the rules.
 - A bug is tracked in one place; a fixing PR says `Fixes #N` ([[adr-0033]]).
 - The README's install and Quick Start run as written in a clean environment
   ([[adr-0032]] release layer; [[design]] P9). pyrite-mcp's install command and
-  its dependency on `pyrite` name the same tag as the README.
+  its dependency on `pyrite` name the same tag as the README, and so does
+  `extensions/software-kb/README.md`.
 
 ## ADRs in reading order
 
@@ -140,7 +141,9 @@ No component doc covers the process. Paths: `.github/workflows/`,
 `tests/test_release_rehearsal.py` (the verified-commit rule at its three
 surfaces; the lookup's failure modes are one list, `tests/verified_commit_cases.py`),
 `tests/test_task_claim_concurrency.py` (the xdist-safe pattern the pre-push
-suite needs), `tests/test_readme_install_tag.py`, `tests/test_pyrite_mcp_install.py`,
+suite needs), `tests/test_readme_install_tag.py` (also the software-kb README's tag), `tests/test_pyrite_mcp_install.py` (one version:
+`pyrite-mcp`'s version, dependency tag and README tags equal `pyproject.toml`'s; the
+release script's precondition asks the same of the requested version),
 `tests/test_readme.py`.
 
 ## Known gaps
@@ -150,9 +153,6 @@ suite needs), `tests/test_readme_install_tag.py`, `tests/test_pyrite_mcp_install
   script. The live repository settings were not verified ([[adr-audit-2026-10]]).
 - [[adr-0025]] still says "no PR reviews" and "all work happens on `dev`" in
   its body, with a banner pointing to [[adr-0032]].
-- The standard `git-workflow` still says "All work happens on `dev`" and lists
-  `feature/*` as for large multi-day changes: it contradicts [[adr-0032]] and
-  is not marked superseded (verified by reading it; not edited here).
 - Not decided: whether `main` moves untagged between releases, and who bumps
   the snapshot version ([[adr-0032]] open questions on 3b).
 - No ADR covers the worker and reviewer roles; the worker method is the

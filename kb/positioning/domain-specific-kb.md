@@ -6,6 +6,7 @@ status: active
 author: markr
 date: "2026-02-23"
 tags: [positioning, platform, domains, plugins, vertical]
+lifecycle: archived
 ---
 
 # Market Positioning: Domain-Specific KB Creation

@@ -438,7 +438,7 @@ extension is one in-tree theme and one extraction theme.
 ## Decisions (maintainer, 2026-09-26: accepted with these)
 
 1. **A façade module, `pyrite.plugin_api`.** Everything not exported there is internal. A snapshot test pins the contract.
-2. **cascade is deleted, not extracted.** Its remaining pieces are absorbed into journalism-investigation (`kb/notes/remove-cascade-plugin.md`).
+2. **cascade is deleted, not extracted.** Its remaining pieces are absorbed into journalism-investigation (`kb/backlog/done/remove-cascade-plugin.md`).
 3. **An operator allowlist.** `plugins: [..]` in `config.yaml` narrows which installed plugins load, and defaults to all installed.
 4. **zettelkasten moves out after journalism-investigation, not first.** It stays in tree as the reference example until the template repo exists and `pyrite init` can install it on demand, or through `pyrite[zettelkasten]`.
 5. **A nightly canary job**, running each published plugin's conformance test against `dev`.

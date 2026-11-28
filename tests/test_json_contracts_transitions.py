@@ -38,7 +38,8 @@ def test_transition_row_matches_real_mcp_not_found(tool, missing, cli_world):
         rows = [row for row in rows if ", unscoped caller" in row]
     assert len(rows) == 1
     fields = [cell.strip().strip("`") for cell in rows[0].strip("|").split("|")]
-    assert fields[2:5] == [refusal["error_code"], refusal["legacy_error_code"], "false"]
+    assert fields[2:4] == [refusal["error_code"], "false"]
+    assert "legacy_error_code" not in refusal
     assert refusal["retryable"] is False
 
 
@@ -46,7 +47,7 @@ def test_transition_row_matches_real_mcp_not_found(tool, missing, cli_world):
     ("page", "heading"),
     [
         ("json-contracts.md", "### Deprecated, still accepted"),
-        ("upgrading.md", "### 8. Still deprecated"),
+        ("upgrading.md", "## Upgrading from 0.26.x to 0.27"),
     ],
 )
 def test_removal_versions_follow_the_maintainer_decision(page, heading):
@@ -55,23 +56,13 @@ def test_removal_versions_follow_the_maintainer_decision(page, heading):
     assert not re.search(r"for one\s+release|this release|next release|a\s+later release", section)
     bullets = re.findall(r"(?m)^- .*?(?=\n- |\n\n|\Z)", section, re.S)
     for name in (
-        "`legacy_error_code`",
-        "`distance`",
-        "`-f`",
-        "export --format",
-        "`task status`",
         "`db.conn`",
         "`FRONTMATTER_ALIASES`",
-        "orient's `schema.guidelines`",
+        "git_identity",
     ):
         matching = [bullet for bullet in bullets if name in bullet]
         assert matching, name
-        assert all("0.27" in bullet for bullet in matching), name
-    if page == "upgrading.md":
-        paragraph = text.split("`legacy_error_code`", 1)[1].split("\n- ", 1)[0]
-        assert "0.27" in paragraph
-        assert "json-contracts.md#mcp-code-transitions" in paragraph
-        assert not re.search(r"for one\s+release|a\s+later release", paragraph)
+        assert all("0.28" in bullet for bullet in matching), name
 
 
 @pytest.mark.control(reason="the central REST mappings keep their existing documented statuses")

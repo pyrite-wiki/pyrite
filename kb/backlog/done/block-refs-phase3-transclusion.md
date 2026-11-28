@@ -41,5 +41,5 @@ Render `![[entry#heading]]` and `![[entry^block-id]]` as inline embedded content
 
 ## References
 
-- [ADR-0012: Block References and Transclusion](../adrs/0012-block-references-and-transclusion.md)
+- [ADR-0012: Block References and Transclusion](../../adrs/0012-block-references-and-transclusion.md)
 - Parent: [Block References and Transclusion](block-references.md) (#17)

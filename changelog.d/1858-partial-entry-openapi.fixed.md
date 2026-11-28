@@ -1,0 +1,1 @@
+- OpenAPI documents when single-entry reads report load problems and omit refused columns (#1858).

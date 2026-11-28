@@ -688,6 +688,12 @@ def test_on_a_fresh_index_the_file_read_equals_the_row(tmp_path):
             )
             got = {k: v for k, v in read.items() if k not in ("outlinks", "backlinks")}
             got.pop("content_hash")
+            # A refused importance is flagged by the read alone (#1761): the
+            # row, the index's own shape, carries no entry_warnings. By hand:
+            # `unquoted` (7.9) and `scalars` (true) hold a refused importance;
+            # no other file here does, a missing key included.
+            flagged = got.pop("entry_warnings", None)
+            assert bool(flagged) == (entry_id in ("unquoted", "scalars")), (entry_id, flagged)
             assert list(got) == list(row), entry_id
             # The one key the two projections differ on, by decision (#1025,
             # option B): the read's `metadata` holds the row's bag less every

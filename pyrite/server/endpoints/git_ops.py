@@ -59,6 +59,8 @@ def publish_changes(
     resolve_named_kb(request, policy, kb_name)  # the one resolver first (#952)
     try:
         return svc.publish_changes(kb_name, summary=summary)
+    except KBReadOnlyError:
+        raise
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
@@ -85,8 +87,8 @@ def commit_kb(
     try:
         result = export_svc.commit_kb(kb_name, message=message, paths=paths, sign_off=sign_off)
         return result
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        raise
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}
@@ -112,8 +114,8 @@ def push_kb(
     try:
         result = export_svc.push_kb(kb_name, remote=remote, branch=branch)
         return result
-    except KBReadOnlyError as e:
-        raise HTTPException(status_code=403, detail={"code": "KB_READ_ONLY", "message": str(e)})
+    except KBReadOnlyError:
+        raise
     except KBNotFoundError:
         raise HTTPException(
             status_code=404, detail={"code": "NOT_FOUND", "message": f"KB '{kb_name}' not found"}

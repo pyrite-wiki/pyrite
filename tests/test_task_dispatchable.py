@@ -503,3 +503,48 @@ def test_a_write_is_never_made(world):
     mcp(world, dispatchable=True)
     rest(world, dispatchable="true")
     assert {p.name: p.read_bytes() for p in root.glob("*.md")} == before
+
+
+def _park_world(root):
+    """Two open tasks, indexed, then edited on disk without ``index sync``.
+
+    ``fresh`` gains ``parked_awaiting: decision``. ``stale-park`` loses the
+    park the index still holds. #1743: the file park excludes ``fresh``; the
+    stale index park keeps ``stale-park`` out.
+    """
+    path = root / "work"
+    path.mkdir()
+    (path / "kb.yaml").write_text("name: work\nkb_type: generic\n", encoding="utf-8")
+    (path / "fresh.md").write_text(_task("fresh"), encoding="utf-8")
+    (path / "stale-park.md").write_text(
+        _task("stale-park", extra="parked_awaiting: decision\n"), encoding="utf-8"
+    )
+    world = build_world(root, kbs=[KBConfig(name="work", path=path, kb_type=KBType.GENERIC)])
+    fresh = path / "fresh.md"
+    fresh.write_text(
+        fresh.read_text(encoding="utf-8").replace(
+            "type: task\n", "type: task\nparked_awaiting: decision\n", 1
+        ),
+        encoding="utf-8",
+    )
+    stale = path / "stale-park.md"
+    stale.write_text(
+        stale.read_text(encoding="utf-8").replace("parked_awaiting: decision\n", "", 1),
+        encoding="utf-8",
+    )
+    return world
+
+
+@pytest.mark.parametrize("surface", list(SURFACES))
+def test_a_file_parked_after_the_index_is_excluded_and_a_stale_index_park_stays(tmp_path, surface):
+    world = _park_world(tmp_path)
+    try:
+        out = SURFACES[surface](world)
+    finally:
+        world.close()
+    listed = [t["id"] for t in out["tasks"]]
+    reasons = {e["id"]: e["reason"] for e in out["excluded"]}
+    assert "fresh" not in listed
+    assert reasons["fresh"] == "parked"
+    assert "stale-park" not in listed
+    assert reasons["stale-park"] == "parked"
