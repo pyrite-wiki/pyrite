@@ -216,7 +216,7 @@ class TestIndexProgress:
     """IndexWorker threads deliver `index_progress` to unscoped sockets only.
 
     It carries whole-index job ids and counts, admin information whichever KB
-    the job covers (the rule recorded in kb/backlog/authenticate-and-scope-ws-218.md),
+    the job covers (the rule recorded in kb/backlog/done/authenticate-and-scope-ws-218.md),
     so a socket that may read the job's KB still does not receive it.
     """
 

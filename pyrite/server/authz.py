@@ -16,9 +16,15 @@ the FastAPI side of asking it:
   - ``authorize(Action.KB_READ, AnyKB)`` -- the `ReadScope` alone, for a
     route that spans KBs and names none it must check.
 
-  Writes (`requires_kb_tier`, theme 3b) and instance/user routes
-  (`requires_tier`, theme 3c) still use their `api.py` dependencies; asking
-  `authorize` for one of those fails when the route is declared.
+  - ``authorize(Action.KB_WRITE, KB)`` -- every KB the request names must be
+    writable (404 ``KB_NOT_FOUND`` when missing or unreadable, 403 when
+    readable but not writable, 422 ``KB_REQUIRED`` when none is named), and
+    records the ADR-0044 write target.
+
+  Row-resolved writes (`requires_kb_tier(..., resolve_kb=...)`) and
+  instance/user routes (`requires_tier`, theme 3c) still use their `api.py`
+  dependencies; asking `authorize` for one of those fails when the route is
+  declared.
 
 `tests/test_every_entry_point_passes_the_policy.py` (ADR-0037 §5) fails for
 any REST operation whose dependant tree lacks exactly one `authorize(...)`,
@@ -129,7 +135,7 @@ def resolve_named_kb(request: Request, policy: AccessPolicy, name: object):
 
 
 # What this theme decides. Everything else is refused at declaration.
-_DECIDED = {(Action.KB_READ, KB), (Action.KB_READ, AnyKB)}
+_DECIDED = {(Action.KB_READ, KB), (Action.KB_READ, AnyKB), (Action.KB_WRITE, KB)}
 
 
 @functools.cache
@@ -145,6 +151,18 @@ def authorize(action: Action, resource: type):
             f"authorize({action!s}, {getattr(resource, '__name__', resource)}) is not "
             "decided by REST's policy adapter yet (ADR-0037 themes 3b, 3c)"
         )
+    if action is Action.KB_WRITE:
+        # Lazy: `api` imports this module for `get_principal`.
+        from .api import requires_kb_tier
+
+        _write_guard = requires_kb_tier("write")
+
+        async def authorize_kb_write_named(
+            _guard: None = Depends(_write_guard),
+        ) -> None:
+            return None
+
+        return authorize_kb_write_named
     # Lazy: `api` imports this module for `get_principal`.
     from ..services.kb_service import KBService
     from .api import (

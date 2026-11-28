@@ -96,10 +96,15 @@ class SearchBackend(Protocol):
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
-        """Count entries matching filters."""
+        """Count entries matching filters.
+
+        ``include_archived`` counts archived entries too — for callers that
+        ask "is anything indexed?" rather than "what does a listing show?".
+        """
         ...
 
     def get_distinct_types(
@@ -213,8 +218,7 @@ class SearchBackend(Protocol):
         and ``embedding``, rounded to 3 places (`similarity_from`), the same
         number on every backend for the same vectors. Rows come back in
         descending ``similarity``, and a row below ``min_similarity`` is not
-        returned. ``distance`` is also on each row and is backend-specific
-        (sqlite-vec: L2; pgvector: cosine distance); nothing should read it.
+        returned.
 
         A backend that cannot consider every candidate the filters admit says
         so by returning a :class:`SemanticRows` with ``capped=True``.
@@ -286,27 +290,6 @@ class SearchBackend(Protocol):
         self, ids: list[str], *, readable_kbs: set[str] | None
     ) -> dict[str, list[str]]:
         """In which readable KBs does each id exist? ``{id: [kb, ...]}``, one query."""
-        ...
-
-    def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL backlinks targeting entries in a KB, keyed by target entry_id.
-
-        Returns the same per-entry data as get_backlinks() but in a single query.
-        """
-        ...
-
-    def get_all_outlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL outlinks from entries in a KB, keyed by source entry_id.
-
-        Returns the same per-entry data as get_outlinks() but in a single query.
-        """
-        ...
-
-    def get_all_sources_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL sources for entries in a KB, keyed by entry_id.
-
-        Returns the same per-entry data as _get_entry_sources() but in a single query.
-        """
         ...
 
     def get_graph_data(

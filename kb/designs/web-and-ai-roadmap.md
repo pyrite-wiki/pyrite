@@ -7,6 +7,7 @@ author: markr
 date: "2026-02-23"
 reviewers: []
 tags: [web, ai, roadmap, architecture]
+lifecycle: archived
 ---
 
 # Pyrite Web Application & AI Integration Roadmap

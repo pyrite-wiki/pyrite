@@ -6,6 +6,7 @@ status: active
 author: markr
 date: "2026-02-23"
 tags: [positioning, software, developer-tools, devex]
+lifecycle: archived
 ---
 
 # Market Positioning: Software Development Teams

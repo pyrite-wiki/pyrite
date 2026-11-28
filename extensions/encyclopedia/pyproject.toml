@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "pyrite-encyclopedia"
 version = "0.1.0"
 description = "Example plugin: Wikipedia-inspired collaborative encyclopedia extension for pyrite"
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 dependencies = []  # pyrite is a peer dependency, installed separately
 
 [project.entry-points."pyrite.plugins"]

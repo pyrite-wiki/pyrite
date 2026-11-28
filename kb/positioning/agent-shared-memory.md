@@ -6,6 +6,7 @@ status: active
 author: markr
 date: "2026-02-23"
 tags: [positioning, agents, mcp, shared-memory]
+lifecycle: archived
 ---
 
 # Market Positioning: Agent Shared Memory

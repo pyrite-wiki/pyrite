@@ -10,7 +10,10 @@ links:
 - launch-plan
 - bhag-self-configuring-knowledge-infrastructure
 - roadmap
+lifecycle: archived
 ---
+
+> **Historical**: March 2026 launch plan.
 
 # Launch Messaging Foundation
 

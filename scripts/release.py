@@ -21,7 +21,11 @@ change the world come after every check:
                        yet (locally, on origin, or as a GitHub release) and
                        `origin/main` is an ancestor of the SHA, so step d can
                        only ever fast-forward; the version in pyproject.toml is
-                       <version>; `uv lock --check` passes (a version bump leaves uv.lock
+                       <version>; README install tags match <version> (so does
+                       extensions/software-kb/README.md, when it exists); so do
+                       pyrite-mcp's version, its `pyrite @ git+...@v<tag>`
+                       dependency and its README's tags (when `pyrite-mcp/` exists);
+                       `uv lock --check` passes (a version bump leaves uv.lock
                        stale until `scripts/lock-deps.sh`); CHANGELOG has a dated section with content
                        and no stranded `[Unreleased]` entries; no open PR
                        labelled `release-blocker`; the private fixes
@@ -151,8 +155,10 @@ DEFAULT_WAIT_CI_MINUTES = 15
 INSTALL_CHECK_EXTRAS = "all"
 
 # The second document step (c) runs against the install, after getting-started:
-# the tutorial a newcomer is sent to first (docs/tutorials/pyrite-in-20-minutes.md).
+# the tutorial a newcomer is sent to first (docs/tutorials/pyrite-in-20-minutes.md),
+# followed by the developer-track tutorial (docs/tutorials/agentic-development.md).
 TUTORIAL_20_MIN = "docs/tutorials/pyrite-in-20-minutes.md"
+TUTORIAL_AGENTIC_DEV = "docs/tutorials/agentic-development.md"
 
 CI_PASSED = verified_commit.PASSED
 CI_FAILED = verified_commit.FAILED
@@ -333,6 +339,102 @@ def check_version_matches(repo: Path, version: str) -> None:
             f"pyproject.toml says version = {declared!r} but you asked to release "
             f"{version!r}. The release commit belongs on dev: bump pyproject.toml "
             "and date the CHANGELOG section there first."
+        )
+
+
+# `git+https://github.com/pyrite-wiki/pyrite@v<tag>`; the tag stops at whitespace,
+# a quote or the `#subdirectory=` fragment pyrite-mcp's install line carries.
+_INSTALL_TAG = re.compile(r"git\+https://github\.com/pyrite-wiki/pyrite@v([0-9][^\s\"'#]*)")
+
+
+def _install_tag_problem(name: str, text: str, version: str) -> str | None:
+    """What is wrong with the install tags in `text` (the file `name`), or None."""
+    tags = _INSTALL_TAG.findall(text)
+    if not tags:
+        return f"{name} has no git+...@v<version> install line."
+    if set(tags) != {version}:
+        found = ", ".join(f"v{t}" for t in sorted(set(tags)))
+        return f"{name} installs {found}, but requested version is {version!r}."
+    return None
+
+
+def check_readme_install_tag(repo: Path, version: str) -> None:
+    """Catch stale installation instructions before attempting a release.
+
+    tests/test_readme_install_tag.py asserts the same on every PR; this asks
+    again at release time, when the bump is made on the release commit (#1436).
+    """
+    path = repo / "README.md"
+    try:
+        readme = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise ReleaseError("README.md is missing; cannot check the install tag.") from None
+    problem = _install_tag_problem("README.md", readme, version)
+    if problem:
+        raise ReleaseError(problem)
+    # The software-kb extension's README and agentic-development tutorial pin
+    # the same tag. A checkout without one of them has nothing to check.
+    for extra in ("extensions/software-kb/README.md", "docs/tutorials/agentic-development.md"):
+        try:
+            text = (repo / extra).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            continue
+        problem = _install_tag_problem(extra, text, version)
+        if problem:
+            raise ReleaseError(problem)
+
+
+def check_pyrite_mcp_matches(repo: Path, version: str) -> None:
+    """`pyrite-mcp` carries Pyrite's version (#1582): its own `version`, the tag
+    its `pyrite @ git+...` dependency names, and the tags in its README.
+
+    One ReleaseError, one line per file that is wrong, each naming the file. A
+    checkout with no `pyrite-mcp/` has nothing to check (the script takes its
+    repository from `origin`; it is not Pyrite-only).
+    """
+    root = repo / "pyrite-mcp"
+    if not root.is_dir():
+        return
+    problems: list[str] = []
+
+    name = "pyrite-mcp/pyproject.toml"
+    try:
+        project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8")).get(
+            "project", {}
+        )
+    except FileNotFoundError:
+        problems.append(f"{name} is missing; cannot check its version.")
+    except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as exc:
+        problems.append(f"{name} could not be read as TOML: {exc}")
+    else:
+        declared = project.get("version") if isinstance(project, dict) else None
+        if declared != version:
+            problems.append(
+                f"{name} says version = {declared!r} but you asked to release {version!r}."
+            )
+        deps = project.get("dependencies", []) if isinstance(project, dict) else []
+        pyrite_deps = [d for d in deps if isinstance(d, str) and d.startswith("pyrite @")]
+        if not pyrite_deps:
+            problems.append(f"{name} has no `pyrite @ git+...@v<version>` dependency.")
+        else:
+            problem = _install_tag_problem(name + " dependency", " ".join(pyrite_deps), version)
+            if problem:
+                problems.append(problem)
+
+    name = "pyrite-mcp/README.md"
+    try:
+        text = (root / "README.md").read_text(encoding="utf-8")
+    except FileNotFoundError:
+        problems.append(f"{name} is missing; cannot check the install tags.")
+    else:
+        problem = _install_tag_problem(name, text, version)
+        if problem:
+            problems.append(problem)
+
+    if problems:
+        raise ReleaseError(
+            "\n".join(problems)
+            + "\nThe release commit moves these together: bump them on dev first."
         )
 
 
@@ -1078,6 +1180,14 @@ def step_preconditions(ctx: Context) -> None:
     if ctx.attempt(lambda: check_version_matches(ctx.repo, ctx.version)):
         ctx.runner.note(f"pyproject.toml version == {ctx.version}")
 
+    if ctx.attempt(lambda: check_readme_install_tag(ctx.repo, ctx.version)):
+        ctx.runner.note(f"README.md install tag == v{ctx.version}")
+
+    if ctx.attempt(lambda: check_pyrite_mcp_matches(ctx.repo, ctx.version)):
+        ctx.runner.note(
+            f"pyrite-mcp version, pyrite dependency tag and README tags == {ctx.version}"
+        )
+
     if ctx.attempt(lambda: check_changelog(ctx.repo, ctx.version, ctx.day)):
         ctx.runner.note(f"CHANGELOG has `## [{ctx.version}] - {ctx.day.isoformat()}` with content")
     if ctx.attempt(lambda: check_lock_is_current(ctx.repo)):
@@ -1390,12 +1500,20 @@ def step_release_layer(ctx: Context) -> None:
 
     if not (ctx.runner.execute or ctx.rehearse_install_check):
         spec = f"pyrite[{INSTALL_CHECK_EXTRAS}] @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+        sw_spec = (
+            f"pyrite-software-kb @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+            "#subdirectory=extensions/software-kb"
+        )
         print("    WOULD RUN: uv venv <tmp>")
         print(f'    WOULD RUN: uv pip install --python <tmp>/bin/python "{spec}"')
+        print(f'    WOULD RUN: uv pip install --python <tmp>/bin/python "{sw_spec}"')
         print(f"    WOULD RUN: <tmp>/bin/pyrite --version    (must contain {ctx.version})")
         print("    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh")
         print(
             f"    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh {TUTORIAL_20_MIN}"
+        )
+        print(
+            f"    WOULD RUN: PYRITE_TUTORIAL_VENV=<tmp> scripts/run_tutorial.sh {TUTORIAL_AGENTIC_DEV}"
         )
         if ctx.docker_check:
             print(f"    WOULD RUN: docker build -t pyrite:{ctx.version} .")
@@ -1416,12 +1534,18 @@ def step_release_layer(ctx: Context) -> None:
 
     venv = Path(tempfile.mkdtemp(prefix="pyrite-release-venv-"))
     spec = f"pyrite[{INSTALL_CHECK_EXTRAS}] @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+    sw_spec = (
+        f"pyrite-software-kb @ git+https://github.com/{ctx.slug}@{ctx.sha}"
+        "#subdirectory=extensions/software-kb"
+    )
     try:
         ctx.runner.note(f"temp venv: {venv}")
         print(f"    RUN: uv venv {venv}")
         _check_output(["uv", "venv", str(venv)])
         print(f'    RUN: uv pip install --python {venv}/bin/python "{spec}"')
         _check_output(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), spec])
+        print(f'    RUN: uv pip install --python {venv}/bin/python "{sw_spec}"')
+        _check_output(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), sw_spec])
 
         reported = _check_output([str(venv / "bin" / "pyrite"), "--version"]).strip()
         if ctx.version not in reported:
@@ -1450,6 +1574,16 @@ def step_release_layer(ctx: Context) -> None:
             env=env,
         )
         ctx.runner.note("Pyrite-in-20-minutes tutorial ran clean against the install")
+        print(
+            f"    RUN: PYRITE_TUTORIAL_VENV={venv} scripts/run_tutorial.sh {TUTORIAL_AGENTIC_DEV}"
+            "   (the agentic-development tutorial against the install)"
+        )
+        _check_output(
+            [str(ctx.repo / "scripts" / "run_tutorial.sh"), TUTORIAL_AGENTIC_DEV],
+            cwd=ctx.repo,
+            env=env,
+        )
+        ctx.runner.note("Agentic-development tutorial ran clean against the install")
     finally:
         shutil.rmtree(venv, ignore_errors=True)
 

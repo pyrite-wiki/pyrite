@@ -568,7 +568,7 @@ def entry_alias_names(entry: Any) -> frozenset[str]:
     """Alias names for a loaded entry: the schema's, plus the deprecated class attribute.
 
     The one reader the model layer uses (``models/base.py``). A class that
-    still sets ``FRONTMATTER_ALIASES`` is honoured until 0.27 and
+    still sets ``FRONTMATTER_ALIASES`` is honoured until 0.28 and
     warned about once; the attribute carries no target, so it can only warn.
     """
     cls = type(entry)
@@ -579,7 +579,7 @@ def entry_alias_names(entry: Any) -> frozenset[str]:
             _WARNED_CLASSES.add(cls)
             logger.warning(
                 "%s sets FRONTMATTER_ALIASES %s; this class attribute is deprecated and "
-                "will be removed in 0.27. Declare `field_aliases: {alias: target}` for type '%s' in "
+                "will be removed in 0.28. Declare `field_aliases: {alias: target}` for type '%s' in "
                 "the plugin's get_type_metadata() instead (ADR-0045).",
                 cls.__name__,
                 sorted(declared),

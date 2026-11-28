@@ -569,6 +569,37 @@ def test_mcp_and_rest_get_a_count_never_a_path(world):
     assert _world_rows(world) == SEEDED_IDS
 
 
+@pytest.mark.parametrize("surface", ["mcp-sync", "mcp-reindex", "rest-sync", "rest-reindex"])
+@pytest.mark.parametrize("unreadable", [False, True], ids=["readable-file", "unreadable-file"])
+def test_network_sync_counts_unreadable_files_without_naming_them(world, surface, unreadable):
+    if unreadable:
+        _world_shut(world, "file-000-mtime-moved")
+
+    if surface == "mcp-sync":
+        body = world.mcp()._dispatch_tool("kb_index_sync", {"kb_name": KB})
+    elif surface == "mcp-reindex":
+        body = world.mcp()._dispatch_tool("kb_registry_reindex", {"name": KB})
+    else:
+        response = (
+            world.client.post("/api/index/sync", params={"wait": "true"})
+            if surface == "rest-sync"
+            else world.client.post(f"/api/kbs/{KB}/reindex")
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+
+    assert type(body["unreadable_files"]) is int
+    assert body["unreadable_files"] == int(unreadable)
+    assert body["unreadable_folders"] == 0
+    assert body["removed"] == 0
+    assert _world_rows(world) == SEEDED_IDS
+    text = json.dumps(body)
+    assert str(world.root_kb) not in text
+    assert "inner.md" not in text
+    assert "Permission denied" not in text
+    assert "Errno" not in text
+
+
 def test_network_health_is_unhealthy_with_a_count_never_a_path(world):
     """REST and MCP ``kb health`` (shaped in ``KBRegistryService.health_kb``):
     unhealthy, and the folders as a count, as sync and reindex give them."""

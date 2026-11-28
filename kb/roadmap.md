@@ -52,8 +52,10 @@ community needs and feedback.
 | 0.26.3 | A network call borrows nothing of the server account, continued | 2026-11-16 |
 | 0.26.4 | Symlink identity and note typing; bugs and dependency alerts | 2026-11-18 |
 | 0.26.5 | One answer per question: the five structural themes of the 2026-11-16 code audit | 2026-12-10 |
-| 0.27 | One operator, many users | undated |
-| 0.28 | Alpha plugin and API contracts | undated |
+| 0.27 | The alpha: one operator, their agents, their repository | undated |
+| 0.27.1 | What the announcement did not need | undated |
+| 0.28 | One operator, many users | undated |
+| 0.29 | Alpha plugin and API contracts | undated |
 
 Dated releases are trains: what is done by the date ships. The GitHub
 milestones carry the issues; this table carries the promise and the gate.
@@ -102,17 +104,34 @@ milestones carry the issues; this table carries the promise and the gate.
   plugin conversions. Also carries what 0.26.4 did not close: the
   high-severity web dependency alerts and the CodeQL error-level alerts. A
   dated target, not a train: the date moves before a theme is cut.
-- **0.27: one operator, many users.** Design first: the authorization model
-  and its executable matrix (#587), the security review (#586), and one
-  operator-owned KB registry ([[adr-0039]]; #539, #602, #382).
-  ~~The `published` flag~~ (`/site` was removed in 0.26.0). Two planes: users read and write entries
-  per KB by grant; everything else belongs to the operator. Capabilities
-  granted by the operator and configured in a user-owned file are the
-  direction, not this release.
-- **0.28: alpha plugin and API contracts.** Plugins out of tree with
-  journalism-investigation as the pilot, where its tools are fixed (#92, #93,
-  #94, #98); identity injected by the dispatcher (#384); #385, #412, #456,
-  #626.
+- **0.27: the alpha announcement.** "The alpha: one operator, their agents,
+  their repository." Only announce-critical work (maintainer, 2026-11-25):
+  install into your own repository with one pinned line and no clone of
+  Pyrite; a KB's type carried in its own `kb.yaml`, so a clone registers
+  correctly (#1861); `discover --add` registers and indexes; the `sw` verbs
+  carry ADRs through a documented link vocabulary (#1862, #1863, #1864); one
+  tested getting-started page, run in CI and in `scripts/release.py` (epic
+  #1868); the instruction-file block, print-only in 0.27 (#1867, #1869); the
+  flagship wiki tutorial (epic #1661, slices #1665-#1669); and honest docs for
+  the alpha (#1897). The open issues are in GitHub milestone 0.27. *Slips
+  first:* #684.
+- **0.27.1.** What 0.27 does not need for the announcement (maintainer,
+  2026-11-25): search, index and MCP work; the research persona; the rest of
+  the developer-track docs; and the issues moved from the skipped 0.26.6.
+- **0.26.6 is skipped** (maintainer, 2026-11-25): its milestone is closed and
+  its issues moved to 0.27.1.
+- **0.28: one operator, many users** (maintainer, 2026-11-25). Design first:
+  multi-user, the authorization model and its executable matrix (#587), the
+  security review (#586), the operator-owned KB registry ([[adr-0039]]; #1486,
+  #539, #602, #382) and the write path. ~~The `published` flag~~ (`/site` was
+  removed in 0.26.0). Two planes: users read and write entries per KB by
+  grant; everything else belongs to the operator. Capabilities granted by the
+  operator and configured in a user-owned file are the direction, not this
+  release.
+- **0.29: alpha plugin and API contracts** (maintainer, 2026-11-25). Plugins
+  out of tree with journalism-investigation as the pilot, where its tools are
+  fixed (#92, #93, #94, #98); identity injected by the dispatcher (#384);
+  #385, #412, #456, #626. No issue is filed for it yet.
 
 The history sections below predate this release line.
 Where they differ, this section wins; their detail is kept for the reasoning.
@@ -382,7 +401,7 @@ without asking:
 | God-object splits | [[split-the-remaining-god-objects-software-kb-plugin-kb-service-index-qa-service]], [[split-mcp-server-module]], [[split-entries-endpoint]] | Opus, one object per PR, sequenced; a different set of capabilities — large-diff review, behaviour-preserving refactor, the cold read at scale |
 | MCP read-tier ergonomics (hallway test #56–#68, minus #56 which is milestone) | #57 #58 #59 #62 #64 #65 #66 #67 #68 | Sonnet mostly; the read tier is the agent surface, and the report's §2.12 says what not to touch (`kb/notes/hallway-test-read-tier-mcp-2026-09-18`) |
 | MCP write-tier correctness (hallway test tier 2) | #95 `kb_bulk_create` not best-effort, #96 `add_type` overwrites silently, #97 `kb_link` accepts a missing target (the mechanism behind #64) | Sonnet; each has a reproduction and acceptance in the issue |
-| CLI write-path integrity (CLI hallway test, `tests/usability/cli-hallway-report-2026-09-18.md`) | **#87** `link`/`update`/`create --link`/`links bulk-create` write frontmatter that no longer parses when the body has a `\|---\|` or `---` line, exit 0 — milestone; #48 cascade validator never called; #51 `parked_awaiting` lost from the index; #54 search output shape; #52 `task status` deprecation invisible | #87 is the same serialization fault as #46/#86 seen from the link step — one theme with #69's follow-up, Opus; the rest Sonnet. Report's "if only three things": the link step, `filters_dropped` on every search response, `--dry-run` on `link` and `update` |
+| CLI write-path integrity (CLI hallway test, 2026-09-18) | **#87** `link`/`update`/`create --link`/`links bulk-create` write frontmatter that no longer parses when the body has a `\|---\|` or `---` line, exit 0 — milestone; #48 cascade validator never called; #51 `parked_awaiting` lost from the index; #54 search output shape; #52 `task status` deprecation invisible | #87 is the same serialization fault as #46/#86 seen from the link step — one theme with #69's follow-up, Opus; the rest Sonnet. The hallway test's "if only three things": the link step, `filters_dropped` on every search response, `--dry-run` on `link` and `update` |
 | Quality pool for the retro (tagged `quality`) | [[tests-leak-open-pyritedb-connections-into-temporarydirectory-teardown]], [[worktree-no-lost-commits-invariant]], [[index-rebuild-from-files-equivalence-test]], [[regression-test-links-fts-quoting]], [[cli-output-is-inconsistent-when-stdout-is-not-a-tty]] | Sonnet; pre-groomed stock so the retro's quality theme has candidates before it has evidence of its own |
 
 Left out on purpose: the JI UI features and the review surface (0.26 — the
@@ -595,7 +614,7 @@ index match the files and reports duplicates, pinned by invariant tests.
   `embed-the-whole-entry-in-passages-by-default`, on the evidence of the embedding spike.
   It changes the index, so it needs a groom and probably an ADR first.
 
-## History: the multi-user plan as of 2026-10-01 (now 0.27)
+## History: the multi-user plan as of 2026-10-01 (now 0.28)
 
 **Sequencing (2026-10-01):** grooming for the review starts in parallel with the 0.25.x
 releases, at a low rate; the build starts after 0.25.9. Target November, no fixed date.
@@ -756,7 +775,7 @@ maintainer.
 
 ---
 
-## History: the plugin direction as of 2026-09-26 (now 0.28)
+## History: the plugin direction as of 2026-09-26 (now 0.29)
 
 - **ADR-0037 themes 3b–5:** writes and MCP go through the one policy point.
 - **CodeQL advanced setup (#228).**

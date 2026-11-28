@@ -1,0 +1,1 @@
+- The plugin contract and the plugin-writing guide now state that a loader must accept a mapping of only `type`, `id` and `title`, the base keys a partial read probes first. A test checks every in-tree plugin type against that rule. Loader behavior is unchanged. (#1855)

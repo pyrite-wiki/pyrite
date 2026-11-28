@@ -281,6 +281,57 @@ class TestEverySearchSaysWhatItSearched:
             assert "fields" not in payload["searched"], surface
 
 
+class TestARefusedImportanceIsFlaggedOnEverySurface:
+    """A row whose file holds a refused importance carries `entry_warnings`,
+    whole and under a `fields` projection, on the CLI, MCP and REST (#1761).
+    Search's page-level `warnings` is a different key and is not used."""
+
+    @pytest.fixture
+    def flagged(self, env):
+        from pyrite.storage.index import IndexManager
+
+        root = env["config"].get_kb(OPEN).path
+        (root / "quokka.md").write_text(
+            "---\nid: quokka\ntype: note\ntitle: Quokka notes\nimportance: 7.5\n---\n\n"
+            "quokkaword body.\n"
+        )
+        (root / "numbat.md").write_text(
+            "---\nid: numbat\ntype: note\ntitle: Numbat notes\nimportance: 5.0\n---\n\n"
+            "quokkaword body too.\n"
+        )
+        (root / "bilby.md").write_text(
+            "---\nid: bilby\ntype: note\ntitle: Bilby notes\n---\n\nquokkaword body too.\n"
+        )
+        IndexManager(env["db"], env["config"]).index_kb(OPEN)
+        return env
+
+    @staticmethod
+    def _by_id(payload):
+        return {r["id"]: r for r in payload["results"]}
+
+    def _surfaces(self, env, **extra):
+        fields_cli = ["--fields", extra["fields"]] if "fields" in extra else []
+        mcp_extra = {"fields": extra["fields"].split(",")} if "fields" in extra else {}
+        return {
+            "cli": cli(env, "quokkaword", "-k", OPEN, "--mode", "keyword", *fields_cli),
+            "mcp": mcp(env, query="quokkaword", kb_name=OPEN, mode="keyword", **mcp_extra),
+            "rest": rest(env["admin"], q="quokkaword", kb=OPEN, mode="keyword", **extra),
+        }
+
+    @pytest.mark.parametrize("fields", [None, "id", "id,title"])
+    def test_the_refused_row_is_flagged_and_the_others_are_not(self, flagged, fields):
+        extra = {"fields": fields} if fields else {}
+        for surface, payload in self._surfaces(flagged, **extra).items():
+            rows = self._by_id(payload)
+            assert set(rows) == {"quokka", "numbat", "bilby"}, surface
+            said = rows["quokka"].get("entry_warnings")
+            assert said and "1-10" in said[0] and "7.5" in said[0], (surface, rows["quokka"])
+            assert not rows["numbat"].get("entry_warnings"), (surface, rows["numbat"])
+            assert not rows["bilby"].get("entry_warnings"), (surface, rows["bilby"])
+            # The page-level key is not the entry's: no leg was skipped here.
+            assert "warnings" not in payload, (surface, payload)
+
+
 class TestTheVerdictSurvivesRowShaping:
     @pytest.mark.parametrize("mode", MODES)
     def test_a_fields_projection_keeps_the_top_level_keys(self, env, mode):

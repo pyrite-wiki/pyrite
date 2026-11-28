@@ -431,9 +431,20 @@ class BaseBackend(ABC):
                     if link.get("relation") != "markdown_link"
                 ]
                 self._sync_links(entry_id, kb_name, links, keep_path_rows=True)
-            self._sync_entry_refs(entry_id, kb_name, entry_data)
-            self._sync_blocks(entry_id, kb_name, entry_data)
-            self._sync_edge_endpoints(entry_id, kb_name, entry_data)
+            # Derived rows (refs, blocks, edge endpoints) are replaced only
+            # by a write that can name them: one made from the entry's file
+            # (it carries ``_kb_root``; ``_entry_to_dict`` sets each key only
+            # when non-empty, so an absent key there means "none now") or one
+            # that carries the key itself. A write back from a read (dedup)
+            # names none of them, and dropping them would lose the rows
+            # until the next index -- the rule links follow above (#1723,
+            # #1733).
+            if entry_data.get("_kb_root") or "_refs" in entry_data:
+                self._sync_entry_refs(entry_id, kb_name, entry_data)
+            if entry_data.get("_kb_root") or "_blocks" in entry_data:
+                self._sync_blocks(entry_id, kb_name, entry_data)
+            if entry_data.get("_kb_root") or "_edge_endpoints" in entry_data:
+                self._sync_edge_endpoints(entry_id, kb_name, entry_data)
             self._session.commit()
         except Exception:
             self._session.rollback()
@@ -846,13 +857,35 @@ class BaseBackend(ABC):
 
     def _get_entry_links(self, entry_id: str, kb_name: str) -> list[dict[str, Any]]:
         links = (
-            self._session.query(Link.target_id, Link.target_kb, Link.relation, Link.note)
+            self._session.query(
+                Link.target_id,
+                Link.target_kb,
+                Link.relation,
+                Link.note,
+                Link.target_path,
+                Link.target_resolved,
+            )
             .filter_by(source_id=entry_id, source_kb=kb_name)
             .all()
         )
-        return [
-            {"target_id": l[0], "target_kb": l[1], "relation": l[2], "note": l[3]} for l in links
-        ]
+        items = []
+        for target_id, target_kb, relation, note, target_path, target_resolved in links:
+            item: dict[str, Any] = {
+                "target_id": target_id,
+                "target_kb": target_kb,
+                "relation": relation,
+                "note": note,
+            }
+            if target_path is not None:
+                # A Markdown link row (#1723): name the path it names and
+                # whether an entry file is there. A broken row's target_id
+                # is its path text, which a hand-set id may equal, so the
+                # flag is the only way to tell it from a link to that entry
+                # (#1765).
+                item["target_path"] = target_path
+                item["broken"] = target_resolved != 1
+            items.append(item)
+        return items
 
     # =====================================================================
     # List / count / types (ORM-based — shared)
@@ -908,6 +941,10 @@ class BaseBackend(ABC):
             query = query.order_by(sort_col.desc())
         if col != "updated_at":
             query = query.order_by(Entry.updated_at.desc())
+        # Ties broken by the primary key, so offset-paged reads (recent's
+        # since-filtered pages, list_entries) never repeat or skip a row that
+        # shares its sort value with a page boundary (#1859).
+        query = query.order_by(Entry.id.asc(), Entry.kb_name.asc())
 
         query = query.limit(limit).offset(offset)
         rows = query.all()
@@ -927,12 +964,20 @@ class BaseBackend(ABC):
         kb_names: set[str] | list[str] | None = None,
         entry_type: str | None = None,
         tag: str | None = None,
+        include_archived: bool = False,
         status: str | None = None,
         min_importance: int | None = None,
     ) -> int:
         from sqlalchemy import func
 
-        query = self._session.query(func.count(func.distinct(Entry.id)))
+        # Count the same set `list_entries` returns by default: archived
+        # entries are dropped there, and the entry key is (id, kb_name), so
+        # one id in two KBs is two entries — not one merged row.
+        # `include_archived=True` is for "is anything indexed?" callers,
+        # which must not report an archived-only index as empty.
+        query = self._session.query(Entry.id, Entry.kb_name)
+        if not include_archived:
+            query = query.filter(func.coalesce(Entry.lifecycle, "active") != "archived")
         if tag:
             query = (
                 query.join(
@@ -954,7 +999,7 @@ class BaseBackend(ABC):
             query = query.filter(effective_status.status_orm(keys) == status)
         if min_importance is not None:
             query = query.filter(Entry.importance >= min_importance)
-        return query.scalar() or 0
+        return query.distinct().count()
 
     def get_distinct_types(
         self,
@@ -1204,66 +1249,6 @@ class BaseBackend(ABC):
         for hit in self._exec(sql, params):
             hits[str(hit["id"])].append(str(hit["kb_name"]))
         return hits
-
-    def get_all_backlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL backlinks targeting entries in a KB in one query."""
-        rows = self._exec(
-            """
-            SELECT l.target_id, e.id, e.kb_name, e.title, e.entry_type,
-                   l.inverse_relation as relation, l.relation as forward_relation,
-                   l.target_prefix as prefix, l.note
-            FROM link l
-            JOIN entry e ON l.source_id = e.id AND l.source_kb = e.kb_name
-            WHERE l.target_kb = :kb_name AND COALESCE(l.target_resolved, 1) = 1
-            """,
-            {"kb_name": kb_name},
-        )
-        result: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            d = dict(row)
-            target_id = d.pop("target_id")
-            result[target_id].append(_with_inverse_relation([d])[0])
-        return result
-
-    def get_all_outlinks_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL outlinks from entries in a KB in one query."""
-        rows = self._exec(
-            """
-            SELECT l.source_id,
-                   l.target_id as id, l.target_kb as kb_name,
-                   e.title, e.entry_type, l.relation, l.target_prefix as prefix, l.note
-            FROM link l
-            LEFT JOIN entry e ON l.target_id = e.id AND l.target_kb = e.kb_name
-                AND COALESCE(l.target_resolved, 1) = 1
-            WHERE l.source_kb = :kb_name
-            """,
-            {"kb_name": kb_name},
-        )
-        result: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            d = dict(row)
-            source_id = d.pop("source_id")
-            result[source_id].append(d)
-        return result
-
-    def get_all_sources_for_kb(self, kb_name: str) -> dict[str, list[dict[str, Any]]]:
-        """Get ALL sources for entries in a KB in one query."""
-        rows = self._exec(
-            """
-            SELECT s.entry_id, s.id, s.title, s.url, s.outlet, s.date, s.verified
-            FROM source s
-            WHERE s.kb_name = :kb_name
-            """,
-            {"kb_name": kb_name},
-        )
-        result: dict[str, list[dict[str, Any]]] = defaultdict(list)
-        for row in rows:
-            d = dict(row)
-            entry_id = d.pop("entry_id")
-            d["entry_id"] = entry_id
-            d["kb_name"] = kb_name
-            result[entry_id].append(d)
-        return result
 
     def get_graph_data(
         self,

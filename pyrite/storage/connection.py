@@ -618,11 +618,11 @@ class ConnectionMixin:
     def conn(self):
         """Backward-compat: returns raw sqlite3 connection.
 
-        Deprecated; removed in 0.27. Use ``session`` for writes and ``execute_sql()`` for
+        Deprecated; removed in 0.28. Use ``session`` for writes and ``execute_sql()`` for
         read-only raw SQL queries.
         """
         warnings.warn(
-            "db.conn is deprecated and will be removed in 0.27. Use db.session for writes and "
+            "db.conn is deprecated and will be removed in 0.28. Use db.session for writes and "
             "db.execute_sql() for read-only queries.",
             DeprecationWarning,
             stacklevel=2,

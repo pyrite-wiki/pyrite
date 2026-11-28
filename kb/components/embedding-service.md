@@ -30,7 +30,7 @@ Initialized with a `PyriteDB` instance and an optional model name (defaults to `
 | `embed_text(text)` | Generate a float32 embedding vector for arbitrary text |
 | `embed_entry(entry_id, kb_name)` | Embed a single entry (title + summary + first 500 chars of body) and upsert into `vec_entry` |
 | `embed_all(kb_name, force, progress_callback)` | Batch embed all entries for a KB (or all KBs). Returns `{embedded, skipped, errors}` counts. Skips already-embedded entries unless `force=True` |
-| `search_similar(query, kb_name, limit, min_similarity, kb_names, ...filters)` | KNN search: embeds the query and asks the backend's `search_semantic`, which filters by KB, readable set and the keyword leg's filters and cuts at a cosine similarity floor (default 0.155). Returns up to `limit` rows with `similarity` (cosine, 3 places, the same on every backend), `snippet`, and `distance` (backend-specific; leaves after one release) |
+| `search_similar(query, kb_name, limit, min_similarity, kb_names, ...filters)` | KNN search: embeds the query and asks the backend's `search_semantic`, which filters by KB, readable set and the keyword leg's filters and cuts at a cosine similarity floor (default 0.155). Returns up to `limit` rows with `similarity` (cosine, 3 places, the same on every backend) and `snippet` |
 | `has_embeddings(kb_name=None, kb_names=None)` | Do any embeddings exist: in the index, or in the KBs named |
 | `embedding_stats()` | Returns `{available, count, total_entries, coverage}` statistics |
 

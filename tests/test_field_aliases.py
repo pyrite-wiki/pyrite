@@ -416,7 +416,7 @@ class TestConformance:
         warnings = [r for r in caplog.records if "foo" in r.getMessage()]
         assert len(warnings) == 1
         assert "Legacy" in warnings[0].getMessage()
-        assert "removed in 0.27" in warnings[0].getMessage()
+        assert "removed in 0.28" in warnings[0].getMessage()
 
     def test_in_tree_classes_declare_no_class_attribute(self):
         # The data moved to the schema; a class that still keeps the attribute

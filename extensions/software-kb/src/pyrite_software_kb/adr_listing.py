@@ -142,3 +142,47 @@ def next_adr_number(kb_conf: Any) -> int:
     row whose file is gone does not advance it (#1082, #1175).
     """
     return max(adr_numbers_in_files(kb_conf) | {0}) + 1
+
+
+ADR_SECTION_PLACEHOLDERS = {
+    "context": "TODO: What is the issue that we're seeing that is motivating this decision or change?",
+    "decision": "TODO: What is the change that we're proposing and/or doing?",
+    "consequences": "TODO: What becomes easier or more difficult to do because of this change?",
+}
+
+
+def build_adr_body(
+    adr_number: int,
+    title: str,
+    *,
+    body_content: str | None = None,
+    context: str | None = None,
+    decision: str | None = None,
+    consequences: str | None = None,
+) -> str:
+    """Build the markdown body for an ADR entry (#1862).
+
+    Shared between the CLI (`sw new-adr`) and the MCP handler (`_mcp_create_adr`).
+    """
+    heading = f"# ADR-{adr_number:04d}: {title}"
+    if body_content is not None:
+        content = body_content.strip()
+        if content.startswith(heading):
+            return f"{content}\n" if not content.endswith("\n") else content
+        if content:
+            return f"{heading}\n\n{content}\n"
+        return f"{heading}\n"
+
+    c = context if (context is not None and context != "") else ADR_SECTION_PLACEHOLDERS["context"]
+    d = (
+        decision
+        if (decision is not None and decision != "")
+        else ADR_SECTION_PLACEHOLDERS["decision"]
+    )
+    cq = (
+        consequences
+        if (consequences is not None and consequences != "")
+        else ADR_SECTION_PLACEHOLDERS["consequences"]
+    )
+
+    return f"{heading}\n\n## Context\n\n{c}\n\n## Decision\n\n{d}\n\n## Consequences\n\n{cq}\n"

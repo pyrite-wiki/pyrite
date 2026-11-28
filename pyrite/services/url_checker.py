@@ -20,6 +20,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ..exceptions import ClipperBlockedHostError, StorageError, outside_text
 from ..storage.errors import storage_error_from
+from ..utils.public_destination import PinnedAddresses, pinned_url_handlers
 from ..utils.public_destination import check_url_safe as _check_url_safe
 
 logger = logging.getLogger(__name__)
@@ -59,10 +60,14 @@ class URLCheckResult:
 
 
 class _PublicDestinationRedirects(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only to a destination the clipper's rule allows."""
+    """Follows a redirect only to a destination the clipper's rule allows, and
+    pins the addresses that check judged for the hop's connection."""
+
+    def __init__(self, pins: PinnedAddresses) -> None:
+        self._pins = pins
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
-        _check_url_safe(newurl)
+        self._pins.record(newurl, _check_url_safe(newurl))
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -134,16 +139,20 @@ class URLChecker:
         The destination is checked before the request and again on every
         redirect hop (a redirect is a new destination), with the rule the web
         clipper applies: globally routable addresses only. A refusal raises
-        ``ClipperBlockedHostError``.
+        ``ClipperBlockedHostError``. Each connection goes to an address that
+        hop's check judged (``pinned_url_handlers``), never to a fresh lookup.
         """
         import urllib.request
 
-        _check_url_safe(req.full_url)
+        pins = PinnedAddresses()
+        pins.record(req.full_url, _check_url_safe(req.full_url))
         # The URL is a caller's: an empty ProxyHandler replaces the default
         # one that reads the server account's proxy variables (which can
         # carry a proxy credential). ADR-0052 N2.
         opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}), _PublicDestinationRedirects
+            urllib.request.ProxyHandler({}),
+            _PublicDestinationRedirects(pins),
+            *pinned_url_handlers(pins),
         )
         return opener.open(req, timeout=self.timeout)
 

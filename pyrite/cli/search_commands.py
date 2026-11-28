@@ -29,8 +29,8 @@ from ..services.read_shaping import (
     unmatched_search_fields,
 )
 from ..utils.errors import exit_unless_whole
-from .context import get_config_with_registered_kbs, require_kb
-from .output import cli_console, validate_output_format
+from .context import ROW_COUNT_MAX, get_config_with_registered_kbs, require_kb
+from .output import cli_console, print_rich_entry_warnings, validate_output_format
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +101,9 @@ def register_search_command(app: typer.Typer):
                 "'readiness') are NOT reachable via this flag."
             ),
         ),
-        limit: int = typer.Option(20, "--limit", "-n", help="Max results"),
+        limit: int = typer.Option(
+            20, "--limit", "-n", min=1, max=ROW_COUNT_MAX, help="Max results"
+        ),
         mode: str = typer.Option(
             None, "--mode", "-m", help="Search mode: keyword, semantic, hybrid"
         ),
@@ -215,6 +217,20 @@ def register_search_command(app: typer.Typer):
             return
         if query is None:
             raise typer.BadParameter("Missing argument 'QUERY' (or use --batch FILE).")
+
+        for name, value in (("query", query), ("kb", kb_name)):
+            if value is not None:
+                try:
+                    value.encode("utf-8")
+                except UnicodeEncodeError:
+                    from ..utils.errors import cli_error
+
+                    cli_error(
+                        f"{name} holds text that is not valid UTF-8 (a lone surrogate, or bytes that were not UTF-8)",
+                        output_format,
+                        error_code="VALIDATION_FAILED",
+                        retryable=False,
+                    )
 
         asked = bool(
             parse_fields_param(fields) or parse_fields_param(os.environ.get(SEARCH_FIELDS_ENV))
@@ -364,6 +380,10 @@ def register_search_command(app: typer.Typer):
                         if f not in IDENTITY_FIELDS and any(f in r for r in results)
                     ]
                 content, _ = format_response(resp_data, output_format, fields=table_fields)
+                if output_format == "csv":
+                    from .output import note_entry_warnings
+
+                    note_entry_warnings(resp_data)
                 typer.echo(content)
                 return
 
@@ -371,6 +391,7 @@ def register_search_command(app: typer.Typer):
                 from ..formats.tabular import projected_rich_table
 
                 console.print(projected_rich_table(results, fields_list, "Search Results"))
+                print_rich_entry_warnings(console, {"results": results})
                 return
 
             table = Table(title=f"Search Results ({len(results)})")
@@ -404,6 +425,7 @@ def register_search_command(app: typer.Typer):
                 table.add_row(*cells, *([date] if show_date else []), snippet)
 
             console.print(table)
+            print_rich_entry_warnings(console, {"results": results})
 
         except QuerySyntaxError as e:
             # Deterministic, not retryable — falling back to file search
@@ -767,6 +789,12 @@ def _run_batch(
     exit_unless_whole(failed, len(searches) - failed)
 
 
+def _safe_rich(val: object) -> str:
+    if val is None:
+        return ""
+    return str(val).encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def _print_batch(data: dict, output_format: str) -> None:
     if output_format != "rich":
         from ..formats import format_response
@@ -774,17 +802,21 @@ def _print_batch(data: dict, output_format: str) -> None:
         typer.echo(format_response(data, output_format)[0])
         return
     for position, slot in enumerate(data["searches"], start=1):
-        console.print(f"[bold]{position}. {escape(str(slot['query']))}[/bold]")
+        query_str = _safe_rich(slot.get("query"))
+        console.print(f"[bold]{position}. {escape(query_str)}[/bold]")
         if "error" in slot:
-            console.print(f"  [red]{escape(slot['error_code'])}:[/red] {escape(slot['error'])}")
+            err_code = _safe_rich(slot.get("error_code", ""))
+            err_msg = _safe_rich(slot.get("error", ""))
+            console.print(f"  [red]{escape(err_code)}:[/red] {escape(err_msg)}")
             continue
         if not slot["results"]:
             console.print("  [yellow]No results found.[/yellow]")
         for r in slot["results"]:
-            console.print(
-                f"  [cyan]{escape(str(r.get('kb_name', '')))}[/cyan] "
-                f"[dim]{escape(str(r.get('id', '')))}[/dim] {escape(str(r.get('title', '')))}"
-            )
+            kb = _safe_rich(r.get("kb_name", ""))
+            rid = _safe_rich(r.get("id", ""))
+            title = _safe_rich(r.get("title", ""))
+            console.print(f"  [cyan]{escape(kb)}[/cyan] [dim]{escape(rid)}[/dim] {escape(title)}")
+        print_rich_entry_warnings(console, slot)
 
 
 def _warn_fields_not_applied(fields):

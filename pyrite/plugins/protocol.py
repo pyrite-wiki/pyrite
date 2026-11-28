@@ -64,6 +64,11 @@ class PyritePlugin(Protocol):
         raises makes the file read-only through Pyrite until it is fixed by
         hand: reads return the declared type without the refused fields, and
         every write is refused with ``ENTRY_UNREADABLE`` (decision 8a).
+
+        A loader must accept a mapping of only ``type``, ``id`` and ``title``:
+        a partial read probes the loader with those base keys first, and a
+        loader that refuses them makes the read answer ``ENTRY_UNREADABLE``
+        instead of listing the refused fields (#1855).
         """
         ...
 

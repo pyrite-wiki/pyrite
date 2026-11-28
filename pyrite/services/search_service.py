@@ -24,6 +24,7 @@ from ..exceptions import (
 )
 from ..storage.errors import storage_error_from
 from ..storage.virtual_tables import EMBEDDED_PARTS, KEYWORD_SEARCHED_PARTS
+from .importance_reading import attach_importance_warnings
 
 if TYPE_CHECKING:
     from ..storage.database import PyriteDB
@@ -609,6 +610,12 @@ class SearchService:
         apply: a single term (nothing to relax), an empty query, or a query the
         user already wrote with explicit operators or quoted phrases (we honor
         their intent rather than widening it).
+
+        Lowercase stop words are left out of the retry. An OR join of "who is
+        the design work" would otherwise match any entry containing "is" and
+        report a keyword hit where the caller's terms never appeared (#1509).
+        As in `build_or_query`, capitalised tokens such as "IT" and "US" are
+        kept: those are acronyms, not stop words.
         """
         if not query or not query.strip():
             return None
@@ -618,6 +625,9 @@ class SearchService:
             return None
         terms = query.split()
         if len(terms) < 2:
+            return None
+        terms = [term for term in terms if not (term.lower() in _STOP_WORDS and not term.isupper())]
+        if not terms:
             return None
         quoted_terms = [re.sub(r"(\S*[^\w\s]\S*)", r'"\1"', term) for term in terms]
         return " OR ".join(quoted_terms)
@@ -780,10 +790,9 @@ class SearchService:
            appears only in one yet (#1776).
         7. Every row the vector leg returned carries ``similarity``: cosine
            similarity, 3 places, the same number on every backend. A hybrid
-           row carries ``legs``, the legs that returned it. ``distance`` (the
-           backend's own measure), ``rank`` (raw BM25) and ``rrf_score`` (rank
-           arithmetic) order results and are not scores; ``distance`` leaves
-           the response in 0.27; use ``similarity`` instead.
+           row carries ``legs``, the legs that returned it. ``rank`` (raw BM25)
+           and ``rrf_score`` (rank arithmetic) order results and are not
+           scores; use ``similarity`` for vector similarity.
         8. The thresholds behind ``match`` belong to an embedding model. With a
            model that has no row in ``_MODEL_MATCH_THRESHOLDS`` the vector leg
            is not judged: ``match_basis`` says ``uncalibrated model <name>``,
@@ -1065,6 +1074,8 @@ class SearchService:
             )
             if ran
         ]
+        # A refused importance keeps its legacy reading in the row; say so (#1761, #1805).
+        attach_importance_warnings(self.db, results)
         response: dict[str, Any] = {
             "results": results,
             "match": match,
@@ -1345,7 +1356,9 @@ class SearchService:
             # be warned about (#668).
             kwargs["kb_names"] = kb_names
         try:
-            return self.db.count_entries(**kwargs) > 0
+            # "Is anything indexed?" — archived entries count, so an
+            # archived-only index is not reported as empty (#1860 review).
+            return self.db.count_entries(include_archived=True, **kwargs) > 0
         except Exception:
             logger.debug("Could not count entries for the embed warning", exc_info=True)
             return False
@@ -1514,7 +1527,6 @@ class SearchService:
                 kept = entries[key]
                 kept["legs"] = ["keyword", "semantic"]
                 kept["similarity"] = result["similarity"]
-                kept["distance"] = result.get("distance")
 
         # Sort by RRF score descending
         sorted_keys = sorted(scores.keys(), key=lambda k: scores[k], reverse=True)
