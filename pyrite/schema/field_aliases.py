@@ -301,87 +301,14 @@ def values_identical(a: Any, b: Any) -> bool:
     "Type" is the YAML kind (``_yaml_kind``), not the parser's class: the
     round-trip parser reads ``x``, ``'x'`` and ``"x"`` as three ``str``
     subclasses and a block mapping as its own mapping class, and they are
-    one value each (#1013: a quoted pair was called a disagreement).
-
-    ``.nan`` is the same value as itself (#749): it never equals itself
-    under ``==``, so without the clause a file holding one could not be
-    updated at all. The clause lived in a wrapper in the service until
-    #1704 folded it in here, so this is the one statement of the rule."""
+    one value each (#1013: a quoted pair was called a disagreement)."""
     if _yaml_kind(a) != _yaml_kind(b):
         return False
     if isinstance(a, Mapping):
         return a.keys() == b.keys() and all(values_identical(a[k], b[k]) for k in a)
     if isinstance(a, list | tuple):
         return len(a) == len(b) and all(values_identical(x, y) for x, y in zip(a, b, strict=True))
-    if isinstance(a, float) and a != a and b != b:
-        return True  # .nan on both sides (the kinds already match)
     return bool(a == b)
-
-
-def same_yaml_value(a: Any, b: Any) -> bool:
-    """The same value, for an update: the one comparison an update's
-    no-change decisions use (#1704). ``apply``'s no-change check, the
-    ``unchanged`` report and the kept-row judgement all call this, so a
-    value an update names is judged the same way in each place.
-
-    ``values_identical`` (the same YAML value, type included: ``True`` is
-    not ``1``, and the string ``"5"`` is not the number ``5``), or a
-    number in another spelling
-    (``5`` is ``5.0``), or a string that spells a date or a timestamp:
-    its ISO form, or the same instant in another ISO spelling (ADR-0042
-    decision 3's temporal clause). A caller who sends a date back as
-    text has not changed it.
-
-    The number clause is the maintainer's decision on #1704
-    (2026-11-19): an update that sends ``5`` over a file's ``5.0`` is
-    reported unchanged and the file is left untouched; it is not stored
-    as ``5``. That differs from #1588's "an accepted importance is
-    stored as an int" only when the value on disk is already that
-    number: a value an update actually changes is still stored in the
-    form the update produced."""
-    if isinstance(a, Mapping) and isinstance(b, Mapping):
-        return a.keys() == b.keys() and all(same_yaml_value(a[k], b[k]) for k in a)
-    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
-        return len(a) == len(b) and all(same_yaml_value(x, y) for x, y in zip(a, b, strict=True))
-    if values_identical(a, b):
-        return True
-    if _same_number(a, b):
-        return True
-    if isinstance(a, str) and isinstance(b, date):
-        a, b = b, a
-    return isinstance(a, date) and isinstance(b, str) and _date_spelled_as(a, b)
-
-
-def _same_number(a: Any, b: Any) -> bool:
-    """Both are numbers (``int`` or ``float``, never ``bool``) and equal
-    by value: the one place a respelled number counts as the same value.
-    ``bool`` is excluded, as in ``values_equal``: ``True`` is not ``1``,
-    and it is not ``1.0`` either."""
-    return (
-        isinstance(a, int | float)
-        and isinstance(b, int | float)
-        and not isinstance(a, bool)
-        and not isinstance(b, bool)
-        and a == b
-    )
-
-
-def _date_spelled_as(value: date, text: str) -> bool:
-    """``text`` spells ``value``: its ISO form, or the same instant in
-    another ISO spelling (ADR-0042 decision 3's temporal clause)."""
-    if value.isoformat() == text:
-        return True
-    if not isinstance(value, datetime):
-        return False
-    if value.isoformat(" ") == text:
-        return True
-    try:
-        other = datetime.fromisoformat(text)
-    except ValueError:
-        return False
-    if (value.tzinfo is None) != (other.tzinfo is None):
-        return False
-    return bool(value == other)
 
 
 def _yaml_kind(value: Any) -> str:
@@ -641,7 +568,7 @@ def entry_alias_names(entry: Any) -> frozenset[str]:
     """Alias names for a loaded entry: the schema's, plus the deprecated class attribute.
 
     The one reader the model layer uses (``models/base.py``). A class that
-    still sets ``FRONTMATTER_ALIASES`` is honoured until 0.27 and
+    still sets ``FRONTMATTER_ALIASES`` is honoured until 0.28 and
     warned about once; the attribute carries no target, so it can only warn.
     """
     cls = type(entry)
@@ -652,7 +579,7 @@ def entry_alias_names(entry: Any) -> frozenset[str]:
             _WARNED_CLASSES.add(cls)
             logger.warning(
                 "%s sets FRONTMATTER_ALIASES %s; this class attribute is deprecated and "
-                "will be removed in 0.27. Declare `field_aliases: {alias: target}` for type '%s' in "
+                "will be removed in 0.28. Declare `field_aliases: {alias: target}` for type '%s' in "
                 "the plugin's get_type_metadata() instead (ADR-0045).",
                 cls.__name__,
                 sorted(declared),
