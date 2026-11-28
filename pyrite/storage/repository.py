@@ -350,10 +350,10 @@ def load_problem(field_path: str, error: str) -> dict[str, str]:
     }
 
 
-def _loader_refuses(fm: dict) -> str | None:
+def _loader_refuses(fm: dict, body: str = "") -> str | None:
     """The loader's message when the type ``fm`` declares refuses it, else None."""
     try:
-        entry_from_frontmatter(fm, "")
+        entry_from_frontmatter(fm, body)
     except Exception as e:  # noqa: BLE001 - a probe of the type's own loader
         # A loader's text (a plugin's, a library's) reaches the refusal's
         # message and its fields: a network caller gets Pyrite's own text
@@ -380,14 +380,14 @@ def _without(fm: dict, refused: Mapping[str, str]) -> dict:
 
 def _refused_fields(fm: dict, body: str) -> dict[str, str]:
     """``{file key: loader message}`` for each key the declared type's loader
-    refuses on its own, or ``{}`` when the refusal is not isolated to fields.
+    refuses with the other kept fields present, or ``{}`` for an unisolated error.
 
-    A key is refused when the loader raises on the base keys (``type``,
+    A key is a candidate when the loader raises on the base keys (``type``,
     ``id``, ``title``) plus that key alone; a ``metadata:`` mapping is probed
-    key by key, so ``metadata.rank`` is named as such. Isolated means the base
-    keys load alone and the file loads without the refused keys; otherwise
-    (a base field, a cross-field rule, a key the loader requires) it is
-    ``{}``. Runs only for a file that already failed to load.
+    key by key, so ``metadata.rank`` is named as such. If the base and the file
+    without the candidates both load, put back any candidate that loads in
+    context, one at a time and in file order. Runs only for a file that
+    already failed to load.
     """
     base = {k: fm[k] for k in ("type", "id", "title") if k in fm}
     if _loader_refuses(base) is not None:
@@ -411,10 +411,21 @@ def _refused_fields(fm: dict, body: str) -> dict[str, str]:
         refused[str(key)] = whole
     if not refused:
         return {}
-    try:
-        entry_from_frontmatter(_without(fm, refused), body)
-    except Exception:  # noqa: BLE001 - the rest still does not load: not isolated
+    if _loader_refuses(_without(fm, refused), body) is not None:
         return {}
+
+    # Restoring a field can make an earlier candidate load on the next pass.
+    # Each successful pass shrinks the set, in deterministic file order.
+    while refused:
+        count = len(refused)
+        for key in tuple(refused):
+            remaining = refused.copy()
+            del remaining[key]
+            if _loader_refuses(_without(fm, remaining), body) is not None:
+                continue
+            refused = remaining
+        if len(refused) == count:
+            break
     return refused
 
 
