@@ -30,7 +30,7 @@ from pyrite.services.search_service import SearchService
 from pyrite.storage.database import PyriteDB
 from tests.auth_seed import seed_and_sign_in
 from tests.cli_help import plain
-from tests.search_verdict_seed import install_fake_model, vector_at
+from tests.search_verdict_seed import FakeModel, install_fake_model, vector_at
 
 OPEN, SECRET = "open", "secret"
 SECRET_SCORES = (0.87, 0.86)  # the similarities seeded into `secret` below
@@ -266,6 +266,29 @@ class TestEverySearchSaysWhatItSearched:
         for surface, payload in walk(env, "falcon", mode).items():
             assert payload["searched"] == want, surface
             assert payload.get("body_prefix_chars") == service.get("body_prefix_chars"), surface
+            assert payload.get("body_truncated_by_model") == service.get(
+                "body_truncated_by_model"
+            ), surface
+
+    def test_a_model_window_cut_is_named_on_every_surface(self, env, monkeypatch):
+        """#1785: when the model's token window cut a returned entry's
+        body, every surface carries the flag, in the same words."""
+
+        class _WordTokenizer:
+            def __call__(self, text):
+                return {"input_ids": text.split()}
+
+        class _WindowedModel(FakeModel):
+            max_seq_length = 3
+            tokenizer = _WordTokenizer()
+
+        install_fake_model(monkeypatch, _WindowedModel())
+        service = SearchService(env["db"], settings=env["config"].settings).search_response(
+            "falcon", kb_name=OPEN, mode="semantic"
+        )
+        assert service["body_truncated_by_model"] is True
+        for surface, payload in walk(env, "falcon", "semantic").items():
+            assert payload.get("body_truncated_by_model") is True, surface
 
     def test_present_on_a_miss_and_under_projection(self, env):
         payloads = walk(env, ABSENT, "keyword")
@@ -279,6 +302,57 @@ class TestEverySearchSaysWhatItSearched:
             assert "tags" not in payload["searched"], surface
             assert "metadata" not in payload["searched"], surface
             assert "fields" not in payload["searched"], surface
+
+
+class TestARefusedImportanceIsFlaggedOnEverySurface:
+    """A row whose file holds a refused importance carries `entry_warnings`,
+    whole and under a `fields` projection, on the CLI, MCP and REST (#1761).
+    Search's page-level `warnings` is a different key and is not used."""
+
+    @pytest.fixture
+    def flagged(self, env):
+        from pyrite.storage.index import IndexManager
+
+        root = env["config"].get_kb(OPEN).path
+        (root / "quokka.md").write_text(
+            "---\nid: quokka\ntype: note\ntitle: Quokka notes\nimportance: 7.5\n---\n\n"
+            "quokkaword body.\n"
+        )
+        (root / "numbat.md").write_text(
+            "---\nid: numbat\ntype: note\ntitle: Numbat notes\nimportance: 5.0\n---\n\n"
+            "quokkaword body too.\n"
+        )
+        (root / "bilby.md").write_text(
+            "---\nid: bilby\ntype: note\ntitle: Bilby notes\n---\n\nquokkaword body too.\n"
+        )
+        IndexManager(env["db"], env["config"]).index_kb(OPEN)
+        return env
+
+    @staticmethod
+    def _by_id(payload):
+        return {r["id"]: r for r in payload["results"]}
+
+    def _surfaces(self, env, **extra):
+        fields_cli = ["--fields", extra["fields"]] if "fields" in extra else []
+        mcp_extra = {"fields": extra["fields"].split(",")} if "fields" in extra else {}
+        return {
+            "cli": cli(env, "quokkaword", "-k", OPEN, "--mode", "keyword", *fields_cli),
+            "mcp": mcp(env, query="quokkaword", kb_name=OPEN, mode="keyword", **mcp_extra),
+            "rest": rest(env["admin"], q="quokkaword", kb=OPEN, mode="keyword", **extra),
+        }
+
+    @pytest.mark.parametrize("fields", [None, "id", "id,title"])
+    def test_the_refused_row_is_flagged_and_the_others_are_not(self, flagged, fields):
+        extra = {"fields": fields} if fields else {}
+        for surface, payload in self._surfaces(flagged, **extra).items():
+            rows = self._by_id(payload)
+            assert set(rows) == {"quokka", "numbat", "bilby"}, surface
+            said = rows["quokka"].get("entry_warnings")
+            assert said and "1-10" in said[0] and "7.5" in said[0], (surface, rows["quokka"])
+            assert not rows["numbat"].get("entry_warnings"), (surface, rows["numbat"])
+            assert not rows["bilby"].get("entry_warnings"), (surface, rows["bilby"])
+            # The page-level key is not the entry's: no leg was skipped here.
+            assert "warnings" not in payload, (surface, payload)
 
 
 class TestTheVerdictSurvivesRowShaping:
